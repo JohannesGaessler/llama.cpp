@@ -86,22 +86,17 @@ static __global__ void dequantize_block_q4_0(const void * vx, float * y, int k) 
     const int i = blockIdx.x*blockDim.x + threadIdx.x;
 
     if (i < k) {
-        const float d = x[i].d;
+        const float d = x[i/QK4_0].d;
 
-        const uint8_t * pp = x[i].qs;
+        const uint8_t * pp = x[i/QK4_0].qs;
 
-        for (int l = 0; l < QK4_0; l += 2) {
-            const uint8_t vi = pp[l/2];
+        const uint8_t vui = pp[(i%QK4_0)/2];
 
-            const int8_t vi0 = vi & 0xf;
-            const int8_t vi1 = vi >> 4;
+        const int8_t vi = (vui >> (4 * (i&1))) & 0xF;
 
-            const float v0 = (vi0 - 8)*d;
-            const float v1 = (vi1 - 8)*d;
+        const float v = (vi - 8)*d;
 
-            y[i*QK4_0 + l + 0] = v0;
-            y[i*QK4_0 + l + 1] = v1;
-        }
+        y[i] = v;
     }
 }
 
@@ -238,7 +233,7 @@ static __global__ void dequantize_block_q8_0(const void * vx, float * y, int k) 
 }
 
 static void dequantize_row_q4_0_cuda(const void * vx, float * y, int k, cudaStream_t stream) {
-    const int nb = k / QK4_0;
+    const int nb = k;
     int min_grid_size, block_size = 1; // Initialize to suppress compiler warning.
     CUDA_CHECK(cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size, dequantize_block_q4_0, 0, 0));
     int grid_size = (nb + block_size - 1) / block_size; // Round up.
