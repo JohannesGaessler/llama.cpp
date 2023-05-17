@@ -79,6 +79,7 @@ struct llama_file {
     size_t size;
 #ifdef GGML_USE_CUBLAS
     CUfileHandle_t cf_handle;
+    bool cf_need_workaround = false;
 #endif // GGML_USE_CUBLAS
 
     llama_file(const char * fname, const char * mode) {
@@ -98,7 +99,13 @@ struct llama_file {
         cf_descr.type = CU_FILE_HANDLE_TYPE_OPAQUE_FD;
 
         CUfileError_t status = cuFileHandleRegister(&cf_handle, &cf_descr);
-        CUFILE_CHECK(status);
+        if (status.err == CU_FILE_INTERNAL_ERROR) {
+            fprintf(stderr, "WARNING: cuFile experienced an internal error while loading weights from \"%s\". Using a workaround (slower). "
+                    "This happens with weight files on Btrfs partitions. ext4 and NTFS are confirmed to work.", fname);
+            cf_need_workaround = true;
+        } else {
+            CUFILE_CHECK(status);
+        }
 #endif // GGML_USE_CUBLAS
     }
 

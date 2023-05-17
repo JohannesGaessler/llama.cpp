@@ -10,8 +10,9 @@
 
 #include "ggml.h"
 #ifdef GGML_USE_CUBLAS
-#include "ggml-cuda.h"
+#include <cuda_runtime.h>
 #include <cufile.h>
+#include "ggml-cuda.h"
 #endif
 
 #include <array>
@@ -784,7 +785,18 @@ struct llama_model_loader {
         size_t offset = lt.shards.at(0).file_off;
         size_t actual_size;
         void * buf = ggml_cuda_pool_malloc(lt.size, &actual_size);
-        cuFileRead(file.cf_handle, buf, lt.size, offset, 0);
+
+        if (file.cf_need_workaround) { // load to host, then copy to device
+            void * buf_host = ggml_cuda_host_malloc(lt.size);
+            file.seek(offset, SEEK_SET);
+            file.read_raw(buf_host, lt.size);
+            cudaMemcpy(buf, buf_host, lt.size, cudaMemcpyHostToDevice);
+            cudaDeviceSynchronize();
+            ggml_cuda_host_free(buf_host);
+        } else { // load directly to device
+            cuFileRead(file.cf_handle, buf, lt.size, offset, 0);
+        }
+
         lt.data = (uint8_t *) buf;
     }
 #endif // GGML_USE_CUBLAS
@@ -974,26 +986,6 @@ static void llama_model_load_internal(
     ml->calc_sizes(&ctx_size, &mmapped_size);
     fprintf(stderr, "%s: ggml ctx size = %6.2f KB\n", __func__, ctx_size/1024.0);
 
-    // print memory requirements
-    {
-        const size_t scale = memory_type == GGML_TYPE_F32 ? 2 : 1;
-
-        // this is the total memory required to run the inference
-        const size_t mem_required =
-            ctx_size +
-            mmapped_size +
-            MEM_REQ_SCRATCH0().at(model.type) +
-            MEM_REQ_SCRATCH1().at(model.type) +
-            MEM_REQ_EVAL().at(model.type);
-
-        // this is the memory required by one llama_state
-        const size_t mem_required_state =
-            scale*MEM_REQ_KV_SELF().at(model.type);
-
-        fprintf(stderr, "%s: mem required  = %7.2f MB (+ %7.2f MB per state)\n", __func__,
-                mem_required / 1024.0 / 1024.0, mem_required_state / 1024.0 / 1024.0);
-    }
-
     // create the ggml context
     {
         lctx.model.buf.resize(ctx_size);
@@ -1015,6 +1007,7 @@ static void llama_model_load_internal(
     }
 
     // prepare memory for the weights
+    size_t vram_total = 0;
     {
         const uint32_t n_embd  = hparams.n_embd;
         const uint32_t n_layer = hparams.n_layer;
@@ -1024,7 +1017,13 @@ static void llama_model_load_internal(
 
         model.tok_embeddings = ml->get_tensor("tok_embeddings.weight", {n_embd, n_vocab}, GGML_BACKEND_CPU);
         model.norm           = ml->get_tensor("norm.weight",           {n_embd}, GGML_BACKEND_CPU);
-        model.output         = ml->get_tensor("output.weight",         {n_embd, n_vocab}, GGML_BACKEND_CPU);
+        ggml_backend backend_output;
+        if (n_gpu_layers > int(n_layer)) {
+            backend_output = GGML_BACKEND_CUDA;
+        } else {
+            backend_output = GGML_BACKEND_CPU;
+        }
+        model.output         = ml->get_tensor("output.weight",         {n_embd, n_vocab}, backend_output);
 
         model.layers.resize(n_layer);
         const int i_gpu_start = n_layer - n_gpu_layers;
@@ -1046,10 +1045,47 @@ static void llama_model_load_internal(
             layer.w1 = ml->get_tensor(layers_i + ".feed_forward.w1.weight", {n_embd,   n_ff}, backend);
             layer.w2 = ml->get_tensor(layers_i + ".feed_forward.w2.weight", {  n_ff,   n_embd}, backend);
             layer.w3 = ml->get_tensor(layers_i + ".feed_forward.w3.weight", {n_embd,   n_ff}, backend);
+            if (backend == GGML_BACKEND_CUDA) {
+                vram_total += ggml_nbytes(layer.attention_norm) + ggml_nbytes(layer.wq) + ggml_nbytes(layer.wk)
+                    + ggml_nbytes(layer.wv) + ggml_nbytes(layer.wo) + ggml_nbytes(layer.attention_norm)
+                    + ggml_nbytes(layer.w1) + ggml_nbytes(layer.w2) + ggml_nbytes(layer.w3);
+            }
         }
     }
 
     ml->done_getting_tensors();
+
+    // print memory requirements
+    {
+        const size_t scale = memory_type == GGML_TYPE_F32 ? 2 : 1;
+
+        // this is the total memory required to run the inference
+        const size_t mem_required =
+            ctx_size +
+            mmapped_size - vram_total + // weights in VRAM not in memory
+            MEM_REQ_SCRATCH0().at(model.type) +
+            MEM_REQ_SCRATCH1().at(model.type) +
+            MEM_REQ_EVAL().at(model.type);
+
+        // this is the memory required by one llama_state
+        const size_t mem_required_state =
+            scale*MEM_REQ_KV_SELF().at(model.type);
+
+        fprintf(stderr, "%s: mem required  = %7.2f MB (+ %7.2f MB per state)\n", __func__,
+                mem_required / 1024.0 / 1024.0, mem_required_state / 1024.0 / 1024.0);
+
+#ifdef GGML_USE_CUBLAS
+        const int n_gpu = std::min(n_gpu_layers, int(hparams.n_layer));
+
+        fprintf(stderr, "%s: [cublas] offloading %d layers to GPU\n", __func__, n_gpu);
+        if (n_gpu_layers > (int) hparams.n_layer) {
+            fprintf(stderr, "%s: [cublas] offloading output layer to GPU\n", __func__);
+        }
+        fprintf(stderr, "%s: [cublas] total VRAM used: %zu MB\n", __func__, vram_total / 1024 / 1024);
+#else
+    (void) n_gpu_layers;
+#endif
+    }
 
     // populate `tensors_by_name`
     for (llama_load_tensor & lt : ml->tensors_map.tensors) {
@@ -1059,38 +1095,6 @@ static void llama_model_load_internal(
     ml->load_all_data(progress_callback, progress_callback_user_data, use_mlock ? &lctx.model.mlock_mmap : NULL);
 
     model.mapping = std::move(ml->mapping);
-#ifdef GGML_USE_CUBLAS
-    {
-        // const int n_gpu = std::min(n_gpu_layers, int(hparams.n_layer));
-        const int n_gpu = 0;
-
-        fprintf(stderr, "%s: [cublas] offloading %d layers to GPU\n", __func__, n_gpu);
-
-        size_t vram_total = 0;
-
-        for (int i = 0; i < n_gpu; ++i) {
-            const auto & layer = model.layers[i];
-
-            ggml_cuda_transform_tensor(layer.attention_norm); vram_total += ggml_nbytes(layer.attention_norm);
-            ggml_cuda_transform_tensor(layer.wq); vram_total += ggml_nbytes(layer.wq);
-            ggml_cuda_transform_tensor(layer.wk); vram_total += ggml_nbytes(layer.wk);
-            ggml_cuda_transform_tensor(layer.wv); vram_total += ggml_nbytes(layer.wv);
-            ggml_cuda_transform_tensor(layer.wo); vram_total += ggml_nbytes(layer.wo);
-            ggml_cuda_transform_tensor(layer.ffn_norm); vram_total += ggml_nbytes(layer.ffn_norm);
-            ggml_cuda_transform_tensor(layer.w1); vram_total += ggml_nbytes(layer.w1);
-            ggml_cuda_transform_tensor(layer.w2); vram_total += ggml_nbytes(layer.w2);
-            ggml_cuda_transform_tensor(layer.w3); vram_total += ggml_nbytes(layer.w3);
-        }
-        if (n_gpu_layers > (int) hparams.n_layer) {
-            fprintf(stderr, "%s: [cublas] offloading output layer to GPU\n", __func__);
-            ggml_cuda_transform_tensor(model.output); vram_total += ggml_nbytes(model.output);
-        }
-
-        fprintf(stderr, "%s: [cublas] total VRAM used: %zu MB\n", __func__, vram_total / 1024 / 1024);
-    }
-#else
-    (void) n_gpu_layers;
-#endif
 
     // loading time will be recalculate after the first eval, so
     // we take page faults deferred by mmap() into consideration
