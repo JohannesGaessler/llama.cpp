@@ -7,6 +7,7 @@
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
 #include <cuda_fp16.h>
+#include <cufile.h>
 
 #include "ggml-cuda.h"
 #include "ggml.h"
@@ -372,7 +373,7 @@ struct cuda_buffer {
 static cuda_buffer g_cuda_buffer_pool[MAX_CUDA_BUFFERS];
 static std::atomic_flag g_cuda_pool_lock = ATOMIC_FLAG_INIT;
 
-static void * ggml_cuda_pool_malloc(size_t size, size_t * actual_size) {
+void * ggml_cuda_pool_malloc(size_t size, size_t * actual_size) {
     scoped_spin_lock lock(g_cuda_pool_lock);
 
     for (int i = 0; i < MAX_CUDA_BUFFERS; ++i) {
@@ -391,7 +392,7 @@ static void * ggml_cuda_pool_malloc(size_t size, size_t * actual_size) {
     return ptr;
 }
 
-static void ggml_cuda_pool_free(void * ptr, size_t size) {
+void ggml_cuda_pool_free(void * ptr, size_t size) {
     scoped_spin_lock lock(g_cuda_pool_lock);
 
     for (int i = 0; i < MAX_CUDA_BUFFERS; ++i) {
@@ -431,6 +432,9 @@ void ggml_init_cublas() {
 
         // configure logging to stdout
         // CUBLAS_CHECK(cublasLoggerConfigure(1, 1, 0, nullptr));
+
+        // initialize cuFile for loading model parameters directly to VRAM
+        CUFILE_CHECK(cuFileDriverOpen());
     }
 }
 

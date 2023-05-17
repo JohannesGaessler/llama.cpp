@@ -11,10 +11,16 @@
 #include <cstdarg>
 #include <cstdlib>
 #include <climits>
+#include <fcntl.h>
 
 #include <string>
 #include <vector>
 #include <stdexcept>
+
+#ifdef GGML_USE_CUBLAS
+#include <cufile.h>
+#include "ggml-cuda.h"
+#endif // GGML_USE_CUBLAS
 
 #ifdef __has_include
     #if __has_include(<unistd.h>)
@@ -71,6 +77,9 @@ struct llama_file {
     // use FILE * so we don't have to re-open the file to mmap
     FILE * fp;
     size_t size;
+#ifdef GGML_USE_CUBLAS
+    CUfileHandle_t cf_handle;
+#endif // GGML_USE_CUBLAS
 
     llama_file(const char * fname, const char * mode) {
         fp = std::fopen(fname, mode);
@@ -80,6 +89,17 @@ struct llama_file {
         seek(0, SEEK_END);
         size = tell();
         seek(0, SEEK_SET);
+
+#ifdef GGML_USE_CUBLAS
+        CUfileDescr_t cf_descr;
+        memset((void *)&cf_descr, 0, sizeof(CUfileDescr_t));
+        int cf_fd = open(fname, O_RDONLY|O_DIRECT, 0644);
+        cf_descr.handle.fd = cf_fd;
+        cf_descr.type = CU_FILE_HANDLE_TYPE_OPAQUE_FD;
+
+        CUfileError_t status = cuFileHandleRegister(&cf_handle, &cf_descr);
+        CUFILE_CHECK(status);
+#endif // GGML_USE_CUBLAS
     }
 
     size_t tell() const {
@@ -422,7 +442,6 @@ struct llama_buffer {
 };
 
 #ifdef GGML_USE_CUBLAS
-#include "ggml-cuda.h"
 struct llama_ctx_buffer {
     uint8_t * addr = NULL;
     bool is_cuda;

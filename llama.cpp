@@ -1,6 +1,7 @@
 // Defines fileno on msys:
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #endif
@@ -11,6 +12,7 @@
 #include "ggml.h"
 #ifdef GGML_USE_CUBLAS
 #include "ggml-cuda.h"
+#include <cufile.h>
 #endif
 
 #include <array>
@@ -641,7 +643,7 @@ struct llama_model_loader {
         }
     }
 
-    struct ggml_tensor * get_tensor(const std::string & name, const std::vector<uint32_t> & ne) {
+    struct ggml_tensor * get_tensor(const std::string & name, const std::vector<uint32_t> & ne, ggml_backend backend) {
         auto it = tensors_map.name_to_idx.find(name);
         if (it == tensors_map.name_to_idx.end()) {
             throw format("llama.cpp: tensor '%s' is missing from model", name.c_str());
@@ -652,10 +654,10 @@ struct llama_model_loader {
                          name.c_str(), llama_format_tensor_shape(ne).c_str(), llama_format_tensor_shape(lt.ne).c_str());
         }
 
-        return get_tensor_for(lt);
+        return get_tensor_for(lt, backend);
     }
 
-    struct ggml_tensor * get_tensor_for(llama_load_tensor & lt) {
+    struct ggml_tensor * get_tensor_for(llama_load_tensor & lt, ggml_backend backend) {
         struct ggml_tensor * tensor;
         if (lt.ne.size() == 2) {
             tensor = ggml_new_tensor_2d(ggml_ctx, lt.type, lt.ne.at(0), lt.ne.at(1));
@@ -665,6 +667,7 @@ struct llama_model_loader {
         }
         ggml_set_name(tensor, lt.name.c_str());
         LLAMA_ASSERT(lt.ggml_tensor == NULL); // if this fails, we called get_tensor twice on the same tensor
+        tensor->backend = backend;
         lt.ggml_tensor = tensor;
         num_ggml_tensors_created++;
         return tensor;
@@ -683,7 +686,7 @@ struct llama_model_loader {
         }
 
         if (use_mmap) {
-            mapping.reset(new llama_mmap(&file_loaders.at(0)->file));
+            mapping.reset(new llama_mmap(&file_loaders.at(0)->file, false));
             if (!lmlock) {
                 // Don't call the callback since the actual loading will be lazy
                 // and we can't measure it.
@@ -701,12 +704,28 @@ struct llama_model_loader {
             }
             LLAMA_ASSERT(lt.ggml_tensor); // unused tensors should have been caught by load_data already
             lt.data = (uint8_t *) lt.ggml_tensor->data;
-            load_data_for(lt);
-            lt.ggml_tensor->data = lt.data;
-            done_size += lt.size;
-            if (use_mmap && lmlock) {
-                lmlock->grow_to(done_size);
+
+            switch (lt.ggml_tensor->backend) {
+                case GGML_BACKEND_CPU:
+                {
+                    load_data_for(lt);
+                    done_size += lt.size;
+                    if (use_mmap && lmlock) {
+                        lmlock->grow_to(done_size);
+                    }
+                } break;
+#ifdef GGML_USE_CUBLAS
+                case GGML_BACKEND_CUDA:
+                {
+                    cuda_load_data_for(lt);
+                    done_size += lt.size;
+                } break;
+#endif // GGML_USE_CUBLAS
+                default:
+                    GGML_ASSERT(false);
             }
+
+            lt.ggml_tensor->data = lt.data;
         }
         if (progress_callback) {
             progress_callback(1.0f, progress_callback_user_data);
@@ -758,6 +777,18 @@ struct llama_model_loader {
             print_checksum(lt);
         }
     }
+
+#ifdef GGML_USE_CUBLAS
+    void cuda_load_data_for(llama_load_tensor & lt) {
+        LLAMA_ASSERT(lt.shards.size() == 1);
+        llama_file & file = file_loaders.at(lt.shards.at(0).file_idx)->file;
+        size_t offset = lt.shards.at(0).file_off;
+        size_t actual_size;
+        void * buf = ggml_cuda_pool_malloc(lt.size, &actual_size);
+        cuFileRead(file.cf_handle, buf, lt.size, offset, 0);
+        lt.data = (uint8_t *) buf;
+    }
+#endif // GGML_USE_CUBLAS
 
     static void print_checksum(llama_load_tensor & lt) {
         uint32_t sum = 0;
@@ -992,28 +1023,30 @@ static void llama_model_load_internal(
 
         ml->ggml_ctx = ctx;
 
-        model.tok_embeddings = ml->get_tensor("tok_embeddings.weight", {n_embd, n_vocab});
-        model.norm           = ml->get_tensor("norm.weight",           {n_embd});
-        model.output         = ml->get_tensor("output.weight",         {n_embd, n_vocab});
+        model.tok_embeddings = ml->get_tensor("tok_embeddings.weight", {n_embd, n_vocab}, GGML_BACKEND_CPU);
+        model.norm           = ml->get_tensor("norm.weight",           {n_embd}, GGML_BACKEND_CPU);
+        model.output         = ml->get_tensor("output.weight",         {n_embd, n_vocab}, GGML_BACKEND_CPU);
 
         model.layers.resize(n_layer);
+        const int i_gpu_start = n_layer - n_gpu_layers;
         for (uint32_t i = 0; i < n_layer; ++i) {
             auto & layer = model.layers[i];
+            const ggml_backend backend = int(i) < i_gpu_start ? GGML_BACKEND_CPU : GGML_BACKEND_CUDA;
 
             std::string layers_i = "layers." + std::to_string(i);
 
-            layer.attention_norm = ml->get_tensor(layers_i + ".attention_norm.weight", {n_embd});
+            layer.attention_norm = ml->get_tensor(layers_i + ".attention_norm.weight", {n_embd}, backend);
 
-            layer.wq = ml->get_tensor(layers_i + ".attention.wq.weight", {n_embd, n_embd});
-            layer.wk = ml->get_tensor(layers_i + ".attention.wk.weight", {n_embd, n_embd});
-            layer.wv = ml->get_tensor(layers_i + ".attention.wv.weight", {n_embd, n_embd});
-            layer.wo = ml->get_tensor(layers_i + ".attention.wo.weight", {n_embd, n_embd});
+            layer.wq = ml->get_tensor(layers_i + ".attention.wq.weight", {n_embd, n_embd}, backend);
+            layer.wk = ml->get_tensor(layers_i + ".attention.wk.weight", {n_embd, n_embd}, backend);
+            layer.wv = ml->get_tensor(layers_i + ".attention.wv.weight", {n_embd, n_embd}, backend);
+            layer.wo = ml->get_tensor(layers_i + ".attention.wo.weight", {n_embd, n_embd}, backend);
 
-            layer.ffn_norm = ml->get_tensor(layers_i + ".ffn_norm.weight", {n_embd});
+            layer.ffn_norm = ml->get_tensor(layers_i + ".ffn_norm.weight", {n_embd}, backend);
 
-            layer.w1 = ml->get_tensor(layers_i + ".feed_forward.w1.weight", {n_embd,   n_ff});
-            layer.w2 = ml->get_tensor(layers_i + ".feed_forward.w2.weight", {  n_ff,   n_embd});
-            layer.w3 = ml->get_tensor(layers_i + ".feed_forward.w3.weight", {n_embd,   n_ff});
+            layer.w1 = ml->get_tensor(layers_i + ".feed_forward.w1.weight", {n_embd,   n_ff}, backend);
+            layer.w2 = ml->get_tensor(layers_i + ".feed_forward.w2.weight", {  n_ff,   n_embd}, backend);
+            layer.w3 = ml->get_tensor(layers_i + ".feed_forward.w3.weight", {n_embd,   n_ff}, backend);
         }
     }
 
@@ -1029,7 +1062,8 @@ static void llama_model_load_internal(
     model.mapping = std::move(ml->mapping);
 #ifdef GGML_USE_CUBLAS
     {
-        const int n_gpu = std::min(n_gpu_layers, int(hparams.n_layer));
+        // const int n_gpu = std::min(n_gpu_layers, int(hparams.n_layer));
+        const int n_gpu = 0;
 
         fprintf(stderr, "%s: [cublas] offloading %d layers to GPU\n", __func__, n_gpu);
 
@@ -2395,7 +2429,8 @@ int llama_apply_lora_from_file_internal(struct llama_context * ctx, const char *
                 }
                 size_t idx = model_loader->tensors_map.name_to_idx[base_name];
                 llama_load_tensor & lt = model_loader->tensors_map.tensors[idx];
-                base_t = model_loader->get_tensor(base_name, { (uint32_t)dest_t->ne[0], (uint32_t)dest_t->ne[1] });
+                base_t = model_loader->get_tensor(
+                    base_name, { (uint32_t)dest_t->ne[0], (uint32_t)dest_t->ne[1] }, GGML_BACKEND_CPU);
                 lt.data = (uint8_t *) lt.ggml_tensor->data;
                 model_loader->load_data_for(lt);
                 lt.ggml_tensor->data = lt.data;
