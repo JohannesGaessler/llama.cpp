@@ -67,6 +67,7 @@ endif()
 option(LLAMA_ACCELERATE             "llama: enable Accelerate framework"                    ON)
 option(LLAMA_OPENBLAS               "llama: use OpenBLAS"                                   OFF)
 option(LLAMA_CUBLAS                 "llama: use cuBLAS"                                     OFF)
+option(LLAMA_DMMV_BLOCK_Y           "llama: y block size for dmmv CUDA kernels"             1)
 option(LLAMA_CLBLAST                "llama: use CLBlast"                                    OFF)
 
 option(LLAMA_BUILD_TESTS            "llama: build tests"    ${LLAMA_STANDALONE})
@@ -190,6 +191,7 @@ if (LLAMA_CUBLAS)
         set(GGML_CUDA_SOURCES ggml-cuda.cu ggml-cuda.h)
 
         add_compile_definitions(GGML_USE_CUBLAS)
+        add_compile_definitions(CUDA_DMMV_BLOCK_Y=${LLAMA_DMMV_BLOCK_Y})
 
         if (LLAMA_STATIC)
             set(LLAMA_EXTRA_LIBS ${LLAMA_EXTRA_LIBS} CUDA::cudart_static CUDA::cublas_static CUDA::cublasLt_static)
