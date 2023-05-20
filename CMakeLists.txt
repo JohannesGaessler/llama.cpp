@@ -67,7 +67,7 @@ endif()
 option(LLAMA_ACCELERATE             "llama: enable Accelerate framework"                    ON)
 option(LLAMA_OPENBLAS               "llama: use OpenBLAS"                                   OFF)
 option(LLAMA_CUBLAS                 "llama: use cuBLAS"                                     OFF)
-option(LLAMA_CUDA_BY                "llama: y block size for dmmv CUDA kernels"             1)
+set(LLAMA_CUDA_BY "1" CACHE STRING  "llama: y block size for dmmv CUDA kernels")
 option(LLAMA_CUDA_UNROLL            "llama: unroll loops in dmmv CUDA kernels"              OFF)
 option(LLAMA_CLBLAST                "llama: use CLBlast"                                    OFF)
 
