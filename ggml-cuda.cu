@@ -84,7 +84,11 @@ typedef struct {
 static_assert(sizeof(block_q8_0) == sizeof(float) + QK8_0, "wrong q8_0 block size/padding");
 
 #define CUDA_DEQUANTIZE_BLOCK_SIZE 256
-#define GGML_CUDA_DMMV_BLOCK_X 32 // dmmv = dequantize_mul_mat_vec
+// dmmv = dequantize_mul_mat_vec
+#define GGML_CUDA_DMMV_BLOCK_X 32
+#ifndef GGML_CUDA_DMMV_BLOCK_Y
+#define GGML_CUDA_DMMV_BLOCK_Y 1 // can by set by compiler option LLAMA_CUDA_BY
+#endif
 
 static __device__ void dequantize_q4_0(const void * vx, const int ib, const int iqs, float & v0, float & v1){
     const block_q4_0 * x = (const block_q4_0 *) vx;
