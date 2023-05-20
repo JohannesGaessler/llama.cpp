@@ -200,22 +200,24 @@ static __global__ void dequantize_mul_mat_vec(const void * vx, const float * y, 
 
     float tmp = 0; // partial sum for thread in warp
 
-#ifdef GGML_CUDA_UNROLL
+    const int istride = 16;
+// #pragma unroll
+    for (int i = 0; i < ncols/block_size; i += istride) {
 #pragma unroll
-#endif
-    for (int i = 0; i < ncols/block_size; i += 2) {
-        const int col = i*block_size + 2*tid;
-        const int ib = (row*ncols + col)/qk; // block index
-        const int iqs = (col%qk)/qr; // quant index
-        const int iybs = col - col%qk; // y block start index
+        for (int j = 0; j < istride; j+=2) {
+            const int col = (i+j)*block_size + 2*tid;
+            const int ib = (row*ncols + col)/qk; // block index
+            const int iqs = (col%qk)/qr; // quant index
+            const int iybs = col - col%qk; // y block start index
 
-        // dequantize
-        float v0, v1;
-        dequantize_kernel(vx, ib, iqs, v0, v1);
+            // dequantize
+            float v0, v1;
+            dequantize_kernel(vx, ib, iqs, v0, v1);
 
-        // matrix multiplication
-        tmp += v0 * y[iybs + iqs + 0];
-        tmp += v1 * y[iybs + iqs + y_offset];
+            // matrix multiplication
+            tmp += v0 * y[iybs + iqs + 0];
+            tmp += v1 * y[iybs + iqs + y_offset];
+        }
     }
 
     // sum up partial sums and write back result
