@@ -104,6 +104,30 @@ static __device__ void dequantize_q4_0(const void * vx, const int ib, const int 
     v1 = (vi1 - 8)*d;
 }
 
+static __device__ void dequantize_q4_0_test(const void * vx, const int ib, const int iqs, float & v0, float & v1, float & v2, float & v3){
+    const block_q4_0 * x = (const block_q4_0 *) vx;
+
+    const float d = x[ib].d;
+    {
+        const uint8_t vui = x[ib].qs[iqs];
+
+        const int8_t vi0 = vui & 0xF;
+        const int8_t vi1 = vui >> 4;
+
+        v0 = (vi0 - 8)*d;
+        v1 = (vi1 - 8)*d;
+    }
+    {
+        const uint8_t vui = x[ib].qs[iqs + 1];
+
+        const int8_t vi0 = vui & 0xF;
+        const int8_t vi1 = vui >> 4;
+
+        v2 = (vi0 - 8)*d;
+        v3 = (vi1 - 8)*d;
+    }
+}
+
 static __device__ void dequantize_q4_1(const void * vx, const int ib, const int iqs, float & v0, float & v1){
     const block_q4_1 * x = (const block_q4_1 *) vx;
 
@@ -207,19 +231,21 @@ static __global__ void dequantize_mul_mat_vec(const void * vx, const float * y, 
 #ifdef GGML_CUDA_UNROLL
 #pragma unroll
 #endif
-    for (int i = 0; i < ncols/block_size; i += 2) {
-        const int col = i*block_size + 2*tid;
+    for (int i = 0; i < ncols/block_size; i += 4) {
+        const int col = i*block_size + 4*tid;
         const int ib = (row*ncols + col)/qk; // block index
         const int iqs = (col%qk)/qr; // quant index
         const int iybs = col - col%qk; // y block start index
 
         // dequantize
-        float v0, v1;
-        dequantize_kernel(vx, ib, iqs, v0, v1);
+        float v0, v1, v2, v3;
+        dequantize_q4_0_test(vx, ib, iqs, v0, v1, v2, v3);
 
         // matrix multiplication
         tmp += v0 * y[iybs + iqs + 0];
         tmp += v1 * y[iybs + iqs + y_offset];
+        tmp += v2 * y[iybs + iqs + 1];
+        tmp += v3 * y[iybs + iqs + y_offset + 1];
     }
 
     // sum up partial sums and write back result
