@@ -970,14 +970,19 @@ void ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensor, const 
 }
 
 bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor) {
-
     switch (tensor->op) {
         case GGML_OP_MUL:
+            if (params->type != GGML_TASK_COMPUTE || params->ith != 0) {
+                return true;
+            }
             ggml_cuda_mul(tensor->src0, tensor->src1, tensor);
             return true;
         case GGML_OP_MUL_MAT:
             if (!ggml_cuda_can_mul_mat(tensor->src0, tensor->src1, tensor)) {
                 return false;
+            }
+            if (params->type != GGML_TASK_COMPUTE || params->ith != 0) {
+                return true;
             }
             ggml_cuda_mul_mat(tensor->src0, tensor->src1, tensor, params->wdata, params->wsize);
             return true;
