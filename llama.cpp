@@ -1260,6 +1260,7 @@ static bool llama_eval_internal(
 
             // cur = cur*attention_norm(broadcasted)
             cur = ggml_mul(ctx0, cur, model.layers[il].attention_norm);
+            cur->backend = model.layers[il].attention_norm->backend;
         }
 
         // self-attention
@@ -1368,6 +1369,7 @@ static bool llama_eval_internal(
 
                 // cur = cur*ffn_norm(broadcasted)
                 cur = ggml_mul(ctx0, cur, model.layers[il].ffn_norm);
+                cur->backend = model.layers[il].ffn_norm->backend;
             }
 
             struct ggml_tensor * tmp = ggml_mul_mat(ctx0,
