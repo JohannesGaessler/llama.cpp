@@ -396,22 +396,6 @@ extern "C" {
         int64_t perf_time_us;
     };
 
-    // scratch buffer
-    struct ggml_scratch {
-        size_t offs;
-        size_t size;
-        void * data;
-    };
-
-    struct ggml_init_params {
-        // memory pool
-        size_t mem_size;   // bytes
-        void * mem_buffer; // if NULL, memory will be allocated internally
-        bool   no_alloc;   // don't allocate memory for the tensor data
-    };
-
-    // compute types
-
     enum ggml_task_type {
         GGML_TASK_INIT = 0,
         GGML_TASK_COMPUTE,
@@ -426,6 +410,20 @@ extern "C" {
         // work buffer for all threads
         size_t wsize;
         void * wdata;
+    };
+
+    // scratch buffer
+    struct ggml_scratch {
+        size_t offs;
+        size_t size;
+        void * data;
+    };
+
+    struct ggml_init_params {
+        // memory pool
+        size_t mem_size;   // bytes
+        void * mem_buffer; // if NULL, memory will be allocated internally
+        bool   no_alloc;   // don't allocate memory for the tensor data
     };
 
     // misc

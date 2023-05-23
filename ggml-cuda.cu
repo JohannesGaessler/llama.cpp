@@ -975,6 +975,7 @@ bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_
             if (params->type != GGML_TASK_COMPUTE || params->ith != 0) {
                 return true;
             }
+            GGML_ASSERT(params->ith == 0);
             ggml_cuda_mul(tensor->src0, tensor->src1, tensor);
             return true;
         case GGML_OP_MUL_MAT:
@@ -984,6 +985,7 @@ bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_
             if (params->type != GGML_TASK_COMPUTE || params->ith != 0) {
                 return true;
             }
+            GGML_ASSERT(params->ith == 0);
             ggml_cuda_mul_mat(tensor->src0, tensor->src1, tensor, params->wdata, params->wsize);
             return true;
         default:
