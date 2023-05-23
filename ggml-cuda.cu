@@ -436,11 +436,14 @@ static void ggml_cuda_pool_free(void * ptr, size_t size) {
 #define GGML_CUDA_MAX_STREAMS 8 // Set this to 1 for reproducible matrix multiplication.
 #define GGML_CUDA_MAX_EVENTS 64
 static cublasHandle_t g_cublasH = nullptr;
+
 static cudaStream_t g_cudaStreams_main[GGML_CUDA_MAX_STREAMS] = { nullptr };
 static cudaEvent_t g_cudaEvents_main[GGML_CUDA_MAX_EVENTS] = { nullptr };
+
 static cudaStream_t g_cudaStreams_memcpy_src1[GGML_CUDA_MAX_STREAMS] = { nullptr };
-static cudaStream_t g_cudaStreams_memcpy_dst[GGML_CUDA_MAX_STREAMS] = { nullptr };
 static cudaEvent_t g_cudaEvents_memcpy_src1[GGML_CUDA_MAX_EVENTS] = { nullptr };
+
+static cudaStream_t g_cudaStreams_memcpy_dst[GGML_CUDA_MAX_STREAMS] = { nullptr };
 
 void ggml_init_cublas() {
     if (g_cublasH == nullptr) {
@@ -791,6 +794,11 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
         dst_ddf_malloced = true;
     }
 
+    // wait until previous op is done
+    for (int i = 0; i < GGML_CUDA_MAX_STREAMS; ++i) {
+        CUDA_CHECK(cudaStreamSynchronize(g_cudaStreams_main[i]));
+    }
+
     for (int64_t i03 = 0; i03 < ne03; i03++) {
         const int64_t i13 = i03 % ne13;
         for (int64_t i02 = 0; i02 < ne02; i02++) {
@@ -847,17 +855,21 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
         }
     }
 
-    CUDA_CHECK(cudaDeviceSynchronize());
+    // wait until computation is done, then free
     if (src0_ddf_malloced) {
+        CUDA_CHECK(cudaDeviceSynchronize());
         ggml_cuda_pool_free(src0_ddf, src0_asf);
     }
     if (src0_ddq_malloced) {
+        CUDA_CHECK(cudaDeviceSynchronize());
         ggml_cuda_pool_free(src0_ddq, src0_asq);
     }
     if (src1_ddf_malloced) {
+        CUDA_CHECK(cudaDeviceSynchronize());
         ggml_cuda_pool_free(src1_ddf, src1_asf);
     }
     if (dst_ddf_malloced) {
+        CUDA_CHECK(cudaDeviceSynchronize());
         ggml_cuda_pool_free(dst_ddf, dst_asf);
     }
 }
@@ -990,5 +1002,11 @@ bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_
             return true;
         default:
             return false;
+    }
+}
+
+void ggml_cuda_wait_memcpy_DtoH(void){
+    for (int i = 0; i < GGML_CUDA_MAX_STREAMS; ++i) {
+        CUDA_CHECK(cudaStreamSynchronize(g_cudaStreams_memcpy_dst[i]));
     }
 }

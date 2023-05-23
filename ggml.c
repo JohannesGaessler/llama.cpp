@@ -12801,6 +12801,11 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
     if (used_cublas) {
         return;
     }
+
+    if ((tensor->src0 && tensor->src0->backend == GGML_BACKEND_CUDA) ||
+        (tensor->src1 && tensor->src1->backend == GGML_BACKEND_CUDA)) {
+        ggml_cuda_wait_memcpy_DtoH();
+    }
 #endif // GGML_USE_CUBLAS
 
     switch (tensor->op) {
