@@ -12798,8 +12798,8 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
     GGML_ASSERT(params);
 
 #ifdef GGML_USE_CUBLAS
-    bool used_cuda = ggml_cuda_compute_forward(params, tensor);
-    if (used_cuda) {
+    bool skip_cpu = ggml_cuda_compute_forward(params, tensor);
+    if (skip_cpu) {
         return;
     }
 #endif // GGML_USE_CUBLAS
