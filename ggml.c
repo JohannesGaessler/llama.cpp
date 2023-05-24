@@ -14317,11 +14317,12 @@ void ggml_graph_compute(struct ggml_context * ctx, struct ggml_cgraph * cgraph) 
             }
 
             // launch thread pool
+            const int offset = node->op == GGML_OP_MUL_MAT && node->src1->ne[1] == 1 ? 1 : 0;
             for (int j = 0; j < n_threads - 1; j++) {
                 workers[j].params = (struct ggml_compute_params) {
                     .type  = GGML_TASK_COMPUTE,
-                    .ith   = j + 1,
-                    .nth   = node->n_tasks,
+                    .ith   = j + 1 - offset,
+                    .nth   = node->n_tasks - offset,
                     .wsize = cgraph->work ? ggml_nbytes(cgraph->work) : 0,
                     .wdata = cgraph->work ? cgraph->work->data : NULL,
                 };
