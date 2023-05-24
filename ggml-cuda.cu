@@ -844,7 +844,11 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
                 CUDA_CHECK(cudaStreamWaitEvent(cudaStream_memcpy_dst, cudaEvent_main, 0));
 
                 float * dhf_dst_i = (float *) ((char *) dst->data + i02*nb2 + i03*nb3);
-                CUDA_CHECK(cudaMemcpyAsync(dhf_dst_i, dst_ddf_i, dst_stride*sizeof(float), cudaMemcpyDeviceToHost, cudaStream_memcpy_dst));
+                if (op == ggml_cuda_op_dequantize_mul_mat_vec) {
+                    CUDA_CHECK(cudaMemcpyAsync(dhf_dst_i, dst_ddf_i, dst_stride*sizeof(float)/2, cudaMemcpyDeviceToHost, cudaStream_memcpy_dst));
+                } else {
+                    CUDA_CHECK(cudaMemcpyAsync(dhf_dst_i, dst_ddf_i, dst_stride*sizeof(float), cudaMemcpyDeviceToHost, cudaStream_memcpy_dst));
+                }
             }
         }
     }
