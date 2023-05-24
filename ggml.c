@@ -9958,8 +9958,8 @@ static void ggml_compute_forward_mul_mat_q_f32(
     const int dr = (nr + nth - 1)/nth;
 
     // row range for this thread
-    const int ir0 = dr*ith;
-    const int ir1 = MIN(ir0 + dr, nr);
+    const int ir0 = (ne01 + dr*ith)/2;
+    const int ir1 = MIN(ir0 + dr/2, nr);
 
     void * wdata = params->wdata;
     const size_t row_size = ne00*GGML_TYPE_SIZE[vec_dot_type]/GGML_BLCK_SIZE[vec_dot_type];
