@@ -3715,6 +3715,12 @@ size_t ggml_nbytes(const struct ggml_tensor * tensor) {
     return (ggml_nelements(tensor)*GGML_TYPE_SIZE[tensor->type])/GGML_BLCK_SIZE[tensor->type];
 }
 
+size_t ggml_nbytes_split(const struct ggml_tensor * tensor, int nrows_split) {
+    static_assert(GGML_MAX_DIMS == 4, "GGML_MAX_DIMS is not 4 - update this function");
+
+    return (nrows_split*tensor->ne[0]*GGML_TYPE_SIZE[tensor->type])/GGML_BLCK_SIZE[tensor->type];
+}
+
 int ggml_blck_size(enum ggml_type type) {
     return GGML_BLCK_SIZE[type];
 }
@@ -4129,6 +4135,7 @@ struct ggml_tensor * ggml_new_tensor_impl(
         /*.perf_time_us =*/ 0,
         /*.data         =*/ (data == NULL && !ctx->no_alloc) ? (void *)(result + 1) : data,
         /*.name         =*/ { 0 },
+        /*.extra        =*/ NULL,
         /*.pad          =*/ { 0 },
     };
 
@@ -12811,8 +12818,8 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
     GGML_ASSERT(params);
 
 #ifdef GGML_USE_CUBLAS
-    bool used_cuda = ggml_cuda_compute_forward(params, tensor);
-    if (used_cuda) {
+    bool skip_cpu = ggml_cuda_compute_forward(params, tensor);
+    if (skip_cpu) {
         return;
     }
 #endif // GGML_USE_CUBLAS
