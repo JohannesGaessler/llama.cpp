@@ -760,9 +760,9 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
 
     if (src0_on_device) {
         if (src0_is_f32) {
-            src0_ddf = (float *) src0->data;
+            src0_ddf = (float *) src0->data_device[0];
         } else {
-            src0_ddq = (char *) src0->data;
+            src0_ddq = (char *) src0->data_device[0];
         }
     } else {
         if (src0_is_f32) {
@@ -780,13 +780,13 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
     }
 
     if (src1_on_device) {
-        src1_ddf = (float *) src1->data;
+        src1_ddf = (float *) src1->data_device[0];
     } else {
         src1_ddf = (float *) ggml_cuda_pool_malloc(num_iters * src1_stride * sizeof(float), &src1_asf);
         src1_ddf_malloced = true;
     }
     if (dst_on_device) {
-        dst_ddf = (float *) dst->data;
+        dst_ddf = (float *) dst->data_device[0];
     } else {
         dst_ddf = (float *) ggml_cuda_pool_malloc(num_iters * dst_stride * sizeof(float), &dst_asf);
         dst_ddf_malloced = true;
@@ -971,8 +971,10 @@ void ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensor, const 
     cudaMemcpy(buf, buf_host, size, cudaMemcpyHostToDevice);
     cudaDeviceSynchronize();
 
-    tensor->data = buf;
-    free(buf_host);
+    // tensor->data = buf;
+    // free(buf_host);
+    tensor->data = buf_host;
+    tensor->data_device[0] = buf;
     fclose(fp);
 }
 

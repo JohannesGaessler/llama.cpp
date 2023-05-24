@@ -199,6 +199,7 @@
 #define GGML_MAX_CONTEXTS      64
 #define GGML_MAX_OPT           4
 #define GGML_DEFAULT_N_THREADS 4
+#define GGML_MAX_DEVICES       16
 
 #define GGML_ASSERT(x) \
     do { \
@@ -371,6 +372,7 @@ extern "C" {
         int64_t perf_time_us;
 
         void * data;
+        void * data_device[GGML_MAX_DEVICES];
 
         char name[32];
 
