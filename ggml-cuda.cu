@@ -647,10 +647,11 @@ inline void ggml_cuda_op_dequantize_mul_mat_vec(
 
     const int64_t ne00 = src0->ne[0];
     const int64_t ne01 = src0->ne[1];
+    const int64_t num_rows = ne01/2;
 
     switch (src0->type) {
         case GGML_TYPE_Q4_0:
-            dequantize_mul_mat_vec_q4_0_cuda(src0_ddq_i, src1_ddf_i, dst_ddf_i, ne00, ne01, cudaStream_main);
+            dequantize_mul_mat_vec_q4_0_cuda(src0_ddq_i, src1_ddf_i, dst_ddf_i, ne00, num_rows, cudaStream_main);
             break;
         case GGML_TYPE_Q4_1:
             dequantize_mul_mat_vec_q4_1_cuda(src0_ddq_i, src1_ddf_i, dst_ddf_i, ne00, ne01, cudaStream_main);
@@ -864,6 +865,8 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
 }
 
 bool ggml_cuda_can_mul(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst) {
+    (void) src0;
+    (void) dst;
     return src1->backend == GGML_BACKEND_CUDA;
 }
 
@@ -980,6 +983,7 @@ void ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensor, const 
 
 bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor){
     ggml_cuda_func_t func;
+    bool ret = true;
 
     switch (tensor->op) {
         case GGML_OP_MUL:
@@ -993,17 +997,18 @@ bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_
                 return false;
             }
             func = ggml_cuda_mul_mat;
+            ret = false;
             break;
         default:
             return false;
     }
 
-    if (params->ith != 0) {
-        return true;
-    }
     if (params->type == GGML_TASK_INIT || params->type == GGML_TASK_FINALIZE) {
-        return true;
+        return ret;
+    }
+    if (params->ith != 0) {
+        return ret;
     }
     func(tensor->src0, tensor->src1, tensor, params->wdata, params->wsize);
-    return true;
+    return ret;
 }
