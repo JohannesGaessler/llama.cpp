@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <cstdint>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <atomic>
@@ -980,6 +981,12 @@ void ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensor, const 
     fclose(fp);
 }
 
+void * pf(void * tensor) {
+    struct ggml_tensor * t = (struct ggml_tensor *) tensor;
+    ggml_cuda_op<GGML_CUDA_OP_TYPE_QFF, ggml_cuda_op_dequantize_mul_mat_vec>(t->src0, t->src1, t);
+    return 0;
+}
+
 bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor){
     ggml_cuda_func_t func;
 
@@ -992,6 +999,17 @@ bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_
             break;
         case GGML_OP_MUL_MAT:
             if (!ggml_cuda_can_mul_mat(tensor->src0, tensor->src1, tensor)) {
+                return false;
+            }
+            if (ggml_is_quantized(tensor->src0->type) && tensor->src1->ne[1] == 1) {
+                if (params->ith != 0) {
+                    return false;
+                }
+                if (params->type == GGML_TASK_INIT || params->type == GGML_TASK_FINALIZE) {
+                    return false;
+                }
+                pthread_t p;
+                pthread_create(&p, NULL, pf, tensor);
                 return false;
             }
             func = ggml_cuda_mul_mat;
