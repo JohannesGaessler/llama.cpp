@@ -9955,10 +9955,10 @@ static void ggml_compute_forward_mul_mat_q_f32(
     const int nr = ne01*ne02*ne03;
 
     // rows per thread
-    const int dr = (nr + nth - 1)/nth;
+    const int dr = (nr - nr*(TEST-1)/TEST + nth - 1)/nth;
 
     // row range for this thread
-    const int ir0 = dr*ith;
+    const int ir0 = nr*(TEST-1)/TEST + dr*ith;
     const int ir1 = MIN(ir0 + dr, nr);
 
     void * wdata = params->wdata;

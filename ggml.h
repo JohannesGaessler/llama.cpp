@@ -1,5 +1,6 @@
 #pragma once
 
+#define TEST 16
 //
 // GGML Tensor Library
 //
