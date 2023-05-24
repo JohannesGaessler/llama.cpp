@@ -3648,26 +3648,6 @@ struct ggml_context_container {
 };
 
 //
-// compute types
-//
-
-enum ggml_task_type {
-    GGML_TASK_INIT = 0,
-    GGML_TASK_COMPUTE,
-    GGML_TASK_FINALIZE,
-};
-
-struct ggml_compute_params {
-    enum ggml_task_type type;
-
-    int ith, nth;
-
-    // work buffer for all threads
-    size_t wsize;
-    void * wdata;
-};
-
-//
 // ggml state
 //
 
@@ -12859,6 +12839,13 @@ static void ggml_compute_forward_map_binary(
 
 static void ggml_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor) {
     GGML_ASSERT(params);
+
+#ifdef GGML_USE_CUBLAS
+    bool used_cuda = ggml_cuda_compute_forward(params, tensor);
+    if (used_cuda) {
+        return;
+    }
+#endif // GGML_USE_CUBLAS
 
     switch (tensor->op) {
         case GGML_OP_DUP:
