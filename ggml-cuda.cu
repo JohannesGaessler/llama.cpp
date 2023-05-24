@@ -436,15 +436,38 @@ static void ggml_cuda_pool_free(void * ptr, size_t size) {
 
 #define GGML_CUDA_MAX_STREAMS 8 // Set this to 1 for reproducible matrix multiplication.
 #define GGML_CUDA_MAX_EVENTS 64
+
+static int g_device_count = -1;
+static float g_vram_splits[GGML_MAX_DEVICES];
+
 static cublasHandle_t g_cublasH = nullptr;
+
 static cudaStream_t g_cudaStreams_main[GGML_CUDA_MAX_STREAMS] = { nullptr };
 static cudaEvent_t g_cudaEvents_main[GGML_CUDA_MAX_EVENTS] = { nullptr };
+
 static cudaStream_t g_cudaStreams_memcpy_src1[GGML_CUDA_MAX_STREAMS] = { nullptr };
-static cudaStream_t g_cudaStreams_memcpy_dst[GGML_CUDA_MAX_STREAMS] = { nullptr };
 static cudaEvent_t g_cudaEvents_memcpy_src1[GGML_CUDA_MAX_EVENTS] = { nullptr };
 
+static cudaStream_t g_cudaStreams_memcpy_dst[GGML_CUDA_MAX_STREAMS] = { nullptr };
+
 void ggml_init_cublas() {
-    if (g_cublasH == nullptr) {
+    static bool initialized = false;
+
+    if (!initialized) {
+        CUDA_CHECK(cudaGetDeviceCount(&g_device_count));
+        int64_t total_vram = 0;
+        fprintf(stderr, "%s: found %d CUDA devices:\n", __func__, g_device_count);
+        for (int i = 0; i < g_device_count; ++i) {
+            cudaDeviceProp prop;
+            CUDA_CHECK(cudaGetDeviceProperties(&prop, i));
+            fprintf(stderr, "  %d. %s\n", i+1, prop.name);
+            g_vram_splits[i] = total_vram;
+            total_vram += prop.totalGlobalMem;
+        }
+        for (int i = 0; i < g_device_count; ++i) {
+            g_vram_splits[i] /= total_vram;
+        }
+
         // create streams
         for (int i = 0; i < GGML_CUDA_MAX_STREAMS; ++i) {
             CUDA_CHECK(cudaStreamCreateWithFlags(&g_cudaStreams_main[i], cudaStreamNonBlocking));
@@ -463,6 +486,8 @@ void ggml_init_cublas() {
 
         // configure logging to stdout
         // CUBLAS_CHECK(cublasLoggerConfigure(1, 1, 0, nullptr));
+
+        initialized = true;
     }
 }
 
