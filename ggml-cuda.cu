@@ -647,7 +647,7 @@ inline void ggml_cuda_op_dequantize_mul_mat_vec(
 
     const int64_t ne00 = src0->ne[0];
     const int64_t ne01 = src0->ne[1];
-    const int64_t num_rows = ne01/2;
+    const int64_t num_rows = ne01*(TEST-1)/TEST;
 
     switch (src0->type) {
         case GGML_TYPE_Q4_0:
@@ -845,7 +845,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
 
                 float * dhf_dst_i = (float *) ((char *) dst->data + i02*nb2 + i03*nb3);
                 if (op == ggml_cuda_op_dequantize_mul_mat_vec) {
-                    CUDA_CHECK(cudaMemcpyAsync(dhf_dst_i, dst_ddf_i, dst_stride*sizeof(float)/2, cudaMemcpyDeviceToHost, cudaStream_memcpy_dst));
+                    CUDA_CHECK(cudaMemcpyAsync(dhf_dst_i, dst_ddf_i, dst_stride*sizeof(float)*(TEST-1)/TEST, cudaMemcpyDeviceToHost, cudaStream_memcpy_dst));
                 } else {
                     CUDA_CHECK(cudaMemcpyAsync(dhf_dst_i, dst_ddf_i, dst_stride*sizeof(float), cudaMemcpyDeviceToHost, cudaStream_memcpy_dst));
                 }
