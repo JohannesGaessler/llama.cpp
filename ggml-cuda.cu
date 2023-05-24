@@ -864,6 +864,8 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
 }
 
 bool ggml_cuda_can_mul(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst) {
+    (void) src0;
+    (void) dst;
     return src1->backend == GGML_BACKEND_CUDA;
 }
 
