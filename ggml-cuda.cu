@@ -46,6 +46,7 @@ enum ggml_cuda_op_type {
 
 typedef void (*dequantize_kernel_t)(const void * vx, const int ib, const int iqs, float & v0, float & v1);
 typedef void (*to_fp32_cuda_t)(const void * x, float * y, int k, cudaStream_t stream);
+typedef void (*ggml_cuda_func_t)(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, void * wdata, size_t wsize);
 typedef void (*ggml_cuda_op_t)(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
     float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int i1, cudaStream_t & cudaStream_main);
@@ -866,9 +867,11 @@ bool ggml_cuda_can_mul(const struct ggml_tensor * src0, const struct ggml_tensor
     return src1->backend == GGML_BACKEND_CUDA;
 }
 
-void ggml_cuda_mul(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst) {
+void ggml_cuda_mul(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, void * wdata, size_t wsize) {
     GGML_ASSERT(src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32);
     ggml_cuda_op<GGML_CUDA_OP_TYPE_FFF, ggml_cuda_op_mul>(src0, src1, dst);
+    (void) wdata;
+    (void) wsize;
 }
 
 bool ggml_cuda_can_mul_mat(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst) {
@@ -974,32 +977,31 @@ void ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensor, const 
 }
 
 bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor){
+    ggml_cuda_func_t func;
+
     switch (tensor->op) {
         case GGML_OP_MUL:
             if (!ggml_cuda_can_mul(tensor->src0, tensor->src1, tensor)) {
                 return false;
             }
-            if (params->ith != 0) {
-                return true;
-            }
-            if (params->type == GGML_TASK_INIT || params->type == GGML_TASK_FINALIZE) {
-                return true;
-            }
-            ggml_cuda_mul(tensor->src0, tensor->src1, tensor);
-            return true;
+            func = ggml_cuda_mul;
+            break;
         case GGML_OP_MUL_MAT:
             if (!ggml_cuda_can_mul_mat(tensor->src0, tensor->src1, tensor)) {
                 return false;
             }
-            if (params->ith != 0) {
-                return true;
-            }
-            if (params->type == GGML_TASK_INIT || params->type == GGML_TASK_FINALIZE) {
-                return true;
-            }
-            ggml_cuda_mul_mat(tensor->src0, tensor->src1, tensor, params->wdata, params->wsize);
-            return true;
+            func = ggml_cuda_mul_mat;
+            break;
         default:
             return false;
     }
+
+    if (params->ith != 0) {
+        return true;
+    }
+    if (params->type == GGML_TASK_INIT || params->type == GGML_TASK_FINALIZE) {
+        return true;
+    }
+    func(tensor->src0, tensor->src1, tensor, params->wdata, params->wsize);
+    return true;
 }
