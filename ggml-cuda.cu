@@ -447,13 +447,13 @@ static float g_vram_splits[GGML_MAX_DEVICES];
 
 static cublasHandle_t g_cublasH = nullptr;
 
-static cudaStream_t g_cudaStreams_main[GGML_CUDA_MAX_STREAMS] = { nullptr };
-static cudaEvent_t g_cudaEvents_main[GGML_CUDA_MAX_EVENTS] = { nullptr };
+static cudaStream_t g_cudaStreams_main[GGML_MAX_DEVICES][GGML_CUDA_MAX_STREAMS] = { nullptr };
+static cudaEvent_t g_cudaEvents_main[GGML_MAX_DEVICES][GGML_CUDA_MAX_EVENTS] = { nullptr };
 
-static cudaStream_t g_cudaStreams_memcpy_src1[GGML_CUDA_MAX_STREAMS] = { nullptr };
-static cudaEvent_t g_cudaEvents_memcpy_src1[GGML_CUDA_MAX_EVENTS] = { nullptr };
+static cudaStream_t g_cudaStreams_memcpy_src1[GGML_MAX_DEVICES][GGML_CUDA_MAX_STREAMS] = { nullptr };
+static cudaEvent_t g_cudaEvents_memcpy_src1[GGML_MAX_DEVICES][GGML_CUDA_MAX_EVENTS] = { nullptr };
 
-static cudaStream_t g_cudaStreams_memcpy_dst[GGML_CUDA_MAX_STREAMS] = { nullptr };
+static cudaStream_t g_cudaStreams_memcpy_dst[GGML_MAX_DEVICES][GGML_CUDA_MAX_STREAMS] = { nullptr };
 
 void ggml_init_cublas() {
     static bool initialized = false;
@@ -473,16 +473,20 @@ void ggml_init_cublas() {
             g_vram_splits[i] /= total_vram;
         }
 
-        // create streams
-        for (int i = 0; i < GGML_CUDA_MAX_STREAMS; ++i) {
-            CUDA_CHECK(cudaStreamCreateWithFlags(&g_cudaStreams_main[i], cudaStreamNonBlocking));
-            CUDA_CHECK(cudaStreamCreateWithFlags(&g_cudaStreams_memcpy_src1[i], cudaStreamNonBlocking));
-            CUDA_CHECK(cudaStreamCreateWithFlags(&g_cudaStreams_memcpy_dst[i], cudaStreamNonBlocking));
-        }
-        // create events
-        for (int i = 0; i < GGML_CUDA_MAX_EVENTS; ++i) {
-            CUDA_CHECK(cudaEventCreateWithFlags(&g_cudaEvents_main[i], cudaEventDisableTiming));
-            CUDA_CHECK(cudaEventCreateWithFlags(&g_cudaEvents_memcpy_src1[i], cudaEventDisableTiming));
+        for (int id = 0; id < g_device_count; ++id) {
+            CUDA_CHECK(cudaSetDevice(id));
+
+            // create streams
+            for (int i = 0; i < GGML_CUDA_MAX_STREAMS; ++i) {
+                CUDA_CHECK(cudaStreamCreateWithFlags(&g_cudaStreams_main[id][i], cudaStreamNonBlocking));
+                CUDA_CHECK(cudaStreamCreateWithFlags(&g_cudaStreams_memcpy_src1[id][i], cudaStreamNonBlocking));
+                CUDA_CHECK(cudaStreamCreateWithFlags(&g_cudaStreams_memcpy_dst[id][i], cudaStreamNonBlocking));
+            }
+            // create events
+            for (int i = 0; i < GGML_CUDA_MAX_EVENTS; ++i) {
+                CUDA_CHECK(cudaEventCreateWithFlags(&g_cudaEvents_main[id][i], cudaEventDisableTiming));
+                CUDA_CHECK(cudaEventCreateWithFlags(&g_cudaEvents_memcpy_src1[id][i], cudaEventDisableTiming));
+            }
         }
 
         // create cublas handle
@@ -579,7 +583,7 @@ static void ggml_cuda_mul_mat_f16(const ggml_tensor * src0, const ggml_tensor * 
     for (int64_t i03 = 0; i03 < ne03; i03++) {
         for (int64_t i02 = 0; i02 < ne02; i02++) {
             int i = i03*ne02 + i02;
-            cudaStream_t cudaStream = g_cudaStreams_main[i % GGML_CUDA_MAX_STREAMS];
+            cudaStream_t cudaStream = g_cudaStreams_main[0][i % GGML_CUDA_MAX_STREAMS];
 
             half  * c_X = d_X + i * x_ne;
             half  * c_Y = d_Y + i * y_ne;
@@ -835,11 +839,11 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
             const int64_t i0 = i03*ne02 + i02;
             const int64_t i1 = i13*ne12 + i12;
 
-            cudaStream_t cudaStream_main = g_cudaStreams_main[i0 % GGML_CUDA_MAX_STREAMS];
-            cudaStream_t cudaStream_memcpy_src1 = g_cudaStreams_memcpy_src1[i0 % GGML_CUDA_MAX_STREAMS];
-            cudaStream_t cudaStream_memcpy_dst = g_cudaStreams_memcpy_dst[i0 % GGML_CUDA_MAX_STREAMS];
-            cudaEvent_t  cudaEvent_main = g_cudaEvents_main[i0 % GGML_CUDA_MAX_EVENTS];
-            cudaEvent_t  cudaEvent_memcpy_src1 = g_cudaEvents_memcpy_src1[i0 % GGML_CUDA_MAX_EVENTS];
+            cudaStream_t cudaStream_main = g_cudaStreams_main[id][i0 % GGML_CUDA_MAX_STREAMS];
+            cudaStream_t cudaStream_memcpy_src1 = g_cudaStreams_memcpy_src1[id][i0 % GGML_CUDA_MAX_STREAMS];
+            cudaStream_t cudaStream_memcpy_dst = g_cudaStreams_memcpy_dst[id][i0 % GGML_CUDA_MAX_STREAMS];
+            cudaEvent_t  cudaEvent_main = g_cudaEvents_main[id][i0 % GGML_CUDA_MAX_EVENTS];
+            cudaEvent_t  cudaEvent_memcpy_src1 = g_cudaEvents_memcpy_src1[id][i0 % GGML_CUDA_MAX_EVENTS];
 
             char  * src0_ddq_i = src0_ddq + i0*src0_stride;
             float * src0_ddf_i = src0_ddf + i0*src0_stride;
