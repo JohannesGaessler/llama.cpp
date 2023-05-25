@@ -345,6 +345,7 @@ extern "C" {
     struct ggml_tensor {
         enum ggml_type    type;
         enum ggml_backend backend;
+        int layer;
 
         int     n_dims;
         int64_t ne[GGML_MAX_DIMS]; // number of elements
@@ -376,7 +377,7 @@ extern "C" {
 
         char name[32];
 
-        char padding[16];
+        char padding[12];
     };
 
     // computation graph

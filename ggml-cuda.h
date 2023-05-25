@@ -15,7 +15,7 @@ void   ggml_cuda_mul_mat(const struct ggml_tensor * src0, const struct ggml_tens
 void * ggml_cuda_host_malloc(size_t size);
 void   ggml_cuda_host_free(void * ptr);
 
-void ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensors, size_t offset);
+void ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensors, size_t offset, int n_layer);
 bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor);
 
 #ifdef  __cplusplus

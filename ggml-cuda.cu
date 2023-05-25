@@ -973,7 +973,18 @@ size_t ggml_cuda_mul_mat_get_wsize(const struct ggml_tensor * src0, const struct
     }
 }
 
-void ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensor, const size_t offset) {
+void ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensor, const size_t offset, int n_layer) {
+    int id = 0;
+    while (id < g_device_count - 1) {
+        int max_layer = n_layer*g_vram_splits[id + 1];
+        if (max_layer < tensor->layer) {
+            break;
+        }
+
+        ++id;
+    }
+    cudaSetDevice(id);
+
     FILE * fp = fopen(fname, "rb");
 
     const size_t size = ggml_nbytes(tensor);
