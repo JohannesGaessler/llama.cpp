@@ -398,14 +398,16 @@ struct cuda_buffer {
     size_t size = 0;
 };
 
-static cuda_buffer g_cuda_buffer_pool[MAX_CUDA_BUFFERS];
+static cuda_buffer g_cuda_buffer_pool[GGML_MAX_DEVICES][MAX_CUDA_BUFFERS];
 static std::atomic_flag g_cuda_pool_lock = ATOMIC_FLAG_INIT;
 
 static void * ggml_cuda_pool_malloc(size_t size, size_t * actual_size) {
     scoped_spin_lock lock(g_cuda_pool_lock);
+    int id;
+    CUDA_CHECK(cudaGetDevice(&id));
 
     for (int i = 0; i < MAX_CUDA_BUFFERS; ++i) {
-        cuda_buffer& b = g_cuda_buffer_pool[i];
+        cuda_buffer& b = g_cuda_buffer_pool[id][i];
         if (b.size >= size && b.ptr != nullptr) {
             void * ptr = b.ptr;
             *actual_size = b.size;
@@ -422,9 +424,11 @@ static void * ggml_cuda_pool_malloc(size_t size, size_t * actual_size) {
 
 static void ggml_cuda_pool_free(void * ptr, size_t size) {
     scoped_spin_lock lock(g_cuda_pool_lock);
+    int id;
+    CUDA_CHECK(cudaGetDevice(&id));
 
     for (int i = 0; i < MAX_CUDA_BUFFERS; ++i) {
-        cuda_buffer& b = g_cuda_buffer_pool[i];
+        cuda_buffer& b = g_cuda_buffer_pool[id][i];
         if (b.ptr == nullptr) {
             b.ptr = ptr;
             b.size = size;
