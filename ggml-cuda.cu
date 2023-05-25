@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <stdint.h>
 #include <stdio.h>
+#include <sys/param.h>
 #include <atomic>
 
 #include <cuda_runtime.h>
@@ -759,6 +760,11 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
 
     const size_t src0_ts = ggml_type_size(src0->type);
 
+    int id = MAX(src0->i_device, src1->i_device);
+    if (id != -1) {
+        cudaSetDevice(id);
+    }
+
     const bool src0_on_device = src0->backend == GGML_BACKEND_CUDA;
     const bool src0_is_f32 = src0->type == GGML_TYPE_F32;
     const bool src0_needs_f32 = op_type & 0x4; // 3rd least significant bit = src0 needs f32
@@ -983,6 +989,7 @@ void ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensor, const 
 
         ++id;
     }
+    tensor->i_device = id;
     cudaSetDevice(id);
 
     FILE * fp = fopen(fname, "rb");

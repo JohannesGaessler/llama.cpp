@@ -4116,6 +4116,7 @@ struct ggml_tensor * ggml_new_tensor_impl(
         /*.perf_time_us =*/ 0,
         /*.data         =*/ (data == NULL && !ctx->no_alloc) ? (void *)(result + 1) : data,
         /*.data_device  =*/ { NULL },
+        /*.i_device     =*/ -1,
         /*.name         =*/ { 0 },
         /*.pad          =*/ { 0 },
     };

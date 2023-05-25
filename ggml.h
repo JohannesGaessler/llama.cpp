@@ -374,10 +374,11 @@ extern "C" {
 
         void * data;
         void * data_device[GGML_MAX_DEVICES];
+        int i_device;
 
         char name[32];
 
-        char padding[12];
+        char padding[8];
     };
 
     // computation graph
