@@ -681,6 +681,8 @@ struct llama_model_loader {
         struct ggml_tensor_extra_gpu * extra = new struct ggml_tensor_extra_gpu;
         extra->layer = layer;
         tensor->extra = extra;
+#else
+        (void) layer;
 #endif // GGML_USE_CUBLAS
 
         tensor->backend = backend;
@@ -836,6 +838,7 @@ struct llama_context_params llama_context_default_params() {
     struct llama_context_params result = {
         /*.n_ctx                       =*/ 512,
         /*.gpu_layers                  =*/ 0,
+        /*.tensor_split                =*/ {0},
         /*.seed                        =*/ -1,
         /*.f16_kv                      =*/ true,
         /*.logits_all                  =*/ false,
@@ -919,6 +922,7 @@ static void llama_model_load_internal(
         llama_context & lctx,
         int n_ctx,
         int n_gpu_layers,
+        float * tensor_split,
         ggml_type memory_type,
         bool use_mmap,
         bool use_mlock,
@@ -1046,8 +1050,8 @@ static void llama_model_load_internal(
 
         model.layers.resize(n_layer);
         for (uint32_t i = 0; i < n_layer; ++i) {
-            const ggml_backend backend = int(i) < i_gpu_start ? GGML_BACKEND_CPU : LLAMA_BACKEND_OFFLOAD;
-            const ggml_backend backend_split = int(i) < i_gpu_start ? GGML_BACKEND_CPU : LLAMA_BACKEND_OFFLOAD_SPLIT;
+            const ggml_backend backend = int(i) < i_gpu_start ? GGML_BACKEND_CPU : LLAMA_BACKEND_OFFLOAD; // NOLINT
+            const ggml_backend backend_split = int(i) < i_gpu_start ? GGML_BACKEND_CPU : LLAMA_BACKEND_OFFLOAD_SPLIT; // NOLINT
 
             auto & layer = model.layers[i];
 
@@ -1118,6 +1122,8 @@ static void llama_model_load_internal(
 
 #ifdef GGML_USE_CUBLAS
     {
+        ggml_cuda_set_tensor_split(tensor_split);
+
         size_t done_size = 0;
         size_t data_size = 0;
         for (llama_load_tensor & lt : ml->tensors_map.tensors) {
@@ -1164,6 +1170,8 @@ static void llama_model_load_internal(
 
         fprintf(stderr, "ggml_opencl: total VRAM used: %zu MB\n", vram_total / 1024 / 1024);
     }
+#else
+    (void) tensor_split;
 #endif
 
     if (progress_callback) {
@@ -1182,6 +1190,7 @@ static bool llama_model_load(
         llama_context & lctx,
         int n_ctx,
         int n_gpu_layers,
+        float * tensor_split,
         ggml_type memory_type,
         bool use_mmap,
         bool use_mlock,
@@ -1189,8 +1198,8 @@ static bool llama_model_load(
         llama_progress_callback progress_callback,
         void *progress_callback_user_data) {
     try {
-        llama_model_load_internal(fname, lctx, n_ctx, n_gpu_layers, memory_type, use_mmap, use_mlock,
-                                  vocab_only, progress_callback, progress_callback_user_data);
+        llama_model_load_internal(fname, lctx, n_ctx, n_gpu_layers, tensor_split, memory_type, use_mmap,
+                                  use_mlock, vocab_only, progress_callback, progress_callback_user_data);
         return true;
     } catch (const std::string & err) {
         fprintf(stderr, "error loading model: %s\n", err.c_str());
@@ -2255,8 +2264,8 @@ struct llama_context * llama_init_from_file(
 
     ggml_type memory_type = params.f16_kv ? GGML_TYPE_F16 : GGML_TYPE_F32;
 
-    if (!llama_model_load(path_model, *ctx, params.n_ctx, params.n_gpu_layers, memory_type,
-                          params.use_mmap, params.use_mlock, params.vocab_only,
+    if (!llama_model_load(path_model, *ctx, params.n_ctx, params.n_gpu_layers, params.tensor_split,
+                          memory_type, params.use_mmap, params.use_mlock, params.vocab_only,
                           params.progress_callback, params.progress_callback_user_data)) {
         fprintf(stderr, "%s: failed to load model\n", __func__);
         llama_free(ctx);

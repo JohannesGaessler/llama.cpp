@@ -1,6 +1,7 @@
 #ifndef LLAMA_H
 #define LLAMA_H
 
+#include "ggml.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -65,9 +66,10 @@ extern "C" {
     typedef void (*llama_progress_callback)(float progress, void *ctx);
 
     struct llama_context_params {
-        int n_ctx;        // text context
-        int n_gpu_layers; // number of layers to store in VRAM
-        int seed;         // RNG seed, -1 for random
+        int n_ctx;                            // text context
+        int n_gpu_layers;                     // number of layers to store in VRAM
+        float tensor_split[GGML_MAX_DEVICES]; // how to split layers across multiple GPUs
+        int seed;                             // RNG seed, -1 for random
 
         bool f16_kv;     // use fp16 for KV cache
         bool logits_all; // the llama_eval() call computes all logits, not just the last one

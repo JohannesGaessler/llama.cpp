@@ -430,7 +430,7 @@ static void ggml_cuda_pool_free(void * ptr, size_t size) {
 #define GGML_CUDA_MAX_EVENTS 64
 
 static int g_device_count = -1;
-static float g_vram_splits[GGML_MAX_DEVICES];
+static float g_tensor_split[GGML_MAX_DEVICES] = {0};
 
 static cublasHandle_t g_cublasH = nullptr;
 
@@ -451,11 +451,11 @@ void ggml_init_cublas() {
             cudaDeviceProp prop;
             CUDA_CHECK(cudaGetDeviceProperties(&prop, i));
             fprintf(stderr, "  %d. %s\n", i+1, prop.name);
-            g_vram_splits[i] = total_vram;
+            g_tensor_split[i] = total_vram;
             total_vram += prop.totalGlobalMem;
         }
         for (int i = 0; i < g_device_count; ++i) {
-            g_vram_splits[i] /= total_vram;
+            g_tensor_split[i] /= total_vram;
         }
 
         for (int id = 0; id < g_device_count; ++id) {
@@ -480,6 +480,27 @@ void ggml_init_cublas() {
         // CUBLAS_CHECK(cublasLoggerConfigure(1, 1, 0, nullptr));
 
         initialized = true;
+    }
+}
+
+void ggml_cuda_set_tensor_split(float * tensor_split) {
+    bool all_zero = true;
+    for (int i = 0; i < g_device_count; ++i) {
+        if (tensor_split[i] != 0.0f) {
+            all_zero = false;
+            break;
+        }
+    }
+    if (all_zero) {
+        return;
+    }
+    float split_sum = 0.0f;
+    for (int i = 0; i < g_device_count; ++i) {
+        g_tensor_split[i] = split_sum;
+        split_sum += tensor_split[i];
+    }
+    for (int i = 0; i < g_device_count; ++i) {
+        g_tensor_split[i] /= split_sum;
     }
 }
 
@@ -797,14 +818,18 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
         bool split = src0_id == -1 && src1_id == -1;
         int64_t row_low, row_high;
         if (split) {
-            row_low = id == 0 ? 0 : nrows0*g_vram_splits[id];
+            row_low = id == 0 ? 0 : nrows0*g_tensor_split[id];
             row_low -= row_low % GGML_CUDA_DMMV_Y;
-            row_high = id == g_device_count - 1 ? nrows0 : nrows0*g_vram_splits[id + 1];
+            row_high = id == g_device_count - 1 ? nrows0 : nrows0*g_tensor_split[id + 1];
             row_high -= row_high % GGML_CUDA_DMMV_Y;
         } else {
             row_low = 0;
             row_high = ne01;
         }
+        if (row_low == row_high) {
+            continue;
+        }
+
         int64_t row_diff = row_high - row_low;
 
         cudaSetDevice(id);
@@ -1031,8 +1056,8 @@ void ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensor, const 
     struct ggml_tensor_extra_gpu * extra = (struct ggml_tensor_extra_gpu *) tensor->extra;
 
     for (int id = 0; id < g_device_count; ++id) {
-        int layer_low = id == 0 ? 0 : n_layer*g_vram_splits[id];
-        int layer_high = id == g_device_count - 1 ? n_layer : n_layer*g_vram_splits[id + 1];
+        int layer_low = id == 0 ? 0 : n_layer*g_tensor_split[id];
+        int layer_high = id == g_device_count - 1 ? n_layer : n_layer*g_tensor_split[id + 1];
         if (backend == GGML_BACKEND_GPU && (extra->layer < layer_low || extra->layer >= layer_high)) {
             continue;
         }
@@ -1048,13 +1073,17 @@ void ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensor, const 
         } else if (backend == GGML_BACKEND_GPU_SPLIT) {
             extra->i_device = -1;
 
-            row_low = id == 0 ? 0 : nrows*g_vram_splits[id];
+            row_low = id == 0 ? 0 : nrows*g_tensor_split[id];
             row_low -= row_low % GGML_CUDA_DMMV_Y;
-            row_high = id == g_device_count - 1 ? nrows : nrows*g_vram_splits[id + 1];
+            row_high = id == g_device_count - 1 ? nrows : nrows*g_tensor_split[id + 1];
             row_high -= row_high % GGML_CUDA_DMMV_Y;
         } else {
             GGML_ASSERT(false);
         }
+        if (row_low == row_high) {
+            continue;
+        }
+
         uint64_t nrows_split = row_high - row_low;
 
         const size_t offset_split = offset + row_low*nb1;
