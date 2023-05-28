@@ -1056,6 +1056,8 @@ void ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensor, const 
     struct ggml_tensor_extra_gpu * extra = (struct ggml_tensor_extra_gpu *) tensor->extra;
 
     for (int id = 0; id < g_device_count; ++id) {
+        extra->data_device[id] = nullptr;
+
         int layer_low = id == 0 ? 0 : n_layer*g_tensor_split[id];
         int layer_high = id == g_device_count - 1 ? n_layer : n_layer*g_tensor_split[id + 1];
         if (backend == GGML_BACKEND_GPU && (extra->layer < layer_low || extra->layer >= layer_high)) {
@@ -1115,6 +1117,25 @@ void ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensor, const 
 
     tensor->extra = extra;
     fclose(fp);
+}
+
+void ggml_cuda_free_data(struct ggml_tensor * tensor) {
+    if (tensor->backend != GGML_BACKEND_GPU && tensor->backend != GGML_BACKEND_GPU_SPLIT) {
+        return;
+    }
+
+    ggml_tensor_extra_gpu * extra = (ggml_tensor_extra_gpu *) tensor->extra;
+
+    for (int id = 0; id < g_device_count; ++id) {
+        if (extra->data_device[id] == nullptr) {
+            continue;
+        }
+
+        CUDA_CHECK(cudaSetDevice(id));
+        CUDA_CHECK(cudaFree(extra->data_device[id]));
+    }
+
+    delete extra;
 }
 
 bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor){
