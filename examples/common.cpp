@@ -297,6 +297,9 @@ bool gpt_params_parse(int argc, char ** argv, gpt_params & params) {
             fprintf(stderr, "warning: see main README.md for information on enabling GPU BLAS support\n");
 #endif
         } else if (arg == "--tensor-split" || arg == "-ts") {
+#ifndef GGML_USE_CUBLAS
+      throw std::runtime_error("llama.cpp was compiled without cuBLAS. It is not possible to set a tensor split.\n");
+#endif // GGML_USE_CUBLAS
             if (++i >= argc) {
                 invalid_param = true;
                 break;
@@ -307,9 +310,9 @@ bool gpt_params_parse(int argc, char ** argv, gpt_params & params) {
             const std::regex regex{R"([,/]+)"};
             std::sregex_token_iterator it{arg_next.begin(), arg_next.end(), regex, -1};
             std::vector<std::string> split_arg{it, {}};
-            GGML_ASSERT(split_arg.size() <= GGML_MAX_DEVICES);
+            GGML_ASSERT(split_arg.size() <= LLAMA_MAX_DEVICES);
 
-            for (size_t i = 0; i < GGML_MAX_DEVICES; ++i) {
+            for (size_t i = 0; i < LLAMA_MAX_DEVICES; ++i) {
                 if (i < split_arg.size()) {
                     params.tensor_split[i] = std::stof(split_arg[i]);
                 } else {
@@ -504,7 +507,7 @@ struct llama_context * llama_init_from_gpt_params(const gpt_params & params) {
 
     lparams.n_ctx        = params.n_ctx;
     lparams.n_gpu_layers = params.n_gpu_layers;
-    memcpy(lparams.tensor_split, params.tensor_split, GGML_MAX_DEVICES*sizeof(float));
+    memcpy(lparams.tensor_split, params.tensor_split, LLAMA_MAX_DEVICES*sizeof(float));
     lparams.seed         = params.seed;
     lparams.f16_kv       = params.memory_f16;
     lparams.use_mmap     = params.use_mmap;

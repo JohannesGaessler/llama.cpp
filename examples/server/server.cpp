@@ -508,6 +508,9 @@ bool server_params_parse(int argc, char **argv, server_params &sparams, gpt_para
     }
     else if (arg == "--tensor-split" || arg == "-ts")
     {
+#ifndef GGML_USE_CUBLAS
+      throw std::runtime_error("llama.cpp was compiled without cuBLAS. It is not possible to set a tensor split.\n");
+#endif // GGML_USE_CUBLAS
       if (++i >= argc)
       {
         invalid_param = true;
@@ -519,9 +522,9 @@ bool server_params_parse(int argc, char **argv, server_params &sparams, gpt_para
       const std::regex regex{R"([,/]+)"};
       std::sregex_token_iterator it{arg_next.begin(), arg_next.end(), regex, -1};
       std::vector<std::string> split_arg{it, {}};
-      GGML_ASSERT(split_arg.size() <= GGML_MAX_DEVICES);
+      GGML_ASSERT(split_arg.size() <= LLAMA_MAX_DEVICES);
 
-      for (size_t i = 0; i < GGML_MAX_DEVICES; ++i)
+      for (size_t i = 0; i < LLAMA_MAX_DEVICES; ++i)
       {
         if (i < split_arg.size())
         {

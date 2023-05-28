@@ -2,6 +2,12 @@
 #define LLAMA_H
 
 #include "ggml.h"
+#ifdef GGML_USE_CUBLAS
+#include "ggml-cuda.h"
+#define LLAMA_MAX_DEVICES GGML_CUDA_MAX_DEVICES
+#else
+#define LLAMA_MAX_DEVICES 1
+#endif // GGML_USE_CUBLAS
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -68,7 +74,7 @@ extern "C" {
     struct llama_context_params {
         int n_ctx;                            // text context
         int n_gpu_layers;                     // number of layers to store in VRAM
-        float tensor_split[GGML_MAX_DEVICES]; // how to split layers across multiple GPUs
+        float tensor_split[LLAMA_MAX_DEVICES]; // how to split layers across multiple GPUs
         int seed;                             // RNG seed, -1 for random
 
         bool f16_kv;     // use fp16 for KV cache

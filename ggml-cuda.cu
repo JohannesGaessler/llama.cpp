@@ -385,7 +385,7 @@ struct cuda_buffer {
     size_t size = 0;
 };
 
-static cuda_buffer g_cuda_buffer_pool[GGML_MAX_DEVICES][MAX_CUDA_BUFFERS];
+static cuda_buffer g_cuda_buffer_pool[GGML_CUDA_MAX_DEVICES][MAX_CUDA_BUFFERS];
 static std::atomic_flag g_cuda_pool_lock = ATOMIC_FLAG_INIT;
 
 static void * ggml_cuda_pool_malloc(size_t size, size_t * actual_size) {
@@ -430,21 +430,21 @@ static void ggml_cuda_pool_free(void * ptr, size_t size) {
 #define GGML_CUDA_MAX_EVENTS 64
 
 static int g_device_count = -1;
-static float g_tensor_split[GGML_MAX_DEVICES] = {0};
+static float g_tensor_split[GGML_CUDA_MAX_DEVICES] = {0};
 
 static cublasHandle_t g_cublasH = nullptr;
 
-static cudaStream_t g_cudaStreams_main[GGML_MAX_DEVICES][GGML_CUDA_MAX_STREAMS] = { nullptr };
+static cudaStream_t g_cudaStreams_main[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_STREAMS] = { nullptr };
 
-static cudaStream_t g_cudaStreams_memcpy_src1[GGML_MAX_DEVICES][GGML_CUDA_MAX_STREAMS] = { nullptr };
-static cudaEvent_t g_cudaEvents_memcpy_src1[GGML_MAX_DEVICES][GGML_CUDA_MAX_EVENTS] = { nullptr };
+static cudaStream_t g_cudaStreams_memcpy_src1[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_STREAMS] = { nullptr };
+static cudaEvent_t g_cudaEvents_memcpy_src1[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_EVENTS] = { nullptr };
 
 void ggml_init_cublas() {
     static bool initialized = false;
 
     if (!initialized) {
         CUDA_CHECK(cudaGetDeviceCount(&g_device_count));
-        GGML_ASSERT(g_device_count <= GGML_MAX_DEVICES);
+        GGML_ASSERT(g_device_count <= GGML_CUDA_MAX_DEVICES);
         int64_t total_vram = 0;
         fprintf(stderr, "%s: found %d CUDA devices:\n", __func__, g_device_count);
         for (int i = 0; i < g_device_count; ++i) {
@@ -797,16 +797,16 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
     const to_fp32_cuda_t to_fp32_cuda = ggml_get_to_fp32_cuda(src0->type);
 
     // dd = data device
-    char  * src0_ddq[GGML_MAX_DEVICES] = {nullptr}; // quantized
-    float * src0_ddf[GGML_MAX_DEVICES] = {nullptr}; // float
-    float * src1_ddf[GGML_MAX_DEVICES] = {nullptr};
-    float * dst_ddf[GGML_MAX_DEVICES] = {nullptr};
+    char  * src0_ddq[GGML_CUDA_MAX_DEVICES] = {nullptr}; // quantized
+    float * src0_ddf[GGML_CUDA_MAX_DEVICES] = {nullptr}; // float
+    float * src1_ddf[GGML_CUDA_MAX_DEVICES] = {nullptr};
+    float * dst_ddf[GGML_CUDA_MAX_DEVICES] = {nullptr};
 
     // asq = actual size quantized, asf = actual size float
-    size_t src0_asq[GGML_MAX_DEVICES] = {0};
-    size_t src0_asf[GGML_MAX_DEVICES] = {0};
-    size_t src1_asf[GGML_MAX_DEVICES] = {0};
-    size_t dst_asf[GGML_MAX_DEVICES] = {0};
+    size_t src0_asq[GGML_CUDA_MAX_DEVICES] = {0};
+    size_t src0_asf[GGML_CUDA_MAX_DEVICES] = {0};
+    size_t src1_asf[GGML_CUDA_MAX_DEVICES] = {0};
+    size_t dst_asf[GGML_CUDA_MAX_DEVICES] = {0};
 
     for (int id = 0; id < g_device_count; ++id) {
         if (src0_id != -1 && src0_id != id) {

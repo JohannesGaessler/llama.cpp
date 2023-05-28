@@ -28,7 +28,7 @@ struct gpt_params {
     int32_t n_batch                        = 512; // batch size for prompt processing (must be >=32 to use BLAS)
     int32_t n_keep                         = 0;   // number of tokens to keep from initial prompt
     int32_t n_gpu_layers                   = 0;   // number of layers to store in VRAM
-    float   tensor_split[GGML_MAX_DEVICES] = {0}; // how split tensors should be distributed across GPUs
+    float   tensor_split[LLAMA_MAX_DEVICES] = {0}; // how split tensors should be distributed across GPUs
 
     // sampling parameters
     std::unordered_map<llama_token, float> logit_bias; // logit bias for specific tokens

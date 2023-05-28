@@ -6,10 +6,12 @@
 extern "C" {
 #endif
 
+#define GGML_CUDA_MAX_DEVICES       16
+
 struct ggml_tensor_extra_gpu {
     int layer; // which layer the tensor is on
     int i_device; // which device the data is on
-    void * data_device[GGML_MAX_DEVICES]; // 1 pointer for each device for split tensors
+    void * data_device[GGML_CUDA_MAX_DEVICES]; // 1 pointer for each device for split tensors
 };
 
 void   ggml_init_cublas(void);
