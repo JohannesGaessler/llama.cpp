@@ -556,6 +556,8 @@ static cudaError_t ggml_cuda_h2d_tensor_2d(
 }
 
 static void ggml_cuda_mul_mat_f16(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, void * wdata, size_t /* wsize */) {
+    GGML_ASSERT(g_device_count == 1);
+    cudaSetDevice(0);
     const int64_t ne00 = src0->ne[0];
     const int64_t ne01 = src0->ne[1];
     const int64_t ne02 = src0->ne[2];
@@ -579,8 +581,17 @@ static void ggml_cuda_mul_mat_f16(const ggml_tensor * src0, const ggml_tensor * 
     const int d_ne = ne11 * ne01;
     const int n_mm = ne03 * ne02;
 
+    bool src0_on_device = src0->backend == GGML_BACKEND_GPU || src0->backend == GGML_BACKEND_GPU_SPLIT;
+    ggml_tensor_extra_gpu * src0_extra = (ggml_tensor_extra_gpu *) src0->extra;
+
     size_t x_size, y_size, d_size;
-    half  * d_X =  (half *) ggml_cuda_pool_malloc(n_mm * sizeof(half) * x_ne, &x_size);
+    half * d_X;
+    if (src0_on_device) {
+        d_X = (half *) src0_extra->data_device[0];
+    } else {
+        d_X = (half *) ggml_cuda_pool_malloc(n_mm * sizeof(half) * x_ne, &x_size);
+    }
+
     half  * d_Y =  (half *) ggml_cuda_pool_malloc(n_mm * sizeof(half) * y_ne, &y_size);
     float * d_D = (float *) ggml_cuda_pool_malloc(n_mm * sizeof(float) * d_ne, &d_size);
 
@@ -596,8 +607,10 @@ static void ggml_cuda_mul_mat_f16(const ggml_tensor * src0, const ggml_tensor * 
             half  * c_Y = d_Y + i * y_ne;
             float * c_D = d_D + i * d_ne;
 
-            // copy src0 to device
-            CUDA_CHECK(ggml_cuda_h2d_tensor_2d(c_X, src0, i03, i02, 0, ne01, cudaStream));
+            // copy src0 to device if necessary
+            if (!src0_on_device) {
+                CUDA_CHECK(ggml_cuda_h2d_tensor_2d(c_X, src0, i03, i02, 0, ne01, cudaStream));
+            }
 
             // convert src1 to fp16
             // TODO: use multiple threads
@@ -643,7 +656,9 @@ static void ggml_cuda_mul_mat_f16(const ggml_tensor * src0, const ggml_tensor * 
     }
 
     CUDA_CHECK(cudaDeviceSynchronize());
-    ggml_cuda_pool_free(d_X, x_size);
+    if (!src0_on_device) {
+        ggml_cuda_pool_free(d_X, x_size);
+    }
     ggml_cuda_pool_free(d_Y, y_size);
     ggml_cuda_pool_free(d_D, d_size);
 }
