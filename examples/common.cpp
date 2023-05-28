@@ -297,13 +297,11 @@ bool gpt_params_parse(int argc, char ** argv, gpt_params & params) {
             fprintf(stderr, "warning: see main README.md for information on enabling GPU BLAS support\n");
 #endif
         } else if (arg == "--tensor-split" || arg == "-ts") {
-#ifndef GGML_USE_CUBLAS
-      throw std::runtime_error("llama.cpp was compiled without cuBLAS. It is not possible to set a tensor split.\n");
-#endif // GGML_USE_CUBLAS
             if (++i >= argc) {
                 invalid_param = true;
                 break;
             }
+#ifdef GGML_USE_CUBLAS
             std::string arg_next = argv[i];
 
             // split string by , and /
@@ -319,6 +317,9 @@ bool gpt_params_parse(int argc, char ** argv, gpt_params & params) {
                     params.tensor_split[i] = 0.0f;
                 }
             }
+#else
+      fprintf(stderr, "WARNING: llama.cpp was compiled without cuBLAS. It is not possible to set a tensor split.\n");
+#endif // GGML_USE_CUBLAS
         } else if (arg == "--no-mmap") {
             params.use_mmap = false;
         } else if (arg == "--mtest") {
