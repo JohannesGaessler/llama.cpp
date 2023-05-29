@@ -694,6 +694,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
     const int nb2  = dst->nb[2];
     const int nb3  = dst->nb[3];
 
+    // strides for iteration over dims 3 and 2
     const int64_t src0_stride = ne00 * ne01;
     const int64_t src1_stride = ne10 * ne11;
     const int64_t dst_stride = ne0 * ne1;
@@ -706,6 +707,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
     struct ggml_tensor_extra_gpu * src1_extra = (ggml_tensor_extra_gpu *) src1->extra;
     struct ggml_tensor_extra_gpu * dst_extra = (ggml_tensor_extra_gpu *) dst->extra;
 
+    // indices of the devices on which the input data is stored
     int src0_id = src0_extra == nullptr ? -1 : src0_extra->i_device;
     int src1_id = src1_extra == nullptr ? -1 : src1_extra->i_device;
 
@@ -731,12 +733,14 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
     size_t dst_asf[GGML_CUDA_MAX_DEVICES] = {0};
 
     for (int id = 0; id < g_device_count; ++id) {
+        // if data is on one device (!= -1) but not this one, continue
         if (src0_id != -1 && src0_id != id) {
             continue;
         }
         if (src1_id != -1 && src1_id != id) {
             continue;
         }
+
         bool split = src0_id == -1 && src1_id == -1;
         int64_t row_low, row_high;
         if (split) {
@@ -818,11 +822,14 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
                 cudaStream_t cudaStream_memcpy_src1 = g_cudaStreams_memcpy_src1[id][i0 % GGML_CUDA_MAX_STREAMS];
                 cudaEvent_t  cudaEvent_memcpy_src1 = g_cudaEvents_memcpy_src1[id][i0 % GGML_CUDA_MAX_EVENTS];
 
+                // for split tensors the data begins at i0 == i0_offset_low
                 char  * src0_ddq_i = src0_ddq[id] + (i0 - i0_offset_low)*src0_stride*src0_ts/src0_bs;
                 float * src0_ddf_i = src0_ddf[id] + (i0 - i0_offset_low)*src0_stride;
                 float * src1_ddf_i = src1_ddf[id] + i1*src1_stride;
                 float * dst_ddf_i = dst_ddf[id] + (i0 - i0_offset_low)*dst_stride;
 
+                // for split tensors the data pointer needs to be rounded down
+                // to the bin edge for i03, i02 bins beyond the first
                 if (i0 - i0_offset_low > 0) {
                     src0_ddq_i -= (row_low % ne01)*ne00 * src0_ts/src0_bs;
                     src0_ddf_i -= (row_low % ne01)*ne00;
@@ -844,6 +851,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
                     }
                 }
 
+                // convert src0 to f32 if it's necessary for the ggml_cuda_op
                 if (src0_needs_f32 && !src0_is_f32) {
                     to_fp32_cuda(src0_ddq_i, src0_ddf_i, i01_diff*ne00, cudaStream_main);
                     CUDA_CHECK(cudaGetLastError());
