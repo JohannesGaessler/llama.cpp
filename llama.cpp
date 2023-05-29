@@ -684,9 +684,11 @@ struct llama_model_loader {
         LLAMA_ASSERT(lt.ggml_tensor == NULL); // if this fails, we called get_tensor twice on the same tensor
 
 #ifdef GGML_USE_CUBLAS
-        struct ggml_tensor_extra_gpu * extra = new struct ggml_tensor_extra_gpu;
-        extra->layer = layer;
-        tensor->extra = extra;
+        if (backend == GGML_BACKEND_GPU || backend == GGML_BACKEND_GPU_SPLIT) {
+            struct ggml_tensor_extra_gpu * extra = new struct ggml_tensor_extra_gpu;
+            extra->layer = layer;
+            tensor->extra = extra;
+        }
 #else
         (void) layer;
 #endif // GGML_USE_CUBLAS
