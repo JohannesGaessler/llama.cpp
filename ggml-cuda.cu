@@ -444,7 +444,7 @@ static void ggml_cuda_pool_free(void * ptr, size_t size) {
 static int g_device_count = -1;
 static float g_tensor_split[GGML_CUDA_MAX_DEVICES] = {0};
 
-static cublasHandle_t g_cublasH = nullptr;
+static cublasHandle_t g_cublas_handles[GGML_CUDA_MAX_DEVICES] = {nullptr};
 
 static cudaStream_t g_cudaStreams_main[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_STREAMS] = { nullptr };
 
@@ -482,11 +482,11 @@ void ggml_init_cublas() {
             for (int i = 0; i < GGML_CUDA_MAX_EVENTS; ++i) {
                 CUDA_CHECK(cudaEventCreateWithFlags(&g_cudaEvents_memcpy_src1[id][i], cudaEventDisableTiming));
             }
-        }
 
-        // create cublas handle
-        CUBLAS_CHECK(cublasCreate(&g_cublasH));
-        CUBLAS_CHECK(cublasSetMathMode(g_cublasH, CUBLAS_TF32_TENSOR_OP_MATH));
+            // create cublas handle
+            CUBLAS_CHECK(cublasCreate(&g_cublas_handles[id]));
+            CUBLAS_CHECK(cublasSetMathMode(g_cublas_handles[id], CUBLAS_TF32_TENSOR_OP_MATH));
+        }
 
         // configure logging to stdout
         // CUBLAS_CHECK(cublasLoggerConfigure(1, 1, 0, nullptr));
@@ -659,9 +659,12 @@ inline void ggml_cuda_op_mul_mat_cublas(
 
     const uint64_t i0_diff = i0_high - i0_low;
 
-    CUBLAS_CHECK(cublasSetStream(g_cublasH, cudaStream_main));
+    int id;
+    CUDA_CHECK(cudaGetDevice(&id));
+
+    CUBLAS_CHECK(cublasSetStream(g_cublas_handles[id], cudaStream_main));
     CUBLAS_CHECK(
-        cublasSgemm(g_cublasH, CUBLAS_OP_T, CUBLAS_OP_N,
+        cublasSgemm(g_cublas_handles[id], CUBLAS_OP_T, CUBLAS_OP_N,
                 i0_diff, ne11, ne10,
                 &alpha, src0_ddf_i, ne00,
                         src1_ddf_i, ne10,
