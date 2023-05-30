@@ -49,7 +49,7 @@ typedef void (*to_fp32_cuda_t)(const void * x, float * y, int k, cudaStream_t st
 typedef void (*ggml_cuda_func_t)(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst);
 typedef void (*ggml_cuda_op_t)(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
-    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, uint64_t i0_low, uint64_t i0_high, int i1, cudaStream_t & cudaStream_main);
+    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i0_low, int64_t i0_high, int i1, cudaStream_t & cudaStream_main);
 
 // QK = number of values after dequantization
 // QR = QK / number of values before dequantization
@@ -537,18 +537,18 @@ void ggml_cuda_host_free(void * ptr) {
 }
 
 static cudaError_t ggml_cuda_h2d_tensor_2d(
-    void * dst, const struct ggml_tensor * src, uint64_t i3, uint64_t i2, uint64_t i1_low, uint64_t i1_high, cudaStream_t stream) {
+    void * dst, const struct ggml_tensor * src, int64_t i3, int64_t i2, int64_t i1_low, int64_t i1_high, cudaStream_t stream) {
 
     char * dst_char = (char *) dst;
-    const uint64_t ne0 = src->ne[0];
-    const uint64_t nb0 = src->nb[0];
-    const uint64_t nb1 = src->nb[1];
-    const uint64_t nb2 = src->nb[2];
-    const uint64_t nb3 = src->nb[3];
+    const int64_t ne0 = src->ne[0];
+    const int64_t nb0 = src->nb[0];
+    const int64_t nb1 = src->nb[1];
+    const int64_t nb2 = src->nb[2];
+    const int64_t nb3 = src->nb[3];
     const enum ggml_type type = src->type;
-    const size_t ts = ggml_type_size(type);
-    const size_t bs = ggml_blck_size(type);
-    uint64_t i1_diff = i1_high - i1_low;
+    const int64_t ts = ggml_type_size(type);
+    const int64_t bs = ggml_blck_size(type);
+    int64_t i1_diff = i1_high - i1_low;
 
     const void * x = (const void *) ((const char *) src->data + i1_low*nb1 + i2*nb2 + i3*nb3);
     if (nb0 == ts && nb1 == ts*ne0/bs) {
@@ -556,7 +556,7 @@ static cudaError_t ggml_cuda_h2d_tensor_2d(
     } else if (nb0 == ts) {
         return cudaMemcpy2DAsync(dst_char, ts*ne0/bs, x, nb1, ts*ne0/bs, i1_diff, cudaMemcpyHostToDevice, stream);
     } else {
-        for (uint64_t i1 = 0; i1 < i1_diff; i1++) {
+        for (int64_t i1 = 0; i1 < i1_diff; i1++) {
             const void * rx = (const void *) ((const char *) x + i1*nb1);
             void * rd = (void *) (dst_char + i1*ts*ne0/bs);
             // pretend the row is a matrix with cols=1
@@ -569,20 +569,20 @@ static cudaError_t ggml_cuda_h2d_tensor_2d(
 
 inline void ggml_cuda_op_mul(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
-    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, uint64_t i0_low, uint64_t i0_high, int i1,
+    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i0_low, int64_t i0_high, int i1,
     cudaStream_t & cudaStream_main){
 
     GGML_ASSERT(src0_ddf_i != nullptr);
     GGML_ASSERT(src1_ddf_i != nullptr);
     GGML_ASSERT(dst_ddf_i != nullptr);
 
-    const uint64_t ne00 = src0->ne[0];
+    const int64_t ne00 = src0->ne[0];
 
-    const uint64_t ne10 = src1->ne[0];
-    const uint64_t ne11 = src1->ne[1];
+    const int64_t ne10 = src1->ne[0];
+    const int64_t ne11 = src1->ne[1];
 
-    for (uint64_t i01 = i0_low; i01 < i0_high; i01++) {
-        const uint64_t i11 = i1*ne11 + i01%ne11; // broadcast src1 across src0
+    for (int64_t i01 = i0_low; i01 < i0_high; i01++) {
+        const int64_t i11 = i1*ne11 + i01%ne11; // broadcast src1 across src0
 
         float * src0_ddf_i01 = src0_ddf_i + i01*ne00;
         float * src1_ddf_i01 = src1_ddf_i + i11*ne10;
@@ -599,7 +599,7 @@ inline void ggml_cuda_op_mul(
 
 inline void ggml_cuda_op_dequantize_mul_mat_vec(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
-    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, uint64_t i0_low, uint64_t i0_high, int i1,
+    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i0_low, int64_t i0_high, int i1,
     cudaStream_t & cudaStream_main){
 
     GGML_ASSERT(src0_ddq_i != nullptr);
@@ -642,7 +642,7 @@ inline void ggml_cuda_op_dequantize_mul_mat_vec(
 
 inline void ggml_cuda_op_mul_mat_cublas(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
-    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, uint64_t i0_low, uint64_t i0_high, int i1,
+    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i0_low, int64_t i0_high, int i1,
     cudaStream_t & cudaStream_main){
 
     GGML_ASSERT(src0_ddf_i != nullptr);
@@ -652,12 +652,12 @@ inline void ggml_cuda_op_mul_mat_cublas(
     const float alpha = 1.0f;
     const float beta = 0.0f;
 
-    const uint64_t ne00 = src0->ne[0];
+    const int64_t ne00 = src0->ne[0];
 
-    const uint64_t ne10 = src1->ne[0];
-    const uint64_t ne11 = src1->ne[1];
+    const int64_t ne10 = src1->ne[0];
+    const int64_t ne11 = src1->ne[1];
 
-    const uint64_t i0_diff = i0_high - i0_low;
+    const int64_t i0_diff = i0_high - i0_low;
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
@@ -988,7 +988,7 @@ void ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensor, const 
             continue;
         }
 
-        uint64_t nrows_split = row_high - row_low;
+        int64_t nrows_split = row_high - row_low;
 
         const size_t offset_split = offset + row_low*nb1;
         const size_t size = ggml_nbytes_split(tensor, nrows_split);
