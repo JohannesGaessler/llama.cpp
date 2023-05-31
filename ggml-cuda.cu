@@ -102,7 +102,6 @@ static_assert(sizeof(block_q8_0) == sizeof(ggml_fp16_t) + QK8_0, "wrong q8_0 blo
 
 #define CUDA_ADD_BLOCK_SIZE 256
 #define CUDA_MUL_BLOCK_SIZE 256
-
 #define CUDA_DEQUANTIZE_BLOCK_SIZE 256
 
 // dmmv = dequantize_mul_mat_vec
@@ -129,6 +128,36 @@ static __global__ void mul_f32(const float * x, const float * y, float * dst, co
         return;
     }
     dst[i] = x[i] * y[i%ky];
+}
+
+static __global__ void rms_norm_f32(const float * x, float * dst, const int ncols) {
+    const int row = blockIdx.x*blockDim.y + threadIdx.y;
+    const int tid = threadIdx.x;
+
+    const float eps = 1e-6;
+
+    float tmp = 0.0f; // partial sum for thread in warp
+
+    for (int i = 0; i < ncols; i += WARP_SIZE) {
+        const int col = i + tid;
+        const float xi = x[row*ncols + col];
+        tmp += xi * xi;
+    }
+
+    // sum up partial sums
+    __syncthreads();
+#pragma unroll
+    for (int mask = 16; mask > 0; mask >>= 1) {
+        tmp += __shfl_xor_sync(0xffffffff, tmp, mask, 32);
+    }
+
+    const float mean = tmp / ncols;
+    const float scale = 1.0f / sqrtf(mean + eps);
+
+    for (int i = 0; i < ncols; i += WARP_SIZE) {
+        const int col = i + tid;
+        dst[row*ncols + col] = scale * x[row*ncols + col];
+    }
 }
 
 static __device__ void dequantize_q4_0(const void * vx, const int ib, const int iqs, float & v0, float & v1){
@@ -246,7 +275,7 @@ static __global__ void dequantize_mul_mat_vec(const void * vx, const float * y, 
     const int vals_per_iter = iter_stride / WARP_SIZE; // num quantized vals per thread and i iter
     const int y_offset = qr == 1 ? 1 : qk/2;
 
-    float tmp = 0; // partial sum for thread in warp
+    float tmp = 0.0f; // partial sum for thread in warp
 
     for (int i = 0; i < ncols; i += iter_stride) {
         const int col = i + vals_per_iter*tid;
@@ -291,6 +320,12 @@ static void add_f32_cuda(const float * x, const float * y, float * dst, const in
 static void mul_f32_cuda(const float * x, const float * y, float * dst, const int kx, const int ky, cudaStream_t stream) {
     const int num_blocks = (kx + CUDA_MUL_BLOCK_SIZE - 1) / CUDA_MUL_BLOCK_SIZE;
     mul_f32<<<num_blocks, CUDA_MUL_BLOCK_SIZE, 0, stream>>>(x, y, dst, kx, ky);
+}
+
+static void rms_norm_f32_cuda(const float * x, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
+    GGML_ASSERT(ncols % WARP_SIZE == 0);
+    const dim3 block_dims(WARP_SIZE, 1, 1);
+    rms_norm_f32<<<nrows, block_dims, 0, stream>>>(x, dst, ncols);
 }
 
 static void dequantize_row_q4_0_cuda(const void * vx, float * y, const int k, cudaStream_t stream) {
@@ -592,21 +627,14 @@ inline void ggml_cuda_op_add(
     GGML_ASSERT(dst_ddf_i != nullptr);
 
     const int64_t ne0 = src0->ne[0];
-    const int64_t ne1 = src0->ne[1];
-    // fprintf(stderr, "%ld %ld %ld %ld\n", ne0, ne1, src0->ne[2], src0->ne[3]);
-    GGML_ASSERT(i0_low == 0);
-    GGML_ASSERT(i0_high == ne1);
-
-    GGML_ASSERT(ne0 == src1->ne[0]);
-    GGML_ASSERT(ne1 == src1->ne[1]);
-
-    GGML_ASSERT(ne0 == dst->ne[0]);
-    GGML_ASSERT(ne1 == dst->ne[1]);
+    const int64_t i0_diff = i0_high - i0_low;
 
     // compute
-    add_f32_cuda(src0_ddf_i, src1_ddf_i, dst_ddf_i, ne0*ne1, cudaStream_main);
+    add_f32_cuda(src0_ddf_i, src1_ddf_i, dst_ddf_i, ne0*i0_diff, cudaStream_main);
     CUDA_CHECK(cudaGetLastError());
 
+    (void) src1;
+    (void) dst;
     (void) src0_ddq_i;
     (void) i1;
 }
@@ -619,10 +647,6 @@ inline void ggml_cuda_op_mul(
     GGML_ASSERT(src0_ddf_i != nullptr);
     GGML_ASSERT(src1_ddf_i != nullptr);
     GGML_ASSERT(dst_ddf_i != nullptr);
-
-    GGML_ASSERT(src0->type == GGML_TYPE_F32);
-    GGML_ASSERT(src1->type == GGML_TYPE_F32);
-    GGML_ASSERT(dst->type == GGML_TYPE_F32);
 
     const int64_t ne00 = src0->ne[0];
 
@@ -643,6 +667,28 @@ inline void ggml_cuda_op_mul(
 
     (void) dst;
     (void) src0_ddq_i;
+}
+
+inline void ggml_cuda_op_rms_norm(
+    const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
+    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i0_low, int64_t i0_high, int i1,
+    cudaStream_t & cudaStream_main){
+
+    GGML_ASSERT(src0_ddf_i != nullptr);
+    GGML_ASSERT(dst_ddf_i != nullptr);
+
+    const int64_t ne00 = src0->ne[0];
+    const int64_t i0_diff = i0_high - i0_low;
+
+    // compute
+    rms_norm_f32_cuda(src0_ddf_i, dst_ddf_i, ne00, i0_diff, cudaStream_main);
+    CUDA_CHECK(cudaGetLastError());
+
+    (void) src1;
+    (void) dst;
+    (void) src0_ddq_i;
+    (void) src1_ddf_i;
+    (void) i1;
 }
 
 inline void ggml_cuda_op_dequantize_mul_mat_vec(
@@ -731,10 +777,11 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
     const int64_t ne03 = src0->ne[3];
     const int64_t nrows0 = ggml_nrows(src0);
 
-    const int64_t ne10 = src1->ne[0];
-    const int64_t ne11 = src1->ne[1];
-    const int64_t ne12 = src1->ne[2];
-    const int64_t ne13 = src1->ne[3];
+    const bool use_src1 = src1 != nullptr;
+    const int64_t ne10 = use_src1 ? src1->ne[0] : 1;
+    const int64_t ne11 = use_src1 ? src1->ne[1] : 1;
+    const int64_t ne12 = use_src1 ? src1->ne[2] : 1;
+    const int64_t ne13 = use_src1 ? src1->ne[3] : 1;
 
     const int64_t ne0 = dst->ne[0];
     const int64_t ne1 = dst->ne[1];
@@ -752,7 +799,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
     const size_t src0_bs = ggml_blck_size(src0->type);
 
     struct ggml_tensor_extra_gpu * src0_extra = (ggml_tensor_extra_gpu *) src0->extra;
-    struct ggml_tensor_extra_gpu * src1_extra = (ggml_tensor_extra_gpu *) src1->extra;
+    struct ggml_tensor_extra_gpu * src1_extra = use_src1 ? (ggml_tensor_extra_gpu *) src1->extra : nullptr;
     struct ggml_tensor_extra_gpu * dst_extra = (ggml_tensor_extra_gpu *) dst->extra;
 
     // indices of the devices on which the input data is stored
@@ -762,7 +809,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
     const bool src0_on_device = src0->backend == GGML_BACKEND_GPU || src0->backend == GGML_BACKEND_GPU_SPLIT;
     const bool src0_is_f32 = src0->type == GGML_TYPE_F32;
 
-    const bool src1_on_device = src1->backend == GGML_BACKEND_GPU || src1->backend == GGML_BACKEND_GPU_SPLIT;
+    const bool src1_on_device = use_src1 && (src1->backend == GGML_BACKEND_GPU || src1->backend == GGML_BACKEND_GPU_SPLIT);
 
     const bool dst_on_device = dst->backend == GGML_BACKEND_GPU || dst->backend == GGML_BACKEND_GPU_SPLIT;
 
@@ -887,7 +934,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
                 }
 
                 // copy src0, src1 to device if necessary
-                if (!src1_on_device) {
+                if (use_src1 && !src1_on_device) {
                     CUDA_CHECK(ggml_cuda_h2d_tensor_2d(src1_ddf_i, src1, i03, i02, 0, ne11, cudaStream_memcpy_src1));
                 }
                 CUDA_CHECK(cudaEventRecord(cudaEvent_memcpy_src1, cudaStream_memcpy_src1));
@@ -979,6 +1026,20 @@ bool ggml_cuda_can_mul(const struct ggml_tensor * src0, const struct ggml_tensor
 void ggml_cuda_mul(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
     GGML_ASSERT(src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32);
     ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul, true);
+}
+
+bool ggml_cuda_can_rms_norm(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst) {
+    GGML_ASSERT(src0->backend == GGML_BACKEND_CPU);
+    GGML_ASSERT(src0->backend != GGML_BACKEND_GPU_SPLIT);
+    (void) src1;
+    (void) dst;
+    return true;
+    return src0->backend == GGML_BACKEND_GPU;
+}
+
+void ggml_cuda_rms_norm(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
+    GGML_ASSERT(src0->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32);
+    ggml_cuda_op(src0, src1, dst, ggml_cuda_op_rms_norm, true);
 }
 
 bool ggml_cuda_can_mul_mat(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst) {
@@ -1120,6 +1181,12 @@ bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_
                 return false;
             }
             func = ggml_cuda_mul;
+            break;
+        case GGML_OP_RMS_NORM:
+            if (!ggml_cuda_can_rms_norm(tensor->src0, tensor->src1, tensor)) {
+                return false;
+            }
+            func = ggml_cuda_rms_norm;
             break;
         case GGML_OP_MUL_MAT:
             if (!ggml_cuda_can_mul_mat(tensor->src0, tensor->src1, tensor)) {
