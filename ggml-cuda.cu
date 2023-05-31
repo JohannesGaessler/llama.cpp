@@ -100,6 +100,7 @@ static_assert(sizeof(block_q8_0) == sizeof(ggml_fp16_t) + QK8_0, "wrong q8_0 blo
 
 #define WARP_SIZE 32
 
+#define CUDA_ADD_BLOCK_SIZE 256
 #define CUDA_MUL_BLOCK_SIZE 256
 
 #define CUDA_DEQUANTIZE_BLOCK_SIZE 256
@@ -111,6 +112,15 @@ static_assert(sizeof(block_q8_0) == sizeof(ggml_fp16_t) + QK8_0, "wrong q8_0 blo
 #ifndef GGML_CUDA_DMMV_Y
 #define GGML_CUDA_DMMV_Y 1
 #endif
+
+static __global__ void add_f32(const float * x, const float * y, float * dst, const int k) {
+    const int i = blockDim.x*blockIdx.x + threadIdx.x;
+
+    if (i >= k) {
+        return;
+    }
+    dst[i] = x[i] + y[i];
+}
 
 static __global__ void mul_f32(const float * x, const float * y, float * dst, const int kx, const int ky) {
     const int i = blockDim.x*blockIdx.x + threadIdx.x;
@@ -271,6 +281,11 @@ static __global__ void dequantize_mul_mat_vec(const void * vx, const float * y, 
     if (tid == 0) {
         dst[row] = tmp;
     }
+}
+
+static void add_f32_cuda(const float * x, const float * y, float * dst, const int k, cudaStream_t stream) {
+    const int num_blocks = (k + CUDA_ADD_BLOCK_SIZE - 1) / CUDA_ADD_BLOCK_SIZE;
+    add_f32<<<num_blocks, CUDA_ADD_BLOCK_SIZE, 0, stream>>>(x, y, dst, k);
 }
 
 static void mul_f32_cuda(const float * x, const float * y, float * dst, const int kx, const int ky, cudaStream_t stream) {
@@ -567,6 +582,35 @@ static cudaError_t ggml_cuda_h2d_tensor_2d(
     }
 }
 
+inline void ggml_cuda_op_add(
+    const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
+    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i0_low, int64_t i0_high, int i1,
+    cudaStream_t & cudaStream_main){
+
+    GGML_ASSERT(src0_ddf_i != nullptr);
+    GGML_ASSERT(src1_ddf_i != nullptr);
+    GGML_ASSERT(dst_ddf_i != nullptr);
+
+    const int64_t ne0 = src0->ne[0];
+    const int64_t ne1 = src0->ne[1];
+    // fprintf(stderr, "%ld %ld %ld %ld\n", ne0, ne1, src0->ne[2], src0->ne[3]);
+    GGML_ASSERT(i0_low == 0);
+    GGML_ASSERT(i0_high == ne1);
+
+    GGML_ASSERT(ne0 == src1->ne[0]);
+    GGML_ASSERT(ne1 == src1->ne[1]);
+
+    GGML_ASSERT(ne0 == dst->ne[0]);
+    GGML_ASSERT(ne1 == dst->ne[1]);
+
+    // compute
+    add_f32_cuda(src0_ddf_i, src1_ddf_i, dst_ddf_i, ne0*ne1, cudaStream_main);
+    CUDA_CHECK(cudaGetLastError());
+
+    (void) src0_ddq_i;
+    (void) i1;
+}
+
 inline void ggml_cuda_op_mul(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
     float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i0_low, int64_t i0_high, int i1,
@@ -575,6 +619,10 @@ inline void ggml_cuda_op_mul(
     GGML_ASSERT(src0_ddf_i != nullptr);
     GGML_ASSERT(src1_ddf_i != nullptr);
     GGML_ASSERT(dst_ddf_i != nullptr);
+
+    GGML_ASSERT(src0->type == GGML_TYPE_F32);
+    GGML_ASSERT(src1->type == GGML_TYPE_F32);
+    GGML_ASSERT(dst->type == GGML_TYPE_F32);
 
     const int64_t ne00 = src0->ne[0];
 
@@ -741,7 +789,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
             continue;
         }
 
-        bool split = src0_id == -1 && src1_id == -1;
+        bool split = src0->backend == GGML_BACKEND_GPU_SPLIT;
         int64_t row_low, row_high;
         if (split) {
             row_low = id == 0 ? 0 : nrows0*g_tensor_split[id];
@@ -904,7 +952,24 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
     }
 }
 
+bool ggml_cuda_can_add(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst) {
+    GGML_ASSERT(src0->backend == GGML_BACKEND_CPU);
+    GGML_ASSERT(src1->backend == GGML_BACKEND_CPU);
+    GGML_ASSERT(src0->backend != GGML_BACKEND_GPU_SPLIT);
+    GGML_ASSERT(src1->backend != GGML_BACKEND_GPU_SPLIT);
+    (void) src0;
+    (void) dst;
+    return true;
+    return src0->backend == GGML_BACKEND_GPU && src1->backend == GGML_BACKEND_GPU;
+}
+
+void ggml_cuda_add(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
+    GGML_ASSERT(src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32);
+    ggml_cuda_op(src0, src1, dst, ggml_cuda_op_add, true);
+}
+
 bool ggml_cuda_can_mul(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst) {
+    GGML_ASSERT(src0->backend != GGML_BACKEND_GPU_SPLIT);
     GGML_ASSERT(src1->backend != GGML_BACKEND_GPU_SPLIT);
     (void) src0;
     (void) dst;
@@ -1044,6 +1109,12 @@ bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_
     ggml_cuda_func_t func;
 
     switch (tensor->op) {
+        case GGML_OP_ADD:
+            if (!ggml_cuda_can_add(tensor->src0, tensor->src1, tensor)) {
+                return false;
+            }
+            func = ggml_cuda_add;
+            break;
         case GGML_OP_MUL:
             if (!ggml_cuda_can_mul(tensor->src0, tensor->src1, tensor)) {
                 return false;
