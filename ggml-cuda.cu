@@ -102,6 +102,7 @@ static_assert(sizeof(block_q8_0) == sizeof(ggml_fp16_t) + QK8_0, "wrong q8_0 blo
 
 #define CUDA_ADD_BLOCK_SIZE 256
 #define CUDA_MUL_BLOCK_SIZE 256
+#define CUDA_SILU_BLOCK_SIZE 256
 #define CUDA_DEQUANTIZE_BLOCK_SIZE 256
 
 // dmmv = dequantize_mul_mat_vec
@@ -128,6 +129,15 @@ static __global__ void mul_f32(const float * x, const float * y, float * dst, co
         return;
     }
     dst[i] = x[i] * y[i%ky];
+}
+
+static __global__ void silu_f32(const float * x, float * dst, const int k) {
+    const int i = blockDim.x*blockIdx.x + threadIdx.x;
+
+    if (i >= k) {
+        return;
+    }
+    dst[i] = x[i] / (1.0f + expf(-x[i]));
 }
 
 static __global__ void rms_norm_f32(const float * x, float * dst, const int ncols) {
@@ -320,6 +330,11 @@ static void add_f32_cuda(const float * x, const float * y, float * dst, const in
 static void mul_f32_cuda(const float * x, const float * y, float * dst, const int kx, const int ky, cudaStream_t stream) {
     const int num_blocks = (kx + CUDA_MUL_BLOCK_SIZE - 1) / CUDA_MUL_BLOCK_SIZE;
     mul_f32<<<num_blocks, CUDA_MUL_BLOCK_SIZE, 0, stream>>>(x, y, dst, kx, ky);
+}
+
+static void silu_f32_cuda(const float * x, float * dst, const int k, cudaStream_t stream) {
+    const int num_blocks = (k + CUDA_SILU_BLOCK_SIZE - 1) / CUDA_SILU_BLOCK_SIZE;
+    silu_f32<<<num_blocks, CUDA_SILU_BLOCK_SIZE, 0, stream>>>(x, dst, k);
 }
 
 static void rms_norm_f32_cuda(const float * x, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
@@ -667,6 +682,28 @@ inline void ggml_cuda_op_mul(
 
     (void) dst;
     (void) src0_ddq_i;
+}
+
+inline void ggml_cuda_op_silu(
+    const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
+    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i0_low, int64_t i0_high, int i1,
+    cudaStream_t & cudaStream_main){
+
+    GGML_ASSERT(src0_ddf_i != nullptr);
+    GGML_ASSERT(dst_ddf_i != nullptr);
+
+    const int64_t ne00 = src0->ne[0];
+    const int64_t i0_diff = i0_high - i0_low;
+
+    // compute
+    silu_f32_cuda(src0_ddf_i, dst_ddf_i, ne00*i0_diff, cudaStream_main);
+    CUDA_CHECK(cudaGetLastError());
+
+    (void) src1;
+    (void) dst;
+    (void) src0_ddq_i;
+    (void) src1_ddf_i;
+    (void) i1;
 }
 
 inline void ggml_cuda_op_rms_norm(
@@ -1028,6 +1065,20 @@ void ggml_cuda_mul(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tens
     ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul, true);
 }
 
+bool ggml_cuda_can_silu(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst) {
+    GGML_ASSERT(src0->backend == GGML_BACKEND_CPU);
+    GGML_ASSERT(src0->backend != GGML_BACKEND_GPU_SPLIT);
+    (void) src1;
+    (void) dst;
+    return true;
+    return src0->backend == GGML_BACKEND_GPU;
+}
+
+void ggml_cuda_silu(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
+    GGML_ASSERT(src0->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32);
+    ggml_cuda_op(src0, src1, dst, ggml_cuda_op_silu, true);
+}
+
 bool ggml_cuda_can_rms_norm(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst) {
     GGML_ASSERT(src0->backend == GGML_BACKEND_CPU);
     GGML_ASSERT(src0->backend != GGML_BACKEND_GPU_SPLIT);
@@ -1181,6 +1232,12 @@ bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_
                 return false;
             }
             func = ggml_cuda_mul;
+            break;
+        case GGML_OP_SILU:
+            if (!ggml_cuda_can_silu(tensor->src0, tensor->src1, tensor)) {
+                return false;
+            }
+            func = ggml_cuda_silu;
             break;
         case GGML_OP_RMS_NORM:
             if (!ggml_cuda_can_rms_norm(tensor->src0, tensor->src1, tensor)) {
