@@ -671,7 +671,7 @@ struct llama_model_loader {
         }
     }
 
-    struct ggml_tensor * get_tensor(const std::string & name, const std::vector<uint32_t> & ne, int layer, ggml_backend backend) {
+    struct ggml_tensor * get_tensor(const std::string & name, const std::vector<uint32_t> & ne, ggml_backend backend) {
         auto it = tensors_map.name_to_idx.find(name);
         if (it == tensors_map.name_to_idx.end()) {
             throw format("llama.cpp: tensor '%s' is missing from model", name.c_str());
@@ -682,10 +682,10 @@ struct llama_model_loader {
                          name.c_str(), llama_format_tensor_shape(ne).c_str(), llama_format_tensor_shape(lt.ne).c_str());
         }
 
-        return get_tensor_for(lt, layer, backend);
+        return get_tensor_for(lt, backend);
     }
 
-    struct ggml_tensor * get_tensor_for(llama_load_tensor & lt, int layer, ggml_backend backend) {
+    struct ggml_tensor * get_tensor_for(llama_load_tensor & lt, ggml_backend backend) {
         struct ggml_tensor * tensor;
         if (lt.ne.size() == 2) {
             tensor = ggml_new_tensor_2d(ggml_ctx, lt.type, lt.ne.at(0), lt.ne.at(1));
@@ -695,16 +695,6 @@ struct llama_model_loader {
         }
         ggml_set_name(tensor, lt.name.c_str());
         LLAMA_ASSERT(lt.ggml_tensor == NULL); // if this fails, we called get_tensor twice on the same tensor
-
-#ifdef GGML_USE_CUBLAS
-        if (backend == GGML_BACKEND_GPU || backend == GGML_BACKEND_GPU_SPLIT) {
-            struct ggml_tensor_extra_gpu * extra = new struct ggml_tensor_extra_gpu;
-            extra->layer = layer;
-            tensor->extra = extra;
-        }
-#else
-        (void) layer;
-#endif // GGML_USE_CUBLAS
 
         tensor->backend = backend;
         lt.ggml_tensor = tensor;
@@ -1059,8 +1049,8 @@ static void llama_model_load_internal(
 
         ml->ggml_ctx = ctx;
 
-        model.tok_embeddings = ml->get_tensor("tok_embeddings.weight", {n_embd, n_vocab}, -1, GGML_BACKEND_CPU);
-        model.norm           = ml->get_tensor("norm.weight",           {n_embd},          -1, GGML_BACKEND_CPU);
+        model.tok_embeddings = ml->get_tensor("tok_embeddings.weight", {n_embd, n_vocab}, GGML_BACKEND_CPU);
+        model.norm           = ml->get_tensor("norm.weight",           {n_embd},          GGML_BACKEND_CPU);
 
         // "output" tensor
         {
@@ -1071,7 +1061,7 @@ static void llama_model_load_internal(
                 backend_output = GGML_BACKEND_CPU;
             }
 
-            model.output = ml->get_tensor("output.weight", {n_embd, n_vocab}, -1, backend_output);
+            model.output = ml->get_tensor("output.weight", {n_embd, n_vocab}, backend_output);
         }
 
         const int i_gpu_start = n_layer - n_gpu_layers;
@@ -1085,18 +1075,18 @@ static void llama_model_load_internal(
 
             std::string layers_i = "layers." + std::to_string(i);
 
-            layer.attention_norm = ml->get_tensor(layers_i + ".attention_norm.weight", {n_embd}, i, backend);
+            layer.attention_norm = ml->get_tensor(layers_i + ".attention_norm.weight", {n_embd}, backend);
 
-            layer.wq = ml->get_tensor(layers_i + ".attention.wq.weight", {n_embd, n_embd}, i, backend_split);
-            layer.wk = ml->get_tensor(layers_i + ".attention.wk.weight", {n_embd, n_embd}, i, backend_split);
-            layer.wv = ml->get_tensor(layers_i + ".attention.wv.weight", {n_embd, n_embd}, i, backend_split);
-            layer.wo = ml->get_tensor(layers_i + ".attention.wo.weight", {n_embd, n_embd}, i, backend_split);
+            layer.wq = ml->get_tensor(layers_i + ".attention.wq.weight", {n_embd, n_embd}, backend_split);
+            layer.wk = ml->get_tensor(layers_i + ".attention.wk.weight", {n_embd, n_embd}, backend_split);
+            layer.wv = ml->get_tensor(layers_i + ".attention.wv.weight", {n_embd, n_embd}, backend_split);
+            layer.wo = ml->get_tensor(layers_i + ".attention.wo.weight", {n_embd, n_embd}, backend_split);
 
-            layer.ffn_norm = ml->get_tensor(layers_i + ".ffn_norm.weight", {n_embd}, i, backend);
+            layer.ffn_norm = ml->get_tensor(layers_i + ".ffn_norm.weight", {n_embd}, backend);
 
-            layer.w1 = ml->get_tensor(layers_i + ".feed_forward.w1.weight", {n_embd,   n_ff},   i, backend_split);
-            layer.w2 = ml->get_tensor(layers_i + ".feed_forward.w2.weight", {  n_ff,   n_embd}, i, backend_split);
-            layer.w3 = ml->get_tensor(layers_i + ".feed_forward.w3.weight", {n_embd,   n_ff},   i, backend_split);
+            layer.w1 = ml->get_tensor(layers_i + ".feed_forward.w1.weight", {n_embd,   n_ff},   backend_split);
+            layer.w2 = ml->get_tensor(layers_i + ".feed_forward.w2.weight", {  n_ff,   n_embd}, backend_split);
+            layer.w3 = ml->get_tensor(layers_i + ".feed_forward.w3.weight", {n_embd,   n_ff},   backend_split);
 
             if (backend == GGML_BACKEND_GPU) {
                 vram_total +=
@@ -1168,7 +1158,7 @@ static void llama_model_load_internal(
             if (progress_callback) {
                 progress_callback((float) done_size / data_size, progress_callback_user_data);
             }
-            ggml_cuda_load_data(fname.c_str(), lt.ggml_tensor, lt.shards.at(0).file_off, hparams.n_layer);
+            ggml_cuda_load_data(fname.c_str(), lt.ggml_tensor, lt.shards.at(0).file_off);
             done_size += lt.size;
         }
     }
@@ -1303,21 +1293,30 @@ static bool llama_eval_internal(
         struct ggml_tensor * inpSA = inpL;
 
         lctx.use_buf(ctx0, 0);
+        //ggml_cuda_set_scratch(0);
 
         // norm
         {
             cur = ggml_rms_norm(ctx0, inpL);
+            ggml_set_name(cur, "rms_norm_0");
+            ggml_cuda_assign_buffers(cur);
 
             // cur = cur*attention_norm(broadcasted)
             cur = ggml_mul(ctx0, cur, model.layers[il].attention_norm);
+            ggml_cuda_assign_buffers(cur);
         }
 
         // self-attention
         {
             // compute Q and K and RoPE them
-
-            struct ggml_tensor * Qcur = ggml_rope_inplace(ctx0, ggml_reshape_3d(ctx0, ggml_mul_mat(ctx0, model.layers[il].wq, cur), n_embd/n_head, n_head, N), n_past, n_rot, 0);
-            struct ggml_tensor * Kcur = ggml_rope_inplace(ctx0, ggml_reshape_3d(ctx0, ggml_mul_mat(ctx0, model.layers[il].wk, cur), n_embd/n_head, n_head, N), n_past, n_rot, 0);
+            struct ggml_tensor * tmpq = ggml_mul_mat(ctx0, model.layers[il].wq, cur);
+            ggml_cuda_assign_buffers(tmpq);
+            struct ggml_tensor * Qcur = ggml_rope_inplace(ctx0, ggml_reshape_3d(ctx0, tmpq, n_embd/n_head, n_head, N), n_past, n_rot, 0);
+            Qcur->backend = GGML_BACKEND_CPU;
+            struct ggml_tensor * tmpk = ggml_mul_mat(ctx0, model.layers[il].wk, cur);
+            ggml_cuda_assign_buffers(tmpk);
+            struct ggml_tensor * Kcur = ggml_rope_inplace(ctx0, ggml_reshape_3d(ctx0, tmpk, n_embd/n_head, n_head, N), n_past, n_rot, 0);
+            Kcur->backend = GGML_BACKEND_CPU;
             ggml_set_name(Qcur, "Qcur");
             ggml_set_name(Kcur, "Kcur");
 
@@ -1405,47 +1404,60 @@ static bool llama_eval_internal(
             cur = ggml_mul_mat(ctx0,
                     model.layers[il].wo,
                     cur);
+            ggml_cuda_assign_buffers(cur);
         }
 
         lctx.use_buf(ctx0, 1);
+        //ggml_cuda_set_scratch(1);
 
         struct ggml_tensor * inpFF = ggml_add(ctx0, cur, inpSA);
+        ggml_cuda_assign_buffers(inpFF);
 
         // feed-forward network
         {
             // norm
             {
                 cur = ggml_rms_norm(ctx0, inpFF);
+                ggml_set_name(cur, "rms_norm_1");
+                ggml_cuda_assign_buffers(cur);
 
                 // cur = cur*ffn_norm(broadcasted)
                 cur = ggml_mul(ctx0, cur, model.layers[il].ffn_norm);
+                ggml_cuda_assign_buffers(cur);
             }
 
             struct ggml_tensor * tmp = ggml_mul_mat(ctx0,
                     model.layers[il].w3,
                     cur);
+            ggml_cuda_assign_buffers(tmp);
 
             cur = ggml_mul_mat(ctx0,
                     model.layers[il].w1,
                     cur);
+            ggml_cuda_assign_buffers(cur);
 
             // SILU activation
             cur = ggml_silu(ctx0, cur);
+            ggml_cuda_assign_buffers(cur);
 
             cur = ggml_mul(ctx0, cur, tmp);
+            ggml_cuda_assign_buffers(cur);
 
             cur = ggml_mul_mat(ctx0,
                     model.layers[il].w2,
                     cur);
+            ggml_cuda_assign_buffers(cur);
         }
 
         cur = ggml_add(ctx0, cur, inpFF);
+        ggml_cuda_assign_buffers(cur);
 
         // input for next layer
         inpL = cur;
     }
 
     lctx.use_buf(ctx0, 0);
+    //ggml_cuda_set_scratch(0);
 
     // used at the end to optionally extract the embeddings
     struct ggml_tensor * embeddings = NULL;
@@ -1454,8 +1466,12 @@ static bool llama_eval_internal(
     {
         cur = ggml_rms_norm(ctx0, inpL);
 
+        cur = ggml_rms_norm(ctx0, cur);
+        ggml_cuda_assign_buffers(cur);
+
         // cur = cur*norm(broadcasted)
         cur = ggml_mul(ctx0, cur, model.norm);
+        ggml_cuda_assign_buffers(cur);
 
         embeddings = cur;
     }
@@ -2576,7 +2592,7 @@ int llama_apply_lora_from_file_internal(struct llama_context * ctx, const char *
                 }
                 size_t idx = model_loader->tensors_map.name_to_idx[base_name];
                 llama_load_tensor & lt = model_loader->tensors_map.tensors[idx];
-                base_t = model_loader->get_tensor(base_name, { (uint32_t)dest_t->ne[0], (uint32_t)dest_t->ne[1] }, -1, GGML_BACKEND_CPU);
+                base_t = model_loader->get_tensor(base_name, { (uint32_t)dest_t->ne[0], (uint32_t)dest_t->ne[1] }, GGML_BACKEND_CPU);
                 lt.data = (uint8_t *) lt.ggml_tensor->data;
                 model_loader->load_data_for(lt);
                 lt.ggml_tensor->data = lt.data;
