@@ -503,6 +503,12 @@ static void ggml_cuda_pool_free(void * ptr, size_t size) {
     CUDA_CHECK(cudaFree(ptr));
 }
 
+#define GGML_CUDA_MAX_SCRATCH_BUFFERS 16
+#define GGML_CUDA_SCRATCH_SIZE 1073741824 // 1 GB
+static void * g_scratch_buffers[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_SCRATCH_BUFFERS] = {nullptr};
+static int g_scratch_index = 0;
+static int g_scratch_offset = 0;
+
 #define GGML_CUDA_MAX_STREAMS 8 // Set this to 1 for reproducible matrix multiplication.
 #define GGML_CUDA_MAX_EVENTS 64
 
@@ -1215,6 +1221,26 @@ void ggml_cuda_free_data(struct ggml_tensor * tensor) {
     }
 
     delete extra;
+}
+
+void ggml_cuda_assign_buffers(struct ggml_tensor * tensor) {
+    struct ggml_tensor_extra_gpu * extra = new ggml_tensor_extra_gpu;
+    extra->i_device = 0;
+    extra->layer = -1;
+    char * data = (char *) g_scratch_buffers[0][g_scratch_index];
+    data += g_scratch_offset;
+    extra->data_device[0] = data;
+    g_scratch_offset += ggml_nbytes(tensor);
+    GGML_ASSERT(g_scratch_offset < GGML_CUDA_SCRATCH_SIZE);
+    tensor->extra = extra;
+}
+
+void set_scratch(int i) {
+    if (i == -1) {
+        return;
+    }
+    g_scratch_index = i;
+    g_scratch_offset = 0;
 }
 
 bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor){
