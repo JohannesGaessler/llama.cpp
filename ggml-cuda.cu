@@ -1263,13 +1263,13 @@ void ggml_cuda_assign_buffers(struct ggml_tensor * tensor, int layer, int n_laye
                 g_scratch_buffers[id][g_scratch_index] = data;
             }
             extra->data_device[id] = data + g_scratch_offset;
-            // fprintf(stderr, "data=%p offset=%ld data_device=%p\n", data, g_scratch_offset, extra->data_device[0]);
-            g_scratch_offset += size;
-            // fprintf(stderr, "%s: scratch %d, %p - %p\n",
-            //         tensor->name, g_scratch_index, data + g_scratch_offset, data + g_scratch_offset + size);
         }
     }
 
+    // fprintf(stderr, "data=%p offset=%ld data_device=%p\n", data, g_scratch_offset, extra->data_device[0]);
+    g_scratch_offset += size;
+    // fprintf(stderr, "%s: scratch %d, %p - %p\n",
+    //         tensor->name, g_scratch_index, data + g_scratch_offset, data + g_scratch_offset + size);
 
     GGML_ASSERT(g_scratch_offset <= GGML_CUDA_SCRATCH_SIZE);
     tensor->extra = extra;
