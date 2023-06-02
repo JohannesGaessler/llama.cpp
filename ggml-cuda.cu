@@ -1042,25 +1042,9 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
     }
 }
 
-bool ggml_cuda_can_add(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst) {
-    GGML_ASSERT(src0->backend != GGML_BACKEND_GPU_SPLIT);
-    GGML_ASSERT(src1->backend != GGML_BACKEND_GPU_SPLIT);
-    (void) src0;
-    (void) dst;
-    return src0->backend == GGML_BACKEND_GPU || src1->backend == GGML_BACKEND_GPU || dst->backend == GGML_BACKEND_GPU;
-}
-
 void ggml_cuda_add(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
     GGML_ASSERT(src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32);
     ggml_cuda_op(src0, src1, dst, ggml_cuda_op_add, true);
-}
-
-bool ggml_cuda_can_mul(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst) {
-    GGML_ASSERT(src0->backend != GGML_BACKEND_GPU_SPLIT);
-    GGML_ASSERT(src1->backend != GGML_BACKEND_GPU_SPLIT);
-    (void) src0;
-    (void) dst;
-    return src0->backend == GGML_BACKEND_GPU || src1->backend == GGML_BACKEND_GPU || dst->backend == GGML_BACKEND_GPU;
 }
 
 void ggml_cuda_mul(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
@@ -1068,23 +1052,9 @@ void ggml_cuda_mul(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tens
     ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul, true);
 }
 
-bool ggml_cuda_can_silu(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst) {
-    GGML_ASSERT(src0->backend != GGML_BACKEND_GPU_SPLIT);
-    (void) src1;
-    (void) dst;
-    return src0->backend == GGML_BACKEND_GPU || dst->backend == GGML_BACKEND_GPU;
-}
-
 void ggml_cuda_silu(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
     GGML_ASSERT(src0->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32);
     ggml_cuda_op(src0, src1, dst, ggml_cuda_op_silu, true);
-}
-
-bool ggml_cuda_can_rms_norm(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst) {
-    GGML_ASSERT(src0->backend != GGML_BACKEND_GPU_SPLIT);
-    (void) src1;
-    (void) dst;
-    return src0->backend == GGML_BACKEND_GPU || dst->backend == GGML_BACKEND_GPU;
 }
 
 void ggml_cuda_rms_norm(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
@@ -1099,14 +1069,11 @@ bool ggml_cuda_can_mul_mat(const struct ggml_tensor * src0, const struct ggml_te
     const int64_t ne0 = dst->ne[0];
     const int64_t ne1 = dst->ne[1];
 
-    if (src0->backend == GGML_BACKEND_GPU || src1->backend == GGML_BACKEND_GPU || dst->backend == GGML_BACKEND_GPU) {
-        return true;
-    }
     // TODO: find the optimal values for these
     if ((src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16 || ggml_is_quantized(src0->type)) &&
         src1->type == GGML_TYPE_F32 &&
         dst->type == GGML_TYPE_F32 &&
-        ((ne0 >= 32 && ne1 >= 32 && ne10 >= 32) || src0->backend == GGML_BACKEND_GPU_SPLIT)) {
+        (ne0 >= 32 && ne1 >= 32 && ne10 >= 32)) {
         return true;
     }
 
@@ -1114,8 +1081,6 @@ bool ggml_cuda_can_mul_mat(const struct ggml_tensor * src0, const struct ggml_te
 }
 
 void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
-    GGML_ASSERT(ggml_cuda_can_mul_mat(src0, src1, dst));
-
     if (src0->type == GGML_TYPE_F32) {
         ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, true);
     } else if (ggml_is_quantized(src0->type) || src0->type == GGML_TYPE_F16) {
@@ -1226,13 +1191,26 @@ void ggml_cuda_assign_buffers(struct ggml_tensor * tensor) {
     struct ggml_tensor_extra_gpu * extra = new ggml_tensor_extra_gpu;
     extra->i_device = 0;
     extra->layer = -1;
-    char * data = (char *) g_scratch_buffers[0][g_scratch_index];
-    if (data == nullptr) {
-        CUDA_CHECK(cudaMalloc(&data, size));
-        g_scratch_buffers[0][g_scratch_index] = data;
+    struct ggml_tensor_extra_gpu * src0_extra = (ggml_tensor_extra_gpu * ) tensor->src0->extra;
+
+    bool inplace = tensor->src0->data == tensor->data;
+    if (inplace && tensor->src0->backend == GGML_BACKEND_GPU) {
+        extra->data_device[0] = src0_extra->data_device;
+        GGML_ASSERT(false);
+    } else {
+        char * data = (char *) g_scratch_buffers[0][g_scratch_index];
+        if (data == nullptr) {
+            CUDA_CHECK(cudaMalloc(&data, size));
+            g_scratch_buffers[0][g_scratch_index] = data;
+        }
+        extra->data_device[0] = data + g_scratch_offset;
+        // fprintf(stderr, "data=%p offset=%ld data_device=%p\n", data, g_scratch_offset, extra->data_device[0]);
+        g_scratch_offset += size;
+        // fprintf(stderr, "%s: scratch %d, %p - %p\n",
+        //         tensor->name, g_scratch_index, data + g_scratch_offset, data + g_scratch_offset + size);
     }
-    extra->data_device[0] = data + g_scratch_offset;
-    g_scratch_offset += size;
+
+
     GGML_ASSERT(g_scratch_offset < GGML_CUDA_SCRATCH_SIZE);
     tensor->extra = extra;
 }
@@ -1251,34 +1229,37 @@ void ggml_cuda_set_scratch(int i) {
 
 bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor){
     ggml_cuda_func_t func;
+    const bool any_on_device = tensor->backend == GGML_BACKEND_GPU
+        || tensor->src0->backend == GGML_BACKEND_GPU || tensor->src0->backend == GGML_BACKEND_GPU_SPLIT
+        || (tensor->src1 != nullptr && tensor->src1->backend == GGML_BACKEND_GPU);
 
     switch (tensor->op) {
         case GGML_OP_ADD:
-            if (!ggml_cuda_can_add(tensor->src0, tensor->src1, tensor)) {
+            if (!any_on_device) {
                 return false;
             }
             func = ggml_cuda_add;
             break;
         case GGML_OP_MUL:
-            if (!ggml_cuda_can_mul(tensor->src0, tensor->src1, tensor)) {
+            if (!any_on_device) {
                 return false;
             }
             func = ggml_cuda_mul;
             break;
         case GGML_OP_SILU:
-            if (!ggml_cuda_can_silu(tensor->src0, tensor->src1, tensor)) {
+            if (!any_on_device) {
                 return false;
             }
             func = ggml_cuda_silu;
             break;
         case GGML_OP_RMS_NORM:
-            if (!ggml_cuda_can_rms_norm(tensor->src0, tensor->src1, tensor)) {
+            if (!any_on_device) {
                 return false;
             }
             func = ggml_cuda_rms_norm;
             break;
         case GGML_OP_MUL_MAT:
-            if (!ggml_cuda_can_mul_mat(tensor->src0, tensor->src1, tensor)) {
+            if (!any_on_device && !ggml_cuda_can_mul_mat(tensor->src0, tensor->src1, tensor)) {
                 return false;
             }
             func = ggml_cuda_mul_mat;
