@@ -1287,12 +1287,12 @@ static bool llama_eval_internal(
         {
             cur = ggml_rms_norm(ctx0, inpL);
             strcpy(cur->name, "rms_norm");
-            ggml_cuda_assign_buffers(cur);
+            ggml_cuda_assign_buffers(cur, il);
 
             // cur = cur*attention_norm(broadcasted)
             cur = ggml_mul(ctx0, cur, model.layers[il].attention_norm);
             strcpy(cur->name, "mul");
-            ggml_cuda_assign_buffers(cur);
+            ggml_cuda_assign_buffers(cur, il);
         }
 
         // self-attention
@@ -1387,48 +1387,48 @@ static bool llama_eval_internal(
             cur = ggml_mul_mat(ctx0,
                     model.layers[il].wo,
                     cur);
-            ggml_cuda_assign_buffers(cur);
+            ggml_cuda_assign_buffers(cur, il);
         }
 
         lctx.use_buf(ctx0, 1);
         //ggml_cuda_set_scratch(1);
 
         struct ggml_tensor * inpFF = ggml_add(ctx0, cur, inpSA);
-        ggml_cuda_assign_buffers(inpFF);
+        ggml_cuda_assign_buffers(inpFF, il);
 
         // feed-forward network
         {
             // norm
             {
                 cur = ggml_rms_norm(ctx0, inpFF);
-                ggml_cuda_assign_buffers(cur);
+                ggml_cuda_assign_buffers(cur, il);
 
                 // cur = cur*ffn_norm(broadcasted)
                 cur = ggml_mul(ctx0, cur, model.layers[il].ffn_norm);
-                ggml_cuda_assign_buffers(cur);
+                ggml_cuda_assign_buffers(cur, il);
             }
 
             struct ggml_tensor * tmp = ggml_mul_mat(ctx0,
                     model.layers[il].w3,
                     cur);
-            ggml_cuda_assign_buffers(tmp);
+            ggml_cuda_assign_buffers(tmp, il);
 
             cur = ggml_mul_mat(ctx0,
                     model.layers[il].w1,
                     cur);
-            ggml_cuda_assign_buffers(cur);
+            ggml_cuda_assign_buffers(cur, il);
 
             // SILU activation
             cur = ggml_silu(ctx0, cur);
-            ggml_cuda_assign_buffers(cur);
+            ggml_cuda_assign_buffers(cur, il);
 
             cur = ggml_mul(ctx0, cur, tmp);
-            ggml_cuda_assign_buffers(cur);
+            ggml_cuda_assign_buffers(cur, il);
 
             cur = ggml_mul_mat(ctx0,
                     model.layers[il].w2,
                     cur);
-            ggml_cuda_assign_buffers(cur);
+            ggml_cuda_assign_buffers(cur, il);
         }
 
         cur = ggml_add(ctx0, cur, inpFF);
