@@ -504,7 +504,8 @@ static void ggml_cuda_pool_free(void * ptr, size_t size) {
 }
 
 #define GGML_CUDA_MAX_SCRATCH_BUFFERS 16
-#define GGML_CUDA_SCRATCH_SIZE 1073741824 // 1 GB
+#define GGML_CUDA_SCRATCH_SIZE 536870912 // 512 MB
+//#define GGML_CUDA_SCRATCH_SIZE 1073741824 // 1 GB
 //#define GGML_CUDA_SCRATCH_SIZE 4294967296 // 4 GB
 static void * g_scratch_buffers[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_SCRATCH_BUFFERS] = {nullptr};
 static int g_scratch_index = 0;
