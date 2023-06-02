@@ -507,7 +507,7 @@ static void ggml_cuda_pool_free(void * ptr, size_t size) {
 #define GGML_CUDA_SCRATCH_SIZE 1073741824 // 1 GB
 static void * g_scratch_buffers[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_SCRATCH_BUFFERS] = {nullptr};
 static int g_scratch_index = 0;
-static int g_scratch_offset = 0;
+static size_t g_scratch_offset = 0;
 
 #define GGML_CUDA_MAX_STREAMS 8 // Set this to 1 for reproducible matrix multiplication.
 #define GGML_CUDA_MAX_EVENTS 64
@@ -1043,14 +1043,11 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
 }
 
 bool ggml_cuda_can_add(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst) {
-    GGML_ASSERT(src0->backend == GGML_BACKEND_CPU);
-    GGML_ASSERT(src1->backend == GGML_BACKEND_CPU);
     GGML_ASSERT(src0->backend != GGML_BACKEND_GPU_SPLIT);
     GGML_ASSERT(src1->backend != GGML_BACKEND_GPU_SPLIT);
     (void) src0;
     (void) dst;
-    return true;
-    return src0->backend == GGML_BACKEND_GPU && src1->backend == GGML_BACKEND_GPU;
+    return src0->backend == GGML_BACKEND_GPU || src1->backend == GGML_BACKEND_GPU || dst->backend == GGML_BACKEND_GPU;
 }
 
 void ggml_cuda_add(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
@@ -1063,7 +1060,7 @@ bool ggml_cuda_can_mul(const struct ggml_tensor * src0, const struct ggml_tensor
     GGML_ASSERT(src1->backend != GGML_BACKEND_GPU_SPLIT);
     (void) src0;
     (void) dst;
-    return src1->backend == GGML_BACKEND_GPU;
+    return src0->backend == GGML_BACKEND_GPU || src1->backend == GGML_BACKEND_GPU || dst->backend == GGML_BACKEND_GPU;
 }
 
 void ggml_cuda_mul(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
@@ -1072,12 +1069,10 @@ void ggml_cuda_mul(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tens
 }
 
 bool ggml_cuda_can_silu(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst) {
-    GGML_ASSERT(src0->backend == GGML_BACKEND_CPU);
     GGML_ASSERT(src0->backend != GGML_BACKEND_GPU_SPLIT);
     (void) src1;
     (void) dst;
-    return true;
-    return src0->backend == GGML_BACKEND_GPU;
+    return src0->backend == GGML_BACKEND_GPU || dst->backend == GGML_BACKEND_GPU;
 }
 
 void ggml_cuda_silu(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
@@ -1086,12 +1081,10 @@ void ggml_cuda_silu(const ggml_tensor * src0, const ggml_tensor * src1, ggml_ten
 }
 
 bool ggml_cuda_can_rms_norm(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst) {
-    GGML_ASSERT(src0->backend == GGML_BACKEND_CPU);
     GGML_ASSERT(src0->backend != GGML_BACKEND_GPU_SPLIT);
     (void) src1;
     (void) dst;
-    return true;
-    return src0->backend == GGML_BACKEND_GPU;
+    return src0->backend == GGML_BACKEND_GPU || dst->backend == GGML_BACKEND_GPU;
 }
 
 void ggml_cuda_rms_norm(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
@@ -1106,6 +1099,9 @@ bool ggml_cuda_can_mul_mat(const struct ggml_tensor * src0, const struct ggml_te
     const int64_t ne0 = dst->ne[0];
     const int64_t ne1 = dst->ne[1];
 
+    if (src0->backend == GGML_BACKEND_GPU || src1->backend == GGML_BACKEND_GPU || dst->backend == GGML_BACKEND_GPU) {
+        return true;
+    }
     // TODO: find the optimal values for these
     if ((src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16 || ggml_is_quantized(src0->type)) &&
         src1->type == GGML_TYPE_F32 &&
@@ -1224,21 +1220,31 @@ void ggml_cuda_free_data(struct ggml_tensor * tensor) {
 }
 
 void ggml_cuda_assign_buffers(struct ggml_tensor * tensor) {
+    const size_t size = ggml_nbytes(tensor);
+
+    tensor->backend = GGML_BACKEND_GPU;
     struct ggml_tensor_extra_gpu * extra = new ggml_tensor_extra_gpu;
     extra->i_device = 0;
     extra->layer = -1;
     char * data = (char *) g_scratch_buffers[0][g_scratch_index];
-    data += g_scratch_offset;
-    extra->data_device[0] = data;
-    g_scratch_offset += ggml_nbytes(tensor);
+    if (data == nullptr) {
+        CUDA_CHECK(cudaMalloc(&data, size));
+        g_scratch_buffers[0][g_scratch_index] = data;
+    }
+    extra->data_device[0] = data + g_scratch_offset;
+    g_scratch_offset += size;
     GGML_ASSERT(g_scratch_offset < GGML_CUDA_SCRATCH_SIZE);
     tensor->extra = extra;
 }
 
-void set_scratch(int i) {
+void ggml_cuda_set_scratch(int i) {
     if (i == -1) {
         return;
     }
+#if false
+    fprintf(stderr, "\n%s: switched scratch %d -> %d, old scratch used %.2f MB\n",
+            __func__, g_scratch_index, i, g_scratch_offset/1024.0f/1024.0f);
+#endif
     g_scratch_index = i;
     g_scratch_offset = 0;
 }
