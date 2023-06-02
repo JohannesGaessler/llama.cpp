@@ -875,11 +875,8 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
     size_t dst_asf[GGML_CUDA_MAX_DEVICES] = {0};
 
     for (int id = 0; id < g_device_count; ++id) {
-        // if data is on one device (!= -1) but not this one, continue
+        // if data is on one device but not this one, continue
         if (src0->backend == GGML_BACKEND_GPU && src0_id != id) {
-            continue;
-        }
-        if (use_src1 && src1->backend == GGML_BACKEND_GPU && src1_id != id) {
             continue;
         }
 
