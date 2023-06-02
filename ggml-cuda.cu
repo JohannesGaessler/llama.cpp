@@ -855,12 +855,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
     int src1_id = src1_extra == nullptr ? -1 : src1_extra->i_device;
     int dst_id = src1_extra == nullptr ? -1 : src1_extra->i_device;
 
-    const bool src0_on_device = src0->backend == GGML_BACKEND_GPU || src0->backend == GGML_BACKEND_GPU_SPLIT;
     const bool src0_is_f32 = src0->type == GGML_TYPE_F32;
-
-    const bool src1_on_device = use_src1 && src1->backend == GGML_BACKEND_GPU;
-
-    const bool dst_on_device = dst->backend == GGML_BACKEND_GPU;
 
     const bool split = src0->backend == GGML_BACKEND_GPU_SPLIT;
     int active_device = 0;
@@ -889,10 +884,14 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
     size_t dst_asf[GGML_CUDA_MAX_DEVICES] = {0};
 
     for (int id = 0; id < g_device_count; ++id) {
-        // if data is on one device but not this one, continue
         if (active_device != -1 && active_device != id) {
             continue;
         }
+
+        const bool src0_on_device = (src0->backend == GGML_BACKEND_GPU && id == src0_extra->i_device)
+            || src0->backend == GGML_BACKEND_GPU_SPLIT;
+        const bool src1_on_device = use_src1 && src1->backend == GGML_BACKEND_GPU && id == src1_extra->i_device;
+        const bool dst_on_device = dst->backend == GGML_BACKEND_GPU && id == dst_extra->i_device;
 
         int64_t row_low, row_high;
         if (split) {
@@ -930,7 +929,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
             src0_ddf[id] = (float *) ggml_cuda_pool_malloc(row_diff*ne00 * sizeof(float), &src0_asf[id]);
         }
 
-        if (src1_on_device) {
+        if (use_src1 && src1->backend == GGML_BACKEND_GPU) {
             src1_ddf[id] = (float *) src1_extra->data_device[id];
         } else {
             src1_ddf[id] = (float *) ggml_cuda_pool_malloc(num_iters*src1_stride * sizeof(float), &src1_asf[id]);
@@ -992,7 +991,17 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
 
                 // copy src0, src1 to device if necessary
                 if (use_src1 && !src1_on_device) {
-                    CUDA_CHECK(ggml_cuda_h2d_tensor_2d(src1_ddf_i, src1, i03, i02, 0, ne11, cudaStream_memcpy_src1));
+                    if (src1->backend == GGML_BACKEND_CPU) {
+                        CUDA_CHECK(ggml_cuda_h2d_tensor_2d(src1_ddf_i, src1, i03, i02, 0, ne11, cudaStream_memcpy_src1));
+                    } else if (src1->backend == GGML_BACKEND_GPU) {
+                        int id_source = src1_extra->i_device;
+                        float * src1_ddf_i_source = (float *) src1_extra->data_device[id_source];
+                        src1_ddf_i_source += i1*src1_stride;
+                        CUDA_CHECK(cudaMemcpyAsync(src1_ddf_i, src1_ddf_i_source, src1_stride*sizeof(float),
+                                                   cudaMemcpyDeviceToDevice, cudaStream_memcpy_src1));
+                    } else {
+                        GGML_ASSERT(false);
+                    }
                 }
                 CUDA_CHECK(cudaEventRecord(cudaEvent_memcpy_src1, cudaStream_memcpy_src1));
                 if (!src0_on_device) {
@@ -1223,39 +1232,42 @@ void ggml_cuda_assign_buffers(struct ggml_tensor * tensor, int layer, int n_laye
         g_scratch_offset = 0;
     }
 
-    int id = 0;
+    int id_source = 0;
     while (true) {
-        GGML_ASSERT(id < g_device_count);
-        int layer_low = id == 0 ? 0 : n_layer*g_tensor_split[id];
-        int layer_high = id == g_device_count - 1 ? n_layer : n_layer*g_tensor_split[id + 1];
+        GGML_ASSERT(id_source < g_device_count);
+        int layer_low = id_source == 0 ? 0 : n_layer*g_tensor_split[id_source];
+        int layer_high = id_source == g_device_count - 1 ? n_layer : n_layer*g_tensor_split[id_source + 1];
         if (layer_low <= layer && layer < layer_high) {
             break;
         }
-        ++id;
+        ++id_source;
     }
-    CUDA_CHECK(cudaSetDevice(id));
 
     tensor->backend = GGML_BACKEND_GPU;
     struct ggml_tensor_extra_gpu * extra = new ggml_tensor_extra_gpu;
-    extra->i_device = id;
+    extra->i_device = id_source;
     extra->layer = layer;
     struct ggml_tensor_extra_gpu * src0_extra = (ggml_tensor_extra_gpu * ) tensor->src0->extra;
 
     bool inplace = tensor->src0->data == tensor->data;
-    if (inplace && tensor->src0->backend == GGML_BACKEND_GPU) {
-        extra->data_device[id] = src0_extra->data_device;
-        GGML_ASSERT(false);
-    } else {
-        char * data = (char *) g_scratch_buffers[id][g_scratch_index];
-        if (data == nullptr) {
-            CUDA_CHECK(cudaMalloc(&data, GGML_CUDA_SCRATCH_SIZE));
-            g_scratch_buffers[id][g_scratch_index] = data;
+
+    for (int id = 0; id < g_device_count; ++id) {
+        CUDA_CHECK(cudaSetDevice(id));
+        if (inplace && tensor->src0->backend == GGML_BACKEND_GPU) {
+            extra->data_device[id] = src0_extra->data_device;
+            GGML_ASSERT(false);
+        } else {
+            char * data = (char *) g_scratch_buffers[id][g_scratch_index];
+            if (data == nullptr) {
+                CUDA_CHECK(cudaMalloc(&data, GGML_CUDA_SCRATCH_SIZE));
+                g_scratch_buffers[id][g_scratch_index] = data;
+            }
+            extra->data_device[id] = data + g_scratch_offset;
+            // fprintf(stderr, "data=%p offset=%ld data_device=%p\n", data, g_scratch_offset, extra->data_device[0]);
+            g_scratch_offset += size;
+            // fprintf(stderr, "%s: scratch %d, %p - %p\n",
+            //         tensor->name, g_scratch_index, data + g_scratch_offset, data + g_scratch_offset + size);
         }
-        extra->data_device[id] = data + g_scratch_offset;
-        // fprintf(stderr, "data=%p offset=%ld data_device=%p\n", data, g_scratch_offset, extra->data_device[0]);
-        g_scratch_offset += size;
-        // fprintf(stderr, "%s: scratch %d, %p - %p\n",
-        //         tensor->name, g_scratch_index, data + g_scratch_offset, data + g_scratch_offset + size);
     }
 
 
