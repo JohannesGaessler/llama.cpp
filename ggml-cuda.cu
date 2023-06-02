@@ -1232,6 +1232,8 @@ void ggml_cuda_assign_buffers(struct ggml_tensor * tensor, int layer, int n_laye
         }
         ++id;
     }
+    CUDA_CHECK(cudaSetDevice(id));
+
     tensor->backend = GGML_BACKEND_GPU;
     struct ggml_tensor_extra_gpu * extra = new ggml_tensor_extra_gpu;
     extra->i_device = id;
