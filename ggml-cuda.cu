@@ -1206,7 +1206,7 @@ void ggml_cuda_free_data(struct ggml_tensor * tensor) {
     delete extra;
 }
 
-void ggml_cuda_assign_buffers(struct ggml_tensor * tensor, int layer) {
+void ggml_cuda_assign_buffers(struct ggml_tensor * tensor, int layer, int n_layer) {
     const size_t size = ggml_nbytes(tensor);
     GGML_ASSERT(size <= GGML_CUDA_SCRATCH_SIZE);
     if (g_scratch_offset + size > GGML_CUDA_SCRATCH_SIZE) {
@@ -1216,8 +1216,8 @@ void ggml_cuda_assign_buffers(struct ggml_tensor * tensor, int layer) {
     int id = 0;
     while (true) {
         GGML_ASSERT(id < g_device_count);
-        int layer_high = id == g_device_count - 1 ? INT_MAX : layer*g_tensor_split[id + 1];
-        if (layer < layer_high) {
+        int layer_low = id == 0 ? 0 : n_layer*g_tensor_split[id];
+        if (layer >= layer_low) {
             break;
         }
         ++id;
