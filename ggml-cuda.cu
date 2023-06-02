@@ -505,6 +505,7 @@ static void ggml_cuda_pool_free(void * ptr, size_t size) {
 
 #define GGML_CUDA_MAX_SCRATCH_BUFFERS 16
 #define GGML_CUDA_SCRATCH_SIZE 1073741824 // 1 GB
+//#define GGML_CUDA_SCRATCH_SIZE 4294967296 // 4 GB
 static void * g_scratch_buffers[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_SCRATCH_BUFFERS] = {nullptr};
 static int g_scratch_index = 0;
 static size_t g_scratch_offset = 0;
@@ -1069,6 +1070,10 @@ bool ggml_cuda_can_mul_mat(const struct ggml_tensor * src0, const struct ggml_te
     const int64_t ne0 = dst->ne[0];
     const int64_t ne1 = dst->ne[1];
 
+    if (strcmp(dst->name, "KQ") == 0 || strcmp(dst->name, "KQV") == 0) {
+        return false;
+    }
+
     // TODO: find the optimal values for these
     if ((src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16 || ggml_is_quantized(src0->type)) &&
         src1->type == GGML_TYPE_F32 &&
@@ -1186,6 +1191,7 @@ void ggml_cuda_free_data(struct ggml_tensor * tensor) {
 
 void ggml_cuda_assign_buffers(struct ggml_tensor * tensor) {
     const size_t size = ggml_nbytes(tensor);
+    GGML_ASSERT(size <= GGML_CUDA_SCRATCH_SIZE);
     if (g_scratch_offset + size > GGML_CUDA_SCRATCH_SIZE) {
         g_scratch_offset = 0;
     }
@@ -1214,7 +1220,7 @@ void ggml_cuda_assign_buffers(struct ggml_tensor * tensor) {
     }
 
 
-    GGML_ASSERT(g_scratch_offset < GGML_CUDA_SCRATCH_SIZE);
+    GGML_ASSERT(g_scratch_offset <= GGML_CUDA_SCRATCH_SIZE);
     tensor->extra = extra;
 }
 
