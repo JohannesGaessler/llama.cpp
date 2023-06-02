@@ -852,6 +852,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
     // indices of the devices on which the input data is stored
     int src0_id = src0_extra == nullptr ? -1 : src0_extra->i_device;
     int src1_id = src1_extra == nullptr ? -1 : src1_extra->i_device;
+    int dst_id = src1_extra == nullptr ? -1 : src1_extra->i_device;
 
     const bool src0_on_device = src0->backend == GGML_BACKEND_GPU || src0->backend == GGML_BACKEND_GPU_SPLIT;
     const bool src0_is_f32 = src0->type == GGML_TYPE_F32;
@@ -859,6 +860,18 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
     const bool src1_on_device = use_src1 && src1->backend == GGML_BACKEND_GPU;
 
     const bool dst_on_device = dst->backend == GGML_BACKEND_GPU;
+
+    const bool split = src0->backend == GGML_BACKEND_GPU_SPLIT;
+    int active_device = 0;
+    if (split) {
+        active_device = -1;
+    } else if (dst_id != -1) {
+        active_device = dst_id;
+    } else if (src0_id != -1) {
+        active_device = dst_id;
+    } else if (src1_id != -1) {
+        active_device = dst_id;
+    }
 
     const to_fp32_cuda_t to_fp32_cuda = ggml_get_to_fp32_cuda(src0->type);
 
@@ -876,11 +889,9 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
 
     for (int id = 0; id < g_device_count; ++id) {
         // if data is on one device but not this one, continue
-        if (src0->backend == GGML_BACKEND_GPU && src0_id != id) {
+        if (active_device != -1 && active_device != id) {
             continue;
         }
-
-        bool split = src0->backend == GGML_BACKEND_GPU_SPLIT;
 
         int64_t row_low, row_high;
         if (split) {
