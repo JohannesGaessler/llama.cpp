@@ -1281,7 +1281,6 @@ static bool llama_eval_internal(
         struct ggml_tensor * cur;
 
         lctx.use_buf(ctx0, 0);
-        ggml_cuda_set_scratch(0);
 
         // norm
         {
@@ -1391,7 +1390,6 @@ static bool llama_eval_internal(
         }
 
         lctx.use_buf(ctx0, 1);
-        ggml_cuda_set_scratch(1);
 
         struct ggml_tensor * inpFF = ggml_add(ctx0, cur, inpSA);
         // ggml_cuda_assign_buffers(inpFF);
@@ -1438,7 +1436,6 @@ static bool llama_eval_internal(
     }
 
     lctx.use_buf(ctx0, 0);
-    ggml_cuda_set_scratch(0);
 
     // used at the end to optionally extract the embeddings
     struct ggml_tensor * embeddings = NULL;
