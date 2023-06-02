@@ -879,7 +879,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
         if (src0->backend == GGML_BACKEND_GPU && src0_id != id) {
             continue;
         }
-        if (src1->backend == GGML_BACKEND_GPU && src1_id != id) {
+        if (use_src1 && src1->backend == GGML_BACKEND_GPU && src1_id != id) {
             continue;
         }
 
