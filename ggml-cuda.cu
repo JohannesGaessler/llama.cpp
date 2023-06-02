@@ -876,14 +876,15 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
 
     for (int id = 0; id < g_device_count; ++id) {
         // if data is on one device (!= -1) but not this one, continue
-        if (src0_id != -1 && src0_id != id) {
+        if (src0->backend == GGML_BACKEND_GPU && src0_id != id) {
             continue;
         }
-        if (src1_id != -1 && src1_id != id) {
+        if (src1->backend == GGML_BACKEND_GPU && src1_id != id) {
             continue;
         }
 
         bool split = src0->backend == GGML_BACKEND_GPU_SPLIT;
+
         int64_t row_low, row_high;
         if (split) {
             row_low = id == 0 ? 0 : nrows0*g_tensor_split[id];
