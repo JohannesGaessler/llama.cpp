@@ -1286,12 +1286,11 @@ static bool llama_eval_internal(
         // norm
         {
             cur = ggml_rms_norm(ctx0, inpL);
-            strcpy(cur->name, "rms_norm");
+            ggml_set_name(cur, "rms_norm_0");
             ggml_cuda_assign_buffers(cur, il, n_layer);
 
             // cur = cur*attention_norm(broadcasted)
             cur = ggml_mul(ctx0, cur, model.layers[il].attention_norm);
-            strcpy(cur->name, "mul");
             ggml_cuda_assign_buffers(cur, il, n_layer);
         }
 
@@ -1401,6 +1400,7 @@ static bool llama_eval_internal(
             // norm
             {
                 cur = ggml_rms_norm(ctx0, inpFF);
+                ggml_set_name(cur, "rms_norm_1");
                 ggml_cuda_assign_buffers(cur, il, n_layer);
 
                 // cur = cur*ffn_norm(broadcasted)
