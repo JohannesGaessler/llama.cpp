@@ -1158,13 +1158,13 @@ bool ggml_cuda_can_mul_mat(const struct ggml_tensor * src0, const struct ggml_te
     const int64_t ne0 = dst->ne[0];
     const int64_t ne1 = dst->ne[1];
 
-    if (strcmp(dst->name, "KQ") == 0 || strcmp(dst->name, "KQV") == 0) {
+    // if (strcmp(dst->name, "KQ") == 0 || strcmp(dst->name, "KQV") == 0) {
         // fprintf(stderr, "(%ld, %ld, %ld, %ld) + (%ld, %ld, %ld, %ld) -> (%ld, %ld, %ld, %ld)\n",
         //         src0->ne[0], src0->ne[1], src0->ne[2], src0->ne[3],
         //         src1->ne[0], src1->ne[1], src1->ne[2], src1->ne[3],
         //         dst->ne[0], dst->ne[1], dst->ne[2], dst->ne[3]);
-        return false;
-    }
+    //     return false;
+    // }
 
     // TODO: find the optimal values for these
     if ((src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16 || ggml_is_quantized(src0->type)) &&
