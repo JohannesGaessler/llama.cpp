@@ -1013,7 +1013,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
                 op(src0, src1, dst, src0_ddq_i, src0_ddf_i, src1_ddf_i, dst_ddf_i, i01_low, i01_high, i1, cudaStream_main);
 
                 // copy dst to host or other device if necessary
-                if (!dst_on_device) {
+                if (!dst_on_device || dst->backend == GGML_BACKEND_GPU) {
                     void * dst_off_device;
                     cudaMemcpyKind kind;
                     if (dst->backend == GGML_BACKEND_CPU) {
