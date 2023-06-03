@@ -4506,6 +4506,8 @@ struct ggml_tensor * ggml_view_tensor(
     result->nb[1] = src->nb[1];
     result->nb[2] = src->nb[2];
     result->nb[3] = src->nb[3];
+    result->backend = src->backend;
+    result->extra = src->extra;
 
     return result;
 }
@@ -5641,6 +5643,8 @@ struct ggml_tensor * ggml_reshape(
     result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
     result->src0 = a;
     result->src1 = NULL;
+    result->backend = a->backend;
+    result->extra = a->extra;
 
     return result;
 }
@@ -5665,6 +5669,8 @@ struct ggml_tensor * ggml_reshape_1d(
     result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
     result->src0 = a;
     result->src1 = NULL;
+    result->backend = a->backend;
+    result->extra = a->extra;
 
     return result;
 }
@@ -5690,6 +5696,8 @@ struct ggml_tensor * ggml_reshape_2d(
     result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
     result->src0 = a;
     result->src1 = NULL;
+    result->backend = a->backend;
+    result->extra = a->extra;
 
     return result;
 }
@@ -5716,6 +5724,8 @@ struct ggml_tensor * ggml_reshape_3d(
     result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
     result->src0 = a;
     result->src1 = NULL;
+    result->backend = a->backend;
+    result->extra = a->extra;
 
     return result;
 }
@@ -5744,6 +5754,8 @@ struct ggml_tensor * ggml_reshape_4d(
     result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
     result->src0 = a;
     result->src1 = NULL;
+    result->backend = a->backend;
+    result->extra = a->extra;
 
     return result;
 }

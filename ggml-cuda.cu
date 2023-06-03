@@ -48,8 +48,9 @@ typedef void (*dequantize_kernel_t)(const void * vx, const int ib, const int iqs
 typedef void (*to_fp32_cuda_t)(const void * x, float * y, int k, cudaStream_t stream);
 typedef void (*ggml_cuda_func_t)(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst);
 typedef void (*ggml_cuda_op_t)(
-    const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
-    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i0_low, int64_t i0_high, int i1, cudaStream_t & cudaStream_main);
+    const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i, float * src0_ddf_i,
+    float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
+    cudaStream_t & cudaStream_main);
 
 // QK = number of values after dequantization
 // QR = QK / number of values before dequantization
@@ -103,6 +104,7 @@ static_assert(sizeof(block_q8_0) == sizeof(ggml_fp16_t) + QK8_0, "wrong q8_0 blo
 #define CUDA_ADD_BLOCK_SIZE 256
 #define CUDA_MUL_BLOCK_SIZE 256
 #define CUDA_SILU_BLOCK_SIZE 256
+#define CUDA_ROPE_BLOCK_SIZE 256
 #define CUDA_DEQUANTIZE_BLOCK_SIZE 256
 
 // dmmv = dequantize_mul_mat_vec
@@ -322,6 +324,22 @@ static __global__ void dequantize_mul_mat_vec(const void * vx, const float * y, 
     }
 }
 
+static __global__ void rope_f32(const float * x, float * dst, const int ncols, const float p, const float theta_scale) {
+    const int col = 2*(blockDim.x*blockIdx.x + threadIdx.x);
+    const int row = blockDim.y*blockIdx.y + threadIdx.y;
+    const int i = row*ncols + col;
+
+    const float theta = p*powf(theta_scale, col/2);
+    const float sin_theta = sinf(theta);
+    const float cos_theta = cosf(theta);
+
+    const float x0 = x[i + 0];
+    const float x1 = x[i + 1];
+
+    dst[i + 0] = x0*cos_theta - x1*sin_theta;
+    dst[i + 1] = x0*sin_theta + x1*cos_theta;
+}
+
 static void add_f32_cuda(const float * x, const float * y, float * dst, const int k, cudaStream_t stream) {
     const int num_blocks = (k + CUDA_ADD_BLOCK_SIZE - 1) / CUDA_ADD_BLOCK_SIZE;
     add_f32<<<num_blocks, CUDA_ADD_BLOCK_SIZE, 0, stream>>>(x, y, dst, k);
@@ -438,6 +456,14 @@ static to_fp32_cuda_t ggml_get_to_fp32_cuda(ggml_type type) {
         default:
             return nullptr;
     }
+}
+
+static void rope_f32_cuda(const float * x, float * dst, const int ncols, const int nrows, const float p, const float theta_scale, cudaStream_t stream) {
+    GGML_ASSERT(nrows % 2 == 0);
+    const dim3 block_dims(2*CUDA_ROPE_BLOCK_SIZE, 1, 1);
+    const int num_blocks_x = (ncols + 2*CUDA_ROPE_BLOCK_SIZE - 1) / (2*CUDA_ROPE_BLOCK_SIZE);
+    const dim3 block_nums(num_blocks_x, nrows, 1);
+    rope_f32<<<block_nums, block_dims, 0, stream>>>(x, dst, ncols, p, theta_scale);
 }
 
 // buffer pool for cuda
@@ -643,7 +669,7 @@ static cudaError_t ggml_cuda_h2d_tensor_2d(
 
 inline void ggml_cuda_op_add(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
-    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i0_low, int64_t i0_high, int i1,
+    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
     cudaStream_t & cudaStream_main){
 
     GGML_ASSERT(src0_ddf_i != nullptr);
@@ -651,21 +677,22 @@ inline void ggml_cuda_op_add(
     GGML_ASSERT(dst_ddf_i != nullptr);
 
     const int64_t ne0 = src0->ne[0];
-    const int64_t i0_diff = i0_high - i0_low;
+    const int64_t i01_diff = i01_high - i01_low;
 
     // compute
-    add_f32_cuda(src0_ddf_i, src1_ddf_i, dst_ddf_i, ne0*i0_diff, cudaStream_main);
+    add_f32_cuda(src0_ddf_i, src1_ddf_i, dst_ddf_i, ne0*i01_diff, cudaStream_main);
     CUDA_CHECK(cudaGetLastError());
 
     (void) src1;
     (void) dst;
     (void) src0_ddq_i;
+    (void) i02;
     (void) i1;
 }
 
 inline void ggml_cuda_op_mul(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
-    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i0_low, int64_t i0_high, int i1,
+    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
     cudaStream_t & cudaStream_main){
 
     GGML_ASSERT(src0_ddf_i != nullptr);
@@ -677,7 +704,7 @@ inline void ggml_cuda_op_mul(
     const int64_t ne10 = src1->ne[0];
     const int64_t ne11 = src1->ne[1];
 
-    for (int64_t i01 = i0_low; i01 < i0_high; i01++) {
+    for (int64_t i01 = i01_low; i01 < i01_high; i01++) {
         const int64_t i11 = i1*ne11 + i01%ne11; // broadcast src1 across src0
 
         float * src0_ddf_i01 = src0_ddf_i + i01*ne00;
@@ -691,55 +718,58 @@ inline void ggml_cuda_op_mul(
 
     (void) dst;
     (void) src0_ddq_i;
+    (void) i02;
 }
 
 inline void ggml_cuda_op_silu(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
-    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i0_low, int64_t i0_high, int i1,
+    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
     cudaStream_t & cudaStream_main){
 
     GGML_ASSERT(src0_ddf_i != nullptr);
     GGML_ASSERT(dst_ddf_i != nullptr);
 
     const int64_t ne00 = src0->ne[0];
-    const int64_t i0_diff = i0_high - i0_low;
+    const int64_t i01_diff = i01_high - i01_low;
 
     // compute
-    silu_f32_cuda(src0_ddf_i, dst_ddf_i, ne00*i0_diff, cudaStream_main);
+    silu_f32_cuda(src0_ddf_i, dst_ddf_i, ne00*i01_diff, cudaStream_main);
     CUDA_CHECK(cudaGetLastError());
 
     (void) src1;
     (void) dst;
     (void) src0_ddq_i;
     (void) src1_ddf_i;
+    (void) i02;
     (void) i1;
 }
 
 inline void ggml_cuda_op_rms_norm(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
-    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i0_low, int64_t i0_high, int i1,
+    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
     cudaStream_t & cudaStream_main){
 
     GGML_ASSERT(src0_ddf_i != nullptr);
     GGML_ASSERT(dst_ddf_i != nullptr);
 
     const int64_t ne00 = src0->ne[0];
-    const int64_t i0_diff = i0_high - i0_low;
+    const int64_t i01_diff = i01_high - i01_low;
 
     // compute
-    rms_norm_f32_cuda(src0_ddf_i, dst_ddf_i, ne00, i0_diff, cudaStream_main);
+    rms_norm_f32_cuda(src0_ddf_i, dst_ddf_i, ne00, i01_diff, cudaStream_main);
     CUDA_CHECK(cudaGetLastError());
 
     (void) src1;
     (void) dst;
     (void) src0_ddq_i;
     (void) src1_ddf_i;
+    (void) i02;
     (void) i1;
 }
 
 inline void ggml_cuda_op_dequantize_mul_mat_vec(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
-    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i0_low, int64_t i0_high, int i1,
+    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
     cudaStream_t & cudaStream_main){
 
     GGML_ASSERT(src0_ddq_i != nullptr);
@@ -747,7 +777,7 @@ inline void ggml_cuda_op_dequantize_mul_mat_vec(
     GGML_ASSERT(dst_ddf_i != nullptr);
 
     const int64_t ne00 = src0->ne[0];
-    const int64_t nrows = i0_high - i0_low;
+    const int64_t nrows = i01_high - i01_low;
 
     switch (src0->type) {
         case GGML_TYPE_Q4_0:
@@ -777,12 +807,13 @@ inline void ggml_cuda_op_dequantize_mul_mat_vec(
     (void) src1;
     (void) dst;
     (void) src0_ddf_i;
+    (void) i02;
     (void) i1;
 }
 
 inline void ggml_cuda_op_mul_mat_cublas(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
-    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i0_low, int64_t i0_high, int i1,
+    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
     cudaStream_t & cudaStream_main){
 
     GGML_ASSERT(src0_ddf_i != nullptr);
@@ -798,22 +829,52 @@ inline void ggml_cuda_op_mul_mat_cublas(
     const int64_t ne11 = src1->ne[1];
 
     const int64_t ne0 = dst->ne[0];
-    const int64_t i0_diff = i0_high - i0_low;
+    const int64_t i01_diff = i01_high - i01_low;
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
-    const int ldc = dst->backend == GGML_BACKEND_GPU && id == g_main_device ? ne0 : i0_diff;
+    const int ldc = dst->backend == GGML_BACKEND_GPU && id == g_main_device ? ne0 : i01_diff;
 
     CUBLAS_CHECK(cublasSetStream(g_cublas_handles[id], cudaStream_main));
     CUBLAS_CHECK(
         cublasSgemm(g_cublas_handles[id], CUBLAS_OP_T, CUBLAS_OP_N,
-                i0_diff, ne11, ne10,
+                i01_diff, ne11, ne10,
                 &alpha, src0_ddf_i, ne00,
                         src1_ddf_i, ne10,
                 &beta,  dst_ddf_i,  ldc));
 
     (void) dst;
     (void) src0_ddq_i;
+    (void) i02;
+    (void) i1;
+}
+
+inline void ggml_cuda_op_rope(
+    const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
+    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
+    cudaStream_t & cudaStream_main){
+
+    GGML_ASSERT(src0_ddf_i != nullptr);
+    GGML_ASSERT(dst_ddf_i != nullptr);
+
+    const int64_t ne00 = src0->ne[0];
+    const int64_t i01_diff = i01_high - i01_low;
+
+    const int n_past = ((int32_t *) src1->data)[0];
+    const int n_dims = ((int32_t *) src1->data)[1];
+    const int mode   = ((int32_t *) src1->data)[2];
+    GGML_ASSERT(mode == 0);
+
+    const float theta_scale = powf(10000.0, -2.0f/n_dims);
+    const int64_t p = ((mode & 1) == 0 ? n_past + i02 : i02);
+
+    // compute
+    rope_f32_cuda(src0_ddf_i, dst_ddf_i, ne00, i01_diff, p, theta_scale, cudaStream_main);
+    CUDA_CHECK(cudaGetLastError());
+
+    (void) dst;
+    (void) src0_ddq_i;
+    (void) src1_ddf_i;
     (void) i1;
 }
 
@@ -956,7 +1017,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
                 if (i01_diff == 0) {
                     continue;
                 }
-                const int64_t i1 = i13*ne12 + i12;
+                const int64_t i11 = i13*ne12 + i12;
 
                 cudaStream_t cudaStream_main = g_cudaStreams_main[id][i0 % GGML_CUDA_MAX_STREAMS];
                 cudaStream_t cudaStream_memcpy_src1 = g_cudaStreams_memcpy_src1[id][i0 % GGML_CUDA_MAX_STREAMS];
@@ -965,7 +1026,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
                 // for split tensors the data begins at i0 == i0_offset_low
                 char  * src0_ddq_i = src0_ddq[id] + (i0 - i0_offset_low)*src0_stride*src0_ts/src0_bs;
                 float * src0_ddf_i = src0_ddf[id] + (i0 - i0_offset_low)*src0_stride;
-                float * src1_ddf_i = src1_ddf[id] + i1*src1_stride;
+                float * src1_ddf_i = src1_ddf[id] + i11*src1_stride;
                 float * dst_ddf_i = dst_ddf[id] + (i0 - i0_offset_low)*dst_stride;
 
                 // for split tensors the data pointer needs to be rounded down
@@ -985,7 +1046,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
                     } else if (src1->backend == GGML_BACKEND_GPU) {
                         if (id != g_main_device) {
                             float * src1_ddf_i_source = (float *) src1_extra->data_device[g_main_device];
-                            src1_ddf_i_source += i1*src1_stride;
+                            src1_ddf_i_source += i11*src1_stride;
                             CUDA_CHECK(cudaMemcpyAsync(src1_ddf_i, src1_ddf_i_source, src1_stride*sizeof(float),
                                                     cudaMemcpyDeviceToDevice, cudaStream_memcpy_src1));
                         }
@@ -1012,7 +1073,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
                 CUDA_CHECK(cudaStreamWaitEvent(cudaStream_main, cudaEvent_memcpy_src1, 0));
 
                 // do the computation
-                op(src0, src1, dst, src0_ddq_i, src0_ddf_i, src1_ddf_i, dst_ddf_i, i01_low, i01_high, i1, cudaStream_main);
+                op(src0, src1, dst, src0_ddq_i, src0_ddf_i, src1_ddf_i, dst_ddf_i, i02, i01_low, i01_high, i11, cudaStream_main);
 
                 // copy dst to host or other device if necessary
                 if (!dst_on_device) {
@@ -1123,6 +1184,17 @@ void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_
     } else {
         GGML_ASSERT(false);
     }
+}
+
+void ggml_cuda_rope(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
+    GGML_ASSERT(src0->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32);
+    ggml_cuda_op(src0, src1, dst, ggml_cuda_op_rope, true);
+}
+
+void ggml_cuda_noop(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
+    (void) src0;
+    (void) src1;
+    (void) dst;
 }
 
 void ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensor, const size_t offset) {
@@ -1292,6 +1364,18 @@ bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_
                 return false;
             }
             func = ggml_cuda_mul_mat;
+            break;
+        case GGML_OP_RESHAPE:
+            if (!any_on_device) {
+                return false;
+            }
+            func = ggml_cuda_noop;
+            break;
+        case GGML_OP_ROPE:
+            if (!any_on_device) {
+                return false;
+            }
+            func = ggml_cuda_rope;
             break;
         default:
             return false;
