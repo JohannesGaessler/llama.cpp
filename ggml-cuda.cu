@@ -916,13 +916,13 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
         }
 
         if (use_src1) {
-            if (src1->backend == GGML_BACKEND_GPU && id == g_main_device) {
+            if (src1_on_device && id == g_main_device) {
                 src1_ddf[id] = (float *) src1_extra->data_device[id];
             } else {
                 src1_ddf[id] = (float *) ggml_cuda_pool_malloc(num_iters*src1_stride * sizeof(float), &src1_asf[id]);
             }
         }
-        if (dst_on_device) {
+        if (dst_on_device && id == g_main_device) {
             dst_ddf[id] = (float *) dst_extra->data_device[id];
         } else {
             size_t size_dst_ddf = split ? row_diff*ne1 * sizeof(float) : num_iters*dst_stride * sizeof(float);
