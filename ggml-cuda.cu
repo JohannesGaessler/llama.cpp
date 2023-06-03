@@ -802,7 +802,7 @@ inline void ggml_cuda_op_mul_mat_cublas(
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
-    const int ldc = id == g_main_device ? ne0 : i0_diff;
+    const int ldc = dst->backend == GGML_BACKEND_GPU && id == g_main_device ? ne0 : i0_diff;
 
     CUBLAS_CHECK(cublasSetStream(g_cublas_handles[id], cudaStream_main));
     CUBLAS_CHECK(
@@ -1015,7 +1015,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
                 op(src0, src1, dst, src0_ddq_i, src0_ddf_i, src1_ddf_i, dst_ddf_i, i01_low, i01_high, i1, cudaStream_main);
 
                 // copy dst to host or other device if necessary
-                if (!dst_on_device || dst->backend == GGML_BACKEND_GPU) {
+                if (!dst_on_device) {
                     void * dst_off_device;
                     cudaMemcpyKind kind;
                     if (dst->backend == GGML_BACKEND_CPU) {
