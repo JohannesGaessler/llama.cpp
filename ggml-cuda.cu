@@ -797,10 +797,12 @@ inline void ggml_cuda_op_mul_mat_cublas(
     const int64_t ne10 = src1->ne[0];
     const int64_t ne11 = src1->ne[1];
 
+    const int64_t ne0 = dst->ne[0];
     const int64_t i0_diff = i0_high - i0_low;
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
+    const int ldc = id == g_main_device ? ne0 : i0_diff;
 
     CUBLAS_CHECK(cublasSetStream(g_cublas_handles[id], cudaStream_main));
     CUBLAS_CHECK(
@@ -808,7 +810,7 @@ inline void ggml_cuda_op_mul_mat_cublas(
                 i0_diff, ne11, ne10,
                 &alpha, src0_ddf_i, ne00,
                         src1_ddf_i, ne10,
-                &beta,  dst_ddf_i,  i0_diff));
+                &beta,  dst_ddf_i,  ldc));
 
     (void) dst;
     (void) src0_ddq_i;
