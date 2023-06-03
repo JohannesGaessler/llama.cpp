@@ -515,6 +515,7 @@ static size_t g_scratch_offset = 0;
 #define GGML_CUDA_MAX_EVENTS 64
 
 static int g_device_count = -1;
+static int g_main_device = 0;
 static float g_tensor_split[GGML_CUDA_MAX_DEVICES] = {0};
 
 static cublasHandle_t g_cublas_handles[GGML_CUDA_MAX_DEVICES] = {nullptr};
@@ -850,24 +851,14 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
     struct ggml_tensor_extra_gpu * src1_extra = use_src1 ? (ggml_tensor_extra_gpu *) src1->extra : nullptr;
     struct ggml_tensor_extra_gpu * dst_extra = (ggml_tensor_extra_gpu *) dst->extra;
 
-    // indices of the devices on which the input data is stored
-    int src0_id = src0_extra == nullptr ? -1 : src0_extra->i_device;
-    int src1_id = src1_extra == nullptr ? -1 : src1_extra->i_device;
-    int dst_id = src1_extra == nullptr ? -1 : src1_extra->i_device;
-
+    const bool src0_on_device = src0->backend == GGML_BACKEND_GPU || src0->backend == GGML_BACKEND_GPU_SPLIT;
     const bool src0_is_f32 = src0->type == GGML_TYPE_F32;
 
+    const bool src1_on_device = use_src1 && src1->backend == GGML_BACKEND_GPU;
+
+    const bool dst_on_device = dst->backend == GGML_BACKEND_GPU;
+
     const bool split = src0->backend == GGML_BACKEND_GPU_SPLIT;
-    int active_device = 0;
-    if (split) {
-        active_device = -1;
-    } else if (dst_id != -1) {
-        active_device = dst_id;
-    } else if (src0_id != -1) {
-        active_device = dst_id;
-    } else if (src1_id != -1) {
-        active_device = dst_id;
-    }
 
     const to_fp32_cuda_t to_fp32_cuda = ggml_get_to_fp32_cuda(src0->type);
 
@@ -884,14 +875,9 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
     size_t dst_asf[GGML_CUDA_MAX_DEVICES] = {0};
 
     for (int id = 0; id < g_device_count; ++id) {
-        if (active_device != -1 && active_device != id) {
+        if (!split && id != g_main_device) {
             continue;
         }
-
-        const bool src0_on_device = (src0->backend == GGML_BACKEND_GPU && id == src0_extra->i_device)
-            || src0->backend == GGML_BACKEND_GPU_SPLIT;
-        const bool src1_on_device = use_src1 && src1->backend == GGML_BACKEND_GPU && id == src1_extra->i_device;
-        const bool dst_on_device = dst->backend == GGML_BACKEND_GPU && id == dst_extra->i_device;
 
         int64_t row_low, row_high;
         if (split) {
@@ -994,8 +980,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
                     if (src1->backend == GGML_BACKEND_CPU) {
                         CUDA_CHECK(ggml_cuda_h2d_tensor_2d(src1_ddf_i, src1, i03, i02, 0, ne11, cudaStream_memcpy_src1));
                     } else if (src1->backend == GGML_BACKEND_GPU) {
-                        int id_source = src1_extra->i_device;
-                        float * src1_ddf_i_source = (float *) src1_extra->data_device[id_source];
+                        float * src1_ddf_i_source = (float *) src1_extra->data_device[g_main_device];
                         src1_ddf_i_source += i1*src1_stride;
                         CUDA_CHECK(cudaMemcpyAsync(src1_ddf_i, src1_ddf_i_source, src1_stride*sizeof(float),
                                                    cudaMemcpyDeviceToDevice, cudaStream_memcpy_src1));
@@ -1032,7 +1017,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
                         dst_off_device = dst->data;
                         kind = cudaMemcpyDeviceToHost;
                     } else if (dst->backend == GGML_BACKEND_GPU) {
-                        dst_off_device = dst_extra->data_device[dst_extra->i_device];
+                        dst_off_device = dst_extra->data_device[g_main_device];
                         kind = cudaMemcpyDeviceToDevice;
                     } else {
                         GGML_ASSERT(false);
@@ -1136,6 +1121,7 @@ void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_
 }
 
 void ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensor, const size_t offset, int n_layer) {
+    (void) n_layer;
     FILE * fp = fopen(fname, "rb");
     int nrows = ggml_nrows(tensor);
     const size_t nb1 = tensor->nb[1];
@@ -1145,9 +1131,7 @@ void ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensor, const 
     for (int id = 0; id < g_device_count; ++id) {
         extra->data_device[id] = nullptr;
 
-        int layer_low = id == 0 ? 0 : n_layer*g_tensor_split[id];
-        int layer_high = id == g_device_count - 1 ? n_layer : n_layer*g_tensor_split[id + 1];
-        if (backend == GGML_BACKEND_GPU && (extra->layer < layer_low || extra->layer >= layer_high)) {
+        if (backend == GGML_BACKEND_GPU && id != g_main_device) {
             continue;
         }
 
@@ -1226,44 +1210,32 @@ void ggml_cuda_free_data(struct ggml_tensor * tensor) {
 }
 
 void ggml_cuda_assign_buffers(struct ggml_tensor * tensor, int layer, int n_layer) {
+    (void) n_layer;
     const size_t size = ggml_nbytes(tensor);
     GGML_ASSERT(size <= GGML_CUDA_SCRATCH_SIZE);
     if (g_scratch_offset + size > GGML_CUDA_SCRATCH_SIZE) {
         g_scratch_offset = 0;
     }
 
-    int id_source = 0;
-    while (true) {
-        GGML_ASSERT(id_source < g_device_count);
-        int layer_low = id_source == 0 ? 0 : n_layer*g_tensor_split[id_source];
-        int layer_high = id_source == g_device_count - 1 ? n_layer : n_layer*g_tensor_split[id_source + 1];
-        if (layer_low <= layer && layer < layer_high) {
-            break;
-        }
-        ++id_source;
-    }
-
     tensor->backend = GGML_BACKEND_GPU;
     struct ggml_tensor_extra_gpu * extra = new ggml_tensor_extra_gpu;
-    extra->i_device = id_source;
+    extra->i_device = g_main_device;
     extra->layer = layer;
     struct ggml_tensor_extra_gpu * src0_extra = (ggml_tensor_extra_gpu * ) tensor->src0->extra;
 
     bool inplace = tensor->src0->data == tensor->data;
 
-    for (int id = 0; id < g_device_count; ++id) {
-        CUDA_CHECK(cudaSetDevice(id));
-        if (inplace && tensor->src0->backend == GGML_BACKEND_GPU) {
-            extra->data_device[id] = src0_extra->data_device;
-            GGML_ASSERT(false);
-        } else {
-            char * data = (char *) g_scratch_buffers[id][g_scratch_index];
-            if (data == nullptr) {
-                CUDA_CHECK(cudaMalloc(&data, GGML_CUDA_SCRATCH_SIZE));
-                g_scratch_buffers[id][g_scratch_index] = data;
-            }
-            extra->data_device[id] = data + g_scratch_offset;
+    CUDA_CHECK(cudaSetDevice(g_main_device));
+    if (inplace && tensor->src0->backend == GGML_BACKEND_GPU) {
+        extra->data_device[g_main_device] = src0_extra->data_device;
+        GGML_ASSERT(false);
+    } else {
+        char * data = (char *) g_scratch_buffers[g_main_device][g_scratch_index];
+        if (data == nullptr) {
+            CUDA_CHECK(cudaMalloc(&data, GGML_CUDA_SCRATCH_SIZE));
+            g_scratch_buffers[g_main_device][g_scratch_index] = data;
         }
+        extra->data_device[g_main_device] = data + g_scratch_offset;
     }
 
     // fprintf(stderr, "data=%p offset=%ld data_device=%p\n", data, g_scratch_offset, extra->data_device[0]);
