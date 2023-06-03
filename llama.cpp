@@ -1432,6 +1432,7 @@ static bool llama_eval_internal(
         }
 
         cur = ggml_add(ctx0, cur, inpFF);
+        ggml_cuda_assign_buffers(cur, il, n_layer);
 
         // input for next layer
         inpL = cur;
@@ -1447,9 +1448,11 @@ static bool llama_eval_internal(
     {
 
         inpL = ggml_rms_norm(ctx0, inpL);
+        ggml_cuda_assign_buffers(inpL, 0, n_layer);
 
         // inpL = inpL*norm(broadcasted)
         inpL = ggml_mul(ctx0, inpL, model.norm);
+        ggml_cuda_assign_buffers(inpL, 0, n_layer);
 
         embeddings = inpL;
     }
