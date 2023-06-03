@@ -1125,13 +1125,12 @@ void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_
     }
 }
 
-void ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensor, const size_t offset, int n_layer) {
-    (void) n_layer;
+void ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensor, const size_t offset) {
     FILE * fp = fopen(fname, "rb");
     int nrows = ggml_nrows(tensor);
     const size_t nb1 = tensor->nb[1];
     ggml_backend backend = tensor->backend;
-    struct ggml_tensor_extra_gpu * extra = (struct ggml_tensor_extra_gpu *) tensor->extra;
+    struct ggml_tensor_extra_gpu * extra = new struct ggml_tensor_extra_gpu;
 
     for (int id = 0; id < g_device_count; ++id) {
         extra->data_device[id] = nullptr;
@@ -1144,13 +1143,9 @@ void ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensor, const 
 
         int row_low, row_high;
         if (backend == GGML_BACKEND_GPU) {
-            extra->i_device = id;
-
             row_low = 0;
             row_high = nrows;
         } else if (backend == GGML_BACKEND_GPU_SPLIT) {
-            extra->i_device = -1;
-
             row_low = id == 0 ? 0 : nrows*g_tensor_split[id];
             row_low -= row_low % GGML_CUDA_DMMV_Y;
             row_high = id == g_device_count - 1 ? nrows : nrows*g_tensor_split[id + 1];
@@ -1214,8 +1209,7 @@ void ggml_cuda_free_data(struct ggml_tensor * tensor) {
     delete extra;
 }
 
-void ggml_cuda_assign_buffers(struct ggml_tensor * tensor, int layer, int n_layer) {
-    (void) n_layer;
+void ggml_cuda_assign_buffers(struct ggml_tensor * tensor) {
     const size_t size = ggml_nbytes(tensor);
     GGML_ASSERT(size <= GGML_CUDA_SCRATCH_SIZE);
     if (g_scratch_offset + size > GGML_CUDA_SCRATCH_SIZE) {
@@ -1224,8 +1218,6 @@ void ggml_cuda_assign_buffers(struct ggml_tensor * tensor, int layer, int n_laye
 
     tensor->backend = GGML_BACKEND_GPU;
     struct ggml_tensor_extra_gpu * extra = new ggml_tensor_extra_gpu;
-    extra->i_device = g_main_device;
-    extra->layer = layer;
     struct ggml_tensor_extra_gpu * src0_extra = (ggml_tensor_extra_gpu * ) tensor->src0->extra;
 
     bool inplace = tensor->src0->data == tensor->data;

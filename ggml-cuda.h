@@ -9,8 +9,6 @@ extern "C" {
 #define GGML_CUDA_MAX_DEVICES       16
 
 struct ggml_tensor_extra_gpu {
-    int layer; // which layer the tensor is on
-    int i_device; // which device the data is on
     void * data_device[GGML_CUDA_MAX_DEVICES]; // 1 pointer for each device for split tensors
 };
 
@@ -26,9 +24,9 @@ void   ggml_cuda_mul_mat(const struct ggml_tensor * src0, const struct ggml_tens
 void * ggml_cuda_host_malloc(size_t size);
 void   ggml_cuda_host_free(void * ptr);
 
-void ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensors, size_t offset, int n_layer);
+void ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensors, size_t offset);
 void ggml_cuda_free_data(struct ggml_tensor * tensor);
-void ggml_cuda_assign_buffers(struct ggml_tensor * tensor, int layer, int n_layer);
+void ggml_cuda_assign_buffers(struct ggml_tensor * tensor);
 void ggml_cuda_set_scratch(int i);
 bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor);
 
