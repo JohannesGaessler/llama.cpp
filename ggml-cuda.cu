@@ -326,6 +326,11 @@ static __global__ void dequantize_mul_mat_vec(const void * vx, const float * y, 
 
 static __global__ void rope_f32(const float * x, float * dst, const int ncols, const float p, const float theta_scale) {
     const int col = 2*(blockDim.x*blockIdx.x + threadIdx.x);
+
+    if (col >= ncols) {
+        return;
+    }
+
     const int row = blockDim.y*blockIdx.y + threadIdx.y;
     const int i = row*ncols + col;
 
@@ -866,7 +871,7 @@ inline void ggml_cuda_op_rope(
     GGML_ASSERT(mode == 0);
 
     const float theta_scale = powf(10000.0, -2.0f/n_dims);
-    const int64_t p = ((mode & 1) == 0 ? n_past + i02 : i02);
+    const float p = ((mode & 1) == 0 ? n_past + i02 : i02);
 
     // compute
     rope_f32_cuda(src0_ddf_i, dst_ddf_i, ne00, i01_diff, p, theta_scale, cudaStream_main);
