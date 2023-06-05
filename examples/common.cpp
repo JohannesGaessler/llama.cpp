@@ -510,6 +510,7 @@ struct llama_context * llama_init_from_gpt_params(const gpt_params & params) {
     auto lparams = llama_context_default_params();
 
     lparams.n_ctx        = params.n_ctx;
+    lparams.n_batch      = params.n_batch;
     lparams.n_gpu_layers = params.n_gpu_layers;
     memcpy(lparams.tensor_split, params.tensor_split, LLAMA_MAX_DEVICES*sizeof(float));
     lparams.seed         = params.seed;
