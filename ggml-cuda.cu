@@ -600,7 +600,7 @@ void ggml_init_cublas() {
     }
 }
 
-void ggml_cuda_set_tensor_split(float * tensor_split) {
+void ggml_cuda_set_tensor_split(const float * tensor_split) {
     bool all_zero = true;
     for (int i = 0; i < g_device_count; ++i) {
         if (tensor_split[i] != 0.0f) {
@@ -1295,12 +1295,12 @@ void ggml_cuda_assign_buffers(struct ggml_tensor * tensor) {
 
     tensor->backend = GGML_BACKEND_GPU;
     struct ggml_tensor_extra_gpu * extra = new ggml_tensor_extra_gpu;
-    struct ggml_tensor_extra_gpu * src0_extra = (ggml_tensor_extra_gpu * ) tensor->src0->extra;
 
-    bool inplace = tensor->src0->data == tensor->data;
+    bool inplace = tensor->src0 != nullptr && tensor->src0->data == tensor->data;
 
     CUDA_CHECK(cudaSetDevice(g_main_device));
     if (inplace && tensor->src0->backend == GGML_BACKEND_GPU) {
+        struct ggml_tensor_extra_gpu * src0_extra = (ggml_tensor_extra_gpu * ) tensor->src0->extra;
         extra->data_device[g_main_device] = src0_extra->data_device;
         GGML_ASSERT(false);
     } else {

@@ -13,7 +13,7 @@ struct ggml_tensor_extra_gpu {
 };
 
 void   ggml_init_cublas(void);
-void ggml_cuda_set_tensor_split(float * tensor_split);
+void ggml_cuda_set_tensor_split(const float * tensor_split);
 
 void   ggml_cuda_mul(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst);
 bool   ggml_cuda_can_mul_mat(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst);
