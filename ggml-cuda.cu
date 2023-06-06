@@ -1196,7 +1196,7 @@ void ggml_cuda_rope(const ggml_tensor * src0, const ggml_tensor * src1, ggml_ten
     ggml_cuda_op(src0, src1, dst, ggml_cuda_op_rope, true);
 }
 
-void ggml_cuda_noop(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
+void ggml_cuda_nop(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
     (void) src0;
     (void) src1;
     (void) dst;
@@ -1287,6 +1287,10 @@ void ggml_cuda_free_data(struct ggml_tensor * tensor) {
 }
 
 void ggml_cuda_assign_buffers(struct ggml_tensor * tensor) {
+    if (tensor->src0 != nullptr && tensor->src0->op == GGML_OP_RESHAPE) {
+        ggml_cuda_assign_buffers(tensor);
+    }
+
     const size_t size = ggml_nbytes(tensor);
     const size_t scratch_size = g_n_batch * GGML_CUDA_SCRATCH_SIZE_PER_BATCH;
     GGML_ASSERT(size <= scratch_size);
@@ -1367,7 +1371,7 @@ bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_
             if (!any_on_device) {
                 return false;
             }
-            func = ggml_cuda_noop;
+            func = ggml_cuda_nop;
             break;
         case GGML_OP_ROPE:
             if (!any_on_device) {

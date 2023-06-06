@@ -479,7 +479,6 @@ extern "C" {
 
     GGML_API size_t  ggml_set_scratch (struct ggml_context * ctx, struct ggml_scratch scratch);
     GGML_API void    ggml_set_no_alloc(struct ggml_context * ctx, bool no_alloc);
-    GGML_API void    ggml_set_default_backend(struct ggml_context * ctx, enum ggml_backend backend);
 
     GGML_API void *  ggml_get_mem_buffer(struct ggml_context * ctx);
     GGML_API size_t  ggml_get_mem_size  (struct ggml_context * ctx);

@@ -60,6 +60,12 @@ static const size_t MB = 1024*1024;
 // TODO: dynamically determine these sizes
 //       needs modifications in ggml
 
+typedef void (*offload_func_t)(struct ggml_tensor * tensor);
+
+void llama_nop(struct ggml_tensor * tensor) { // don't offload by default
+    (void) tensor;
+}
+
 static const std::map<e_model, size_t> & MEM_REQ_SCRATCH0()
 {
     static std::map<e_model, size_t> k_sizes = {
@@ -1300,10 +1306,11 @@ static bool llama_eval_internal(
     const int i_gpu_start = n_layer - n_gpu_layers;
 
     for (int il = 0; il < n_layer; ++il) {
-        ggml_backend backend_offload = GGML_BACKEND_CPU;
+        offload_func_t offload_func = llama_nop;
+
 #ifdef GGML_USE_CUBLAS
         if (il >= i_gpu_start) {
-            backend_offload = GGML_BACKEND_GPU;
+            offload_func = ggml_cuda_assign_buffers; // sets the output backend to GPU
         }
 #endif // GGML_USE_CUBLAS
 
@@ -1313,12 +1320,13 @@ static bool llama_eval_internal(
 
         // norm
         {
-            ggml_set_default_backend(ctx0, backend_offload);
             cur = ggml_rms_norm(ctx0, inpL);
+            offload_func(cur);
             ggml_set_name(cur, "rms_norm_0");
 
             // cur = cur*attention_norm(broadcasted)
             cur = ggml_mul(ctx0, cur, model.layers[il].attention_norm);
+            offload_func(cur);
             ggml_set_name(cur, "attention_norm_0");
         }
 
@@ -1326,27 +1334,17 @@ static bool llama_eval_internal(
         {
             // compute Q and K and RoPE them
             struct ggml_tensor * tmpq = ggml_reshape_3d(ctx0, ggml_mul_mat(ctx0, model.layers[il].wq, cur), n_embd/n_head, n_head, N);
+            offload_func(cur);
             ggml_set_name(tmpq, "tmpq");
             struct ggml_tensor * tmpk = ggml_reshape_3d(ctx0, ggml_mul_mat(ctx0, model.layers[il].wk, cur), n_embd/n_head, n_head, N);
+            offload_func(cur);
             ggml_set_name(tmpk, "tmpk");
-            ggml_set_default_backend(ctx0, GGML_BACKEND_CPU);
 
-#ifdef GGML_USE_CUBLAS
-                struct ggml_tensor * Kcur;
-                struct ggml_tensor * Qcur;
-            if (backend_offload == GGML_BACKEND_GPU) {
-                Kcur = ggml_rope(ctx0, tmpk, n_past, n_rot, 0);
-                Qcur = ggml_rope(ctx0, tmpq, n_past, n_rot, 0);
-            } else {
-                Kcur = ggml_rope_inplace(ctx0, tmpk, n_past, n_rot, 0);
-                Qcur = ggml_rope_inplace(ctx0, tmpq, n_past, n_rot, 0);
-            }
-#else
             struct ggml_tensor * Kcur = ggml_rope_inplace(ctx0, tmpk, n_past, n_rot, 0);
-            struct ggml_tensor * Qcur = ggml_rope_inplace(ctx0, tmpq, n_past, n_rot, 0);
-#endif // GGML_USE_CUBLAS
-            ggml_set_name(Qcur, "Qcur");
             ggml_set_name(Kcur, "Kcur");
+
+            struct ggml_tensor * Qcur = ggml_rope_inplace(ctx0, tmpq, n_past, n_rot, 0);
+            ggml_set_name(Qcur, "Qcur");
 
             // store key and value to memory
             {
@@ -1430,11 +1428,11 @@ static bool llama_eval_internal(
                     ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_embd, N));
             ggml_set_name(cur, "KQV_merged_contiguous");
 
-            ggml_set_default_backend(ctx0, backend_offload);
             // projection (no bias)
             cur = ggml_mul_mat(ctx0,
                     model.layers[il].wo,
                     cur);
+            offload_func(cur);
             ggml_set_name(cur, "result_wo");
         }
 
@@ -1442,6 +1440,7 @@ static bool llama_eval_internal(
         //ggml_cuda_set_scratch(1);
 
         struct ggml_tensor * inpFF = ggml_add(ctx0, cur, inpSA);
+        offload_func(inpFF);
         ggml_set_name(inpFF, "inpFF");
 
         // feed-forward network
@@ -1449,43 +1448,50 @@ static bool llama_eval_internal(
             // norm
             {
                 cur = ggml_rms_norm(ctx0, inpFF);
+                offload_func(cur);
                 ggml_set_name(cur, "rms_norm_1");
 
                 // cur = cur*ffn_norm(broadcasted)
                 cur = ggml_mul(ctx0, cur, model.layers[il].ffn_norm);
+                offload_func(cur);
                 ggml_set_name(cur, "ffn_norm");
             }
 
             struct ggml_tensor * tmp = ggml_mul_mat(ctx0,
                     model.layers[il].w3,
                     cur);
-            ggml_set_name(cur, "result_w3");
+            offload_func(tmp);
+            ggml_set_name(tmp, "result_w3");
 
             cur = ggml_mul_mat(ctx0,
                     model.layers[il].w1,
                     cur);
+            offload_func(cur);
             ggml_set_name(cur, "result_w2");
 
             // SILU activation
             cur = ggml_silu(ctx0, cur);
+            offload_func(cur);
             ggml_set_name(cur, "silu");
 
             cur = ggml_mul(ctx0, cur, tmp);
+            offload_func(cur);
             ggml_set_name(cur, "silu_x_result_w3");
 
             cur = ggml_mul_mat(ctx0,
                     model.layers[il].w2,
                     cur);
+            offload_func(cur);
             ggml_set_name(cur, "result_w2");
         }
 
         cur = ggml_add(ctx0, cur, inpFF);
+        offload_func(cur);
         ggml_set_name(cur, "inpFF_+_result_w2");
 
         // input for next layer
         inpL = cur;
 
-        ggml_set_default_backend(ctx0, GGML_BACKEND_CPU);
     }
 
     lctx.use_buf(ctx0, 0);
@@ -1494,28 +1500,32 @@ static bool llama_eval_internal(
     // used at the end to optionally extract the embeddings
     struct ggml_tensor * embeddings = NULL;
 
+    offload_func_t offload_func = llama_nop;
+
 #ifdef GGML_USE_CUBLAS
-    if (n_gpu_layers > n_layer) {
-        ggml_set_default_backend(ctx0, GGML_BACKEND_GPU);
-    }
+        if (n_gpu_layers > n_layer) {
+            offload_func = ggml_cuda_assign_buffers; // sets the output backend to GPU
+        }
 #endif // GGML_USE_CUBLAS
 
     // norm
     {
         cur = ggml_rms_norm(ctx0, inpL);
+        offload_func(cur);
         ggml_set_name(cur, "rms_norm_inpL");
 
         cur = ggml_rms_norm(ctx0, cur);
+        offload_func(cur);
         ggml_set_name(cur, "rms_norm_after");
 
         // cur = cur*norm(broadcasted)
         cur = ggml_mul(ctx0, cur, model.norm);
+        offload_func(cur);
         ggml_set_name(cur, "result_norm");
 
         embeddings = cur;
     }
 
-    ggml_set_default_backend(ctx0, GGML_BACKEND_CPU);
 
     // lm_head
     cur = ggml_mul_mat(ctx0, model.output, cur);

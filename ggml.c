@@ -3639,8 +3639,6 @@ struct ggml_context {
 
     struct ggml_scratch scratch;
     struct ggml_scratch scratch_save;
-
-    enum ggml_backend default_backend;
 };
 
 struct ggml_context_container {
@@ -3967,7 +3965,6 @@ struct ggml_context * ggml_init(struct ggml_init_params params) {
         /*.objects_end        =*/ NULL,
         /*.scratch            =*/ { 0, 0, NULL, },
         /*.scratch_save       =*/ { 0, 0, NULL, },
-        /*.default_backend    =*/ GGML_BACKEND_CPU,
     };
 
     GGML_ASSERT(ctx->mem_buffer != NULL);
@@ -4024,10 +4021,6 @@ size_t ggml_set_scratch(struct ggml_context * ctx, struct ggml_scratch scratch) 
 
 void ggml_set_no_alloc(struct ggml_context * ctx, bool no_alloc) {
     ctx->no_alloc = no_alloc;
-}
-
-void ggml_set_default_backend(struct ggml_context * ctx, enum ggml_backend backend) {
-    ctx->default_backend = backend;
 }
 
 void * ggml_get_mem_buffer(struct ggml_context * ctx) {
@@ -4141,7 +4134,7 @@ struct ggml_tensor * ggml_new_tensor_impl(
 
     *result = (struct ggml_tensor) {
         /*.type         =*/ type,
-        /*.backend      =*/ ctx->default_backend,
+        /*.backend      =*/ GGML_BACKEND_CPU,
         /*.n_dims       =*/ n_dims,
         /*.ne           =*/ { 1, 1, 1, 1 },
         /*.nb           =*/ { 0, 0, 0, 0 },
@@ -4173,15 +4166,6 @@ struct ggml_tensor * ggml_new_tensor_impl(
     for (int i = 2; i < GGML_MAX_DIMS; i++) {
         result->nb[i] = result->nb[i - 1]*result->ne[i - 1];
     }
-
-#ifdef GGML_USE_CUBLAS
-    if (result->backend == GGML_BACKEND_GPU) {
-        ggml_cuda_assign_buffers(result);
-    }
-#else
-    GGML_ASSERT(result->backend == GGML_BACKEND_CPU);
-#endif // GGML_USE_CUBLAS
-    GGML_ASSERT(result->backend != GGML_BACKEND_GPU_SPLIT);
 
     ctx->n_objects++;
 
@@ -4537,8 +4521,6 @@ struct ggml_tensor * ggml_view_tensor(
     result->nb[1] = src->nb[1];
     result->nb[2] = src->nb[2];
     result->nb[3] = src->nb[3];
-    result->backend = src->backend;
-    result->extra = src->extra;
 
     return result;
 }
@@ -5691,8 +5673,6 @@ struct ggml_tensor * ggml_reshape(
     result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
     result->src0 = a;
     result->src1 = NULL;
-    result->backend = a->backend;
-    result->extra = a->extra;
 
     return result;
 }
@@ -5717,8 +5697,6 @@ struct ggml_tensor * ggml_reshape_1d(
     result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
     result->src0 = a;
     result->src1 = NULL;
-    result->backend = a->backend;
-    result->extra = a->extra;
 
     return result;
 }
@@ -5744,8 +5722,6 @@ struct ggml_tensor * ggml_reshape_2d(
     result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
     result->src0 = a;
     result->src1 = NULL;
-    result->backend = a->backend;
-    result->extra = a->extra;
 
     return result;
 }
@@ -5772,8 +5748,6 @@ struct ggml_tensor * ggml_reshape_3d(
     result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
     result->src0 = a;
     result->src1 = NULL;
-    result->backend = a->backend;
-    result->extra = a->extra;
 
     return result;
 }
@@ -5802,8 +5776,6 @@ struct ggml_tensor * ggml_reshape_4d(
     result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
     result->src0 = a;
     result->src1 = NULL;
-    result->backend = a->backend;
-    result->extra = a->extra;
 
     return result;
 }
