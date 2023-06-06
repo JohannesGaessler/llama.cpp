@@ -954,7 +954,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
             row_high -= row_high % GGML_CUDA_DMMV_Y;
         } else {
             row_low = 0;
-            row_high = ne01;
+            row_high = nrows0;
         }
         if (row_low == row_high) {
             continue;
