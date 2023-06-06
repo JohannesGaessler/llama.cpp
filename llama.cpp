@@ -1041,6 +1041,7 @@ static void llama_model_load_internal(
 
 #if defined(GGML_USE_CUBLAS)
     fprintf(stderr, "%s: using CUDA for GPU acceleration\n", __func__);
+    ggml_cuda_set_main_device(main_gpu);
 #define LLAMA_BACKEND_OFFLOAD GGML_BACKEND_GPU
 #define LLAMA_BACKEND_OFFLOAD_SPLIT GGML_BACKEND_GPU_SPLIT
 #elif defined(GGML_USE_CLBLAST)
@@ -1162,7 +1163,6 @@ static void llama_model_load_internal(
 
 #if defined(GGML_USE_CUBLAS)
     {
-        ggml_cuda_set_main_device(main_gpu);
         ggml_cuda_set_tensor_split(tensor_split);
 
         size_t done_size = 0;
