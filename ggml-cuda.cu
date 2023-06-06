@@ -781,14 +781,6 @@ inline void ggml_cuda_op_dequantize_mul_mat_vec(
     const int64_t ne00 = src0->ne[0];
     const int64_t nrows = i01_high - i01_low;
 
-    int id;
-    CUDA_CHECK(cudaGetDevice(&id));
-
-    // the main device has a larger memory buffer to hold the results from all GPUs
-    if (dst->backend == GGML_BACKEND_GPU && id == g_main_device) {
-        dst_ddf_i += i01_low;
-    }
-
     switch (src0->type) {
         case GGML_TYPE_Q4_0:
             dequantize_mul_mat_vec_q4_0_cuda(src0_ddq_i, src1_ddf_i, dst_ddf_i, ne00, nrows, cudaStream_main);
@@ -846,11 +838,7 @@ inline void ggml_cuda_op_mul_mat_cublas(
 
     // the main device has a larger memory buffer to hold the results from all GPUs
     // ldc == nrows of the matrix that cuBLAS writes into
-    int ldc = i01_diff;
-    if (dst->backend == GGML_BACKEND_GPU && id == g_main_device) {
-        ldc = ne0;
-        dst_ddf_i += i01_low; // != 0 if g_main_device != 0, fixes memory alignment
-    }
+    int ldc = dst->backend == GGML_BACKEND_GPU && id == g_main_device ? ne0 : i01_diff;
 
     CUBLAS_CHECK(cublasSetStream(g_cublas_handles[id], cudaStream_main));
     CUBLAS_CHECK(
@@ -1054,6 +1042,12 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
                 }
                 if (i0 - i0_offset_low > 0) {
                     dst_ddf_i -= (row_low % ne0)*ne1;
+                }
+
+                // the main device memory buffer can be on VRAM scratch, with space for all partial results
+                // in that case an offset on dst_ddf_i is needed
+                if (dst->backend == GGML_BACKEND_GPU && id == g_main_device) {
+                    dst_ddf_i += i01_low; // offset is 0 if no tensor split
                 }
 
                 // copy src0, src1 to device if necessary
