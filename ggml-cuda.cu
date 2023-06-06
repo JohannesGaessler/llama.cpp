@@ -781,6 +781,14 @@ inline void ggml_cuda_op_dequantize_mul_mat_vec(
     const int64_t ne00 = src0->ne[0];
     const int64_t nrows = i01_high - i01_low;
 
+    int id;
+    CUDA_CHECK(cudaGetDevice(&id));
+
+    // the main device has a larger memory buffer to hold the results from all GPUs
+    if (dst->backend == GGML_BACKEND_GPU && id == g_main_device) {
+        dst_ddf_i += i01_low;
+    }
+
     switch (src0->type) {
         case GGML_TYPE_Q4_0:
             dequantize_mul_mat_vec_q4_0_cuda(src0_ddq_i, src1_ddf_i, dst_ddf_i, ne00, nrows, cudaStream_main);
