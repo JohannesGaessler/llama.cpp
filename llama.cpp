@@ -1051,7 +1051,8 @@ static void llama_model_load_internal(
 #endif
 
     // prepare memory for the weights
-    size_t vram_total = 0;
+    size_t vram_weights = 0;
+    size_t vram_scratch = 0;
     {
         const uint32_t n_embd  = hparams.n_embd;
         const uint32_t n_layer = hparams.n_layer;
@@ -1099,7 +1100,7 @@ static void llama_model_load_internal(
             layer.w3 = ml->get_tensor(layers_i + ".feed_forward.w3.weight", {n_embd,   n_ff},   backend_split);
 
             if (backend == GGML_BACKEND_GPU) {
-                vram_total +=
+                vram_weights +=
                     ggml_nbytes(layer.attention_norm) + ggml_nbytes(layer.wq) + ggml_nbytes(layer.wk)             +
                     ggml_nbytes(layer.wv)             + ggml_nbytes(layer.wo) + ggml_nbytes(layer.attention_norm) +
                     ggml_nbytes(layer.w1)             + ggml_nbytes(layer.w2) + ggml_nbytes(layer.w3);
@@ -1116,7 +1117,7 @@ static void llama_model_load_internal(
         // this is the total memory required to run the inference
         const size_t mem_required =
             ctx_size +
-            mmapped_size - vram_total + // weights in VRAM not in memory
+            mmapped_size - vram_weights + // weights in VRAM not in memory
             MEM_REQ_SCRATCH0().at(model.type) +
             MEM_REQ_SCRATCH1().at(model.type) +
             MEM_REQ_EVAL().at    (model.type);
@@ -1130,12 +1131,21 @@ static void llama_model_load_internal(
 
         const int n_gpu = std::min(n_gpu_layers, int(hparams.n_layer));
 
+#ifdef GGML_USE_CUBLAS
+        vram_scratch = n_batch * MB;
+        ggml_cuda_set_scratch_size(vram_scratch);
+        if (n_gpu_layers > 0) {
+            fprintf(stderr, "%s: allocating batch_size x 1 MB = %ld MB VRAM for the scratch buffer\n",
+                    __func__, vram_scratch / MB);
+        }
+#endif // GGML_USE_CUBLAS
 #if defined(GGML_USE_CUBLAS) || defined(GGML_USE_CLBLAST)
         fprintf(stderr, "%s: offloading %d layers to GPU\n", __func__, n_gpu);
         if (n_gpu_layers > (int) hparams.n_layer) {
             fprintf(stderr, "%s: offloading output layer to GPU\n", __func__);
         }
-        fprintf(stderr, "%s: total VRAM used: %zu MB\n", __func__, vram_total / 1024 / 1024);
+        fprintf(stderr, "%s: total VRAM used: %zu MB\n",
+                __func__, (vram_weights + vram_scratch + MB - 1) / MB); // round up
 #else
         (void) n_gpu_layers;
 #endif
@@ -1150,7 +1160,6 @@ static void llama_model_load_internal(
 
 #if defined(GGML_USE_CUBLAS)
     {
-        ggml_cuda_set_n_batch(n_batch);
         ggml_cuda_set_tensor_split(tensor_split);
 
         size_t done_size = 0;

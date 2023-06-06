@@ -535,11 +535,8 @@ static void ggml_cuda_pool_free(void * ptr, size_t size) {
 }
 
 
-#define GGML_CUDA_SCRATCH_SIZE_PER_BATCH 1048576 // 1 MB
-//#define GGML_CUDA_SCRATCH_SIZE_PER_BATCH 2097152 // 2 MB
-
 static void * g_scratch_buffer = nullptr;
-static int g_n_batch = 512;
+static size_t g_scratch_size = 1024*1024*1024; // 1 GB by default
 static size_t g_scratch_offset = 0;
 
 #define GGML_CUDA_MAX_STREAMS 8 // Set this to 1 for reproducible matrix multiplication.
@@ -1292,9 +1289,8 @@ void ggml_cuda_assign_buffers(struct ggml_tensor * tensor) {
     }
 
     const size_t size = ggml_nbytes(tensor);
-    const size_t scratch_size = g_n_batch * GGML_CUDA_SCRATCH_SIZE_PER_BATCH;
-    GGML_ASSERT(size <= scratch_size);
-    if (g_scratch_offset + size > scratch_size) {
+    GGML_ASSERT(size <= g_scratch_size);
+    if (g_scratch_offset + size > g_scratch_size) {
         g_scratch_offset = 0;
     }
 
@@ -1311,7 +1307,7 @@ void ggml_cuda_assign_buffers(struct ggml_tensor * tensor) {
     } else {
         char * data = (char *) g_scratch_buffer;
         if (data == nullptr) {
-            CUDA_CHECK(cudaMalloc(&data, scratch_size));
+            CUDA_CHECK(cudaMalloc(&data, g_scratch_size));
             g_scratch_buffer = data;
         }
         extra->data_device[g_main_device] = data + g_scratch_offset;
@@ -1322,12 +1318,12 @@ void ggml_cuda_assign_buffers(struct ggml_tensor * tensor) {
     // fprintf(stderr, "%s: scratch %d, %p - %p\n",
     //         tensor->name, g_scratch_index, data + g_scratch_offset, data + g_scratch_offset + size);
 
-    GGML_ASSERT(g_scratch_offset <= scratch_size);
+    GGML_ASSERT(g_scratch_offset <= g_scratch_size);
     tensor->extra = extra;
 }
 
-void ggml_cuda_set_n_batch(int n_batch) {
-    g_n_batch = n_batch;
+void ggml_cuda_set_scratch_size(size_t scratch_size) {
+    g_scratch_size = scratch_size;
 }
 
 bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor){

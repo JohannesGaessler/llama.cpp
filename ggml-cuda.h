@@ -27,7 +27,7 @@ void   ggml_cuda_host_free(void * ptr);
 void   ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensors, size_t offset);
 void   ggml_cuda_free_data(struct ggml_tensor * tensor);
 void   ggml_cuda_assign_buffers(struct ggml_tensor * tensor);
-void   ggml_cuda_set_n_batch(int n_batch);
+void   ggml_cuda_set_scratch_size(size_t scratch_size);
 bool   ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor);
 
 #ifdef  __cplusplus
