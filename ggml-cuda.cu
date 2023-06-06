@@ -838,8 +838,11 @@ inline void ggml_cuda_op_mul_mat_cublas(
 
     // the main device has a larger memory buffer to hold the results from all GPUs
     // ldc == nrows of the matrix that cuBLAS writes into
-    const int ldc = dst->backend == GGML_BACKEND_GPU && id == g_main_device ? ne0 : i01_diff;
-    dst_ddf_i += i01_low; // != 0 if g_main_device != 0, fixes memory alignment
+    int ldc = i01_diff;
+    if (dst->backend == GGML_BACKEND_GPU && id == g_main_device) {
+        ldc = ne0;
+        dst_ddf_i += i01_low; // != 0 if g_main_device != 0, fixes memory alignment
+    }
 
     CUBLAS_CHECK(cublasSetStream(g_cublas_handles[id], cudaStream_main));
     CUBLAS_CHECK(
