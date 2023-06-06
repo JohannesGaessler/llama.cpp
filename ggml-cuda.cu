@@ -561,15 +561,15 @@ void ggml_init_cublas() {
         GGML_ASSERT(g_device_count <= GGML_CUDA_MAX_DEVICES);
         int64_t total_vram = 0;
         fprintf(stderr, "%s: found %d CUDA devices:\n", __func__, g_device_count);
-        for (int i = 0; i < g_device_count; ++i) {
+        for (int id = 0; id < g_device_count; ++id) {
             cudaDeviceProp prop;
-            CUDA_CHECK(cudaGetDeviceProperties(&prop, i));
-            fprintf(stderr, "  %d. %s\n", i+1, prop.name);
-            g_tensor_split[i] = total_vram;
+            CUDA_CHECK(cudaGetDeviceProperties(&prop, id));
+            fprintf(stderr, "  Device %d: %s\n", id, prop.name);
+            g_tensor_split[id] = total_vram;
             total_vram += prop.totalGlobalMem;
         }
-        for (int i = 0; i < g_device_count; ++i) {
-            g_tensor_split[i] /= total_vram;
+        for (int id = 0; id < g_device_count; ++id) {
+            g_tensor_split[id] /= total_vram;
         }
 
         for (int id = 0; id < g_device_count; ++id) {
@@ -1320,6 +1320,20 @@ void ggml_cuda_assign_buffers(struct ggml_tensor * tensor) {
 
     GGML_ASSERT(g_scratch_offset <= g_scratch_size);
     tensor->extra = extra;
+}
+
+void ggml_cuda_set_main_device(int main_device) {
+    if (main_device > g_device_count) {
+        fprintf(stderr, "warning: cannot set main_device=%d because there are only %d devices. Using device %d instead.\n",
+                main_device, g_device_count, g_main_device);
+        return;
+    }
+    g_main_device = main_device;
+    if (g_device_count > 1) {
+        cudaDeviceProp prop;
+        CUDA_CHECK(cudaGetDeviceProperties(&prop, g_main_device));
+        fprintf(stderr, "%s: using device %d (%s) as main device\n", __func__, g_main_device, prop.name);
+    }
 }
 
 void ggml_cuda_set_scratch_size(size_t scratch_size) {

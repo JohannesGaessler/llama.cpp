@@ -403,6 +403,8 @@ void server_print_usage(int /*argc*/, char **argv, const gpt_params &params)
   fprintf(stderr, "                        number of layers to store in VRAM\n");
   fprintf(stderr, "  -ts SPLIT --tensor-split SPLIT\n");
   fprintf(stderr, "                        how to split tensors across multiple GPUs, comma-separated list of proportions, e.g. 3,1\n");
+  fprintf(stderr, "                        how to split tensors across multiple GPUs, comma-separated list of proportions, e.g. 3,1\n");
+  fprintf(stderr, "  -mg i, --main-gpu i   the GPU to use for scratch and small tensors\n" );
 #endif
   fprintf(stderr, "  -m FNAME, --model FNAME\n");
   fprintf(stderr, "                        model path (default: %s)\n", params.model.c_str());
@@ -536,6 +538,19 @@ bool server_params_parse(int argc, char **argv, server_params &sparams, gpt_para
 #else
       fprintf(stderr, "WARNING: llama.cpp was compiled without cuBLAS. It is not possible to set a tensor split.\n");
 #endif // GGML_USE_CUBLAS
+    }
+    else if (arg == "--main-gpu" || arg == "-mg")
+    {
+      if (++i >= argc)
+      {
+        invalid_param = true;
+        break;
+      }
+#ifdef GGML_USE_CUBLAS
+      params.main_gpu = std::stoi(argv[i]);
+#else
+      fprintf(stderr, "warning: llama.cpp was compiled without cuBLAS. It is not possible to set a main GPU.\n");
+#endif
     }
     else
     {

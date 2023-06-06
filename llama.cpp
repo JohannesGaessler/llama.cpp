@@ -857,6 +857,7 @@ struct llama_context_params llama_context_default_params() {
         /*.n_ctx                       =*/ 512,
         /*.n_batch                     =*/ 512,
         /*.gpu_layers                  =*/ 0,
+        /*.main_gpu                    =*/ 0,
         /*.tensor_split                =*/ {0},
         /*.seed                        =*/ -1,
         /*.f16_kv                      =*/ true,
@@ -943,6 +944,7 @@ static void llama_model_load_internal(
         int n_ctx,
         int n_batch,
         int n_gpu_layers,
+        int main_gpu,
         const float * tensor_split,
         ggml_type memory_type,
         bool use_mmap,
@@ -1160,6 +1162,7 @@ static void llama_model_load_internal(
 
 #if defined(GGML_USE_CUBLAS)
     {
+        ggml_cuda_set_main_device(main_gpu);
         ggml_cuda_set_tensor_split(tensor_split);
 
         size_t done_size = 0;
@@ -1225,6 +1228,7 @@ static bool llama_model_load(
         int n_ctx,
         int n_batch,
         int n_gpu_layers,
+        int main_gpu,
         float * tensor_split,
         ggml_type memory_type,
         bool use_mmap,
@@ -1233,8 +1237,8 @@ static bool llama_model_load(
         llama_progress_callback progress_callback,
         void *progress_callback_user_data) {
     try {
-        llama_model_load_internal(fname, lctx, n_ctx, n_batch, n_gpu_layers, tensor_split, memory_type, use_mmap,
-                                  use_mlock, vocab_only, progress_callback, progress_callback_user_data);
+        llama_model_load_internal(fname, lctx, n_ctx, n_batch, n_gpu_layers, main_gpu, tensor_split, memory_type,
+                                  use_mmap, use_mlock, vocab_only, progress_callback, progress_callback_user_data);
         return true;
     } catch (const std::string & err) {
         fprintf(stderr, "error loading model: %s\n", err.c_str());
@@ -2400,8 +2404,8 @@ struct llama_context * llama_init_from_file(
     ggml_type memory_type = params.f16_kv ? GGML_TYPE_F16 : GGML_TYPE_F32;
 
     if (!llama_model_load(path_model, *ctx, params.n_ctx, params.n_batch, params.n_gpu_layers,
-                params.tensor_split, memory_type, params.use_mmap, params.use_mlock, params.vocab_only,
-                params.progress_callback, params.progress_callback_user_data)) {
+                params.main_gpu, params.tensor_split, memory_type, params.use_mmap, params.use_mlock,
+                params.vocab_only, params.progress_callback, params.progress_callback_user_data)) {
         fprintf(stderr, "%s: failed to load model\n", __func__);
         llama_free(ctx);
         return nullptr;
