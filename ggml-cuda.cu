@@ -845,6 +845,14 @@ inline void ggml_cuda_op_mul_mat_cublas(
                         src1_ddf_i, ne10,
                 &beta,  dst_ddf_i,  ldc));
 
+    for (int i = 0; i < dst->ne[1]; ++i) {
+        CUDA_CHECK(cudaMemcpyAsync(
+                       dst_ddf_i + i*ne0 + i01_low,
+                       dst_ddf_i + i*ne0,
+                       i01_diff*sizeof(float),
+                       cudaMemcpyDeviceToDevice, cudaStream_main));
+    }
+
     (void) dst;
     (void) src0_ddq_i;
     (void) i02;
