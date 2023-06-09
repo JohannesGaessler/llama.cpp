@@ -737,6 +737,45 @@ static __global__ void dequantize_mul_mat_vec_k(const void * vx, const float * y
     }
 }
 
+static __global__ void mul_mat_p021_f16_f32(const void * vx, const float * y, float * dst, const int ncols_x, const int nrows_x, const int ncols_y) {
+    const half * x = (half *) vx;
+    // const int col_x = blockDim.x*blockIdx.x + threadIdx.x;
+    // const int row_x = blockDim.y*blockIdx.y + threadIdx.y;
+    // const int channel = blockDim.z*blockIdx.z + threadIdx.z;
+
+    const int row_x = blockDim.x*blockIdx.x + threadIdx.x;
+
+    for (int col_x = 0; col_x < ncols_x; ++col_x) {
+        // x is transposed and permuted
+        // const int ix = (row_x*ncols_x + col_x)*WARP_SIZE + channel;
+        const int ix = row_x*ncols_x + col_x;
+        const float xi = __half2float(x[ix]);
+
+        const int row_y = col_x;
+        const int nrows_y = ncols_x;
+
+        const int row_dst = row_x;
+        const int nrows_dst = nrows_x;
+
+        const int ncols_dst = ncols_x;
+
+        for (int col_y = 0; col_y < ncols_y; ++col_y) {
+            const int col_dst = col_y;
+
+            // y is not transposed but permuted
+            // const int iy = (col_y*nrows_y + row_y)*WARP_SIZE + channel;
+            const int iy = col_y*nrows_y + row_y;
+
+            // dst is not transposed and not permuted
+            // const int idst = (col_dst*nrows_dst + row_dst)*WARP_SIZE + channel;
+            const int idst = col_dst*nrows_dst + row_dst;
+
+
+            dst[idst] += xi * y[iy];
+        }
+    }
+}
+
 static __global__ void rope_f32(const float * x, float * dst, const int ncols, const float p, const float theta_scale) {
     const int col = 2*(blockDim.x*blockIdx.x + threadIdx.x);
 
@@ -940,6 +979,14 @@ static to_fp32_cuda_t ggml_get_to_fp32_cuda(ggml_type type) {
         default:
             return nullptr;
     }
+}
+
+static void ggml_mul_mat_p021_f16_f32_cuda(const void * vx, const float * y, float * dst, const int ncols_x, const int nrows_x, const int ncols_y, cudaStream_t stream) {
+    // const dim3 block_dims(1, 1, WARP_SIZE);
+    // const dim3 block_dims(1, 1, 1);
+    // const dim3 block_nums(ncols_x, nrows_x, 1);
+    CUDA_CHECK(cudaMemset(dst, 0, nrows_x*ncols_y*sizeof(float)));
+    mul_mat_p021_f16_f32<<<nrows_x, 1, 0, stream>>>(vx, y, dst, ncols_x, nrows_x, ncols_y);
 }
 
 static void rope_f32_cuda(const float * x, float * dst, const int ncols, const int nrows, const float p, const float theta_scale, cudaStream_t stream) {
@@ -1307,6 +1354,30 @@ inline void ggml_cuda_op_dequantize_mul_mat_vec(
     (void) i1;
 }
 
+inline void ggml_cuda_op_mul_mat_p021_f16_f32(
+    const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
+    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
+    cudaStream_t & cudaStream_main){
+
+    GGML_ASSERT(src0_ddq_i != nullptr);
+    GGML_ASSERT(src1_ddf_i != nullptr);
+    GGML_ASSERT(dst_ddf_i != nullptr);
+
+
+    const int64_t ne00 = src0->ne[0];
+
+    const int64_t ne11 = src1->ne[1];
+
+    const int64_t i01_diff = i01_high - i01_low;
+
+    ggml_mul_mat_p021_f16_f32_cuda(src0_ddq_i, src1_ddf_i, dst_ddf_i, ne00, i01_diff, ne11, cudaStream_main);
+
+    (void) dst;
+    (void) src0_ddf_i;
+    (void) i02;
+    (void) i1;
+}
+
 inline void ggml_cuda_op_mul_mat_cublas(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
     float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
@@ -1660,19 +1731,18 @@ void ggml_cuda_rms_norm(const ggml_tensor * src0, const ggml_tensor * src1, ggml
 }
 
 bool ggml_cuda_can_mul_mat(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst) {
-    GGML_ASSERT(src0->backend != GGML_BACKEND_GPU);
     const int64_t ne10 = src1->ne[0];
 
     const int64_t ne0 = dst->ne[0];
     const int64_t ne1 = dst->ne[1];
 
-    // if (strcmp(dst->name, "KQ") == 0 || strcmp(dst->name, "KQV") == 0) {
+    if (strcmp(dst->name, "KQ") == 0) {
         // fprintf(stderr, "(%ld, %ld, %ld, %ld) + (%ld, %ld, %ld, %ld) -> (%ld, %ld, %ld, %ld)\n",
         //         src0->ne[0], src0->ne[1], src0->ne[2], src0->ne[3],
         //         src1->ne[0], src1->ne[1], src1->ne[2], src1->ne[3],
         //         dst->ne[0], dst->ne[1], dst->ne[2], dst->ne[3]);
-    //     return false;
-    // }
+        return true;
+    }
 
     // TODO: find the optimal values for these
     if ((src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16 || ggml_is_quantized(src0->type)) &&
@@ -1686,7 +1756,16 @@ bool ggml_cuda_can_mul_mat(const struct ggml_tensor * src0, const struct ggml_te
 }
 
 void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
-    if (src0->type == GGML_TYPE_F32) {
+    if (strcmp(dst->name, "KQ") == 0) {
+        GGML_ASSERT(!ggml_is_contiguous(src0) && !ggml_is_contiguous(src1));
+        GGML_ASSERT(src0->backend != GGML_BACKEND_GPU_SPLIT);
+        GGML_ASSERT(src0->nb[0] <= src0->nb[1] && src0->nb[2] <= src0->nb[3]);
+        GGML_ASSERT(src1->nb[0] <= src1->nb[1] && src1->nb[2] <= src1->nb[3]);
+        GGML_ASSERT(src0->type == GGML_TYPE_F16);
+        GGML_ASSERT(src1->type == GGML_TYPE_F32);
+        ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_p021_f16_f32, false);
+        // ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, true);
+    } else if (src0->type == GGML_TYPE_F32) {
         ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, true);
     } else if (ggml_is_quantized(src0->type) || src0->type == GGML_TYPE_F16) {
         if (src1->ne[1] == 1) {
@@ -1716,10 +1795,9 @@ void ggml_cuda_load_data(const char * fname, struct ggml_tensor * tensor, const 
     const size_t nb1 = tensor->nb[1];
     ggml_backend backend = tensor->backend;
     struct ggml_tensor_extra_gpu * extra = new struct ggml_tensor_extra_gpu;
+    memset(extra, 0, sizeof(*extra));
 
     for (int id = 0; id < g_device_count; ++id) {
-        extra->data_device[id] = nullptr;
-
         if (backend == GGML_BACKEND_GPU && id != g_main_device) {
             continue;
         }
