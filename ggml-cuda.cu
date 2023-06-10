@@ -151,6 +151,7 @@ static_assert(sizeof(block_q6_K) == sizeof(ggml_fp16_t) + 13*QK_K/16, "wrong q6_
 #define CUDA_ADD_BLOCK_SIZE 256
 #define CUDA_MUL_BLOCK_SIZE 256
 #define CUDA_SILU_BLOCK_SIZE 256
+#define CUDA_CPY_BLOCK_SIZE 32
 #define CUDA_ROPE_BLOCK_SIZE 256
 #define CUDA_DEQUANTIZE_BLOCK_SIZE 256
 
@@ -767,6 +768,23 @@ static __global__ void mul_mat_p021_f16_f32(const void * vx, const float * y, fl
     }
 }
 
+static __global__ void cpy_f32_f16(const float * x, void * vdst, const int ne0, const int ne1, const int stride_1, const int stride_2) {
+    const int i0 = blockDim.x*blockIdx.x + threadIdx.x;
+
+    if (i0 >= ne0) {
+        return;
+    }
+
+    const int i1 = blockDim.y*blockIdx.y + threadIdx.y;
+    const int i2 = blockDim.z*blockIdx.z + threadIdx.z;
+
+    half * dst = (half *) vdst;
+
+    const int ix   = i0 + i1*stride_1 + i2*stride_2;
+    const int idst = i0 + i1*ne0      + i2*ne1*ne0;
+    dst[idst] = __float2half(x[ix]);
+}
+
 static __global__ void rope_f32(const float * x, float * dst, const int ncols, const float p, const float theta_scale) {
     const int col = 2*(blockDim.x*blockIdx.x + threadIdx.x);
 
@@ -977,6 +995,14 @@ static void ggml_mul_mat_p021_f16_f32_cuda(const void * vx, const float * y, flo
     const dim3 block_nums(1, nrows_x, WARP_SIZE);
     CUDA_CHECK(cudaMemset(dst, 0, nrows_x*WARP_SIZE*sizeof(float)));
     mul_mat_p021_f16_f32<<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols_x, nrows_x, ncols_y);
+}
+
+static void ggml_cpy_f32_f16_cuda(const float * x, void * vdst, const int ne0, const int ne1, const int ne2,
+                                  const int stride_1, const int stride_2, cudaStream_t stream) {
+    const int block_num_x = (ne0 + CUDA_CPY_BLOCK_SIZE - 1) / CUDA_CPY_BLOCK_SIZE;
+    const dim3 block_nums(block_num_x, ne1, ne2);
+    const dim3 block_dims(CUDA_CPY_BLOCK_SIZE, 1, 1);
+    cpy_f32_f16<<<block_nums, block_dims, 0, stream>>>(x, vdst, ne0, ne1, stride_1, stride_2);
 }
 
 static void rope_f32_cuda(const float * x, float * dst, const int ncols, const int nrows, const float p, const float theta_scale, cudaStream_t stream) {
@@ -1729,6 +1755,8 @@ void ggml_cuda_mul_mat_p021_f16_f32(const ggml_tensor * src0, const ggml_tensor 
     GGML_ASSERT(src0->type == GGML_TYPE_F16);
     GGML_ASSERT(src1->type == GGML_TYPE_F32);
 
+    // GGML_ASSERT(src0->backend == GGML_BACKEND_GPU && src1->backend == GGML_BACKEND_GPU);
+
     const int64_t ne00 = src0->ne[0];
     const int64_t ne01 = src0->ne[1];
     const int64_t ne02 = src0->ne[2];
@@ -1761,12 +1789,24 @@ void ggml_cuda_mul_mat_p021_f16_f32(const ggml_tensor * src0, const ggml_tensor 
     void * src0_ddq;
     float * src1_ddf;
     float * dst_ddf;
-    CUDA_CHECK(cudaMalloc(&src0_ddq, src0_size));
-    CUDA_CHECK(cudaMalloc(&src1_ddf, src1_size));
+    if (src0->backend == GGML_BACKEND_CPU) {
+        CUDA_CHECK(cudaMalloc(&src0_ddq, src0_size));
+        CUDA_CHECK(cudaMemcpyAsync(src0_ddq, src0->data, src0_size, cudaMemcpyHostToDevice, cudaStream_main));
+    } else {
+        struct ggml_tensor_extra_gpu * src0_extra = (ggml_tensor_extra_gpu *) src0->extra;
+        src0_ddq = src0_extra->data_device[g_main_device];
+        // CUDA_CHECK(cudaMemset(src0_ddq, 0, ggml_nbytes(src0)));
+    }
+    if (src1->backend == GGML_BACKEND_CPU) {
+        CUDA_CHECK(cudaMalloc(&src1_ddf, src1_size));
+        CUDA_CHECK(cudaMemcpyAsync(src1_ddf, src1->data, src1_size, cudaMemcpyHostToDevice, cudaStream_main));
+    } else {
+        struct ggml_tensor_extra_gpu * src1_extra = (ggml_tensor_extra_gpu *) src1->extra;
+        src1_ddf = (float *) src1_extra->data_device[g_main_device];
+        // CUDA_CHECK(cudaMemset(src1_ddf, 0, ggml_nbytes(src1)));
+    }
     CUDA_CHECK(cudaMalloc(&dst_ddf, dst_size));
 
-    CUDA_CHECK(cudaMemcpyAsync(src0_ddq, src0->data, src0_size, cudaMemcpyHostToDevice, cudaStream_main));
-    CUDA_CHECK(cudaMemcpyAsync(src1_ddf, src1->data, src1_size, cudaMemcpyHostToDevice, cudaStream_main));
 
     for (int64_t i11 = 0; i11 < ne11; ++i11) {
         float * src1_ddf_i = src1_ddf + i11 * ne10*ne12;
@@ -1788,8 +1828,12 @@ void ggml_cuda_mul_mat_p021_f16_f32(const ggml_tensor * src0, const ggml_tensor 
         }
     }
     CUDA_CHECK(cudaDeviceSynchronize());
-    CUDA_CHECK(cudaFree(src0_ddq));
-    CUDA_CHECK(cudaFree(src1_ddf));
+    if (src0->backend == GGML_BACKEND_CPU) {
+        CUDA_CHECK(cudaFree(src0_ddq));
+    }
+    if (src1->backend == GGML_BACKEND_CPU) {
+        CUDA_CHECK(cudaFree(src1_ddf));
+    }
     CUDA_CHECK(cudaFree(dst_ddf));
 }
 
@@ -1808,6 +1852,43 @@ void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_
     } else {
         GGML_ASSERT(false);
     }
+}
+
+void ggml_cuda_cpy(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
+    GGML_ASSERT(ggml_nelements(src0) == ggml_nelements(src1));
+    GGML_ASSERT(ggml_is_contiguous(src0));
+    GGML_ASSERT(ggml_is_contiguous(src1));
+
+    GGML_ASSERT(src0->backend == GGML_BACKEND_GPU);
+    GGML_ASSERT(src1->backend == GGML_BACKEND_GPU);
+
+    const int64_t ne00 = src0->ne[0];
+    const int64_t ne01 = src0->ne[1];
+    const int64_t ne02 = src0->ne[2];
+    GGML_ASSERT(src0->ne[3] == src1->ne[3]);
+
+    const int64_t nb01 = src0->nb[1];
+    const int64_t nb02 = src0->nb[2];
+
+    cudaStream_t cudaStream_main = g_cudaStreams_main[g_main_device][0];
+
+    const struct ggml_tensor_extra_gpu * src0_extra = (ggml_tensor_extra_gpu *) src0->extra;
+    const struct ggml_tensor_extra_gpu * src1_extra = (ggml_tensor_extra_gpu *) src1->extra;
+
+    float * src0_ddf = (float *) src0_extra->data_device[g_main_device];
+    void  * src1_ddv = src1_extra->data_device[g_main_device];
+
+    const int64_t stride_1 = nb01 / sizeof(float);
+    GGML_ASSERT(nb01 % sizeof(float) == 0);
+    const int64_t stride_2 = nb02 / sizeof(float);
+    GGML_ASSERT(nb02 % sizeof(float) == 0);
+
+    ggml_cpy_f32_f16_cuda(src0_ddf, src1_ddv, ne00, ne01, ne02, stride_1, stride_2, cudaStream_main);
+    // test<<<ggml_nelements(src0), 1, 0, cudaStream_main>>>(src0_ddf, src1_ddv);
+
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    (void) dst;
 }
 
 void ggml_cuda_rope(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
@@ -1906,22 +1987,29 @@ void ggml_cuda_free_data(struct ggml_tensor * tensor) {
 }
 
 void ggml_cuda_assign_buffers_impl(struct ggml_tensor * tensor, bool scratch) {
-    if (tensor->src0 != nullptr &&
-        (tensor->src0->op == GGML_OP_RESHAPE || tensor->src0->op == GGML_OP_TRANSPOSE)) {
-
-        ggml_cuda_assign_buffers_impl(tensor->src0, scratch);
+    if (tensor->src0 != nullptr) {
+        const ggml_op src0_op = tensor->src0->op;
+        if (src0_op == GGML_OP_RESHAPE || src0_op == GGML_OP_TRANSPOSE || src0_op == GGML_OP_VIEW) {
+            ggml_cuda_assign_buffers_impl(tensor->src0, scratch);
+        }
     }
 
     tensor->backend = GGML_BACKEND_GPU;
     struct ggml_tensor_extra_gpu * extra = new ggml_tensor_extra_gpu;
 
-    const bool inplace = tensor->src0 != nullptr && tensor->src0->data == tensor->data;
+    const bool inplace = (tensor->src0 != nullptr && tensor->src0->data == tensor->data) ||
+        tensor->op == GGML_OP_VIEW;
     const size_t size = ggml_nbytes(tensor);
 
     CUDA_CHECK(cudaSetDevice(g_main_device));
     if (inplace && tensor->src0->backend == GGML_BACKEND_GPU) {
         struct ggml_tensor_extra_gpu * src0_extra = (ggml_tensor_extra_gpu * ) tensor->src0->extra;
-        extra->data_device[g_main_device] = src0_extra->data_device[g_main_device];
+        char * src0_ddc = (char *) src0_extra->data_device[g_main_device];
+        size_t offset = 0;
+        if (tensor->op == GGML_OP_VIEW) {
+            memcpy(&offset, tensor->opt[0]->data, sizeof(size_t));
+        }
+        extra->data_device[g_main_device] = src0_ddc + offset;
     } else if (scratch) {
         GGML_ASSERT(size <= g_scratch_size);
         if (g_scratch_offset + size > g_scratch_size) {
@@ -1944,6 +2032,7 @@ void ggml_cuda_assign_buffers_impl(struct ggml_tensor * tensor, bool scratch) {
     } else {
         void * data;
         CUDA_CHECK(cudaMalloc(&data, size));
+        CUDA_CHECK(cudaMemset(data, 0, size));
         extra->data_device[g_main_device] = data;
     }
 
@@ -2013,7 +2102,15 @@ bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_
             }
             func = ggml_cuda_mul_mat;
             break;
+        case GGML_OP_CPY:
+            if (!any_on_device) {
+                return false;
+            }
+            func = ggml_cuda_cpy;
+            break;
         case GGML_OP_RESHAPE:
+        case GGML_OP_VIEW:
+        case GGML_OP_PERMUTE:
         case GGML_OP_TRANSPOSE:
             if (!any_on_device) {
                 return false;
