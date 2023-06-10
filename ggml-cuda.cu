@@ -1905,42 +1905,57 @@ void ggml_cuda_free_data(struct ggml_tensor * tensor) {
     delete extra;
 }
 
-void ggml_cuda_assign_buffers(struct ggml_tensor * tensor) {
-    if (tensor->src0 != nullptr && tensor->src0->op == GGML_OP_RESHAPE) {
-        ggml_cuda_assign_buffers(tensor->src0);
-    }
+void ggml_cuda_assign_buffers_impl(struct ggml_tensor * tensor, bool scratch) {
+    if (tensor->src0 != nullptr &&
+        (tensor->src0->op == GGML_OP_RESHAPE || tensor->src0->op == GGML_OP_TRANSPOSE)) {
 
-    const size_t size = ggml_nbytes(tensor);
-    GGML_ASSERT(size <= g_scratch_size);
-    if (g_scratch_offset + size > g_scratch_size) {
-        g_scratch_offset = 0;
+        ggml_cuda_assign_buffers_impl(tensor->src0, scratch);
     }
 
     tensor->backend = GGML_BACKEND_GPU;
     struct ggml_tensor_extra_gpu * extra = new ggml_tensor_extra_gpu;
 
-    bool inplace = tensor->src0 != nullptr && tensor->src0->data == tensor->data;
+    const bool inplace = tensor->src0 != nullptr && tensor->src0->data == tensor->data;
+    const size_t size = ggml_nbytes(tensor);
 
     CUDA_CHECK(cudaSetDevice(g_main_device));
     if (inplace && tensor->src0->backend == GGML_BACKEND_GPU) {
         struct ggml_tensor_extra_gpu * src0_extra = (ggml_tensor_extra_gpu * ) tensor->src0->extra;
         extra->data_device[g_main_device] = src0_extra->data_device[g_main_device];
-    } else {
+    } else if (scratch) {
+        GGML_ASSERT(size <= g_scratch_size);
+        if (g_scratch_offset + size > g_scratch_size) {
+            g_scratch_offset = 0;
+        }
+
         char * data = (char *) g_scratch_buffer;
         if (data == nullptr) {
             CUDA_CHECK(cudaMalloc(&data, g_scratch_size));
             g_scratch_buffer = data;
         }
         extra->data_device[g_main_device] = data + g_scratch_offset;
+
+        // fprintf(stderr, "data=%p offset=%ld data_device=%p\n", data, g_scratch_offset, extra->data_device[0]);
+        g_scratch_offset += size;
+        // fprintf(stderr, "%s: scratch %d, %p - %p\n",
+        //         tensor->name, g_scratch_index, data + g_scratch_offset, data + g_scratch_offset + size);
+
+        GGML_ASSERT(g_scratch_offset <= g_scratch_size);
+    } else {
+        void * data;
+        CUDA_CHECK(cudaMalloc(&data, size));
+        extra->data_device[g_main_device] = data;
     }
 
-    // fprintf(stderr, "data=%p offset=%ld data_device=%p\n", data, g_scratch_offset, extra->data_device[0]);
-    g_scratch_offset += size;
-    // fprintf(stderr, "%s: scratch %d, %p - %p\n",
-    //         tensor->name, g_scratch_index, data + g_scratch_offset, data + g_scratch_offset + size);
-
-    GGML_ASSERT(g_scratch_offset <= g_scratch_size);
     tensor->extra = extra;
+}
+
+void ggml_cuda_assign_buffers(struct ggml_tensor * tensor) {
+    ggml_cuda_assign_buffers_impl(tensor, true);
+}
+
+void ggml_cuda_assign_buffers_no_scratch(struct ggml_tensor * tensor) {
+    ggml_cuda_assign_buffers_impl(tensor, false);
 }
 
 void ggml_cuda_set_main_device(int main_device) {
@@ -1999,6 +2014,7 @@ bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_
             func = ggml_cuda_mul_mat;
             break;
         case GGML_OP_RESHAPE:
+        case GGML_OP_TRANSPOSE:
             if (!any_on_device) {
                 return false;
             }
