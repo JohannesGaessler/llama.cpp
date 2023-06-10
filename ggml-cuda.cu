@@ -1758,10 +1758,12 @@ void ggml_cuda_mul_mat_p021_f16_f32(const ggml_tensor * src0, const ggml_tensor 
 
     cudaStream_t cudaStream_main = g_cudaStreams_main[g_main_device][0];
 
-    size_t src0_asq, src1_asf, dst_asf;
-    void * src0_ddq = ggml_cuda_pool_malloc(src0_size, &src0_asq);
-    float * src1_ddf = (float *) ggml_cuda_pool_malloc(src1_size, &src1_asf);
-    float * dst_ddf = (float *) ggml_cuda_pool_malloc(dst_size, &dst_asf);
+    void * src0_ddq;
+    float * src1_ddf;
+    float * dst_ddf;
+    CUDA_CHECK(cudaMalloc(&src0_ddq, src0_size));
+    CUDA_CHECK(cudaMalloc(&src1_ddf, src1_size));
+    CUDA_CHECK(cudaMalloc(&dst_ddf, dst_size));
 
     CUDA_CHECK(cudaMemcpyAsync(src0_ddq, src0->data, src0_size, cudaMemcpyHostToDevice, cudaStream_main));
     CUDA_CHECK(cudaMemcpyAsync(src1_ddf, src1->data, src1_size, cudaMemcpyHostToDevice, cudaStream_main));
@@ -1786,9 +1788,9 @@ void ggml_cuda_mul_mat_p021_f16_f32(const ggml_tensor * src0, const ggml_tensor 
         }
     }
     CUDA_CHECK(cudaDeviceSynchronize());
-    ggml_cuda_pool_free(src0_ddq, src0_size);
-    ggml_cuda_pool_free(src1_ddf, src1_size);
-    ggml_cuda_pool_free(dst_ddf, dst_size);
+    CUDA_CHECK(cudaFree(src0_ddq));
+    CUDA_CHECK(cudaFree(src1_ddf));
+    CUDA_CHECK(cudaFree(dst_ddf));
 }
 
 void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
