@@ -738,7 +738,7 @@ static __global__ void dequantize_mul_mat_vec_k(const void * vx, const float * y
     }
 }
 
-static __global__ void mul_mat_p021_f16_f32(const void * vx, const float * y, float * dst, const int ncols_x, const int nrows_x, const int ncols_y) {
+static __global__ void mul_mat_p021_f16_f32(const void * vx, const float * y, float * dst, const int ncols_x, const int nrows_x, const int nchannels_x, const int ncols_y) {
     const half * x = (half *) vx;
     // const int col_x = blockDim.x*blockIdx.x + threadIdx.x;
     // const int row_x = blockDim.y*blockIdx.y + threadIdx.y;
@@ -748,7 +748,7 @@ static __global__ void mul_mat_p021_f16_f32(const void * vx, const float * y, fl
 
     for (int col_x = 0; col_x < ncols_x; ++col_x) {
         // x is transposed and permuted
-        const int ix = row_x*WARP_SIZE*ncols_x + channel*ncols_x + col_x;
+        const int ix = row_x*nchannels_x*ncols_x + channel*ncols_x + col_x;
         const float xi = __half2float(x[ix]);
 
         const int row_y = col_x;
@@ -990,11 +990,11 @@ static to_fp32_cuda_t ggml_get_to_fp32_cuda(ggml_type type) {
     }
 }
 
-static void ggml_mul_mat_p021_f16_f32_cuda(const void * vx, const float * y, float * dst, const int ncols_x, const int nrows_x, const int ncols_y, cudaStream_t stream) {
+static void ggml_mul_mat_p021_f16_f32_cuda(const void * vx, const float * y, float * dst, const int ncols_x, const int nrows_x, const int nchannels_x, const int ncols_y, cudaStream_t stream) {
     const dim3 block_dims(1, 1, 1);
-    const dim3 block_nums(1, nrows_x, WARP_SIZE);
-    CUDA_CHECK(cudaMemset(dst, 0, nrows_x*WARP_SIZE*sizeof(float)));
-    mul_mat_p021_f16_f32<<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols_x, nrows_x, ncols_y);
+    const dim3 block_nums(1, nrows_x, nchannels_x);
+    CUDA_CHECK(cudaMemset(dst, 0, nrows_x*nchannels_x*sizeof(float)));
+    mul_mat_p021_f16_f32<<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols_x, nrows_x, nchannels_x, ncols_y);
 }
 
 static void ggml_cpy_f32_f16_cuda(const float * x, void * vdst, const int ne0, const int ne1, const int ne2,
@@ -1762,22 +1762,23 @@ void ggml_cuda_mul_mat_p021_f16_f32(const ggml_tensor * src0, const ggml_tensor 
     const int64_t ne02 = src0->ne[2];
     const int64_t ne03 = src0->ne[3];
     GGML_ASSERT(ne00 % 8 == 0);
-    GGML_ASSERT(ne02 == WARP_SIZE);
     GGML_ASSERT(ne03 == 1);
     const size_t src0_size = ggml_nbytes(src0);
 
     const int64_t ne10 = src1->ne[0];
     const int64_t ne11 = src1->ne[1];
     const int64_t ne12 = src1->ne[2];
+    const int64_t ne13 = src1->ne[3];
     GGML_ASSERT(ne10 % 4 == 0);
-    GGML_ASSERT(src1->ne[2] == WARP_SIZE);
+    GGML_ASSERT(ne13 == 1);
+    GGML_ASSERT(ne12 == ne02);
     const size_t src1_size = ggml_nbytes(src1);
 
     const int64_t ne0 = dst->ne[0];
     const int64_t ne1 = dst->ne[1];
     const int64_t ne2 = dst->ne[2];
     const int64_t ne3 = dst->ne[3];
-    GGML_ASSERT(dst->ne[2] == WARP_SIZE);
+    GGML_ASSERT(ne2 == ne02);
     const size_t dst_size = ggml_nbytes(dst);
 
     const int64_t nb1 = dst->nb[1];
@@ -1812,7 +1813,7 @@ void ggml_cuda_mul_mat_p021_f16_f32(const ggml_tensor * src0, const ggml_tensor 
         float * src1_ddf_i = src1_ddf + i11 * ne10*ne12;
         float * dst_ddf_i = dst_ddf + i11 * ne0;
 
-        ggml_mul_mat_p021_f16_f32_cuda(src0_ddq, src1_ddf_i, dst_ddf_i, ne00, ne01, ne11, cudaStream_main);
+        ggml_mul_mat_p021_f16_f32_cuda(src0_ddq, src1_ddf_i, dst_ddf_i, ne00, ne01, ne02, ne11, cudaStream_main);
     }
 
     CUDA_CHECK(cudaDeviceSynchronize());
