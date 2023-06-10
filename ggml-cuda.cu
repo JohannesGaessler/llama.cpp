@@ -1749,13 +1749,13 @@ bool ggml_cuda_can_mul_mat(const struct ggml_tensor * src0, const struct ggml_te
     const int64_t ne0 = dst->ne[0];
     const int64_t ne1 = dst->ne[1];
 
-    if (strcmp(dst->name, "KQ") == 0) {
+    // if (strcmp(dst->name, "KQ") == 0) {
         // fprintf(stderr, "(%ld, %ld, %ld, %ld) + (%ld, %ld, %ld, %ld) -> (%ld, %ld, %ld, %ld)\n",
         //         src0->ne[0], src0->ne[1], src0->ne[2], src0->ne[3],
         //         src1->ne[0], src1->ne[1], src1->ne[2], src1->ne[3],
         //         dst->ne[0], dst->ne[1], dst->ne[2], dst->ne[3]);
-        return true;
-    }
+        // return true;
+    // }
 
     // TODO: find the optimal values for these
     if ((src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16 || ggml_is_quantized(src0->type)) &&
@@ -1860,7 +1860,7 @@ void ggml_cuda_mul_mat_p021_f16_f32(const ggml_tensor * src0, const ggml_tensor 
 }
 
 void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
-    if (strcmp(dst->name, "KQ") == 0) {
+    if (!ggml_is_contiguous(src0) && !ggml_is_contiguous(src1)) {
         ggml_cuda_mul_mat_p021_f16_f32(src0, src1, dst);
         // ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, true);
     } else if (src0->type == GGML_TYPE_F32) {
