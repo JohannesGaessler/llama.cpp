@@ -746,25 +746,45 @@ static __global__ void mul_mat_p021_f16_f32(const void * vx, const float * y, fl
     const int row_x = blockDim.y*blockIdx.y + threadIdx.y;
     const int channel = blockDim.z*blockIdx.z + threadIdx.z;
 
-    for (int col_x = 0; col_x < ncols_x; ++col_x) {
+    const int nrows_y = ncols_x;
+    const int ncols_dst = ncols_y;
+    const int nrows_dst = nrows_x;
+    const int row_dst = row_x;
+
+    float tmp = 0.0f;
+
+    for (int col_x0 = 0; col_x0 < ncols_x; col_x0 += blockDim.x) {
+        const int col_x = col_x0 + threadIdx.x;
+
+        if (col_x >= ncols_x) {
+            return;
+        }
+
         // x is transposed and permuted
         const int ix = row_x*nchannels_x*ncols_x + channel*ncols_x + col_x;
         const float xi = __half2float(x[ix]);
 
         const int row_y = col_x;
-        const int nrows_y = ncols_x;
 
-        const int row_dst = row_x;
-        const int ncols_dst = ncols_y;
-        const int nrows_dst = nrows_x;
 
         // y is not transposed but permuted
         const int iy = channel*nrows_y + row_y;
 
         // dst is not transposed and not permuted
-        const int idst = channel*ncols_dst*nrows_dst + row_dst;
 
-        dst[idst] += xi * y[iy];
+        tmp += xi * y[iy];
+    }
+    const int idst = channel*ncols_dst*nrows_dst + row_dst;
+
+    // sum up partial sums and write back result
+    __syncthreads();
+#pragma unroll
+    for (int mask = 16; mask > 0; mask >>= 1) {
+        tmp += __shfl_xor_sync(0xffffffff, tmp, mask, 32);
+    }
+
+    if (threadIdx.x == 0) {
+        dst[idst] = tmp;
     }
 }
 
@@ -991,8 +1011,9 @@ static to_fp32_cuda_t ggml_get_to_fp32_cuda(ggml_type type) {
 }
 
 static void ggml_mul_mat_p021_f16_f32_cuda(const void * vx, const float * y, float * dst, const int ncols_x, const int nrows_x, const int nchannels_x, const int ncols_y, cudaStream_t stream) {
-    const dim3 block_dims(1, 1, 1);
-    const dim3 block_nums(1, nrows_x, nchannels_x);
+    const int block_num_x = (ncols_x + WARP_SIZE - 1) / WARP_SIZE;
+    const dim3 block_nums(block_num_x, nrows_x, nchannels_x);
+    const dim3 block_dims(WARP_SIZE, 1, 1);
     CUDA_CHECK(cudaMemset(dst, 0, nrows_x*nchannels_x*sizeof(float)));
     mul_mat_p021_f16_f32<<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols_x, nrows_x, nchannels_x, ncols_y);
 }
