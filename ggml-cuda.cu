@@ -1014,7 +1014,6 @@ static void ggml_mul_mat_p021_f16_f32_cuda(const void * vx, const float * y, flo
     const int block_num_x = (ncols_x + WARP_SIZE - 1) / WARP_SIZE;
     const dim3 block_nums(block_num_x, nrows_x, nchannels_x);
     const dim3 block_dims(WARP_SIZE, 1, 1);
-    CUDA_CHECK(cudaMemset(dst, 0, nrows_x*nchannels_x*sizeof(float)));
     mul_mat_p021_f16_f32<<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols_x, nrows_x, nchannels_x, ncols_y);
 }
 
@@ -1828,7 +1827,6 @@ void ggml_cuda_mul_mat_p021_f16_f32(const ggml_tensor * src0, const ggml_tensor 
         // CUDA_CHECK(cudaMemset(src1_ddf, 0, ggml_nbytes(src1)));
     }
     CUDA_CHECK(cudaMalloc(&dst_ddf, dst_size));
-
 
     for (int64_t i11 = 0; i11 < ne11; ++i11) {
         float * src1_ddf_i = src1_ddf + i11 * ne10*ne12;
