@@ -845,25 +845,40 @@ static __global__ void diag_mask_inf_f32(const float * x, float * dst, const int
 
 static __global__ void soft_max_f32(const float * x, float * dst, const int ncols) {
     const int row = blockDim.y*blockIdx.y + threadIdx.y;
+    const int block_size = blockDim.x;
+    const int tid = threadIdx.x;
 
-    double tmp = 0.0;
+    float tmp = 0.0;
 
-    for (int col = 0; col < ncols; ++col) {
+    for (int block_start = 0; block_start < ncols; block_start += block_size) {
+        const int col = block_start + tid;
+
         if (col >= ncols) {
-            return;
+            break;
         }
 
         const int i = row*ncols + col;
-        tmp += exp(x[i]);
+        const float val = expf(x[i]);
+        tmp += val;
+        dst[i] = val;
     }
 
-    for (int col = 0; col < ncols; ++col) {
+    // sum up partial sums
+    __syncthreads();
+#pragma unroll
+    for (int mask = 16; mask > 0; mask >>= 1) {
+        tmp += __shfl_xor_sync(0xffffffff, tmp, mask, 32);
+    }
+
+    for (int block_start = 0; block_start < ncols; block_start += block_size) {
+        const int col = block_start + tid;
+
         if (col >= ncols) {
-            return;
+            break;
         }
 
         const int i = row*ncols + col;
-        dst[i] = exp(x[i]) / tmp;
+        dst[i] /= tmp;
     }
 }
 
@@ -1097,8 +1112,8 @@ static void diag_mask_inf_f32_cuda(const float * x, float * dst, const int ncols
 }
 
 static void soft_max_f32_cuda(const float * x, float * dst, const int ncols_x, const int nrows_x, cudaStream_t stream) {
-    const dim3 block_dims(1, 1, 1);
-    const dim3 block_nums(ncols_x, nrows_x, 1);
+    const dim3 block_dims(WARP_SIZE, 1, 1);
+    const dim3 block_nums(1, nrows_x, 1);
     soft_max_f32<<<block_nums, block_dims, 0, stream>>>(x, dst, ncols_x);
 }
 
