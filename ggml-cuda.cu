@@ -1,3 +1,4 @@
+#include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -838,12 +839,8 @@ static __global__ void diag_mask_inf_f32(const float * x, float * dst, const int
     }
 
     const int i = row*ncols + col;
-    if (col > n_past + row) {
-        dst[i] = -INFINITY;
-    } else {
-        dst[i] = x[i];
-    }
-
+    // dst[i] = col > n_past + row ? -INFINITY : x[i];
+    dst[i] = x[i] - (col > n_past + row) * INT_MAX; // equivalent within rounding error but slightly faster on GPU
 }
 
 static __global__ void soft_max_f32(const float * x, float * dst, const int ncols) {
