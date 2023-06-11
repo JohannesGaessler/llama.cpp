@@ -1522,6 +1522,7 @@ inline void ggml_cuda_op_diag_mask_inf(
     (void) dst;
     (void) src0_ddq_i;
     (void) src1_ddf_i;
+    (void) i02;
     (void) i1;
 }
 
