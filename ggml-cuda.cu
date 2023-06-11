@@ -2024,7 +2024,7 @@ void ggml_cuda_mul_mat_p021_f16_f32(const ggml_tensor * src0, const ggml_tensor 
 }
 
 void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
-    if (!ggml_is_contiguous(src0) && !ggml_is_contiguous(src1)) {
+    if (ggml_is_permuted(src0) && ggml_is_permuted(src1)) {
         ggml_cuda_mul_mat_p021_f16_f32(src0, src1, dst);
         // ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, true);
     } else if (src0->type == GGML_TYPE_F32) {
