@@ -761,7 +761,7 @@ static __global__ void mul_mat_p021_f16_f32(const void * vx, const float * y, fl
         const int col_x = col_x0 + threadIdx.x;
 
         if (col_x >= ncols_x) {
-            return;
+            break;
         }
 
         // x is transposed and permuted
@@ -813,7 +813,7 @@ static __global__ void mul_mat_vec_nc_f16_f32(
         const int col_x = col_x0 + threadIdx.x;
 
         if (col_x >= ncols_x) {
-            return;
+            break;
         }
 
         const int ix = channel*channel_stride_x + row_x*row_stride_x + col_x;
@@ -1140,8 +1140,7 @@ static void ggml_mul_mat_vec_nc_f16_f32_cuda(
     const void * vx, const float * y, float * dst, const int ncols_x, const int nrows_x, const int row_stride_x,
     const int nchannels_x, const int channel_stride_x, cudaStream_t stream) {
 
-    const int block_num_x = (ncols_x + WARP_SIZE - 1) / WARP_SIZE;
-    const dim3 block_nums(block_num_x, nrows_x, nchannels_x);
+    const dim3 block_nums(1, nrows_x, nchannels_x);
     const dim3 block_dims(WARP_SIZE, 1, 1);
     mul_mat_vec_nc_f16_f32<<<block_nums, block_dims, 0, stream>>>
         (vx, y, dst, ncols_x, nrows_x, row_stride_x, nchannels_x, channel_stride_x);
