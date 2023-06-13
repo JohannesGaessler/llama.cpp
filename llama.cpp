@@ -215,6 +215,7 @@ struct llama_model {
         for (size_t i = 0; i < tensors_by_name.size(); ++i) {
             ggml_cuda_free_data(tensors_by_name[i].second);
         }
+        ggml_cuda_free_scratch();
 #endif // GGML_USE_CUBLAS
     }
 };
