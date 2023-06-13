@@ -866,7 +866,7 @@ static bool kv_cache_init(
 
 #ifdef GGML_USE_CUBLAS
     ggml_cuda_assign_buffers_no_scratch(cache.k);
-    ggml_cuda_assign_buffers_no_scratch(cache.v);
+    // ggml_cuda_assign_buffers_no_scratch(cache.v);
 #endif // GGML_USE_CUBLAS
 
     return true;
@@ -1397,11 +1397,11 @@ static bool llama_eval_internal(
                 // compute the transposed [N, n_embd] V matrix
 
                 struct ggml_tensor * tmpv = ggml_mul_mat(ctx0, model.layers[il].wv, cur);
-                offload_func(tmpv);
+                // offload_func(tmpv);
                 ggml_set_name(tmpv, "tmpv");
 
                 struct ggml_tensor * Vcur = ggml_transpose(ctx0, ggml_reshape_2d(ctx0, tmpv, n_embd, N));
-                offload_func(Vcur);
+                // offload_func(Vcur);
                 ggml_set_name(Vcur, "Vcur");
 
                 struct ggml_tensor * k = ggml_view_1d(ctx0, kv_self.k, N*n_embd, (ggml_element_size(kv_self.k)*n_embd)*(il*n_ctx + n_past));
@@ -1411,7 +1411,7 @@ static bool llama_eval_internal(
                 struct ggml_tensor * v = ggml_view_2d(ctx0, kv_self.v, N, n_embd,
                         (   n_ctx)*ggml_element_size(kv_self.v),
                         (il*n_ctx)*ggml_element_size(kv_self.v)*n_embd + n_past*ggml_element_size(kv_self.v));
-                offload_func(v);
+                // offload_func(v);
                 ggml_set_name(v, "v");
 
                 // important: storing RoPE-ed version of K in the KV cache!
@@ -1456,7 +1456,7 @@ static bool llama_eval_internal(
 
             // KQ = soft_max(KQ_masked)
             struct ggml_tensor * KQ_soft_max = ggml_soft_max_inplace(ctx0, KQ_masked);
-            offload_func(KQ_soft_max);
+            // offload_func(KQ_soft_max);
             ggml_set_name(KQ_soft_max, "KQ_soft_max");
 
             // split cached V into n_head heads
@@ -1466,12 +1466,12 @@ static bool llama_eval_internal(
                         n_ctx*ggml_element_size(kv_self.v),
                         n_ctx*ggml_element_size(kv_self.v)*n_embd/n_head,
                         il*n_ctx*ggml_element_size(kv_self.v)*n_embd);
-            offload_func(V);
+            // offload_func(V);
             ggml_set_name(V, "V");
 
 #if 1
             struct ggml_tensor * KQV = ggml_mul_mat(ctx0, V, KQ_soft_max);
-            offload_func(KQV);
+            // offload_func(KQV);
             ggml_set_name(KQV, "KQV");
 #else
             // make V contiguous in memory to speed up the matmul, however we waste time on the copy
@@ -1483,14 +1483,14 @@ static bool llama_eval_internal(
 
             // KQV_merged = KQV.permute(0, 2, 1, 3)
             struct ggml_tensor * KQV_merged = ggml_permute(ctx0, KQV, 0, 2, 1, 3);
-            offload_func(KQV_merged);
+            // offload_func(KQV_merged);
             ggml_set_name(KQV_merged, "KQV_merged");
 
             // cur = KQV_merged.contiguous().view(n_embd, N)
             cur = ggml_cpy(ctx0,
                     KQV_merged,
                     ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_embd, N));
-            offload_func(cur);
+            // offload_func(cur);
             ggml_set_name(cur, "KQV_merged_contiguous");
 
             // projection (no bias)
