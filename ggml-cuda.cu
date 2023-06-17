@@ -712,6 +712,67 @@ static __global__ void dequantize_mul_mat_vec(const void * vx, const float * y, 
     }
 }
 
+template <int qk, int qr, dequantize_kernel_t dequantize_kernel>
+static __global__ void dequantize_mul_mat_vec_half(const void * vx, const half * y, float * dst, const int ncols, const int nrows) {
+    // qk = quantized weights per x block
+    // qr = number of quantized weights per data value in x block
+    const int row = blockIdx.y*blockDim.y + threadIdx.y;
+
+    if (row >= nrows) {
+        return;
+    }
+
+    const int tid = threadIdx.x;
+
+    const int iter_stride = 2*GGML_CUDA_DMMV_X;
+    const int vals_per_iter = iter_stride / WARP_SIZE; // num quantized vals per thread and i iter
+    const int y_offset = qr == 1 ? 1 : qk/2;
+
+    half2 tmp = make_half2(0.0f, 0.0f); // partial sum for thread in warp
+
+    for (int i = 0; i < ncols; i += iter_stride) {
+        const int col = i + vals_per_iter*tid;
+        const int ib = (row*ncols + col)/qk; // x block index
+        const int iqs = (col%qk)/qr; // x quant index
+        const int iybs = col - col%qk; // y block start index
+
+// processing >2 values per i iter is faster for fast GPUs
+#pragma unroll
+        for (int j = 0; j < vals_per_iter; j += 2) {
+            // process 2 vals per j iter
+
+            // dequantize
+            const block_q4_0 * x = (const block_q4_0 *) vx;
+
+            const half2 d = make_half2(x[ib].d, x[ib].d);
+
+            const uint8_t vui = x[ib].qs[iqs + j/qr];
+
+            const half2 vi = make_half2(vui & 0xF, vui >> 4);
+
+            const half2 v = (vi - make_half2(8.0f, 8.0f)) * d;
+            // for qr = 2 the iqs needs to increase by 1 per j iter because 2 weights per data val
+
+            // matrix multiplication
+            const half2 yi = make_half2(y[iybs + iqs + j/qr + 0], y[iybs + iqs + j/qr + y_offset]);
+            // for qr = 2 the y index needs to increase by 1 per j iter because of y_offset = qk/2
+
+            tmp += v * yi;
+        }
+    }
+
+    // sum up partial sums and write back result
+    __syncthreads();
+#pragma unroll
+    for (int mask = 16; mask > 0; mask >>= 1) {
+        tmp += __shfl_xor_sync(0xffffffff, tmp, mask, 32);
+    }
+
+    if (tid == 0) {
+        dst[row] = tmp.x + tmp.y;
+    }
+}
+
 template <int n_thread, dot_kernel_k_t dot_kernel>
 static __global__ void dequantize_mul_mat_vec_k(const void * vx, const float * y, float * dst, const int ncols, const int nrows) {
     const int row = blockIdx.y*blockDim.y + threadIdx.y;
@@ -1049,6 +1110,15 @@ static void dequantize_mul_mat_vec_q4_0_cuda(const void * vx, const float * y, f
     const dim3 block_nums(1, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, GGML_CUDA_DMMV_Y, 1);
     dequantize_mul_mat_vec<QK4_0, QR4_0, dequantize_q4_0>
+        <<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols, nrows);
+}
+
+static void dequantize_mul_mat_vec_q4_0_half_cuda(const void * vx, const half * y, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
+    GGML_ASSERT(ncols % GGML_CUDA_DMMV_X == 0);
+    const int block_num_y = (nrows + GGML_CUDA_DMMV_Y - 1) / GGML_CUDA_DMMV_Y;
+    const dim3 block_nums(1, block_num_y, 1);
+    const dim3 block_dims(WARP_SIZE, GGML_CUDA_DMMV_Y, 1);
+    dequantize_mul_mat_vec_half<QK4_0, QR4_0, dequantize_q4_0>
         <<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols, nrows);
 }
 
@@ -1553,9 +1623,20 @@ inline void ggml_cuda_op_dequantize_mul_mat_vec(
     const int64_t ne00 = src0->ne[0];
     const int64_t nrows = i01_high - i01_low;
 
+    size_t ash;
+    half * src1_ddh_i;
+
     switch (src0->type) {
         case GGML_TYPE_Q4_0:
-            dequantize_mul_mat_vec_q4_0_cuda(src0_ddq_i, src1_ddf_i, dst_ddf_i, ne00, nrows, cudaStream_main);
+            src1_ddh_i = (half *) ggml_cuda_pool_malloc(ne00*sizeof(half), &ash);
+
+            ggml_cpy_f32_f16_cuda((char *) src1_ddf_i, (char *) src1_ddh_i, ne00,
+                                  ne00, 1, sizeof(float), 0, 0,
+                                  ne00, 1, sizeof(half),  0, 0, cudaStream_main);
+
+            dequantize_mul_mat_vec_q4_0_half_cuda(src0_ddq_i, src1_ddh_i, dst_ddf_i, ne00, nrows, cudaStream_main);
+
+            ggml_cuda_pool_free(src1_ddh_i, ash);
             break;
         case GGML_TYPE_Q4_1:
             dequantize_mul_mat_vec_q4_1_cuda(src0_ddq_i, src1_ddf_i, dst_ddf_i, ne00, nrows, cudaStream_main);
