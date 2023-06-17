@@ -728,7 +728,7 @@ static __global__ void dequantize_mul_mat_vec_half(const void * vx, const half *
     const int vals_per_iter = iter_stride / WARP_SIZE; // num quantized vals per thread and i iter
     const int y_offset = qr == 1 ? 1 : qk/2;
 
-    half2 tmp = make_half2(0.0f, 0.0f); // partial sum for thread in warp
+    float tmp = 0.0f; // partial sum for thread in warp
 
     for (int i = 0; i < ncols; i += iter_stride) {
         const int col = i + vals_per_iter*tid;
@@ -744,20 +744,21 @@ static __global__ void dequantize_mul_mat_vec_half(const void * vx, const half *
             // dequantize
             const block_q4_0 * x = (const block_q4_0 *) vx;
 
-            const half2 d = make_half2(x[ib].d, x[ib].d);
+            const float d = x[ib].d;
 
             const uint8_t vui = x[ib].qs[iqs + j/qr];
 
-            const half2 vi = make_half2(vui & 0xF, vui >> 4);
+            const int8_t vi0 = vui & 0xF;
+            const int8_t vi1 = vui >> 4;
 
-            const half2 v = (vi - make_half2(8.0f, 8.0f)) * d;
+            const float v0 = (vi0 - 8) * d;
+            const float v1 = (vi1 - 8) * d;
             // for qr = 2 the iqs needs to increase by 1 per j iter because 2 weights per data val
 
             // matrix multiplication
-            const half2 yi = make_half2(y[iybs + iqs + j/qr + 0], y[iybs + iqs + j/qr + y_offset]);
+            tmp += v0 * __half2float(y[iybs + iqs + j/qr + 0]);
+            tmp += v1 * __half2float(y[iybs + iqs + j/qr + y_offset]);
             // for qr = 2 the y index needs to increase by 1 per j iter because of y_offset = qk/2
-
-            tmp += v * yi;
         }
     }
 
@@ -769,7 +770,7 @@ static __global__ void dequantize_mul_mat_vec_half(const void * vx, const half *
     }
 
     if (tid == 0) {
-        dst[row] = tmp.x + tmp.y;
+        dst[row] = tmp;
     }
 }
 
