@@ -997,22 +997,30 @@ static __global__ void mul_mat_f32(const float * x, const float * y, float * dst
     const int row_x = row_dst;
     const int col_y = col_dst;
 
+    __shared__ float tile_x[WARP_SIZE][WARP_SIZE + 1];
+    float sum = 0.0f;
+
+    for (int col_x = 0; col_x < ncols_x; ++col_x) {
+        if (col_x % WARP_SIZE == 0) {
+            const int row_x_tile = blockIdx.x*blockDim.x + tid_y;
+            const int col_x_tile = col_x + tid_x;
+            tile_x[tid_y][tid_x] = col_x_tile < ncols_x ? x[row_x_tile*ncols_x + col_x_tile] : 0.0f;
+            __syncthreads();
+        }
+
+        const int row_y = col_x;
+
+        const float xi = tile_x[tid_x][col_x % WARP_SIZE];
+        const float yi = y[col_y*nrows_y + row_y];
+        sum += xi*yi;
+    }
+
     if (row_x >= nrows_x) {
         return;
     }
 
     if (col_y >= ncols_y) {
         return;
-    }
-
-    float sum = 0.0f;
-
-    for (int col_x = 0; col_x < ncols_x; ++col_x) {
-        const int row_y = col_x;
-
-        const float xi = x[row_x*ncols_x + col_x];
-        const float yi = y[col_y*nrows_y + row_y];
-        sum += xi*yi;
     }
 
     dst[col_dst*nrows_dst + row_dst] = sum;
