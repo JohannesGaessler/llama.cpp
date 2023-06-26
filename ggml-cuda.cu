@@ -984,6 +984,29 @@ static __global__ void dequantize_mul_mat_vec(const void * vx, const dfloat * y,
     }
 }
 
+static __global__ void mul_mat_f32(const float * x, const float * y, float * dst, const int ncols_x, const int nrows_x, const int ncols_y) {
+    const int nrows_y = ncols_x;
+    const int nrows_dst = nrows_x;
+
+    const int col_dst = blockIdx.x*blockDim.x + threadIdx.x;
+    const int row_dst = blockIdx.y*blockDim.y + threadIdx.y;
+
+    const int row_x = row_dst;
+    const int col_y = col_dst;
+
+    float sum = 0.0f;
+
+    for (int col_x = 0; col_x < ncols_x; ++col_x) {
+        const int row_y = col_x;
+
+        const float xi = x[row_x*ncols_x + col_x];
+        const float yi = y[col_y*nrows_y + row_y];
+        sum += xi*yi;
+    }
+
+    dst[col_dst*nrows_dst + row_dst] = sum;
+}
+
 static __global__ void mul_mat_p021_f16_f32(const void * vx, const float * y, float * dst, const int ncols_x, const int nrows_x, const int nchannels_x) {
     const half * x = (half *) vx;
 
@@ -1403,6 +1426,13 @@ static to_fp32_cuda_t ggml_get_to_fp32_cuda(ggml_type type) {
         default:
             return nullptr;
     }
+}
+
+static void ggml_mul_mat_f32_cuda(const float * x, const float * y, float * dst, const int ncols_x, const int nrows_x, const int ncols_y, cudaStream_t stream){
+    CUDA_CHECK(cudaMemsetAsync(dst, 0, nrows_x*ncols_y, stream));
+    const dim3 block_nums(ncols_y, nrows_x, 1);
+    const dim3 block_dims(1, 1, 1);
+    mul_mat_f32<<<block_nums, block_dims, 0, stream>>>(x, y, dst, ncols_x, nrows_x, ncols_y);
 }
 
 static void ggml_mul_mat_p021_f16_f32_cuda(const void * vx, const float * y, float * dst, const int ncols_x, const int nrows_x, const int nchannels_x, cudaStream_t stream) {
@@ -1879,15 +1909,17 @@ inline void ggml_cuda_op_mul_mat_cublas(
 
     // the main device has a larger memory buffer to hold the results from all GPUs
     // ldc == nrows of the matrix that cuBLAS writes into
-    int ldc = dst->backend == GGML_BACKEND_GPU && id == g_main_device ? ne0 : i01_diff;
+    // int ldc = dst->backend == GGML_BACKEND_GPU && id == g_main_device ? ne0 : i01_diff;
 
-    CUBLAS_CHECK(cublasSetStream(g_cublas_handles[id], cudaStream_main));
-    CUBLAS_CHECK(
-        cublasSgemm(g_cublas_handles[id], CUBLAS_OP_T, CUBLAS_OP_N,
-                i01_diff, ne11, ne10,
-                &alpha, src0_ddf_i, ne00,
-                        src1_ddf_i, ne10,
-                &beta,  dst_ddf_i,  ldc));
+    // CUBLAS_CHECK(cublasSetStream(g_cublas_handles[id], cudaStream_main));
+    // CUBLAS_CHECK(
+    //     cublasSgemm(g_cublas_handles[id], CUBLAS_OP_T, CUBLAS_OP_N,
+    //             i01_diff, ne11, ne10,
+    //             &alpha, src0_ddf_i, ne00,
+    //                     src1_ddf_i, ne10,
+    //             &beta,  dst_ddf_i,  ldc));
+
+    ggml_mul_mat_f32_cuda(src0_ddf_i, src1_ddf_i, dst_ddf_i, ne00, i01_diff, ne11, cudaStream_main);
 
     (void) dst;
     (void) src0_ddq_i;
