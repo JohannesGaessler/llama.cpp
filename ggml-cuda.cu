@@ -1000,10 +1000,7 @@ static __global__ void mul_mat_f32(const float * x, const float * y, float * dst
 
     __shared__ float tile_x[WARP_SIZE][WARP_SIZE + 1];
     __shared__ float tile_y[WARP_SIZE][WARP_SIZE];
-    __shared__ float sum[WARP_SIZE][WARP_SIZE];
-    for (int j = 0; j < WARP_SIZE; ++j) {
-        sum[j][tid_x] = 0.0f;
-    }
+    float sum[WARP_SIZE] = {0.0f};
 
     for (int col_x_0 = 0; col_x_0 < ncols_x; col_x_0 += WARP_SIZE) {
         const int row_y_0 = col_x_0;
@@ -1024,7 +1021,7 @@ static __global__ void mul_mat_f32(const float * x, const float * y, float * dst
             const float xi = tile_x[tid_x][i];
             for (int j = 0; j < WARP_SIZE; ++j) {
                 const float yi = tile_y[j][i];
-                sum[j][tid_x] += xi*yi;
+                sum[j] += xi*yi;
             }
         }
     }
@@ -1040,7 +1037,7 @@ static __global__ void mul_mat_f32(const float * x, const float * y, float * dst
             break;
         }
 
-        dst[col_dst_j*nrows_dst + row_dst] = sum[j][tid_x];
+        dst[col_dst_j*nrows_dst + row_dst] = sum[j];
     }
 }
 
