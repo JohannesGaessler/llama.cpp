@@ -987,43 +987,50 @@ static __global__ void dequantize_mul_mat_vec(const void * vx, const dfloat * y,
 static __global__ void mul_mat_f32(const float * x, const float * y, float * dst, const int ncols_x, const int nrows_x, const int ncols_y) {
     const int nrows_y = ncols_x;
     const int nrows_dst = nrows_x;
+    const int ncols_dst = ncols_y;
 
     const int tid_x = threadIdx.x;
-    const int tid_y = threadIdx.y;
 
-    const int col_dst = blockIdx.y*blockDim.y + tid_y;
+    const int col_dst_0 = blockIdx.y*WARP_SIZE;
     const int row_dst = blockIdx.x*blockDim.x + tid_x;
 
     const int row_x = row_dst;
-    const int col_y = col_dst;
+    const int col_y_0 = col_dst_0;
 
     __shared__ float tile_x[WARP_SIZE][WARP_SIZE + 1];
-    float sum = 0.0f;
+    float sum[WARP_SIZE] = {0};
 
     for (int col_x = 0; col_x < ncols_x; ++col_x) {
         if (col_x % WARP_SIZE == 0) {
-            const int row_x_tile = blockIdx.x*blockDim.x + tid_y;
-            const int col_x_tile = col_x + tid_x;
-            tile_x[tid_y][tid_x] = col_x_tile < ncols_x ? x[row_x_tile*ncols_x + col_x_tile] : 0.0f;
-            __syncthreads();
+            for (int j = 0; j < WARP_SIZE; ++j) {
+                const int row_x_tile = blockIdx.x*blockDim.x + j;
+                const int col_x_tile = col_x + tid_x;
+                tile_x[j][tid_x] = col_x_tile < ncols_x ? x[row_x_tile*ncols_x + col_x_tile] : 0.0f;
+            }
         }
 
         const int row_y = col_x;
 
         const float xi = tile_x[tid_x][col_x % WARP_SIZE];
-        const float yi = y[col_y*nrows_y + row_y];
-        sum += xi*yi;
+        for (int j = 0; j < WARP_SIZE; ++j) {
+            const float yi = y[(col_y_0 + j)*nrows_y + row_y];
+            sum[j] += xi*yi;
+        }
     }
 
-    if (row_x >= nrows_x) {
+    if (row_dst >= nrows_dst) {
         return;
     }
 
-    if (col_y >= ncols_y) {
-        return;
-    }
+    for (int j = 0; j < WARP_SIZE; ++j) {
+        const int col_dst_j = col_dst_0 + j;
 
-    dst[col_dst*nrows_dst + row_dst] = sum;
+        if (col_dst_j >= ncols_dst) {
+            break;
+        }
+
+        dst[col_dst_j*nrows_dst + row_dst] = sum[j];
+    }
 }
 
 static __global__ void mul_mat_p021_f16_f32(const void * vx, const float * y, float * dst, const int ncols_x, const int nrows_x, const int nchannels_x) {
@@ -1451,7 +1458,7 @@ static void ggml_mul_mat_f32_cuda(const float * x, const float * y, float * dst,
     const int block_num_x = (nrows_x + WARP_SIZE - 1) / WARP_SIZE;
     const int block_num_y = (ncols_y + WARP_SIZE - 1) / WARP_SIZE;
     const dim3 block_nums(block_num_x, block_num_y, 1);
-    const dim3 block_dims(WARP_SIZE, WARP_SIZE, 1);
+    const dim3 block_dims(WARP_SIZE, 1, 1);
     mul_mat_f32<<<block_nums, block_dims, 0, stream>>>(x, y, dst, ncols_x, nrows_x, ncols_y);
 }
 
