@@ -988,8 +988,11 @@ static __global__ void mul_mat_f32(const float * x, const float * y, float * dst
     const int nrows_y = ncols_x;
     const int nrows_dst = nrows_x;
 
-    const int col_dst = blockIdx.x*blockDim.x + threadIdx.x;
-    const int row_dst = blockIdx.y*blockDim.y + threadIdx.y;
+    const int tid_x = threadIdx.x;
+    const int tid_y = threadIdx.y;
+
+    const int col_dst = blockIdx.y*blockDim.y + tid_y;
+    const int row_dst = blockIdx.x*blockDim.x + tid_x;
 
     const int row_x = row_dst;
     const int col_y = col_dst;
@@ -1437,9 +1440,8 @@ static to_fp32_cuda_t ggml_get_to_fp32_cuda(ggml_type type) {
 }
 
 static void ggml_mul_mat_f32_cuda(const float * x, const float * y, float * dst, const int ncols_x, const int nrows_x, const int ncols_y, cudaStream_t stream){
-    CUDA_CHECK(cudaMemsetAsync(dst, 0, nrows_x*ncols_y, stream));
-    const int block_num_x = (ncols_y + WARP_SIZE - 1) / WARP_SIZE;
-    const int block_num_y = (nrows_x + WARP_SIZE - 1) / WARP_SIZE;
+    const int block_num_x = (nrows_x + WARP_SIZE - 1) / WARP_SIZE;
+    const int block_num_y = (ncols_y + WARP_SIZE - 1) / WARP_SIZE;
     const dim3 block_nums(block_num_x, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, WARP_SIZE, 1);
     mul_mat_f32<<<block_nums, block_dims, 0, stream>>>(x, y, dst, ncols_x, nrows_x, ncols_y);
