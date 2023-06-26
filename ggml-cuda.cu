@@ -998,25 +998,32 @@ static __global__ void mul_mat_f32(const float * x, const float * y, float * dst
     const int col_y_0 = col_dst_0;
 
     __shared__ float tile_x[WARP_SIZE][WARP_SIZE + 1];
+    __shared__ float tile_y[WARP_SIZE][WARP_SIZE];
     __shared__ float sum[WARP_SIZE][WARP_SIZE];
     for (int j = 0; j < WARP_SIZE; ++j) {
         sum[j][tid_x] = 0.0f;
     }
 
     for (int col_x = 0; col_x < ncols_x; ++col_x) {
+        const int row_y = col_x;
+
         if (col_x % WARP_SIZE == 0) {
             for (int j = 0; j < WARP_SIZE; ++j) {
                 const int row_x_tile = blockIdx.x*blockDim.x + j;
                 const int col_x_tile = col_x + tid_x;
                 tile_x[j][tid_x] = col_x_tile < ncols_x ? x[row_x_tile*ncols_x + col_x_tile] : 0.0f;
             }
-        }
 
-        const int row_y = col_x;
+            for (int i = 0; i < WARP_SIZE; ++i) {
+                const int row_y_tile = row_y + tid_x;
+                const int col_y_tile = col_y_0 + i;
+                tile_y[i][tid_x] = row_y_tile < nrows_y ? y[col_y_tile*nrows_y + row_y_tile] : 0.0f;
+            }
+        }
 
         const float xi = tile_x[tid_x][col_x % WARP_SIZE];
         for (int j = 0; j < WARP_SIZE; ++j) {
-            const float yi = y[(col_y_0 + j)*nrows_y + row_y];
+            const float yi = tile_y[j][row_y % WARP_SIZE];
             sum[j][tid_x] += xi*yi;
         }
     }
