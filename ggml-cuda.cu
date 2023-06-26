@@ -991,8 +991,9 @@ static __global__ void mul_mat_f32(const float * x, const float * y, float * dst
 
     const int tid_x = threadIdx.x;
 
+    const int row_x_0 = blockIdx.x*blockDim.x;
     const int col_dst_0 = blockIdx.y*WARP_SIZE;
-    const int row_dst = blockIdx.x*blockDim.x + tid_x;
+    const int row_dst = row_x_0 + tid_x;
 
     const int row_x = row_dst;
     const int col_y_0 = col_dst_0;
@@ -1004,27 +1005,27 @@ static __global__ void mul_mat_f32(const float * x, const float * y, float * dst
         sum[j][tid_x] = 0.0f;
     }
 
-    for (int col_x = 0; col_x < ncols_x; ++col_x) {
-        const int row_y = col_x;
+    for (int col_x_0 = 0; col_x_0 < ncols_x; col_x_0 += WARP_SIZE) {
+        const int row_y_0 = col_x_0;
 
-        if (col_x % WARP_SIZE == 0) {
-            for (int j = 0; j < WARP_SIZE; ++j) {
-                const int row_x_tile = blockIdx.x*blockDim.x + j;
-                const int col_x_tile = col_x + tid_x;
-                tile_x[j][tid_x] = col_x_tile < ncols_x ? x[row_x_tile*ncols_x + col_x_tile] : 0.0f;
-            }
-
-            for (int i = 0; i < WARP_SIZE; ++i) {
-                const int row_y_tile = row_y + tid_x;
-                const int col_y_tile = col_y_0 + i;
-                tile_y[i][tid_x] = row_y_tile < nrows_y ? y[col_y_tile*nrows_y + row_y_tile] : 0.0f;
-            }
+        for (int j = 0; j < WARP_SIZE; ++j) {
+            const int row_x_tile = row_x_0 + j;
+            const int col_x_tile = col_x_0 + tid_x;
+            tile_x[j][tid_x] = col_x_tile < ncols_x ? x[row_x_tile*ncols_x + col_x_tile] : 0.0f;
         }
 
-        const float xi = tile_x[tid_x][col_x % WARP_SIZE];
-        for (int j = 0; j < WARP_SIZE; ++j) {
-            const float yi = tile_y[j][row_y % WARP_SIZE];
-            sum[j][tid_x] += xi*yi;
+        for (int i = 0; i < WARP_SIZE; ++i) {
+            const int row_y_tile = row_y_0 + tid_x;
+            const int col_y_tile = col_y_0 + i;
+            tile_y[i][tid_x] = row_y_tile < nrows_y ? y[col_y_tile*nrows_y + row_y_tile] : 0.0f;
+        }
+
+        for (int i = 0; i < WARP_SIZE; ++i) {
+            const float xi = tile_x[tid_x][i];
+            for (int j = 0; j < WARP_SIZE; ++j) {
+                const float yi = tile_y[j][i];
+                sum[j][tid_x] += xi*yi;
+            }
         }
     }
 
