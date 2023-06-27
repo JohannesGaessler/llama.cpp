@@ -354,6 +354,31 @@ static __device__ __forceinline__ float dequantize_1_q8_0(const void * vx, const
     return v * d;
 }
 
+static __device__ __forceinline__ float dequantize_1_q6_K(const void * vx, const int i){
+    const block_q6_K * x = (const block_q6_K *) vx;
+    const int ib = i / QK_K;
+
+    const int iy = i % QK_K;
+    const int n = iy / (QK_K/2);
+
+    const float d = x[ib].d;
+
+    const int iql = iy % (QK_K/4) + n * (QK_K/4);
+    const int ql_shift = 4 * ((iy % (QK_K/2)) / (QK_K/4));
+    const int ql = (x[ib].ql[iql] >> ql_shift) & 0xF;
+
+    const int iqh = iy % (QK_K/8) + n * (QK_K/8);
+    const int qh_shift = 2 * ((iy % (QK_K/2)) / (QK_K/8));
+    const int qh = (((x[ib].qh[iqh] >> qh_shift) & 3) << 4);
+
+    const int q = (ql | qh) - 32;
+
+    const int isc = iy / (QK_K/16);
+    const int sc = x[ib].scales[isc];
+
+    return d * sc * q;
+}
+
 static __device__ __forceinline__ void dequantize_2_q4_0(const void * vx, const int ib, const int iqs, dfloat2 & v){
     const block_q4_0 * x = (const block_q4_0 *) vx;
 
@@ -1639,6 +1664,14 @@ static void ggml_dequantize_mul_mat_q8_0_cuda(const void * vx, const float * y, 
     dequantize_mul_mat<dequantize_1_q8_0><<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols_x, nrows_x, ncols_y);
 }
 
+static void ggml_dequantize_mul_mat_q6_K_cuda(const void * vx, const float * y, float * dst, const int ncols_x, const int nrows_x, const int ncols_y, cudaStream_t stream){
+    const int block_num_x = (nrows_x + WARP_SIZE - 1) / WARP_SIZE;
+    const int block_num_y = (ncols_y + WARP_SIZE - 1) / WARP_SIZE;
+    const dim3 block_nums(block_num_x, block_num_y, 1);
+    const dim3 block_dims(WARP_SIZE, 1, 1);
+    dequantize_mul_mat<dequantize_1_q6_K><<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols_x, nrows_x, ncols_y);
+}
+
 static void ggml_mul_mat_p021_f16_f32_cuda(const void * vx, const float * y, float * dst, const int ncols_x, const int nrows_x, const int nchannels_x, cudaStream_t stream) {
     const dim3 block_nums(1, nrows_x, nchannels_x);
     const dim3 block_dims(WARP_SIZE, 1, 1);
@@ -2122,6 +2155,9 @@ inline void ggml_cuda_op_dequantize_mul_mat(
             break;
         case GGML_TYPE_Q8_0:
             ggml_dequantize_mul_mat_q8_0_cuda(src0_ddq_i, src1_ddf_i, dst_ddf_i, ne00, i01_diff, ne11, cudaStream_main);
+            break;
+        case GGML_TYPE_Q6_K:
+            ggml_dequantize_mul_mat_q6_K_cuda(src0_ddq_i, src1_ddf_i, dst_ddf_i, ne00, i01_diff, ne11, cudaStream_main);
             break;
         default:
             GGML_ASSERT(false);
@@ -2673,6 +2709,7 @@ void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_
             ggml_cuda_op(src0, src1, dst, ggml_cuda_op_dequantize_mul_mat_vec, false, false);
         } else {
             bool no_cublas_type_supported = false;
+#ifdef GGML_CUDA_DMM
             switch (src0->type) {
                 case GGML_TYPE_F32:
                 case GGML_TYPE_F16:
@@ -2681,12 +2718,14 @@ void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_
                 case GGML_TYPE_Q5_0:
                 case GGML_TYPE_Q5_1:
                 case GGML_TYPE_Q8_0:
+                case GGML_TYPE_Q6_K:
                     no_cublas_type_supported = true;
                     break;
                 default:
                     no_cublas_type_supported = false;
                     break;
             }
+#endif // GGML_CUDA_DMM
             if (no_cublas_type_supported) {
                 ggml_cuda_op(src0, src1, dst, ggml_cuda_op_dequantize_mul_mat, false, false);
             } else {
