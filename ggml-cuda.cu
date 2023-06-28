@@ -1228,10 +1228,10 @@ static __global__ void dequantize_mul_mat_vec(const void * vx, const dfloat * y,
 
 template <dequantize_1_kernel_t dequantize_kernel>
 static __global__ void dequantize_mul_mat(
-    const void * vx, const float * y, float * dst, const int ncols_x, const int nrows_x, const int ncols_y, const int ncols_dst) {
+    const void * vx, const float * y, float * dst, const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_dst) {
 
     const int nrows_y = ncols_x;
-    const int nrows_dst = nrows_x;
+    const int ncols_dst = ncols_y;
 
     const int tid = threadIdx.x;
 
