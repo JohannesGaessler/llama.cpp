@@ -1232,11 +1232,12 @@ static __global__ void dequantize_mul_mat_vec(const void * vx, const dfloat * y,
     float tmp = 0.0f;
 #endif // GGML_CUDA_DMMV_F16
 
-    for (int i = 0; i < ncols; i += WARP_SIZE*8) {
-        const int col = i + tid*8;
-        const int ib = (row*ncols + col)/qk; // x block index
-        const int iqs = (col%qk)/qr; // x quant index
-        const int iybs = col - col%qk; // y block start index
+    const int ib0 = row*ncols / qk;
+    const int iqs = (tid*8%qk)/qr; // x quant index
+    const int iybs_offset = (tid*8)%qk;
+    for (int col = tid*8; col < ncols; col += WARP_SIZE*8) {
+        const int ib = ib0 + col/qk; // x block index
+        const int iybs = col - iybs_offset; // y block start index
 
         // dequantize
         dfloat2 v;
