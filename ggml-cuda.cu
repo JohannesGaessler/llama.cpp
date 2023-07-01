@@ -1223,9 +1223,7 @@ static __global__ void dequantize_mul_mat_vec(const void * vx, const dfloat * y,
 
     const int tid = threadIdx.x;
 
-    const int iter_stride = 2*GGML_CUDA_DMMV_X;
-    const int vals_per_iter = iter_stride / WARP_SIZE; // num quantized vals per thread and i iter
-    const int y_offset = qr == 1 ? 1 : qk/2;
+    const int y_offset = qk/2;
 
 // partial sum for each thread
 #ifdef GGML_CUDA_DMMV_F16
@@ -1234,51 +1232,43 @@ static __global__ void dequantize_mul_mat_vec(const void * vx, const dfloat * y,
     float tmp = 0.0f;
 #endif // GGML_CUDA_DMMV_F16
 
-    for (int i = 0; i < ncols; i += iter_stride) {
-        const int col = i + vals_per_iter*tid;
+    for (int i = 0; i < ncols; i += WARP_SIZE*2) {
+        const int col = i + tid*2;
         const int ib = (row*ncols + col)/qk; // x block index
         const int iqs = (col%qk)/qr; // x quant index
         const int iybs = col - col%qk; // y block start index
 
-// processing >2 values per i iter is faster for fast GPUs
-#pragma unroll
-        for (int j = 0; j < vals_per_iter; j += 2) {
-            // process 2 vals per j iter
+        // dequantize
+        dfloat2 v;
+        const half * hx  = (const half *) vx;
+        const int  * uix = (const int *) (hx + ncols*nrows/QK4_0);
 
-            // dequantize
-            // for qr = 2 the iqs needs to increase by 1 per j iter because 2 weights per data val
-            dfloat2 v;
-            const half * hx  = (const half *) vx;
-            const int  * uix = (const int *) (hx + ncols*nrows/QK4_0);
+        const dfloat d = hx[ib];
 
-            const dfloat d = hx[ib];
+        const int vui = uix[(ib*QK4_0/2 + iqs) / 4];
 
-            const int iqs_eff = iqs + j/qr;
-            const int vui = uix[(ib*QK4_0/2 + iqs_eff) / 4];
-
-            v.x = (vui >> (8 * (iqs_eff % 4) + 0)) & 0xF;
-            v.y = (vui >> (8 * (iqs_eff % 4) + 4)) & 0xF;
+        v.x = (vui >> (8 * (iqs % 4) + 0)) & 0xF;
+        v.y = (vui >> (8 * (iqs % 4) + 4)) & 0xF;
 
 #ifdef GGML_CUDA_DMMV_F16
-            v = __hsub2(v, {8.0f, 8.0f});
-            v = __hmul2(v, {d, d});
+        v = __hsub2(v, {8.0f, 8.0f});
+        v = __hmul2(v, {d, d});
 #else
-            v.x = (v.x - 8.0f) * d;
-            v.y = (v.y - 8.0f) * d;
+        v.x = (v.x - 8.0f) * d;
+        v.y = (v.y - 8.0f) * d;
 #endif // GGML_CUDA_DMMV_F16
 
-            // matrix multiplication
-            // for qr = 2 the y index needs to increase by 1 per j iter because of y_offset = qk/2
+        // matrix multiplication
+        // for qr = 2 the y index needs to increase by 1 per j iter because of y_offset = qk/2
 #ifdef GGML_CUDA_DMMV_F16
-            tmp += __hmul2(v, {
-                y[iybs + iqs + j/qr + 0],
-                y[iybs + iqs + j/qr + y_offset]
-            });
+        tmp += __hmul2(v, {
+            y[iybs + iqs + 0],
+            y[iybs + iqs + y_offset]
+        });
 #else
-            tmp += v.x * y[iybs + iqs + j/qr + 0];
-            tmp += v.y * y[iybs + iqs + j/qr + y_offset];
+        tmp += v.x * y[iybs + iqs + 0];
+        tmp += v.y * y[iybs + iqs + y_offset];
 #endif // GGML_CUDA_DMMV_F16
-        }
     }
 
     // sum up partial sums and write back result
@@ -1611,6 +1601,7 @@ static void dequantize_row_q6_K_cuda(const void * vx, float * y, const int k, cu
 
 static void dequantize_mul_mat_vec_q4_0_cuda(const void * vx, const dfloat * y, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
     GGML_ASSERT(ncols % GGML_CUDA_DMMV_X == 0);
+    GGML_ASSERT(GGML_CUDA_DMMV_X == WARP_SIZE);
     const int block_num_y = (nrows + GGML_CUDA_DMMV_Y - 1) / GGML_CUDA_DMMV_Y;
     const dim3 block_nums(1, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, GGML_CUDA_DMMV_Y, 1);
