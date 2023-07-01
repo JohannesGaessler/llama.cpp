@@ -1232,8 +1232,8 @@ static __global__ void dequantize_mul_mat_vec(const void * vx, const dfloat * y,
     float tmp = 0.0f;
 #endif // GGML_CUDA_DMMV_F16
 
-    for (int i = 0; i < ncols; i += WARP_SIZE*2) {
-        const int col = i + tid*2;
+    for (int i = 0; i < ncols; i += WARP_SIZE*8) {
+        const int col = i + tid*8;
         const int ib = (row*ncols + col)/qk; // x block index
         const int iqs = (col%qk)/qr; // x quant index
         const int iybs = col - col%qk; // y block start index
@@ -1247,28 +1247,31 @@ static __global__ void dequantize_mul_mat_vec(const void * vx, const dfloat * y,
 
         const int vui = uix[(ib*QK4_0/2 + iqs) / 4];
 
-        v.x = (vui >> (8 * (iqs % 4) + 0)) & 0xF;
-        v.y = (vui >> (8 * (iqs % 4) + 4)) & 0xF;
+#pragma unroll
+        for (int j = 0; j < 4; ++j) {
+            v.x = (vui >> (8 * j + 0)) & 0xF;
+            v.y = (vui >> (8 * j + 4)) & 0xF;
 
 #ifdef GGML_CUDA_DMMV_F16
-        v = __hsub2(v, {8.0f, 8.0f});
-        v = __hmul2(v, {d, d});
+            v = __hsub2(v, {8.0f, 8.0f});
+            v = __hmul2(v, {d, d});
 #else
-        v.x = (v.x - 8.0f) * d;
-        v.y = (v.y - 8.0f) * d;
+            v.x = (v.x - 8.0f) * d;
+            v.y = (v.y - 8.0f) * d;
 #endif // GGML_CUDA_DMMV_F16
 
-        // matrix multiplication
-        // for qr = 2 the y index needs to increase by 1 per j iter because of y_offset = qk/2
+            // matrix multiplication
+            // for qr = 2 the y index needs to increase by 1 per j iter because of y_offset = qk/2
 #ifdef GGML_CUDA_DMMV_F16
-        tmp += __hmul2(v, {
-            y[iybs + iqs + 0],
-            y[iybs + iqs + y_offset]
-        });
+            tmp += __hmul2(v, {
+                y[iybs + iqs + j + 0],
+                y[iybs + iqs + j + y_offset]
+            });
 #else
-        tmp += v.x * y[iybs + iqs + 0];
-        tmp += v.y * y[iybs + iqs + y_offset];
+            tmp += v.x * y[iybs + iqs + j + 0];
+            tmp += v.y * y[iybs + iqs + j + y_offset];
 #endif // GGML_CUDA_DMMV_F16
+        }
     }
 
     // sum up partial sums and write back result
