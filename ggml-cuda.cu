@@ -1248,15 +1248,16 @@ static __global__ void dequantize_mul_mat_vec(const void * vx, const dfloat * y,
             // dequantize
             // for qr = 2 the iqs needs to increase by 1 per j iter because 2 weights per data val
             dfloat2 v;
-            const half    * hx  = (const half *) vx;
-            const uint8_t * uix = (const uint8_t *) (hx + ncols*nrows/QK4_0);
+            const half * hx  = (const half *) vx;
+            const int  * uix = (const int *) (hx + ncols*nrows/QK4_0);
 
             const dfloat d = hx[ib];
 
-            const int vui = uix[ib*QK4_0/2 + iqs + j/qr];
+            const int iqs_eff = iqs + j/qr;
+            const int vui = uix[(ib*QK4_0/2 + iqs_eff) / 4];
 
-            v.x = vui & 0xF;
-            v.y = vui >> 4;
+            v.x = (vui >> (8 * (iqs_eff % 4) + 0)) & 0xF;
+            v.y = (vui >> (8 * (iqs_eff % 4) + 4)) & 0xF;
 
 #ifdef GGML_CUDA_DMMV_F16
             v = __hsub2(v, {8.0f, 8.0f});
