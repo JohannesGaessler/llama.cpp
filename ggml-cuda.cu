@@ -1175,6 +1175,43 @@ static __global__ void dequantize_block(const void * vx, float * y, const int k)
 }
 
 template <int qk, int qr, dequantize_kernel_t dequantize_kernel>
+static __global__ void dequantize_block_test(const void * vx, float * y, const int k) {
+    const int i = blockDim.x*blockIdx.x + 2*threadIdx.x;
+
+    if (i >= k) {
+        return;
+    }
+
+    const int ib = i/qk; // block index
+    const int iqs = (i%qk)/qr; // quant index
+    const int iybs = i - i%qk; // y block start index
+    const int y_offset = qr == 1 ? 1 : qk/2;
+
+    // dequantize
+    dfloat2 v;
+    const half    * hx  = (const half *) vx;
+    const uint8_t * uix = (const uint8_t *) (hx + k/QK4_0);
+
+    const dfloat d = hx[ib];
+
+    const int vui = uix[ib*QK4_0/2 + iqs];
+
+    v.x = vui & 0xF;
+    v.y = vui >> 4;
+
+#ifdef GGML_CUDA_DMMV_F16
+    v = __hsub2(v, {8.0f, 8.0f});
+    v = __hmul2(v, {d, d});
+#else
+    v.x = (v.x - 8.0f) * d;
+    v.y = (v.y - 8.0f) * d;
+#endif // GGML_CUDA_DMMV_F16
+
+    y[iybs + iqs + 0]        = v.x;
+    y[iybs + iqs + y_offset] = v.y;
+}
+
+template <int qk, int qr, dequantize_kernel_t dequantize_kernel>
 static __global__ void dequantize_mul_mat_vec(const void * vx, const dfloat * y, float * dst, const int ncols, const int nrows) {
     // qk = quantized weights per x block
     // qr = number of quantized weights per data value in x block
@@ -1211,7 +1248,23 @@ static __global__ void dequantize_mul_mat_vec(const void * vx, const dfloat * y,
             // dequantize
             // for qr = 2 the iqs needs to increase by 1 per j iter because 2 weights per data val
             dfloat2 v;
-            dequantize_kernel(vx, ib, iqs + j/qr, v);
+            const half    * hx  = (const half *) vx;
+            const uint8_t * uix = (const uint8_t *) (hx + ncols*nrows/QK4_0);
+
+            const dfloat d = hx[ib];
+
+            const int vui = uix[ib*QK4_0/2 + iqs + j/qr];
+
+            v.x = vui & 0xF;
+            v.y = vui >> 4;
+
+#ifdef GGML_CUDA_DMMV_F16
+            v = __hsub2(v, {8.0f, 8.0f});
+            v = __hmul2(v, {d, d});
+#else
+            v.x = (v.x - 8.0f) * d;
+            v.y = (v.y - 8.0f) * d;
+#endif // GGML_CUDA_DMMV_F16
 
             // matrix multiplication
             // for qr = 2 the y index needs to increase by 1 per j iter because of y_offset = qk/2
@@ -1491,7 +1544,7 @@ static void rms_norm_f32_cuda(const float * x, float * dst, const int ncols, con
 
 static void dequantize_row_q4_0_cuda(const void * vx, float * y, const int k, cudaStream_t stream) {
     const int num_blocks = (k + CUDA_DEQUANTIZE_BLOCK_SIZE - 1) / CUDA_DEQUANTIZE_BLOCK_SIZE;
-    dequantize_block<QK4_0, QR4_0, dequantize_q4_0><<<num_blocks, CUDA_DEQUANTIZE_BLOCK_SIZE, 0, stream>>>(vx, y, k);
+    dequantize_block_test<QK4_0, QR4_0, dequantize_q4_0><<<num_blocks, CUDA_DEQUANTIZE_BLOCK_SIZE, 0, stream>>>(vx, y, k);
 }
 
 static void dequantize_row_q4_1_cuda(const void * vx, float * y, const int k, cudaStream_t stream) {
@@ -2796,11 +2849,24 @@ void ggml_cuda_transform_tensor(void * data, struct ggml_tensor * tensor) {
         const size_t offset_split = row_low*nb1;
         const size_t size = ggml_nbytes_split(tensor, nrows_split);
 
-        void * buf;
+        char * buf;
         CUDA_CHECK(cudaMalloc(&buf, size));
-        void * buf_host = (char*)data + offset_split;
+        char * buf_host = (char *) data + offset_split;
 
-        cudaMemcpy(buf, buf_host, size, cudaMemcpyHostToDevice);
+        if (tensor->type == GGML_TYPE_Q4_0) {
+            const size_t nblocks = ggml_nelements(tensor) / QK4_0;
+            GGML_ASSERT(size == nblocks*sizeof(block_q4_0));
+            CUDA_CHECK(cudaMemcpy2D(
+                buf,        sizeof(half), buf_host               , sizeof(block_q4_0),
+                sizeof(half), nblocks, cudaMemcpyHostToDevice));
+            char * buf_quants = buf + nblocks * sizeof(half);
+            const size_t size_quants = QK4_0/2 * sizeof(uint8_t);
+            CUDA_CHECK(cudaMemcpy2D(
+                buf_quants, size_quants,  buf_host + sizeof(half), sizeof(block_q4_0),
+                size_quants,  nblocks, cudaMemcpyHostToDevice));
+        } else {
+            cudaMemcpy(buf, buf_host, size, cudaMemcpyHostToDevice);
+        }
 
         extra->data_device[id] = buf;
     }
