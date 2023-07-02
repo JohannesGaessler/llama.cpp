@@ -115,6 +115,8 @@ typedef struct {
 } block_q8_0;
 static_assert(sizeof(block_q8_0) == sizeof(ggml_fp16_t) + QK8_0, "wrong q8_0 block size/padding");
 
+typedef float (*vec_dot_q_cuda_t)(const void * vbq, const block_q8_0 * bq8_0, const int iqs);
+
 //================================= k-quants
 
 #ifdef GGML_QKK_64
@@ -1186,6 +1188,27 @@ static __global__ void quantize_q8_0(const float * x, void * vy, const int k) {
     y[ib].d = d;
 }
 
+static __device__ float vec_dot_q4_0_q8_0(const void * vbq, const block_q8_0 * bq8_0, const int iqs) {
+    const block_q8_0 * bq4_0 = (const block_q8_0 *) vbq;
+
+    int vi;
+    int ui0, ui1;
+    memcpy(&vi,  &bq4_0->qs[sizeof(int) * (iqs + 0)], sizeof(int));
+    memcpy(&ui0, &bq8_0->qs[sizeof(int) * (iqs + 0)], sizeof(int));
+    memcpy(&ui1, &bq8_0->qs[sizeof(int) * (iqs + 4)], sizeof(int));
+
+    const float d = bq4_0->d * bq8_0->d;
+
+    const int vi0 = __vsub4((vi >> 0) & 0x0F0F0F0F, 0x08080808);
+    const int vi1 = __vsub4((vi >> 4) & 0x0F0F0F0F, 0x08080808);
+
+    const int sumi0 = __dp4a(vi0, ui0, 0);
+    const int sumi1 = __dp4a(vi1, ui1, 0);
+
+    return (sumi0 + sumi1)*d;
+
+}
+
 template <int qk, int qr, dequantize_kernel_t dequantize_kernel>
 static __global__ void dequantize_block(const void * vx, float * y, const int k) {
     const int i = blockDim.x*blockIdx.x + 2*threadIdx.x;
@@ -1207,8 +1230,8 @@ static __global__ void dequantize_block(const void * vx, float * y, const int k)
     y[iybs + iqs + y_offset] = v.y;
 }
 
-template <int qk, int qr, dequantize_kernel_t dequantize_kernel>
-static __global__ void vec_dot_q(const void * vx, const void * vy, float * dst, const int ncols, const int nrows) {
+template <int qk, typename block_q_t, vec_dot_q_cuda_t vec_dot_q_cuda>
+static __global__ void mul_mat_vec_q(const void * vx, const void * vy, float * dst, const int ncols, const int nrows) {
     const int row = blockIdx.y*blockDim.y + threadIdx.y;
 
     if (row >= nrows) {
@@ -1224,33 +1247,17 @@ static __global__ void vec_dot_q(const void * vx, const void * vy, float * dst, 
 // partial sum for each thread
     float tmp = 0.0f;
 
-    const block_q4_0 * x = (const block_q4_0 *) vx;
-    const block_q8_0 * y = (block_q8_0 *) vy;
+    const block_q_t  * x = (const block_q_t  *) vx;
+    const block_q8_0 * y = (const block_q8_0 *) vy;
 
     for (int i = 0; i < blocks_per_row; i += blocks_per_warp) {
         const int ibx = row*blocks_per_row + i + tid/ints_per_block; // x block index
 
         const int iby = i + tid/ints_per_block;
 
-        const int iqsx  = tid % ints_per_block;
-        const int iqsy0 = tid % ints_per_block + 0;
-        const int iqsy1 = tid % ints_per_block + ints_per_block;
+        const int iqs  = tid % ints_per_block;
 
-        int vi;
-        int ui0, ui1;
-        memcpy(&vi,  &x[ibx].qs[sizeof(int) * iqsx],  sizeof(int));
-        memcpy(&ui0, &y[iby].qs[sizeof(int) * iqsy0], sizeof(int));
-        memcpy(&ui1, &y[iby].qs[sizeof(int) * iqsy1], sizeof(int));
-
-        const dfloat d = x[ibx].d * y[iby].d;
-
-        const int vi0 = __vsub4((vi >> 0) & 0x0F0F0F0F, 0x08080808);
-        const int vi1 = __vsub4((vi >> 4) & 0x0F0F0F0F, 0x08080808);
-
-        const int sumi0 = __dp4a(vi0, ui0, 0);
-        const int sumi1 = __dp4a(vi1, ui1, 0);
-
-        tmp += (sumi0 + sumi1)*d;
+        tmp += vec_dot_q_cuda(&x[ibx], &y[iby], iqs);
     }
 
     // sum up partial sums and write back result
@@ -1743,7 +1750,7 @@ static void mul_mat_vec_q4_0_q8_0_cuda(const void * vx, const void * vy, float *
     const int block_num_y = (nrows + GGML_CUDA_DMMV_Y - 1) / GGML_CUDA_DMMV_Y;
     const dim3 block_nums(1, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, GGML_CUDA_DMMV_Y, 1);
-    vec_dot_q<QK4_0, QR4_0, dequantize_q4_0>
+    mul_mat_vec_q<QK4_0, block_q4_0, vec_dot_q4_0_q8_0>
         <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows);
 }
 
