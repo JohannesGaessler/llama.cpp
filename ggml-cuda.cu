@@ -1189,7 +1189,7 @@ static __global__ void quantize_q8_0(const float * x, void * vy, const int k) {
 }
 
 static __device__ float vec_dot_q4_0_q8_0(const void * vbq, const block_q8_0 * bq8_0, const int iqs) {
-    const block_q8_0 * bq4_0 = (const block_q8_0 *) vbq;
+    const block_q4_0 * bq4_0 = (const block_q4_0 *) vbq;
 
     int vi;
     int ui0, ui1;
@@ -1206,6 +1206,31 @@ static __device__ float vec_dot_q4_0_q8_0(const void * vbq, const block_q8_0 * b
     const int sumi1 = __dp4a(vi1, ui1, 0);
 
     return (sumi0 + sumi1)*d;
+
+}
+
+static __device__ float vec_dot_q4_1_q8_0(const void * vbq, const block_q8_0 * bq8_0, const int iqs) {
+    const block_q4_1 * bq4_1 = (const block_q4_1 *) vbq;
+
+    int vi = *((int *) &bq4_1->qs[sizeof(int) * (iqs + 0)]);
+    int ui0, ui1;
+    memcpy(&ui0, &bq8_0->qs[sizeof(int) * (iqs + 0)], sizeof(int));
+    memcpy(&ui1, &bq8_0->qs[sizeof(int) * (iqs + 4)], sizeof(int));
+
+    const float d4_1 = bq4_1->d;
+    const float m    = bq4_1->m;
+    const float d8_0 = bq8_0->d;
+
+    const int vi0 = (vi >> 0) & 0x0F0F0F0F;
+    const int vi1 = (vi >> 4) & 0x0F0F0F0F;
+
+    const int sumi0 = __dp4a(vi0, ui0, 0);
+    const int sumi1 = __dp4a(vi1, ui1, 0);
+
+    const int sumi2 = __dp4a(0x01010101, ui0, 0);
+    const int sumi3 = __dp4a(0x01010101, ui1, 0);
+
+    return (sumi0 + sumi1)*d4_1*d8_0 + (sumi2 + sumi3)*m*d8_0;
 
 }
 
@@ -1754,6 +1779,15 @@ static void mul_mat_vec_q4_0_q8_0_cuda(const void * vx, const void * vy, float *
         <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows);
 }
 
+static void mul_mat_vec_q4_1_q8_0_cuda(const void * vx, const void * vy, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
+    GGML_ASSERT(ncols % GGML_CUDA_DMMV_X == 0);
+    const int block_num_y = (nrows + GGML_CUDA_DMMV_Y - 1) / GGML_CUDA_DMMV_Y;
+    const dim3 block_nums(1, block_num_y, 1);
+    const dim3 block_dims(WARP_SIZE, GGML_CUDA_DMMV_Y, 1);
+    mul_mat_vec_q<QK4_0, block_q4_1, vec_dot_q4_1_q8_0>
+        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows);
+}
+
 static void convert_fp16_to_fp32_cuda(const void * vx, float * y, const int k, cudaStream_t stream) {
     const int num_blocks = (k + CUDA_DEQUANTIZE_BLOCK_SIZE - 1) / CUDA_DEQUANTIZE_BLOCK_SIZE;
     dequantize_block<1, 1, convert_f16><<<num_blocks, CUDA_DEQUANTIZE_BLOCK_SIZE, 0, stream>>>(vx, y, k);
@@ -2199,15 +2233,9 @@ inline void ggml_cuda_op_dequantize_mul_mat_vec(
     dfloat * src1_dfloat = src1_ddf_i; // dfloat == float, no conversion
 #endif // GGML_CUDA_DMMV_F16
 
-    size_t as;
-    void * src1_q8_0;
     switch (src0->type) {
         case GGML_TYPE_Q4_0:
-            GGML_ASSERT(ne00 % QK8_0 == 0);
-            src1_q8_0 = ggml_cuda_pool_malloc(ne00*sizeof(block_q8_0)/QK8_0, &as);
-            quantize_row_q8_0_cuda(src1_ddf_i, src1_q8_0, ne00, cudaStream_main);
-            mul_mat_vec_q4_0_q8_0_cuda(src0_ddq_i, src1_q8_0, dst_ddf_i, ne00, nrows, cudaStream_main);
-            ggml_cuda_pool_free(src1_q8_0, as);
+            dequantize_mul_mat_vec_q4_0_cuda(src0_ddq_i, src1_dfloat, dst_ddf_i, ne00, nrows, cudaStream_main);
             break;
         case GGML_TYPE_Q4_1:
             dequantize_mul_mat_vec_q4_1_cuda(src0_ddq_i, src1_dfloat, dst_ddf_i, ne00, nrows, cudaStream_main);
@@ -2250,6 +2278,46 @@ inline void ggml_cuda_op_dequantize_mul_mat_vec(
         ggml_cuda_pool_free(src1_dfloat, ash);
     }
 #endif // GGML_CUDA_DMMV_F16
+
+    (void) src1;
+    (void) dst;
+    (void) src0_ddf_i;
+    (void) i02;
+    (void) i1;
+}
+
+inline void ggml_cuda_op_mul_mat_vec_q(
+    const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
+    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
+    cudaStream_t & cudaStream_main){
+
+    GGML_ASSERT(src0_ddq_i != nullptr);
+    GGML_ASSERT(src1_ddf_i != nullptr);
+    GGML_ASSERT(dst_ddf_i != nullptr);
+
+    const int64_t ne00 = src0->ne[0];
+    const int64_t nrows = i01_high - i01_low;
+
+    GGML_ASSERT(ne00 % QK8_0 == 0);
+
+    size_t as;
+    void * src1_q8_0 = ggml_cuda_pool_malloc(ne00*sizeof(block_q8_0)/QK8_0, &as);
+    quantize_row_q8_0_cuda(src1_ddf_i, src1_q8_0, ne00, cudaStream_main);
+
+    switch (src0->type) {
+        case GGML_TYPE_Q4_0:
+            mul_mat_vec_q4_0_q8_0_cuda(src0_ddq_i, src1_q8_0, dst_ddf_i, ne00, nrows, cudaStream_main);
+            break;
+        case GGML_TYPE_Q4_1:
+            mul_mat_vec_q4_1_q8_0_cuda(src0_ddq_i, src1_q8_0, dst_ddf_i, ne00, nrows, cudaStream_main);
+            break;
+        default:
+            GGML_ASSERT(false);
+            break;
+    }
+    CUDA_CHECK(cudaGetLastError());
+
+    ggml_cuda_pool_free(src1_q8_0, as);
 
     (void) src1;
     (void) dst;
@@ -2798,7 +2866,13 @@ void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_
         ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, true, false);
     } else if (ggml_is_quantized(src0->type) || src0->type == GGML_TYPE_F16) {
         if (src1->ne[1] == 1 && src0->ne[0] % GGML_CUDA_DMMV_X == 0 && src0->ne[1] % GGML_CUDA_DMMV_Y == 0) {
-            ggml_cuda_op(src0, src1, dst, ggml_cuda_op_dequantize_mul_mat_vec, false, false);
+            bool use_mul_mat_vec_q = false;
+            use_mul_mat_vec_q = src0->type == GGML_TYPE_Q4_0 || src0->type == GGML_TYPE_Q4_1;
+            if (use_mul_mat_vec_q) {
+                ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_vec_q, false, false);
+            } else {
+                ggml_cuda_op(src0, src1, dst, ggml_cuda_op_dequantize_mul_mat_vec, false, false);
+            }
         } else {
             ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, true, false);
         }
