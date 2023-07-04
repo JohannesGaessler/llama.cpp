@@ -1220,13 +1220,11 @@ static __device__ __forceinline__ float vec_dot_q4_0_q8_1(const void * vbq, cons
     // sumi     = __dp4a(vi1, ui1, sumi);
     int sumi = 0;
 
-#pragma unroll
     for (int i = 0; i < 32; i += 8) {
         const int8_t u8 = ((ui0 >> i) & 0xFF);
         sumi += (((vi >> (i + 0)) & 0xF) - 8) * u8;
     }
 
-#pragma unroll
     for (int i = 0; i < 32; i += 8) {
         const int8_t u8 = ((ui1 >> i) & 0xFF);
         sumi += (((vi >> (i + 4)) & 0xF) - 8) * u8;
