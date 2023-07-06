@@ -1413,39 +1413,47 @@ static __global__ void dequantize_mul_mat_vec_test(const void * vx, const dfloat
         return;
     }
 
-    const int tid = threadIdx.x;
-
-    const int iter_stride = 2*WARP_SIZE;
-    const int y_offset = qr == 1 ? 1 : qk/2;
+    const int iter_stride = 8*WARP_SIZE;
 
 // partial sum for each thread
     float tmp = 0.0f;
 
-    for (int i = 0; i < ncols; i += iter_stride) {
-        const int col = i + 2*tid;
-        const int ib = (row*ncols + col)/qk; // x block index
-        const int iqs = (col%qk)/qr; // x quant index
-        const int iybs = col - col%qk; // y block start index
+    __shared__ float xf[8][WARP_SIZE + 1];
 
-        // dequantize
-        // for qr = 2 the iqs needs to increase by 1 per j iter because 2 weights per data val
-        dfloat2 v;
+    for (int i = 0; i < ncols; i += iter_stride) {
+        const int col = i + 8*threadIdx.x;
+        const int ib = (row*ncols + col)/QK4_0; // x block index
+        const int iqs = threadIdx.x % 4; // x quant index
+        const int xfy = threadIdx.x / 4;
+
         const block_q4_0 * x = (const block_q4_0 *) vx;
 
-        const dfloat d = x[ib].d;
+        const float d = x[ib].d;
 
-        const int vui = x[ib].qs[iqs];
+        int vui;
+        memcpy(&vui, &x[ib].qs[4*iqs], sizeof(int));
 
-        v.x = vui & 0xF;
-        v.y = vui >> 4;
+        xf[xfy][4 * iqs +  0] = (((vui >>  0) & 0xF) - 8) * d;
+        xf[xfy][4 * iqs +  1] = (((vui >>  8) & 0xF) - 8) * d;
+        xf[xfy][4 * iqs +  2] = (((vui >> 16) & 0xF) - 8) * d;
+        xf[xfy][4 * iqs +  3] = (((vui >> 24) & 0xF) - 8) * d;
+        xf[xfy][4 * iqs + 16] = (((vui >>  4) & 0xF) - 8) * d;
+        xf[xfy][4 * iqs + 17] = (((vui >> 12) & 0xF) - 8) * d;
+        xf[xfy][4 * iqs + 18] = (((vui >> 20) & 0xF) - 8) * d;
+        xf[xfy][4 * iqs + 19] = (((vui >> 28) & 0xF) - 8) * d;
 
-        v.x = (v.x - 8.0f) * d;
-        v.y = (v.y - 8.0f) * d;
+        // xf[xfy][4 * iqs +  0] = (x[ib].qs[4 * iqs + 0] & 0xF) * d;
+        // xf[xfy][4 * iqs +  1] = (x[ib].qs[4 * iqs + 1] & 0xF) * d;
+        // xf[xfy][4 * iqs +  2] = (x[ib].qs[4 * iqs + 2] & 0xF) * d;
+        // xf[xfy][4 * iqs +  3] = (x[ib].qs[4 * iqs + 3] & 0xF) * d;
+        // xf[xfy][4 * iqs + 16] = (x[ib].qs[4 * iqs + 0] >>  4) * d;
+        // xf[xfy][4 * iqs + 17] = (x[ib].qs[4 * iqs + 1] >>  4) * d;
+        // xf[xfy][4 * iqs + 18] = (x[ib].qs[4 * iqs + 2] >>  4) * d;
+        // xf[xfy][4 * iqs + 19] = (x[ib].qs[4 * iqs + 3] >>  4) * d;
 
-        // matrix multiplication
-        // for qr = 2 the y index needs to increase by 1 per j iter because of y_offset = qk/2
-        tmp += v.x * y[iybs + iqs + 0];
-        tmp += v.y * y[iybs + iqs + y_offset];
+        for (int j = 0; j < 8; ++j) {
+            tmp += xf[j][threadIdx.x] * y[i + j*WARP_SIZE + threadIdx.x];
+        }
     }
 
     // sum up partial sums and write back result
@@ -1454,7 +1462,7 @@ static __global__ void dequantize_mul_mat_vec_test(const void * vx, const dfloat
         tmp += __shfl_xor_sync(0xffffffff, tmp, mask, 32);
     }
 
-    if (tid == 0) {
+    if (threadIdx.x == 0) {
         dst[row] = tmp;
     }
 }
