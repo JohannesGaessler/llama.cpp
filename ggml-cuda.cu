@@ -1404,6 +1404,62 @@ static __global__ void mul_mat_vec_q(const void * vx, const void * vy, float * d
 }
 
 template <int qk, int qr, dequantize_kernel_t dequantize_kernel>
+static __global__ void dequantize_mul_mat_vec_test(const void * vx, const dfloat * y, float * dst, const int ncols, const int nrows) {
+    // qk = quantized weights per x block
+    // qr = number of quantized weights per data value in x block
+    const int row = blockIdx.y*blockDim.y + threadIdx.y;
+
+    if (row >= nrows) {
+        return;
+    }
+
+    const int tid = threadIdx.x;
+
+    const int iter_stride = 2*WARP_SIZE;
+    const int y_offset = qr == 1 ? 1 : qk/2;
+
+// partial sum for each thread
+    float tmp = 0.0f;
+
+    for (int i = 0; i < ncols; i += iter_stride) {
+        const int col = i + 2*tid;
+        const int ib = (row*ncols + col)/qk; // x block index
+        const int iqs = (col%qk)/qr; // x quant index
+        const int iybs = col - col%qk; // y block start index
+
+        // dequantize
+        // for qr = 2 the iqs needs to increase by 1 per j iter because 2 weights per data val
+        dfloat2 v;
+        const block_q4_0 * x = (const block_q4_0 *) vx;
+
+        const dfloat d = x[ib].d;
+
+        const int vui = x[ib].qs[iqs];
+
+        v.x = vui & 0xF;
+        v.y = vui >> 4;
+
+        v.x = (v.x - 8.0f) * d;
+        v.y = (v.y - 8.0f) * d;
+
+        // matrix multiplication
+        // for qr = 2 the y index needs to increase by 1 per j iter because of y_offset = qk/2
+        tmp += v.x * y[iybs + iqs + 0];
+        tmp += v.y * y[iybs + iqs + y_offset];
+    }
+
+    // sum up partial sums and write back result
+#pragma unroll
+    for (int mask = 16; mask > 0; mask >>= 1) {
+        tmp += __shfl_xor_sync(0xffffffff, tmp, mask, 32);
+    }
+
+    if (tid == 0) {
+        dst[row] = tmp;
+    }
+}
+
+template <int qk, int qr, dequantize_kernel_t dequantize_kernel>
 static __global__ void dequantize_mul_mat_vec(const void * vx, const dfloat * y, float * dst, const int ncols, const int nrows) {
     // qk = quantized weights per x block
     // qr = number of quantized weights per data value in x block
@@ -1790,7 +1846,7 @@ static void dequantize_mul_mat_vec_q4_0_cuda(const void * vx, const dfloat * y, 
     const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
     const dim3 block_nums(1, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-    dequantize_mul_mat_vec<QK4_0, QR4_0, dequantize_q4_0>
+    dequantize_mul_mat_vec_test<QK4_0, QR4_0, dequantize_q4_0>
         <<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols, nrows);
 }
 
