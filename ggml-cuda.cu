@@ -1389,7 +1389,24 @@ static __global__ void mul_mat_vec_q(const void * vx, const void * vy, float * d
 
         const int iqs  = threadIdx.x % qi; // x block quant index when casting the quants to int
 
-        tmp += vec_dot_q_cuda(&x[ibx], &y[iby], iqs);
+        const block_q4_0 * bq4_0 = (const block_q4_0 *) &x[ibx];
+
+        int vi;
+        memcpy(&vi,  &bq4_0->qs[sizeof(int) * (iqs + 0)], sizeof(int));
+        const int ui0 = *((int *) &y[iby].qs[sizeof(int) * (iqs + 0)]);
+        const int ui1 = *((int *) &y[iby].qs[sizeof(int) * (iqs + QI4_0)]);
+
+        const float d = __half2float(bq4_0->d) * __half2float(y[iby].d);
+
+        // subtract 8 from each quantized value
+        const int vi0 = __vsub4((vi >> 0) & 0x0F0F0F0F, 0x08080808);
+        const int vi1 = __vsub4((vi >> 4) & 0x0F0F0F0F, 0x08080808);
+
+        // SIMD dot product of quantized values
+        int sumi = __dp4a(vi0, ui0, 0);
+        sumi     = __dp4a(vi1, ui1, sumi);
+
+        tmp += sumi*d;
     }
 
     // sum up partial sums and write back result
