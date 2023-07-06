@@ -1374,7 +1374,6 @@ static __global__ void mul_mat_vec_q(const void * vx, const void * vy, float * d
     }
 
     const int blocks_per_row = ncols / qk;
-    const int blocks_per_warp = WARP_SIZE / qi;
 
 // partial sum for each thread
     float tmp = 0.0f;
@@ -1382,31 +1381,21 @@ static __global__ void mul_mat_vec_q(const void * vx, const void * vy, float * d
     const block_q_t  * x = (const block_q_t  *) vx;
     const block_q8_1 * y = (const block_q8_1 *) vy;
 
-    for (int i = 0; i < blocks_per_row; i += blocks_per_warp) {
-        const int ibx = row*blocks_per_row + i + threadIdx.x / qi; // x block index
+    for (int i = 0; i < blocks_per_row; i += 2) {
+        const int ibx = row*blocks_per_row + i + threadIdx.x / 16; // x block index
 
-        const int iby = i + threadIdx.x / qi; // y block index
+        const int iby = i + threadIdx.x / 16; // y block index
 
-        const int iqs  = threadIdx.x % qi; // x block quant index when casting the quants to int
+        const int iqs  = threadIdx.x % 16; // x block quant index when casting the quants to int
 
-        const block_q4_0 * bq4_0 = (const block_q4_0 *) &x[ibx];
+        const float d = __half2float(x[ibx].d) * __half2float(y[iby].d);
 
-        int vi;
-        memcpy(&vi,  &bq4_0->qs[sizeof(int) * (iqs + 0)], sizeof(int));
-        const int ui0 = *((int *) &y[iby].qs[sizeof(int) * (iqs + 0)]);
-        const int ui1 = *((int *) &y[iby].qs[sizeof(int) * (iqs + QI4_0)]);
+        const int vi  = x[ibx].qs[iqs];
+        const int ui0 = y[iby].qs[iqs +  0];
+        const int ui1 = y[iby].qs[iqs + 16];
 
-        const float d = __half2float(bq4_0->d) * __half2float(y[iby].d);
-
-        // subtract 8 from each quantized value
-        const int vi0 = __vsub4((vi >> 0) & 0x0F0F0F0F, 0x08080808);
-        const int vi1 = __vsub4((vi >> 4) & 0x0F0F0F0F, 0x08080808);
-
-        // SIMD dot product of quantized values
-        int sumi = __dp4a(vi0, ui0, 0);
-        sumi     = __dp4a(vi1, ui1, sumi);
-
-        tmp += sumi*d;
+        tmp += ((vi & 0xF) - 8) * ui0 * d;
+        tmp += ((vi >>  4) - 8) * ui1 * d;
     }
 
     // sum up partial sums and write back result
