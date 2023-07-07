@@ -81,6 +81,16 @@ typedef struct {
 } block_q4_0;
 static_assert(sizeof(block_q4_0) == sizeof(ggml_fp16_t) + QK4_0 / 2, "wrong q4_0 block size/padding");
 
+#define QK4_0_BIG 64
+#define QR4_0_BIG 2
+#define QI4_0_BIG 8
+typedef struct {
+    half    d[2];              // delta
+    uint8_t qs[QK4_0_BIG/2];  // nibbles / quants
+} block_q4_0_big;
+static_assert(sizeof(block_q4_0_big) == 2*sizeof(block_q4_0), "wrong q4_0_aligned block size/padding");
+static_assert(sizeof(block_q4_0_big) % 4 == 0, "wrong q4_0_aligned block size/padding");
+
 #define QK4_1 32
 #define QR4_1 2
 #define QI4_1 4
@@ -238,6 +248,27 @@ struct ggml_tensor_extra_gpu {
     cudaEvent_t events[GGML_CUDA_MAX_DEVICES]; // events for synchronizing multiple GPUs
 };
 
+static __global__ void transform_big_q4_0(void * vx) {
+    block_q4_0     *  bx = (block_q4_0 *) vx;
+    block_q4_0_big * bbx = (block_q4_0_big *) vx;
+
+    const int i = blockIdx.x*(QK4_0_BIG/2) + threadIdx.x;
+    const int ib = i / (QK4_0/2);
+
+    half d = bx[ib].d;
+    uint8_t qsi = bx[ib].qs[i % (QK4_0/2)];
+
+    __syncthreads();
+
+    bbx[blockIdx.x].qs[threadIdx.x] = qsi;
+
+    if (threadIdx.x % (QK4_0/2) != 0) {
+        return;
+    }
+
+    bbx[blockIdx.x].d[threadIdx.x/(QK4_0/2)] = d;
+}
+
 static __global__ void add_f32(const float * x, const float * y, float * dst, const int k) {
     const int i = blockDim.x*blockIdx.x + threadIdx.x;
 
@@ -309,6 +340,25 @@ static __device__ __forceinline__ void dequantize_q4_0(const void * vx, const in
     const dfloat d = x[ib].d;
 
     const int vui = x[ib].qs[iqs];
+
+    v.x = vui & 0xF;
+    v.y = vui >> 4;
+
+#ifdef GGML_CUDA_DMMV_F16
+    v = __hsub2(v, {8.0f, 8.0f});
+    v = __hmul2(v, {d, d});
+#else
+    v.x = (v.x - 8.0f) * d;
+    v.y = (v.y - 8.0f) * d;
+#endif // GGML_CUDA_DMMV_F16
+}
+
+static __device__ __forceinline__ void dequantize_q4_0_big(const void * vx, const int ib, const int iqs, dfloat2 & v){
+    const block_q4_0_big * x = (const block_q4_0_big *) vx;
+
+    const dfloat d = x[ib / (QK4_0_BIG/QK4_0)].d[ib % (QK4_0_BIG/QK4_0)];
+
+    const int vui = x[ib / (QK4_0_BIG/QK4_0)].qs[iqs + (QK4_0/2) * (ib % (QK4_0_BIG/QK4_0))];
 
     v.x = vui & 0xF;
     v.y = vui >> 4;
@@ -1690,6 +1740,10 @@ static __global__ void scale_f32(const float * x, float * dst, const float scale
     dst[i] = scale * x[i];
 }
 
+static void transform_big_q4_0_cuda(void * vx, const int k, cudaStream_t stream) {
+    transform_big_q4_0<<<k/QK4_0_BIG, QK4_0_BIG/2, 0, stream>>>(vx);
+}
+
 static void add_f32_cuda(const float * x, const float * y, float * dst, const int k, cudaStream_t stream) {
     const int num_blocks = (k + CUDA_ADD_BLOCK_SIZE - 1) / CUDA_ADD_BLOCK_SIZE;
     add_f32<<<num_blocks, CUDA_ADD_BLOCK_SIZE, 0, stream>>>(x, y, dst, k);
@@ -1724,6 +1778,11 @@ static void quantize_row_q8_1_cuda(const float * x, void * vy, const int k, cuda
 static void dequantize_row_q4_0_cuda(const void * vx, float * y, const int k, cudaStream_t stream) {
     const int num_blocks = (k + CUDA_DEQUANTIZE_BLOCK_SIZE - 1) / CUDA_DEQUANTIZE_BLOCK_SIZE;
     dequantize_block<QK4_0, QR4_0, dequantize_q4_0><<<num_blocks, CUDA_DEQUANTIZE_BLOCK_SIZE, 0, stream>>>(vx, y, k);
+}
+
+static void dequantize_row_q4_0_big_cuda(const void * vx, float * y, const int k, cudaStream_t stream) {
+    const int num_blocks = (k + CUDA_DEQUANTIZE_BLOCK_SIZE - 1) / CUDA_DEQUANTIZE_BLOCK_SIZE;
+    dequantize_block<QK4_0, QR4_0, dequantize_q4_0_big><<<num_blocks, CUDA_DEQUANTIZE_BLOCK_SIZE, 0, stream>>>(vx, y, k);
 }
 
 static void dequantize_row_q4_1_cuda(const void * vx, float * y, const int k, cudaStream_t stream) {
@@ -1936,7 +1995,8 @@ static void convert_mul_mat_vec_f16_cuda(const void * vx, const dfloat * y, floa
 static to_fp32_cuda_t ggml_get_to_fp32_cuda(ggml_type type) {
     switch (type) {
         case GGML_TYPE_Q4_0:
-            return dequantize_row_q4_0_cuda;
+            // return dequantize_row_q4_0_cuda;
+            return dequantize_row_q4_0_big_cuda;
         case GGML_TYPE_Q4_1:
             return dequantize_row_q4_1_cuda;
         case GGML_TYPE_Q5_0:
@@ -3024,7 +3084,7 @@ void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_
     }else if (src0->type == GGML_TYPE_F32) {
         ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, true, false);
     } else if (ggml_is_quantized(src0->type) || src0->type == GGML_TYPE_F16) {
-        if (src1->ne[1] == 1 && src0->ne[0] % GGML_CUDA_DMMV_X == 0) {
+        if (false && src1->ne[1] == 1 && src0->ne[0] % GGML_CUDA_DMMV_X == 0) {
             ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_vec, false, false);
         } else {
             ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, true, false);
@@ -3146,6 +3206,12 @@ void ggml_cuda_transform_tensor(void * data, struct ggml_tensor * tensor) {
         void * buf_host = (char*)data + offset_split;
 
         cudaMemcpy(buf, buf_host, size, cudaMemcpyHostToDevice);
+        if (tensor->type == GGML_TYPE_Q4_0) {
+            const int64_t nelements = ggml_nelements(tensor);
+            GGML_ASSERT(nelements % QK4_0_BIG == 0);
+            transform_big_q4_0_cuda(buf, nelements, g_cudaStreams_main[id]);
+            CUDA_CHECK(cudaGetLastError());
+        }
 
         extra->data_device[id] = buf;
 
