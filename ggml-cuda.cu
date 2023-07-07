@@ -2360,7 +2360,7 @@ inline void ggml_cuda_op_mul_mat_vec(
     // The integer intrinsics used in mul_mat_vec_q are available with compute capability 6.
     // However, they have bad performance with Pascal cards.
     // Therefore, in a multi GPU setting decide at runtime which GPUs should use mul_mat_vec_q.
-    const bool use_mul_mat_vec_q = g_compute_capabilities[id] >= 700 && mul_mat_vec_q_implemented;
+    const bool use_mul_mat_vec_q = g_compute_capabilities[id] >= 600 && mul_mat_vec_q_implemented;
 #endif
 
     if (use_mul_mat_vec_q) {
