@@ -1413,13 +1413,14 @@ static __global__ void dequantize_mul_mat_vec_test(const void * vx, const dfloat
         return;
     }
 
-    const int tid = threadIdx.x;
+    const int tid = blockIdx.x*blockDim.x + threadIdx.x;
 
-    const int iter_stride = 2*WARP_SIZE;
+    const int iter_stride = 2*GGML_CUDA_DMMV_X;
     const int y_offset = qr == 1 ? 1 : qk/2;
 
 // partial sum for each thread
     float tmp = 0.0f;
+    __shared__ float tmp_other[GGML_CUDA_DMMV_X/WARP_SIZE - 1];
 
     for (int i = 0; i < ncols; i += iter_stride) {
         const int col = i + 2*tid;
@@ -1454,7 +1455,19 @@ static __global__ void dequantize_mul_mat_vec_test(const void * vx, const dfloat
         tmp += __shfl_xor_sync(0xffffffff, tmp, mask, 32);
     }
 
-    if (tid == 0) {
+    if (tid != 0) {
+        return;
+    }
+
+    const int wid = tid / WARP_SIZE;
+    if (wid != 0) {
+        tmp_other[wid - 1] = tmp;
+    }
+    __syncthreads();
+    if (wid == 0) {
+        for (int i = 0; i < GGML_CUDA_DMMV_X/WARP_SIZE - 1; ++i) {
+            tmp += tmp_other[i];
+        }
         dst[row] = tmp;
     }
 }
@@ -1845,7 +1858,7 @@ static void dequantize_mul_mat_vec_q4_0_cuda(const void * vx, const dfloat * y, 
     GGML_ASSERT(ncols % GGML_CUDA_DMMV_X == 0);
     const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
     const dim3 block_nums(1, block_num_y, 1);
-    const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
+    const dim3 block_dims(GGML_CUDA_DMMV_X, GGML_CUDA_MMV_Y, 1);
     dequantize_mul_mat_vec_test<QK4_0, QR4_0, dequantize_q4_0>
         <<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols, nrows);
 }
