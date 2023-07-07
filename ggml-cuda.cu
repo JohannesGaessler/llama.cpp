@@ -1304,6 +1304,32 @@ static __device__ __forceinline__ float vec_dot_q4_0_q8_1(const void * vbq, cons
 #endif // __CUDA_ARCH__ >= 600
 }
 
+static __device__ __forceinline__ float vec_dot_q4_0_big_q8_1(const void * vbq, const block_q8_1 * bq8_1, const int iqs) {
+#if __CUDA_ARCH__ >= 600 // lowest compute capability for integer intrinsics
+    const block_q4_0_big * bq4_0 = (const block_q4_0_big *) vbq;
+
+    const int vi  = *((int *) &bq4_0->qs[sizeof(int) * (iqs + 0)]);
+    const int ui0 = *((int *) &bq8_1->qs[sizeof(int) * (iqs%QI4_0 + 0)]);
+    const int ui1 = *((int *) &bq8_1->qs[sizeof(int) * (iqs%QI4_0 + QI4_0)]);
+
+    const float d4 = bq4_0->d[iqs/QI4_0];
+    const float d8 = bq8_1->d;
+    const float s = bq8_1->s;
+
+    // subtract 8 from each quantized value
+    const int vi0 = (vi >> 0) & 0x0F0F0F0F;
+    const int vi1 = (vi >> 4) & 0x0F0F0F0F;
+
+    // SIMD dot product of quantized values
+    int sumi = __dp4a(vi0, ui0, 0);
+    sumi     = __dp4a(vi1, ui1, sumi);
+
+    return (sumi*d8 - 8*s / QI4_0) * d4;
+#else
+    return 0.0f; // only to satisfy the compiler
+#endif // __CUDA_ARCH__ >= 600
+}
+
 static __device__ __forceinline__ float vec_dot_q4_1_q8_1(const void * vbq, const block_q8_1 * bq8_1, const int iqs) {
 #if __CUDA_ARCH__ >= 600 // lowest compute capability for integer intrinsics
     const block_q4_1 * bq4_1 = (const block_q4_1 *) vbq;
@@ -1437,7 +1463,7 @@ static __global__ void mul_mat_vec_q(const void * vx, const void * vy, float * d
     for (int i = 0; i < blocks_per_row; i += blocks_per_warp) {
         const int ibx = row*blocks_per_row + i + threadIdx.x / qi; // x block index
 
-        const int iby = i + threadIdx.x / qi; // y block index
+        const int iby = (2*qi/QI8_1)*i + threadIdx.x / (QI8_1/2); // y block index
 
         const int iqs  = threadIdx.x % qi; // x block quant index when casting the quants to int
 
@@ -1942,6 +1968,15 @@ static void mul_mat_vec_q4_0_q8_1_cuda(const void * vx, const void * vy, float *
         <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows);
 }
 
+static void mul_mat_vec_q4_0_big_q8_1_cuda(const void * vx, const void * vy, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
+    GGML_ASSERT(ncols % GGML_CUDA_DMMV_X == 0);
+    const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
+    const dim3 block_nums(1, block_num_y, 1);
+    const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
+    mul_mat_vec_q<QK4_0_BIG, QI4_0_BIG, block_q4_0_big, vec_dot_q4_0_big_q8_1>
+        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows);
+}
+
 static void mul_mat_vec_q4_1_q8_1_cuda(const void * vx, const void * vy, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
     GGML_ASSERT(ncols % GGML_CUDA_DMMV_X == 0);
     const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
@@ -2430,7 +2465,8 @@ inline void ggml_cuda_op_mul_mat_vec(
 
         switch (src0->type) {
             case GGML_TYPE_Q4_0:
-                mul_mat_vec_q4_0_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, cudaStream_main);
+                // mul_mat_vec_q4_0_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, cudaStream_main);
+                mul_mat_vec_q4_0_big_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, cudaStream_main);
                 break;
             case GGML_TYPE_Q4_1:
                 mul_mat_vec_q4_1_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, cudaStream_main);
@@ -3084,7 +3120,7 @@ void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_
     }else if (src0->type == GGML_TYPE_F32) {
         ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, true, false);
     } else if (ggml_is_quantized(src0->type) || src0->type == GGML_TYPE_F16) {
-        if (false && src1->ne[1] == 1 && src0->ne[0] % GGML_CUDA_DMMV_X == 0) {
+        if (src1->ne[1] == 1 && src0->ne[0] % GGML_CUDA_DMMV_X == 0) {
             ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_vec, false, false);
         } else {
             ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, true, false);
