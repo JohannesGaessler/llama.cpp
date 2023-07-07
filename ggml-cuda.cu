@@ -1236,17 +1236,19 @@ static __device__ __forceinline__ float vec_dot_q4_0_q8_1(const void * vbq, cons
     const int ui0 = *((int *) &bq8_1->qs[sizeof(int) * (iqs + 0)]);
     const int ui1 = *((int *) &bq8_1->qs[sizeof(int) * (iqs + QI4_0)]);
 
-    const float d = __half2float(bq4_0->d) * __half2float(bq8_1->d);
+    const float d4 = bq4_0->d;
+    const float d8 = bq8_1->d;
+    const float s = bq8_1->s;
 
     // subtract 8 from each quantized value
-    const int vi0 = __vsub4((vi >> 0) & 0x0F0F0F0F, 0x08080808);
-    const int vi1 = __vsub4((vi >> 4) & 0x0F0F0F0F, 0x08080808);
+    const int vi0 = (vi >> 0) & 0x0F0F0F0F;
+    const int vi1 = (vi >> 4) & 0x0F0F0F0F;
 
     // SIMD dot product of quantized values
     int sumi = __dp4a(vi0, ui0, 0);
     sumi     = __dp4a(vi1, ui1, sumi);
 
-    return sumi*d;
+    return (sumi*d8 - 8*s / QI4_0) * d4;
 #else
     return 0.0f; // only to satisfy the compiler
 #endif // __CUDA_ARCH__ >= 600
