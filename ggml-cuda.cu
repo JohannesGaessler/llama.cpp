@@ -1639,6 +1639,89 @@ static __device__ __forceinline__ float vec_dot_q6_K_q8_1(
 #endif // __CUDA_ARCH__ >= MIN_CC_DP4A
 }
 
+static __device__ __forceinline__ float dequantize_1_q4_0(const void * vx, const int i){
+    const block_q4_0 * x = (const block_q4_0 *) vx;
+    const int ib = i / QK4_0;
+
+    const float d = x[ib].d;
+
+    const int iqs0 = i % QK4_0;
+    const int shift = iqs0 / (QK4_0/QR4_0);
+    const int iqs = iqs0 - shift * (QK4_0/QR4_0);
+
+    int vi = x[ib].qs[iqs];
+
+    vi >>= 4 * shift;
+    vi &= 0xF;
+
+    return (vi - 8) * d;
+}
+
+static __global__ void dequantize_mul_mat(
+    const void * vx, const float * y, float * dst, const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_dst) {
+
+    const int nrows_y = ncols_x;
+    const int ncols_dst = ncols_y;
+
+    const int tid = threadIdx.x;
+
+    const int row_dst_0 = blockIdx.x*WARP_SIZE;
+    const int row_x_0 = row_dst_0;
+    const int row_dst = row_dst_0 + tid;
+
+    const int col_dst_0 = blockIdx.y*WARP_SIZE;
+    const int col_y_0 = col_dst_0;
+
+    __shared__ float tile_x[WARP_SIZE][WARP_SIZE + 1];
+    __shared__ float tile_y[WARP_SIZE][WARP_SIZE];
+    float sum[WARP_SIZE] = {0.0f};
+
+    for (int col_x_0 = 0; col_x_0 < ncols_x; col_x_0 += WARP_SIZE) {
+        const int row_y_0 = col_x_0;
+
+        const int col_x_tile = min(col_x_0 + tid, ncols_x-1);
+
+#pragma unroll
+        for (int j = 0; j < WARP_SIZE; ++j) {
+            const int row_x_tile = min(row_x_0 + j, nrows_x-1);
+            tile_x[j][tid] = dequantize_1_q4_0(vx, row_x_tile*ncols_x + col_x_tile);
+        }
+
+        const int row_y_tile = min(row_y_0 + tid, nrows_y-1);
+
+#pragma unroll
+        for (int i = 0; i < WARP_SIZE; ++i) {
+            const int col_y_tile = min(col_y_0 + i, ncols_y-1);
+            tile_y[i][tid] = y[col_y_tile*nrows_y + row_y_tile];
+        }
+
+#pragma unroll
+        for (int i = 0; i < WARP_SIZE; ++i) {
+            const float xi = tile_x[tid][i];
+
+#pragma unroll
+            for (int j = 0; j < WARP_SIZE; ++j) {
+                const float yi = tile_y[j][i];
+                sum[j] += xi*yi;
+            }
+        }
+    }
+
+    if (row_dst >= nrows_dst) {
+        return;
+    }
+
+#pragma unroll
+    for (int j = 0; j < WARP_SIZE; ++j) {
+        const int col_dst_j = col_dst_0 + j;
+
+        if (col_dst_j >= ncols_dst) {
+            break;
+        }
+
+        dst[col_dst_j*nrows_dst + row_dst] = sum[j];
+    }
+}
 template <int qk, int qi, typename block_q_t, vec_dot_q_cuda_t vec_dot_q_cuda>
 static __global__ void mul_mat_vec_q(const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst, const int ncols, const int nrows) {
     const int row = blockIdx.y*blockDim.y + threadIdx.y;
@@ -2324,6 +2407,14 @@ static to_fp32_cuda_t ggml_get_to_fp32_cuda(ggml_type type) {
     }
 }
 
+static void ggml_dequantize_mul_mat_q4_0_cuda(const void * vx, const float * y, float * dst, const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_dst, cudaStream_t stream){
+    const int block_num_x = (nrows_x + WARP_SIZE - 1) / WARP_SIZE;
+    const int block_num_y = (ncols_y + WARP_SIZE - 1) / WARP_SIZE;
+    const dim3 block_nums(block_num_x, block_num_y, 1);
+    const dim3 block_dims(WARP_SIZE, 1, 1);
+    dequantize_mul_mat<<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols_x, nrows_x, ncols_y, nrows_dst);
+}
+
 static void ggml_mul_mat_p021_f16_f32_cuda(const void * vx, const float * y, float * dst, const int ncols_x, const int nrows_x, const int nchannels_x, cudaStream_t stream) {
     const dim3 block_nums(1, nrows_x, nchannels_x);
     const dim3 block_dims(WARP_SIZE, 1, 1);
@@ -2747,6 +2838,47 @@ inline void ggml_cuda_op_rms_norm(
     (void) dst;
     (void) src0_ddq_i;
     (void) src1_ddf_i;
+    (void) i02;
+    (void) i1;
+}
+
+inline void ggml_cuda_op_dequantize_mul_mat(
+    const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
+    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
+    cudaStream_t & cudaStream_main){
+
+    GGML_ASSERT(src0_ddq_i != nullptr);
+    GGML_ASSERT(src1_ddf_i != nullptr);
+    GGML_ASSERT(dst_ddf_i != nullptr);
+
+    const int64_t ne00 = src0->ne[0];
+
+    const int64_t ne11 = src1->ne[1];
+
+    const int64_t ne0 = dst->ne[0];
+
+    const int64_t i01_diff = i01_high - i01_low;
+
+    int id;
+    CUDA_CHECK(cudaGetDevice(&id));
+
+    // the main device has a larger memory buffer to hold the results from all GPUs
+    // nrows_dst == nrows of the matrix that the dequantize_mul_mat kernel writes into
+    const int64_t nrows_dst = dst->backend == GGML_BACKEND_GPU && id == g_main_device ? ne0 : i01_diff;
+
+    switch (src0->type) {
+        case GGML_TYPE_Q4_0:
+            ggml_dequantize_mul_mat_q4_0_cuda(src0_ddq_i, src1_ddf_i, dst_ddf_i, ne00, i01_diff, ne11, nrows_dst, cudaStream_main);
+            break;
+        default:
+            GGML_ASSERT(false);
+            break;
+    }
+    CUDA_CHECK(cudaGetLastError());
+
+    (void) src1;
+    (void) dst;
+    (void) src0_ddf_i;
     (void) i02;
     (void) i1;
 }
@@ -3486,7 +3618,11 @@ void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_
         if (src1->ne[1] == 1 && src0->ne[0] % GGML_CUDA_DMMV_X == 0) {
             ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_vec, false, false);
         } else {
-            ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, true, false);
+            if (src0->type == GGML_TYPE_Q4_0) {
+                ggml_cuda_op(src0, src1, dst, ggml_cuda_op_dequantize_mul_mat, false, false);
+            } else {
+                ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, true, false);
+            }
         }
     } else {
         GGML_ASSERT(false);
