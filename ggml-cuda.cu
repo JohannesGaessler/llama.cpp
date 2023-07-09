@@ -133,7 +133,7 @@ typedef struct {
 } block_q8_1;
 static_assert(sizeof(block_q8_1) == 2*sizeof(ggml_fp16_t) + QK8_0, "wrong q8_1 block size/padding");
 
-typedef float (*vec_dot_q_cuda_t)(const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int iqs);
+typedef float (*vec_dot_q_cuda_t)(const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs);
 
 //================================= k-quants
 
@@ -1283,18 +1283,10 @@ static __global__ void dequantize_block(const void * __restrict__ vx, float * __
     y[iybs + iqs + y_offset] = v.y;
 }
 
-static __device__ __forceinline__ float vec_dot_q4_0_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int iqs) {
+static __device__ __forceinline__ float vec_dot_q4_0_q8_1_impl(
+    const int & vi, const int & ui0, const int & ui1, const float & d4, const float & d8) {
+
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
-    const block_q4_0 * bq4_0 = (const block_q4_0 *) vbq;
-
-    int vi;
-    memcpy(&vi,  &bq4_0->qs[sizeof(int) * (iqs + 0)], sizeof(int));
-    const int ui0 = *((int *) &bq8_1->qs[sizeof(int) * (iqs + 0)]);
-    const int ui1 = *((int *) &bq8_1->qs[sizeof(int) * (iqs + QI4_0)]);
-
-    const float d = __half2float(bq4_0->d) * __half2float(bq8_1->d);
-
     // subtract 8 from each quantized value
     const int vi0 = __vsub4((vi >> 0) & 0x0F0F0F0F, 0x08080808);
     const int vi1 = __vsub4((vi >> 4) & 0x0F0F0F0F, 0x08080808);
@@ -1303,14 +1295,25 @@ static __device__ __forceinline__ float vec_dot_q4_0_q8_1(
     int sumi = __dp4a(vi0, ui0, 0);
     sumi     = __dp4a(vi1, ui1, sumi);
 
-    return sumi*d;
+    return sumi*d4*d8;
 #else
     return 0.0f; // only to satisfy the compiler
 #endif // __CUDA_ARCH__ >= MIN_CC_DP4A
 }
 
-static __device__ __forceinline__ float vec_dot_q4_1_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int iqs) {
+static __device__ __forceinline__ float vec_dot_q4_0_q8_1(
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
+    const block_q4_0 * bq4_0 = (const block_q4_0 *) vbq;
+
+    int vi;
+    memcpy(&vi,  &bq4_0->qs[sizeof(int) * (iqs + 0)], sizeof(int));
+    const int ui0 = *((int *) &bq8_1->qs[sizeof(int) * (iqs + 0)]);
+    const int ui1 = *((int *) &bq8_1->qs[sizeof(int) * (iqs + QI4_0)]);
+
+    return vec_dot_q4_0_q8_1_impl(vi, ui0, ui1, __half2float(bq4_0->d), __half2float(bq8_1->d));
+}
+
+static __device__ __forceinline__ float vec_dot_q4_1_q8_1(const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
     const block_q4_1 * bq4_1 = (const block_q4_1 *) vbq;
 
@@ -1336,7 +1339,7 @@ static __device__ __forceinline__ float vec_dot_q4_1_q8_1(
 }
 
 static __device__ __forceinline__ float vec_dot_q5_0_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int iqs) {
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
     const block_q5_0 * bq5_0 = (const block_q5_0 *) vbq;
 
@@ -1372,7 +1375,7 @@ static __device__ __forceinline__ float vec_dot_q5_0_q8_1(
 }
 
 static __device__ __forceinline__ float vec_dot_q5_1_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int iqs) {
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
     const block_q5_1 * bq5_1 = (const block_q5_1 *) vbq;
 
@@ -1407,7 +1410,7 @@ static __device__ __forceinline__ float vec_dot_q5_1_q8_1(
 }
 
 static __device__ __forceinline__ float vec_dot_q8_0_q8_1(
-    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int iqs) {
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
     const block_q8_0 * bq8_0 = (const block_q8_0 *) vbq;
 
@@ -1665,6 +1668,7 @@ static __global__ void dequantize_mul_mat(
     const block_q8_1 * y = (const block_q8_1 *) vy;
 
     const int blocks_per_row = ncols_x / QK4_0;
+    const int blocks_per_warp = WARP_SIZE / QI4_0;
 
     const int nrows_y = ncols_x;
     const int ncols_dst = ncols_y;
@@ -1678,17 +1682,50 @@ static __global__ void dequantize_mul_mat(
     const int col_dst_0 = blockIdx.y*WARP_SIZE;
     const int col_y_0 = col_dst_0;
 
-    __shared__ block_q4_0 tile_x[WARP_SIZE];
-    __shared__ block_q8_1 tile_y[WARP_SIZE];
+    __shared__ int tile_x_qs[WARP_SIZE][WARP_SIZE + 1];
+    __shared__ half tile_x_d[WARP_SIZE][WARP_SIZE/QI4_0];
+    __shared__ int tile_y_qs[WARP_SIZE][2*WARP_SIZE];
+    __shared__ half tile_y_d[WARP_SIZE][2*WARP_SIZE/QI8_1];
     float sum[WARP_SIZE] = {0.0f};
 
-    for (int ib = 0; ib < blocks_per_row; ++ib) {
-        tile_x[tid] = x[(row_x_0 + tid)*blocks_per_row + ib];
-        tile_y[tid] = y[(col_y_0 + tid)*blocks_per_row + ib];
+    for (int ib0 = 0; ib0 < blocks_per_row; ib0 += blocks_per_warp) {
+        const int ibx  = tid / QI4_0;
+        const int iqsx = tid % QI4_0;
+
+        for (int j = 0; j < WARP_SIZE; ++j) {
+            const block_q4_0 * bx = &x[(row_x_0 + j)*blocks_per_row + ib0 + ibx];
+            memcpy(&tile_x_qs[j][tid], &bx->qs[sizeof(int) * iqsx], sizeof(int));
+            if (iqsx == 0) {
+                tile_x_d[j][ibx] = bx->d;
+            }
+        }
+
+        const int iby0 = tid / QI8_1;
+        const int iby1 = iby0 + WARP_SIZE / QI8_1;
+        const int iqsy = tid % QI8_1;
 
         for (int i = 0; i < WARP_SIZE; ++i) {
-            for (int iqs = 0; iqs < QI4_0; ++iqs) {
-                sum[i] += vec_dot_q4_0_q8_1(&tile_x[tid], &tile_y[i], iqs);
+            const block_q8_1 * by0 = &y[(col_y_0 + i)*blocks_per_row + ib0 + iby0];
+
+            tile_y_qs[i][tid] = *((int *) &by0->qs[sizeof(int) * iqsy]);
+            if (iqsy == 0) {
+                tile_y_d[i][iby0] = by0->d;
+            }
+
+            const block_q8_1 * by1 = &y[(col_y_0 + i)*blocks_per_row + ib0 + iby1];
+
+            tile_y_qs[i][tid + WARP_SIZE] = *((int *) &by1->qs[sizeof(int) * iqsy]);
+            if (iqsy == 0) {
+                tile_y_d[i][iby1] = by1->d;
+            }
+        }
+
+        for (int j = 0; j < WARP_SIZE; ++j) {
+            for (int k = 0; k < WARP_SIZE; ++k) {
+                const int iqsy = k % (QI8_1/2) + QI8_1 * (k / (QI8_1/2));
+                sum[j] += vec_dot_q4_0_q8_1_impl(
+                    tile_x_qs[tid][k], tile_y_qs[j][iqsy + 0], tile_y_qs[j][iqsy + (QI8_1/2)],
+                    tile_x_d[tid][k / QI4_0], tile_y_d[j][2 * k / QI8_1]);
             }
         }
     }
