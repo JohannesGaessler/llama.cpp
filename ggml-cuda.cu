@@ -1695,9 +1695,7 @@ static __global__ void dequantize_mul_mat(
         for (int j = 0; j < WARP_SIZE; ++j) {
             const block_q4_0 * bx = &x[(row_x_0 + j)*blocks_per_row + ib0 + ibx];
             memcpy(&tile_x_qs[j][tid], &bx->qs[sizeof(int) * iqsx], sizeof(int));
-            if (iqsx == 0) {
-                tile_x_d[j][ibx] = bx->d;
-            }
+            tile_x_d[j][ibx] = bx->d;
         }
 
         const int iby0 = tid / QI8_1;
@@ -1708,16 +1706,12 @@ static __global__ void dequantize_mul_mat(
             const block_q8_1 * by0 = &y[(col_y_0 + i)*blocks_per_row + ib0 + iby0];
 
             tile_y_qs[i][tid] = *((int *) &by0->qs[sizeof(int) * iqsy]);
-            if (iqsy == 0) {
-                tile_y_d[i][iby0] = by0->d;
-            }
+            tile_y_d[i][iby0] = by0->d;
 
             const block_q8_1 * by1 = &y[(col_y_0 + i)*blocks_per_row + ib0 + iby1];
 
             tile_y_qs[i][tid + WARP_SIZE] = *((int *) &by1->qs[sizeof(int) * iqsy]);
-            if (iqsy == 0) {
-                tile_y_d[i][iby1] = by1->d;
-            }
+            tile_y_d[i][iby1] = by1->d;
         }
 
         for (int j = 0; j < WARP_SIZE; ++j) {
