@@ -1642,24 +1642,6 @@ static __device__ __forceinline__ float vec_dot_q6_K_q8_1(
 #endif // __CUDA_ARCH__ >= MIN_CC_DP4A
 }
 
-static __device__ __forceinline__ float dequantize_1_q4_0(const void * vx, const int i){
-    const block_q4_0 * x = (const block_q4_0 *) vx;
-    const int ib = i / QK4_0;
-
-    const float d = x[ib].d;
-
-    const int iqs0 = i % QK4_0;
-    const int shift = iqs0 / (QK4_0/QR4_0);
-    const int iqs = iqs0 - shift * (QK4_0/QR4_0);
-
-    int vi = x[ib].qs[iqs];
-
-    vi >>= 4 * shift;
-    vi &= 0xF;
-
-    return (vi - 8) * d;
-}
-
 static __global__ void mul_mat_q(
     const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
     const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_dst) {
