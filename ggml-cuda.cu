@@ -1670,18 +1670,17 @@ static __global__ void mul_mat_q(
     const int blocks_per_row = ncols_x / QK4_0;
     const int blocks_per_warp = WARP_SIZE / QI4_0;
 
-    const int nrows_y = ncols_x;
-    const int ncols_dst = ncols_y;
+    const int & ncols_dst = ncols_y;
 
     const int tid_x = threadIdx.x;
     const int tid_y = threadIdx.y;
 
     const int row_dst_0 = blockIdx.x*WARP_SIZE;
-    const int row_x_0 = row_dst_0;
+    const int & row_x_0 = row_dst_0;
     const int row_dst = row_dst_0 + tid_x;
 
     const int col_dst_0 = blockIdx.y*WARP_SIZE;
-    const int col_y_0 = col_dst_0;
+    const int & col_y_0 = col_dst_0;
 
     __shared__ int tile_x_qs[WARP_SIZE][WARP_SIZE + 1];
     __shared__ half tile_x_d[WARP_SIZE][WARP_SIZE/QI4_0];
@@ -1691,27 +1690,27 @@ static __global__ void mul_mat_q(
 
     for (int ib0 = 0; ib0 < blocks_per_row; ib0 += blocks_per_warp) {
         const int ibx  = tid_x / QI4_0;
-        const int iqsx = tid_x % QI4_0;
+        const int iqsx = sizeof(int) * (tid_x % QI4_0);
 
         for (int j = 0; j < WARP_SIZE; j += 8) {
             const block_q4_0 * bx = &x[(row_x_0 + j + tid_y)*blocks_per_row + ib0 + ibx];
-            memcpy(&tile_x_qs[j + tid_y][tid_x], &bx->qs[sizeof(int) * iqsx], sizeof(int));
+            memcpy(&tile_x_qs[j + tid_y][tid_x], &bx->qs[iqsx], sizeof(int));
             tile_x_d[j + tid_y][ibx] = bx->d;
         }
 
         const int iby0 = tid_x / QI8_1;
         const int iby1 = iby0 + WARP_SIZE / QI8_1;
-        const int iqsy = tid_x % QI8_1;
+        const int iqsy = sizeof(int) * (tid_x % QI8_1);
 
         for (int i = 0; i < WARP_SIZE; i += 8) {
             const block_q8_1 * by0 = &y[(col_y_0 + tid_y + i)*blocks_per_row + ib0 + iby0];
 
-            tile_y_qs[tid_y + i][tid_x] = *((int *) &by0->qs[sizeof(int) * iqsy]);
+            tile_y_qs[tid_y + i][tid_x] = *((int *) &by0->qs[iqsy]);
             tile_y_d[tid_y + i][iby0] = by0->d;
 
             const block_q8_1 * by1 = &y[(col_y_0 + tid_y + i)*blocks_per_row + ib0 + iby1];
 
-            tile_y_qs[tid_y + i][tid_x + WARP_SIZE] = *((int *) &by1->qs[sizeof(int) * iqsy]);
+            tile_y_qs[tid_y + i][tid_x + WARP_SIZE] = *((int *) &by1->qs[iqsy]);
             tile_y_d[tid_y + i][iby1] = by1->d;
         }
 
