@@ -1693,7 +1693,7 @@ static __global__ void mul_mat_q(
         const int iqsx = sizeof(int) * (tid_x % QI4_0);
 
         for (int j = 0; j < WARP_SIZE; j += 8) {
-            const block_q4_0 * bx = &x[(row_x_0 + j + tid_y)*blocks_per_row + ib0 + ibx];
+            const block_q4_0 * __restrict__ bx = &x[(row_x_0 + j + tid_y)*blocks_per_row + ib0 + ibx];
             memcpy(&tile_x_qs[j + tid_y][tid_x], &bx->qs[iqsx], sizeof(int));
             tile_x_d[j + tid_y][ibx] = bx->d;
         }
@@ -1703,12 +1703,12 @@ static __global__ void mul_mat_q(
         const int iqsy = sizeof(int) * (tid_x % QI8_1);
 
         for (int i = 0; i < WARP_SIZE; i += 8) {
-            const block_q8_1 * by0 = &y[(col_y_0 + tid_y + i)*blocks_per_row + ib0 + iby0];
+            const block_q8_1 * __restrict__ by0 = &y[(col_y_0 + tid_y + i)*blocks_per_row + ib0 + iby0];
 
             tile_y_qs[tid_y + i][tid_x] = *((int *) &by0->qs[iqsy]);
             tile_y_d[tid_y + i][iby0] = by0->d;
 
-            const block_q8_1 * by1 = &y[(col_y_0 + tid_y + i)*blocks_per_row + ib0 + iby1];
+            const block_q8_1 * __restrict__ by1 = &y[(col_y_0 + tid_y + i)*blocks_per_row + ib0 + iby1];
 
             tile_y_qs[tid_y + i][tid_x + WARP_SIZE] = *((int *) &by1->qs[iqsy]);
             tile_y_d[tid_y + i][iby1] = by1->d;
