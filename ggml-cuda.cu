@@ -1687,49 +1687,62 @@ static __global__ void mul_mat_q(
     __shared__ half tile_x_d[WARP_SIZE][WARP_SIZE/QI4_0];
     __shared__ int tile_y_qs[WARP_SIZE][2*WARP_SIZE];
     __shared__ half tile_y_d[WARP_SIZE][2*WARP_SIZE/QI8_1];
-    float sum = 0.0f;
+    float sum[4] = {0.0f};
 
     for (int ib0 = 0; ib0 < blocks_per_row; ib0 += blocks_per_warp) {
         const int ibx  = tid_x / QI4_0;
         const int iqsx = tid_x % QI4_0;
 
-        const block_q4_0 * bx = &x[(row_x_0 + tid_y)*blocks_per_row + ib0 + ibx];
-        memcpy(&tile_x_qs[tid_y][tid_x], &bx->qs[sizeof(int) * iqsx], sizeof(int));
-        tile_x_d[tid_y][ibx] = bx->d;
+        for (int j = 0; j < WARP_SIZE; j += 8) {
+            const block_q4_0 * bx = &x[(row_x_0 + j + tid_y)*blocks_per_row + ib0 + ibx];
+            memcpy(&tile_x_qs[j + tid_y][tid_x], &bx->qs[sizeof(int) * iqsx], sizeof(int));
+            tile_x_d[j + tid_y][ibx] = bx->d;
+        }
 
         const int iby0 = tid_x / QI8_1;
         const int iby1 = iby0 + WARP_SIZE / QI8_1;
         const int iqsy = tid_x % QI8_1;
 
-        const block_q8_1 * by0 = &y[(col_y_0 + tid_y)*blocks_per_row + ib0 + iby0];
+        for (int i = 0; i < WARP_SIZE; i += 8) {
+            const block_q8_1 * by0 = &y[(col_y_0 + tid_y + i)*blocks_per_row + ib0 + iby0];
 
-        tile_y_qs[tid_y][tid_x] = *((int *) &by0->qs[sizeof(int) * iqsy]);
-        tile_y_d[tid_y][iby0] = by0->d;
+            tile_y_qs[tid_y + i][tid_x] = *((int *) &by0->qs[sizeof(int) * iqsy]);
+            tile_y_d[tid_y + i][iby0] = by0->d;
 
-        const block_q8_1 * by1 = &y[(col_y_0 + tid_y)*blocks_per_row + ib0 + iby1];
+            const block_q8_1 * by1 = &y[(col_y_0 + tid_y + i)*blocks_per_row + ib0 + iby1];
 
-        tile_y_qs[tid_y][tid_x + WARP_SIZE] = *((int *) &by1->qs[sizeof(int) * iqsy]);
-        tile_y_d[tid_y][iby1] = by1->d;
+            tile_y_qs[tid_y + i][tid_x + WARP_SIZE] = *((int *) &by1->qs[sizeof(int) * iqsy]);
+            tile_y_d[tid_y + i][iby1] = by1->d;
+        }
 
         __syncthreads();
 
         for (int k = 0; k < WARP_SIZE; ++k) {
             const int iqsy = k % (QI8_1/2) + QI8_1 * (k / (QI8_1/2));
-            sum += vec_dot_q4_0_q8_1_impl(
-                tile_x_qs[tid_x][k], tile_y_qs[tid_y][iqsy + 0], tile_y_qs[tid_y][iqsy + (QI8_1/2)],
-                tile_x_d[tid_x][k / QI4_0], tile_y_d[tid_y][2 * k / QI8_1]);
+            for (int j = 0; j < WARP_SIZE; j += 8) {
+                sum[j/8] += vec_dot_q4_0_q8_1_impl(
+                    tile_x_qs[tid_x][k], tile_y_qs[tid_y + j][iqsy + 0], tile_y_qs[tid_y + j][iqsy + (QI8_1/2)],
+                    tile_x_d[tid_x][k / QI4_0], tile_y_d[tid_y + j][2 * k / QI8_1]);
+            }
         }
 
         __syncthreads();
     }
 
-    const int col_dst = col_dst_0 + tid_y;
 
-    if (row_dst >= nrows_dst || col_dst >= ncols_dst) {
+    if (row_dst >= nrows_dst) {
         return;
     }
 
-    dst[col_dst*nrows_dst + row_dst] = sum;
+    for (int j = 0; j < WARP_SIZE; j += 8) {
+        const int col_dst = col_dst_0 + j + tid_y;
+
+        if (col_dst >= ncols_dst) {
+            return;
+        }
+
+        dst[col_dst*nrows_dst + row_dst] = sum[j/8];
+    }
 }
 
 template <int qk, int qi, typename block_q_t, vec_dot_q_cuda_t vec_dot_q_cuda>
@@ -2421,7 +2434,7 @@ static void ggml_mul_mat_q4_0_q8_1_cuda(const void * vx, const void * vy, float 
     const int block_num_x = (nrows_x + WARP_SIZE - 1) / WARP_SIZE;
     const int block_num_y = (ncols_y + WARP_SIZE - 1) / WARP_SIZE;
     const dim3 block_nums(block_num_x, block_num_y, 1);
-    const dim3 block_dims(WARP_SIZE, WARP_SIZE, 1);
+    const dim3 block_dims(WARP_SIZE, WARP_SIZE/4, 1);
     mul_mat_q<<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_dst);
 }
 
