@@ -1660,7 +1660,7 @@ static __device__ __forceinline__ float dequantize_1_q4_0(const void * vx, const
     return (vi - 8) * d;
 }
 
-static __global__ void dequantize_mul_mat(
+static __global__ void mul_mat_q(
     const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
     const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_dst) {
 
@@ -2430,7 +2430,7 @@ static void ggml_mul_mat_q4_0_q8_1_cuda(const void * vx, const void * vy, float 
     const int block_num_y = (ncols_y + WARP_SIZE - 1) / WARP_SIZE;
     const dim3 block_nums(block_num_x, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, 1, 1);
-    dequantize_mul_mat<<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_dst);
+    mul_mat_q<<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_dst);
 }
 
 static void ggml_mul_mat_p021_f16_f32_cuda(const void * vx, const float * y, float * dst, const int ncols_x, const int nrows_x, const int nchannels_x, cudaStream_t stream) {
