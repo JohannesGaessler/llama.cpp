@@ -3056,7 +3056,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
     const int64_t ne11 = use_src1 ? src1->ne[1] : 1;
     const int64_t ne12 = use_src1 ? src1->ne[2] : 1;
     const int64_t ne13 = use_src1 ? src1->ne[3] : 1;
-    const int64_t nrows1 = ggml_nrows(src1);
+    const int64_t nrows1 = use_src1 ? ggml_nrows(src1) : 1;
 
     GGML_ASSERT(ne03 == ne13);
 
