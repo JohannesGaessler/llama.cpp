@@ -3071,8 +3071,9 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
     GGML_ASSERT(!use_src1 || src1->backend != GGML_BACKEND_GPU_SPLIT);
 
     // strides for iteration over dims 3 and 2
-    const int64_t num_iters = flatten_rows ? 1 : ne02 * ne03;
-    const int64_t stride_mod = flatten_rows ? ne02 * ne03 : 1;
+    const int64_t num_iters_0 = ne02 >= ne12 ? ne02*ne03 : ne12*ne13;
+    const int64_t num_iters = flatten_rows ? 1 : num_iters_0;
+    const int64_t stride_mod = flatten_rows ? num_iters_0 : 1;
     const int64_t src0_stride = ne00 * ne01 * stride_mod;
     const int64_t src1_stride = ne10 * ne11 * stride_mod;
     const int64_t dst_stride = ne0 * ne1 * stride_mod;
