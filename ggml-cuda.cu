@@ -3174,13 +3174,14 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
         }
 
         const int64_t i03_max = flatten_rows ? 1 : ne03;
-        const int64_t i02_max = flatten_rows ? 1 : ne02;
+        const int64_t i2_max  = flatten_rows ? 1 : (ne02 > ne12 ? ne02 : ne12);
         const int64_t rows_per_iter = flatten_rows ? nrows0 : ne01;
 
         for (int64_t i03 = 0; i03 < i03_max; i03++) {
             const int64_t i13 = i03 % ne13;
-            for (int64_t i02 = 0; i02 < i02_max; i02++) {
-                const int64_t i12 = i02 % ne12;
+            for (int64_t i2 = 0; i2 < i2_max; i2++) {
+                const int64_t i02 = ne02 > ne12 ? i2 : i2 / (ne12 / ne02);
+                const int64_t i12 = ne02 > ne12 ? i2 % ne12 : i2;
 
                 const int64_t i0 = i03*ne02 + i02;
 
