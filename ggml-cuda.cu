@@ -3264,7 +3264,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
                     }
                 }
 
-                if (!src0_on_device || !src0_is_contiguous) {
+                if ((!src0_on_device || !src0_is_contiguous) && i02 % i02_divisor == 0) {
                     if (src0_is_f32) {
                         CUDA_CHECK(ggml_cuda_cpy_tensor_2d(src0_ddf_i, src0, i03, i02/i02_divisor, i01_low, i01_high, cudaStream_main));
                     } else {
