@@ -1804,7 +1804,7 @@ static __global__ void mul_mat_vec_nc_f16_f32( // nc == non-contiguous
     const int nrows_dst = nrows_x;
     const int row_dst = row_x;
 
-    const int idst = (channel/8)*nrows_dst + row_dst;
+    const int idst = channel*nrows_dst + row_dst;
 
     float tmp = 0.0f;
 
