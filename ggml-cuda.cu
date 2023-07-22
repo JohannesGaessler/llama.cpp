@@ -3475,8 +3475,9 @@ void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_
 
     if (all_on_device && ggml_is_permuted(src0) && ggml_is_permuted(src1) && src1->ne[1] == 1) {
         ggml_cuda_mul_mat_vec_p021(src0, src1, dst);
-    } else if (false && all_on_device && !ggml_is_contiguous(src0) && ggml_is_contiguous(src1) && src1->ne[1] == 1) {
-        ggml_cuda_mul_mat_vec_nc(src0, src1, dst);
+    } else if (all_on_device && !ggml_is_contiguous(src0) && ggml_is_contiguous(src1) && src1->ne[1] == 1) {
+        ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, true, false);
+        // ggml_cuda_mul_mat_vec_nc(src0, src1, dst);
     }else if (src0->type == GGML_TYPE_F32) {
         ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, true, false);
     } else if (ggml_is_quantized(src0->type) || src0->type == GGML_TYPE_F16) {
