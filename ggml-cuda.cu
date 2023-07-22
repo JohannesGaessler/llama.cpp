@@ -1804,7 +1804,7 @@ static __global__ void mul_mat_vec_nc_f16_f32( // nc == non-contiguous
     const int nrows_dst = nrows_x;
     const int row_dst = row_x;
 
-    const int idst = channel*nrows_dst + row_dst;
+    const int idst = (channel/8)*nrows_dst + row_dst;
 
     float tmp = 0.0f;
 
@@ -1815,7 +1815,7 @@ static __global__ void mul_mat_vec_nc_f16_f32( // nc == non-contiguous
             break;
         }
 
-        const int ix = channel*channel_stride_x + row_x*row_stride_x + col_x;
+        const int ix = (channel/8)*channel_stride_x + row_x*row_stride_x + col_x;
         const float xi = __half2float(x[ix]);
 
         const int row_y = col_x;
