@@ -3123,13 +3123,15 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
         const bool src1_on_device = use_src1 && src1->backend == GGML_BACKEND_GPU && id == g_main_device;
         const bool dst_on_device = dst->backend == GGML_BACKEND_GPU && id == g_main_device;
 
+        const int64_t i02_divisor = ne02 >= ne12 ? 1 : ne12 / ne02;
+
         int64_t row_low, row_high;
         if (split) {
             row_low = id == 0 ? 0 : nrows0*g_tensor_split[id];
             row_high = id == g_device_count - 1 ? nrows0 : nrows0*g_tensor_split[id + 1];
         } else {
             row_low = 0;
-            row_high = ne02 >= ne12 ? nrows0 : nrows1;
+            row_high = nrows0*i02_divisor;
         }
         if (row_low == row_high) {
             continue;
@@ -3179,7 +3181,6 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
 
         const int64_t i03_max = flatten_rows ? 1 : ne03;
         const int64_t i02_max = flatten_rows ? 1 : (ne02 >= ne12 ? ne02 : ne12);
-        const int64_t i02_divisor = ne02 >= ne12 ? 1 : ne12 / ne02;
         GGML_ASSERT(!(flatten_rows && ne02 < ne12));
         const int64_t rows_per_iter = flatten_rows ? nrows0 : ne01;
 
