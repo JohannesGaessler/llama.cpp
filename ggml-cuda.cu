@@ -1567,13 +1567,20 @@ static __device__ __forceinline__ float vec_dot_q4_K_q8_1(
     const uint16_t * scales = (const uint16_t *)bq4_K->scales;
     uint16_t aux[2];
     const int j = bq8_offset/2;
-    if (j < 2) {
-        aux[0] = scales[j+0] & 0x3f3f;
-        aux[1] = scales[j+2] & 0x3f3f;
-    } else {
-        aux[0] = ((scales[j+2] >> 0) & 0x0f0f) | ((scales[j-2] & 0xc0c0) >> 2);
-        aux[1] = ((scales[j+2] >> 4) & 0x0f0f) | ((scales[j-0] & 0xc0c0) >> 2);
-    }
+
+    const int tmp = 2 * (j / 2);
+    aux[0]  =  scales[j + tmp]                 & 0x0F0F;
+    aux[0] |= (scales[j - tmp]     >> tmp)     & 0x3030;
+    aux[1]  = (scales[j + 2]       >> 2 * tmp) & 0x0F0F;
+    aux[1] |= (scales[j + 2 - tmp] >> tmp)     & 0x3030;
+
+    // if (j < 2) {
+    //     aux[0] = scales[j+0] & 0x3f3f;
+    //     aux[1] = scales[j+2] & 0x3f3f;
+    // } else {
+    //     aux[0] = ((scales[j+2] >> 0) & 0x0f0f) | ((scales[j-2] & 0xc0c0) >> 2);
+    //     aux[1] = ((scales[j+2] >> 4) & 0x0f0f) | ((scales[j-0] & 0xc0c0) >> 2);
+    // }
     const uint8_t * sc = (const uint8_t *)aux;
     const uint8_t * m  = sc + 2;
 
