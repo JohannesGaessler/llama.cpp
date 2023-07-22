@@ -2332,9 +2332,9 @@ static void ggml_mul_mat_p021_f16_f32_cuda(const void * vx, const float * y, flo
 
 static void ggml_mul_mat_vec_nc_f16_f32_cuda(
     const void * vx, const float * y, float * dst, const int ncols_x, const int nrows_x, const int row_stride_x,
-    const int nchannels_x, const int channel_stride_x, cudaStream_t stream) {
+    const int nchannels_dst, const int channel_stride_x, cudaStream_t stream) {
 
-    const dim3 block_nums(1, nrows_x, nchannels_x);
+    const dim3 block_nums(1, nrows_x, nchannels_dst);
     const dim3 block_dims(WARP_SIZE, 1, 1);
     mul_mat_vec_nc_f16_f32<<<block_nums, block_dims, 0, stream>>>
         (vx, y, dst, ncols_x, nrows_x, row_stride_x, channel_stride_x);
@@ -3440,9 +3440,14 @@ void ggml_cuda_mul_mat_vec_nc(const ggml_tensor * src0, const ggml_tensor * src1
 
     const int64_t ne00 = src0->ne[0];
     const int64_t ne01 = src0->ne[1];
-    // const int64_t ne02 = src0->ne[2];
+    const int64_t ne02 = src0->ne[2];
 
     const int64_t ne12 = src1->ne[2];
+
+    const int64_t ne2 = dst->ne[2];
+
+    GGML_ASSERT(ne02*8 == ne2);
+    GGML_ASSERT(ne12 == ne2);
 
     const int64_t nb01 = src0->nb[1];
     const int64_t nb02 = src0->nb[2];
@@ -3462,7 +3467,7 @@ void ggml_cuda_mul_mat_vec_nc(const ggml_tensor * src0, const ggml_tensor * src1
     const int row_stride_x = nb01 / sizeof(half);
     const int channel_stride_x = nb02 / sizeof(half);
 
-    ggml_mul_mat_vec_nc_f16_f32_cuda(src0_ddq, src1_ddf, dst_ddf, ne00, ne01, row_stride_x, ne12, channel_stride_x, cudaStream_main);
+    ggml_mul_mat_vec_nc_f16_f32_cuda(src0_ddq, src1_ddf, dst_ddf, ne00, ne01, row_stride_x, ne2, channel_stride_x, cudaStream_main);
 }
 
 void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
