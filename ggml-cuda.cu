@@ -4856,9 +4856,17 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
                         // The outputs of matrix matrix multiplications can therefore NOT simply be concatenated for >1 GPU.
                         // Instead they need to be copied to the correct slice in ne0 = dst row index.
                         // If dst is a vector with ne0 == 1 then you don't have to do this but it still produces correct results.
-                        float * dhf_dst_i = (float *) ((char *) dst_off_device + i01_low*sizeof(float) + i02*nb2 + i03*nb3);
-                        CUDA_CHECK(cudaMemcpy2DAsync(dhf_dst_i, ne0*sizeof(float), dst_ddf_i, i01_diff*sizeof(float),
-                                                     i01_diff*sizeof(float), ne1, kind, cudaStream_main));
+                        struct cudaPitchedPtr cpp_src = make_cudaPitchedPtr(dst_ddf_i, i01_diff*sizeof(float), i01_diff, ne1);
+
+                        struct cudaPitchedPtr cpp_dst = make_cudaPitchedPtr(
+                            (char *) dst_off_device + i01_low*sizeof(float) + i02*nb2 + i03*nb3, ne0*sizeof(float), ne0, ne1);
+
+                        struct cudaMemcpy3DParms parms = {0};
+                        parms.dstPtr = cpp_dst;
+                        parms.srcPtr = cpp_src;
+                        parms.extent = make_cudaExtent(i01_diff*sizeof(float), ne1, 1);
+                        parms.kind = kind;
+                        CUDA_CHECK(cudaMemcpy3DAsync(&parms, cudaStream_main));
                     } else {
                         float * dhf_dst_i = (float *) ((char *) dst_off_device + i02*nb2 + i03*nb3);
                         CUDA_CHECK(cudaMemcpyAsync(dhf_dst_i, dst_ddf_i, dst_stride*sizeof(float), kind, cudaStream_main));
