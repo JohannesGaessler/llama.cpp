@@ -88,7 +88,7 @@ static __device__ __forceinline__ int get_int_from_uint8_aligned(const uint8_t *
     return *((int *) (x8 + sizeof(int) * i32)); // assume at least 4 byte alignment
 }
 
-cudaError ggml_cudaMemcpy2DAsync(void * dst, size_t dpitch, void * src, size_t spitch, size_t width, size_t height,
+cudaError_t ggml_cudaMemcpy2DAsync(void * dst, size_t dpitch, void * src, size_t spitch, size_t width, size_t height,
                                  enum cudaMemcpyKind kind, cudaStream_t stream) {
     const struct cudaPitchedPtr cpp_dst = make_cudaPitchedPtr(dst, dpitch, dpitch, height);
     const struct cudaPitchedPtr cpp_src = make_cudaPitchedPtr(src, spitch, spitch, height);
@@ -4063,17 +4063,17 @@ static cudaError_t ggml_cuda_cpy_tensor_2d(
     const int64_t bs = ggml_blck_size(type);
     int64_t i1_diff = i1_high - i1_low;
 
-    const char * x = src_ptr + i1_low*nb1 + i2*nb2 + i3*nb3;
+    char * x = src_ptr + i1_low*nb1 + i2*nb2 + i3*nb3;
     if (nb0 == ts && nb1 == ts*ne0/bs) {
         return cudaMemcpyAsync(dst_ptr, x, i1_diff*nb1, kind, stream);
     } else if (nb0 == ts) {
-        return cudaMemcpy2DAsync(dst_ptr, ts*ne0/bs, x, nb1, ts*ne0/bs, i1_diff, kind, stream);
+        return ggml_cudaMemcpy2DAsync(dst_ptr, ts*ne0/bs, x, nb1, ts*ne0/bs, i1_diff, kind, stream);
     } else {
         for (int64_t i1 = 0; i1 < i1_diff; i1++) {
-            const void * rx = (const void *) ((const char *) x + i1*nb1);
+            void * rx = (void *) ((char *) x + i1*nb1);
             void * rd = (void *) (dst_ptr + i1*ts*ne0/bs);
             // pretend the row is a matrix with cols=1
-            cudaError_t r = cudaMemcpy2DAsync(rd, ts/bs, rx, nb0, ts/bs, ne0, kind, stream);
+            cudaError_t r = ggml_cudaMemcpy2DAsync(rd, ts/bs, rx, nb0, ts/bs, ne0, kind, stream);
             if (r != cudaSuccess) return r;
         }
         return cudaSuccess;
