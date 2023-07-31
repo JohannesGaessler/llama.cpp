@@ -88,6 +88,25 @@ static __device__ __forceinline__ int get_int_from_uint8_aligned(const uint8_t *
     return *((int *) (x8 + sizeof(int) * i32)); // assume at least 4 byte alignment
 }
 
+cudaError ggml_cudaMemcpy2DAsync(void * dst, size_t dpitch, void * src, size_t spitch, size_t width, size_t height,
+                                 enum cudaMemcpyKind kind, cudaStream_t stream) {
+    const struct cudaPitchedPtr cpp_dst = make_cudaPitchedPtr(dst, dpitch, dpitch, height);
+    const struct cudaPitchedPtr cpp_src = make_cudaPitchedPtr(src, spitch, spitch, height);
+
+    const struct cudaMemcpy3DParms parms = {
+        /*srcArray*/ nullptr,
+        /*srcPos*/   make_cudaPos(0, 0, 0),
+        /*srcPtr*/   cpp_src,
+        /*dstArray*/ nullptr,
+        /*dstPos*/   make_cudaPos(0, 0, 0),
+        /*dstPtr*/   cpp_dst,
+        /*extent*/   make_cudaExtent(width, height, 1),
+        /*kind*/     kind
+    };
+
+    return cudaMemcpy3DAsync(&parms, stream);
+}
+
 typedef void (*dequantize_kernel_t)(const void * vx, const int ib, const int iqs, dfloat2 & v);
 typedef void (*to_fp32_cuda_t)(const void * __restrict__ x, float * __restrict__ y, int k, cudaStream_t stream);
 typedef void (*dot_kernel_k_t)(const void * __restrict__ vx, const int ib, const int iqs, const float * __restrict__ y, float & v);
@@ -4856,17 +4875,9 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
                         // The outputs of matrix matrix multiplications can therefore NOT simply be concatenated for >1 GPU.
                         // Instead they need to be copied to the correct slice in ne0 = dst row index.
                         // If dst is a vector with ne0 == 1 then you don't have to do this but it still produces correct results.
-                        struct cudaPitchedPtr cpp_src = make_cudaPitchedPtr(dst_ddf_i, i01_diff*sizeof(float), i01_diff, ne1);
-
-                        struct cudaPitchedPtr cpp_dst = make_cudaPitchedPtr(
-                            (char *) dst_off_device + i01_low*sizeof(float) + i02*nb2 + i03*nb3, ne0*sizeof(float), ne0, ne1);
-
-                        struct cudaMemcpy3DParms parms = {0};
-                        parms.dstPtr = cpp_dst;
-                        parms.srcPtr = cpp_src;
-                        parms.extent = make_cudaExtent(i01_diff*sizeof(float), ne1, 1);
-                        parms.kind = kind;
-                        CUDA_CHECK(cudaMemcpy3DAsync(&parms, cudaStream_main));
+                        float * dhf_dst_i = (float *) ((char *) dst_off_device + i01_low*sizeof(float) + i02*nb2 + i03*nb3);
+                        CUDA_CHECK(ggml_cudaMemcpy2DAsync(dhf_dst_i, ne0*sizeof(float), dst_ddf_i, i01_diff*sizeof(float),
+                                                          i01_diff*sizeof(float), ne1, kind, cudaStream_main));
                     } else {
                         float * dhf_dst_i = (float *) ((char *) dst_off_device + i02*nb2 + i03*nb3);
                         CUDA_CHECK(cudaMemcpyAsync(dhf_dst_i, dst_ddf_i, dst_stride*sizeof(float), kind, cudaStream_main));
