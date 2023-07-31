@@ -5330,6 +5330,28 @@ void ggml_init_cublas() {
             CUBLAS_CHECK(cublasSetMathMode(g_cublas_handles[id], CUBLAS_TF32_TENSOR_OP_MATH));
         }
 
+#ifdef NDEBUG
+        for (int id = 0; id < g_device_count; ++id) {
+            CUDA_CHECK(cudaSetDevice(id));
+
+            for (int id_other = 0; id_other < g_device_count; ++id_other) {
+                if (id == id_other) {
+                    continue;
+                }
+                if (id != g_main_device && id_other != g_main_device) {
+                    continue;
+                }
+
+                int canAccessPeer;
+                CUDA_CHECK(cudaDeviceCanAccessPeer(&canAccessPeer, id, id_other));
+                if (canAccessPeer) {
+                    // FIXME for some reason enabling peer access makes prompt processing slightly slower
+                    CUDA_CHECK(cudaDeviceEnablePeerAccess(id_other, 0));
+                }
+            }
+        }
+#endif // NDEBUG
+
         // configure logging to stdout
         // CUBLAS_CHECK(cublasLoggerConfigure(1, 1, 0, nullptr));
 
