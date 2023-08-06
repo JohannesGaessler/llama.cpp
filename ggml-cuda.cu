@@ -262,6 +262,8 @@ static_assert(sizeof(block_q6_K) == sizeof(ggml_fp16_t) + 13*QK_K/16, "wrong q6_
 #define CUDA_QUANTIZE_BLOCK_SIZE 256
 #define CUDA_DEQUANTIZE_BLOCK_SIZE 256
 
+#define GGML_CUDA_MMQ_X 64
+
 #ifndef GGML_CUDA_MMQ_Y
 #define GGML_CUDA_MMQ_Y 64
 #endif // GGML_CUDA_MMQ_Y
@@ -1948,7 +1950,7 @@ static __device__ __forceinline__ float vec_dot_q4_0_q8_1_mul_mat(
     __builtin_assume(i >= 0);
     __builtin_assume(i <  GGML_CUDA_MMQ_Y);
     __builtin_assume(j >= 0);
-    __builtin_assume(j <  WARP_SIZE);
+    __builtin_assume(j <  GGML_CUDA_MMQ_X);
     __builtin_assume(k >= 0);
     __builtin_assume(k <  WARP_SIZE);
     __builtin_assume(k % VDR_Q4_0_Q8_1_MMQ == 0);
@@ -3229,7 +3231,7 @@ static __global__ void mul_mat_q(
     const int & row_x_0 = row_dst_0;
     const int row_dst = row_dst_0 + tid_x;
 
-    const int col_dst_0 = blockIdx.y*WARP_SIZE;
+    const int col_dst_0 = blockIdx.y*GGML_CUDA_MMQ_X;
     const int & col_y_0 = col_dst_0;
 
     int   * tile_x_ql = nullptr;
@@ -3239,10 +3241,10 @@ static __global__ void mul_mat_q(
 
     allocate_tiles(&tile_x_ql, &tile_x_dm, &tile_x_qh, &tile_x_sc);
 
-    __shared__ int    tile_y_qs[(WARP_SIZE) * WARP_SIZE];
-    __shared__ half2  tile_y_ds[(WARP_SIZE) * WARP_SIZE/QI8_1];
+    __shared__ int    tile_y_qs[GGML_CUDA_MMQ_X * WARP_SIZE];
+    __shared__ half2  tile_y_ds[GGML_CUDA_MMQ_X * WARP_SIZE/QI8_1];
 
-    float sum[GGML_CUDA_MMQ_Y/WARP_SIZE][4] = {0.0f};
+    float sum[GGML_CUDA_MMQ_Y/WARP_SIZE][GGML_CUDA_MMQ_X/8] = {0.0f};
 
     for (int ib0 = 0; ib0 < blocks_per_row_x; ib0 += blocks_per_warp) {
 
@@ -3253,7 +3255,7 @@ static __global__ void mul_mat_q(
             const int kqs = ir*WARP_SIZE + tid_x;
             const int kbxd = kqs / QI8_1;
 
-            for (int i = 0; i < WARP_SIZE; i += 8) {
+            for (int i = 0; i < GGML_CUDA_MMQ_X; i += 8) {
                 const int col_y_eff = min(col_y_0 + tid_y + i, ncols_y-1); // to prevent out-of-bounds memory accesses
 
                 const block_q8_1 * by0 = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + kbxd];
@@ -3291,7 +3293,7 @@ static __global__ void mul_mat_q(
 #endif // __CUDA_ARCH__ >= 700
             for (int k = ir*WARP_SIZE/qr; k < (ir+1)*WARP_SIZE/qr; k += vdr) {
 #pragma unroll
-                for (int j = 0; j < WARP_SIZE; j += 8) {
+                for (int j = 0; j < GGML_CUDA_MMQ_X; j += 8) {
 #pragma unroll
                     for (int i = 0; i < GGML_CUDA_MMQ_Y; i += WARP_SIZE) {
                         sum[i/WARP_SIZE][j/8] += vec_dot(tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc, tile_y_qs, tile_y_ds,
@@ -3309,7 +3311,7 @@ static __global__ void mul_mat_q(
         return;
     }
 
-    for (int j = 0; j < WARP_SIZE; j += 8) {
+    for (int j = 0; j < GGML_CUDA_MMQ_X; j += 8) {
         const int col_dst = col_dst_0 + j + tid_y;
 
         if (col_dst >= ncols_dst) {
@@ -4020,7 +4022,7 @@ static void ggml_mul_mat_q4_0_q8_1_cuda(
     const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
 
     const int block_num_x = (nrows_x + GGML_CUDA_MMQ_Y - 1) / GGML_CUDA_MMQ_Y;
-    const int block_num_y = (ncols_y + WARP_SIZE - 1) / WARP_SIZE;
+    const int block_num_y = (ncols_y + GGML_CUDA_MMQ_X - 1) / GGML_CUDA_MMQ_X;
     const dim3 block_nums(block_num_x, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, WARP_SIZE/4, 1);
 
