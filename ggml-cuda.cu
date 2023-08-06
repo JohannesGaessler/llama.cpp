@@ -3194,7 +3194,7 @@ static __device__ __forceinline__ float vec_dot_q6_K_q8_1_mul_mat(
     __builtin_assume(i >= 0);
     __builtin_assume(i <  GGML_CUDA_MMQ_Y);
     __builtin_assume(j >= 0);
-    __builtin_assume(j <  WARP_SIZE);
+    __builtin_assume(j <  GGML_CUDA_MMQ_X);
     __builtin_assume(k >= 0);
     __builtin_assume(k <  WARP_SIZE);
     __builtin_assume(k % VDR_Q6_K_Q8_1_MMQ == 0);
@@ -3204,8 +3204,8 @@ static __device__ __forceinline__ float vec_dot_q6_K_q8_1_mul_mat(
 
     const int8_t * sc = ((const int8_t *) &x_sc[i * (WARP_SIZE/8) + i/8 + k/8]);
 
-    const int index_x = i * (QR6_K*WARP_SIZE + 1) + QR6_K*k;
-    const int index_y = j * (QR6_K*WARP_SIZE)     + QR6_K*k;
+    const int index_x = i * (QR6_K*WARP_SIZE + 1) +  QR6_K*k;
+    const int index_y = j * WARP_SIZE             + (QR6_K*k) % WARP_SIZE;
     return vec_dot_q6_K_q8_1_impl_mmq(&x_ql[index_x], &y_qs[index_y], sc, x_dmf[i * (WARP_SIZE/QI6_K) + i/QI6_K], &y_df[index_y/QI8_1]);
 }
 
