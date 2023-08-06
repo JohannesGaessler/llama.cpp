@@ -3260,25 +3260,32 @@ static __global__ void mul_mat_q(
 
                 const block_q8_1 * by0 = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + kbxd];
 
-                tile_y_qs[(tid_y + i) * (qr*WARP_SIZE) + kqs] = get_int_from_int8_aligned(by0->qs, tid_x % QI8_1);
+                const int index_y = (tid_y + i) * (qr*WARP_SIZE) + kqs;
+                tile_y_qs[index_y] = get_int_from_int8_aligned(by0->qs, tid_x % QI8_1);
+                if (need_sum) {
+                    tile_y_ds[index_y/QI8_1] = by0->ds;
+                } else {
+                    float * tile_y_df = (float *) tile_y_ds;
+                    tile_y_df[index_y/QI8_1] = by0->ds.x;
+                }
             }
         }
 
-        for (int ids0 = 0; ids0 < WARP_SIZE; ids0 += 8 * (WARP_SIZE/blocks_per_tile_y_col)) {
-            const int ids = (ids0 + tid_y * (WARP_SIZE/blocks_per_tile_y_col) + tid_x / blocks_per_tile_y_col) % WARP_SIZE;
-            const int kby = tid_x % blocks_per_tile_y_col;
-            const int col_y_eff = min(col_y_0 + ids, ncols_y-1);
+        // for (int ids0 = 0; ids0 < WARP_SIZE; ids0 += 8 * (WARP_SIZE/blocks_per_tile_y_col)) {
+        //     const int ids = (ids0 + tid_y * (WARP_SIZE/blocks_per_tile_y_col) + tid_x / blocks_per_tile_y_col) % WARP_SIZE;
+        //     const int kby = tid_x % blocks_per_tile_y_col;
+        //     const int col_y_eff = min(col_y_0 + ids, ncols_y-1);
 
-            // if the sum is not needed it's faster to transform the scale to f32 ahead of time
-            const half2 * dsi_src = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + kby].ds;
-            half2       * dsi_dst = &tile_y_ds[ids * (qr*WARP_SIZE/QI8_1) + kby];
-            if (need_sum) {
-                *dsi_dst = *dsi_src;
-            } else {
-                float * dfi_dst = (float *) dsi_dst;
-                *dfi_dst = (*dsi_src).x;
-            }
-        }
+        //     // if the sum is not needed it's faster to transform the scale to f32 ahead of time
+        //     const half2 * dsi_src = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + kby].ds;
+        //     half2       * dsi_dst = &tile_y_ds[ids * (qr*WARP_SIZE/QI8_1) + kby];
+        //     if (need_sum) {
+        //         *dsi_dst = *dsi_src;
+        //     } else {
+        //         float * dfi_dst = (float *) dsi_dst;
+        //         *dfi_dst = (*dsi_src).x;
+        //     }
+        // }
 
         __syncthreads();
 
