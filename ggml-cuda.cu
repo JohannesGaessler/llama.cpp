@@ -3251,6 +3251,7 @@ static __global__ void mul_mat_q(
         load_tiles(x + row_x_0*blocks_per_row_x + ib0, tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc,
                    tid_y, nrows_x-row_x_0-1, tid_x, blocks_per_row_x);
 
+#pragma unroll
         for (int ir = 0; ir < qr; ++ir) {
             const int kqs = ir*WARP_SIZE + tid_x;
             const int kbxd = kqs / QI8_1;
@@ -3262,29 +3263,24 @@ static __global__ void mul_mat_q(
 
                 const int index_y = (tid_y + i) * WARP_SIZE + kqs % WARP_SIZE;
                 tile_y_qs[index_y] = get_int_from_int8_aligned(by0->qs, tid_x % QI8_1);
-                if (need_sum) {
-                    tile_y_ds[index_y/QI8_1] = by0->ds;
-                } else {
-                    float * tile_y_df = (float *) tile_y_ds;
-                    tile_y_df[index_y/QI8_1] = by0->ds.x;
-                }
             }
 
-            // for (int ids0 = 0; ids0 < WARP_SIZE; ids0 += 8 * (WARP_SIZE/blocks_per_tile_y_col)) {
-            //     const int ids = (ids0 + tid_y * (WARP_SIZE/blocks_per_tile_y_col) + tid_x / blocks_per_tile_y_col) % WARP_SIZE;
-            //     const int kby = tid_x % blocks_per_tile_y_col;
-            //     const int col_y_eff = min(col_y_0 + ids, ncols_y-1);
+#pragma unroll
+            for (int ids0 = 0; ids0 < GGML_CUDA_MMQ_X; ids0 += 8 * QI8_1) {
+                const int ids = (ids0 + tid_y * QI8_1 + tid_x / (WARP_SIZE/QI8_1)) % GGML_CUDA_MMQ_X;
+                const int kby = tid_x % (WARP_SIZE/QI8_1);
+                const int col_y_eff = min(col_y_0 + ids, ncols_y-1);
 
-            //     // if the sum is not needed it's faster to transform the scale to f32 ahead of time
-            //     const half2 * dsi_src = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + kby].ds;
-            //     half2       * dsi_dst = &tile_y_ds[ids * (qr*WARP_SIZE/QI8_1) + kby];
-            //     if (need_sum) {
-            //         *dsi_dst = *dsi_src;
-            //     } else {
-            //         float * dfi_dst = (float *) dsi_dst;
-            //         *dfi_dst = (*dsi_src).x;
-            //     }
-            // }
+                // if the sum is not needed it's faster to transform the scale to f32 ahead of time
+                const half2 * dsi_src = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + ir*(WARP_SIZE/QI8_1) + kby].ds;
+                half2       * dsi_dst = &tile_y_ds[ids * (WARP_SIZE/QI8_1) + kby];
+                if (need_sum) {
+                    *dsi_dst = *dsi_src;
+                } else {
+                    float * dfi_dst = (float *) dsi_dst;
+                    *dfi_dst = (*dsi_src).x;
+                }
+            }
 
             __syncthreads();
 
