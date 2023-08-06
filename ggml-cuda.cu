@@ -3269,36 +3269,36 @@ static __global__ void mul_mat_q(
                     tile_y_df[index_y/QI8_1] = by0->ds.x;
                 }
             }
-        }
 
-        // for (int ids0 = 0; ids0 < WARP_SIZE; ids0 += 8 * (WARP_SIZE/blocks_per_tile_y_col)) {
-        //     const int ids = (ids0 + tid_y * (WARP_SIZE/blocks_per_tile_y_col) + tid_x / blocks_per_tile_y_col) % WARP_SIZE;
-        //     const int kby = tid_x % blocks_per_tile_y_col;
-        //     const int col_y_eff = min(col_y_0 + ids, ncols_y-1);
+            // for (int ids0 = 0; ids0 < WARP_SIZE; ids0 += 8 * (WARP_SIZE/blocks_per_tile_y_col)) {
+            //     const int ids = (ids0 + tid_y * (WARP_SIZE/blocks_per_tile_y_col) + tid_x / blocks_per_tile_y_col) % WARP_SIZE;
+            //     const int kby = tid_x % blocks_per_tile_y_col;
+            //     const int col_y_eff = min(col_y_0 + ids, ncols_y-1);
 
-        //     // if the sum is not needed it's faster to transform the scale to f32 ahead of time
-        //     const half2 * dsi_src = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + kby].ds;
-        //     half2       * dsi_dst = &tile_y_ds[ids * (qr*WARP_SIZE/QI8_1) + kby];
-        //     if (need_sum) {
-        //         *dsi_dst = *dsi_src;
-        //     } else {
-        //         float * dfi_dst = (float *) dsi_dst;
-        //         *dfi_dst = (*dsi_src).x;
-        //     }
-        // }
+            //     // if the sum is not needed it's faster to transform the scale to f32 ahead of time
+            //     const half2 * dsi_src = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + kby].ds;
+            //     half2       * dsi_dst = &tile_y_ds[ids * (qr*WARP_SIZE/QI8_1) + kby];
+            //     if (need_sum) {
+            //         *dsi_dst = *dsi_src;
+            //     } else {
+            //         float * dfi_dst = (float *) dsi_dst;
+            //         *dfi_dst = (*dsi_src).x;
+            //     }
+            // }
 
-        __syncthreads();
+            __syncthreads();
 
 #if __CUDA_ARCH__ >= 700 // Unrolling the loop is slower on Pascal
 #pragma unroll
 #endif // __CUDA_ARCH__ >= 700
-        for (int k = 0; k < WARP_SIZE; k += vdr) {
+            for (int k = ir*WARP_SIZE/qr; k < (ir+1)*WARP_SIZE/qr; k += vdr) {
 #pragma unroll
-            for (int j = 0; j < WARP_SIZE; j += 8) {
+                for (int j = 0; j < WARP_SIZE; j += 8) {
 #pragma unroll
-                for (int i = 0; i < GGML_CUDA_MMQ_Y; i += WARP_SIZE) {
-                    sum[i/WARP_SIZE][j/8] += vec_dot(tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc, tile_y_qs, tile_y_ds,
-                                                     tid_x + i, tid_y + j, k);
+                    for (int i = 0; i < GGML_CUDA_MMQ_Y; i += WARP_SIZE) {
+                        sum[i/WARP_SIZE][j/8] += vec_dot(tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc, tile_y_qs, tile_y_ds,
+                                                        tid_x + i, tid_y + j, k);
+                    }
                 }
             }
         }
