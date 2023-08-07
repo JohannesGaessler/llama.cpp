@@ -2550,12 +2550,12 @@ static __device__ __forceinline__ float vec_dot_q3_K_q8_1(
     return vec_dot_q3_K_q8_1_impl_mmvq(vl, vh, u, bq3_K->scales, scale_offset, d, d8);
 }
 
-static __device__ __forceinline__ void allocate_tiles_q3_K(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc) {
+template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q3_K(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc) {
 
-    __shared__ int   tile_x_ql[GGML_CUDA_MMQ_Y * (WARP_SIZE)       + GGML_CUDA_MMQ_Y];
-    __shared__ half2 tile_x_dm[GGML_CUDA_MMQ_Y * (WARP_SIZE/QI3_K) + GGML_CUDA_MMQ_Y/QI3_K];
-    __shared__ int   tile_x_qh[GGML_CUDA_MMQ_Y * (WARP_SIZE/2)     + GGML_CUDA_MMQ_Y/2];
-    __shared__ int   tile_x_sc[GGML_CUDA_MMQ_Y * (WARP_SIZE/4)     + GGML_CUDA_MMQ_Y/4];
+    __shared__ int   tile_x_ql[mmq_y * (WARP_SIZE)       + mmq_y];
+    __shared__ half2 tile_x_dm[mmq_y * (WARP_SIZE/QI3_K) + mmq_y/QI3_K];
+    __shared__ int   tile_x_qh[mmq_y * (WARP_SIZE/2)     + mmq_y/2];
+    __shared__ int   tile_x_sc[mmq_y * (WARP_SIZE/4)     + mmq_y/4];
 
     *x_ql = tile_x_ql;
     *x_dm = tile_x_dm;
@@ -2563,12 +2563,12 @@ static __device__ __forceinline__ void allocate_tiles_q3_K(int ** x_ql, half2 **
     *x_sc = tile_x_sc;
 }
 
-template <bool need_check> static __device__ __forceinline__ void load_tiles_q3_K(
+template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q3_K(
     const void * __restrict__ vx, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
     int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & blocks_per_row) {
 
     __builtin_assume(i_offset >= 0);
-    __builtin_assume(i_offset <  8);
+    __builtin_assume(i_offset <  nwarps);
     __builtin_assume(k >= 0);
     __builtin_assume(k <  WARP_SIZE);
 
@@ -2578,7 +2578,7 @@ template <bool need_check> static __device__ __forceinline__ void load_tiles_q3_
     const block_q3_K * bx0 = (block_q3_K *) vx;
 
 #pragma unroll
-    for (int i0 = 0; i0 < GGML_CUDA_MMQ_Y; i0 += 8) {
+    for (int i0 = 0; i0 < mmq_y; i0 += nwarps) {
         int i = i0 + i_offset;
 
         if (need_check) {
@@ -2595,8 +2595,8 @@ template <bool need_check> static __device__ __forceinline__ void load_tiles_q3_
     float * x_dmf = (float *) x_dm;
 
 #pragma unroll
-    for (int i0 = 0; i0 < GGML_CUDA_MMQ_Y; i0 += 8 * QI3_K) {
-        int i = (i0 + i_offset * QI3_K + k / blocks_per_tile_x_row) % GGML_CUDA_MMQ_Y;
+    for (int i0 = 0; i0 < mmq_y; i0 += nwarps * QI3_K) {
+        int i = (i0 + i_offset * QI3_K + k / blocks_per_tile_x_row) % mmq_y;
 
         if (need_check) {
             i = min(i, i_max);
@@ -2608,7 +2608,7 @@ template <bool need_check> static __device__ __forceinline__ void load_tiles_q3_
     }
 
 #pragma unroll
-    for (int i0 = 0; i0 < GGML_CUDA_MMQ_Y; i0 += 8 * 2) {
+    for (int i0 = 0; i0 < mmq_y; i0 += nwarps * 2) {
         int i = i0 + i_offset * 2 + k / (WARP_SIZE/2);
 
         if (need_check) {
@@ -2622,7 +2622,7 @@ template <bool need_check> static __device__ __forceinline__ void load_tiles_q3_
     }
 
 #pragma unroll
-    for (int i0 = 0; i0 < GGML_CUDA_MMQ_Y; i0 += 8 * 4) {
+    for (int i0 = 0; i0 < mmq_y; i0 += nwarps * 4) {
         int i = i0 + i_offset * 4 + k / (WARP_SIZE/4);
 
         if (need_check) {
@@ -2647,14 +2647,14 @@ template <bool need_check> static __device__ __forceinline__ void load_tiles_q3_
     }
 }
 
-static __device__ __forceinline__ float vec_dot_q3_K_q8_1_mul_mat(
+template <int mmq_x, int mmq_y> static __device__ __forceinline__ float vec_dot_q3_K_q8_1_mul_mat(
     const int * __restrict__ x_ql, const half2 * __restrict__ x_dm, const int * __restrict__ x_qh, const int * __restrict__ x_sc,
     const int * __restrict__ y_qs, const half2 * __restrict__ y_ds, const int & i, const int & j, const int & k) {
 
     __builtin_assume(i >= 0);
-    __builtin_assume(i <  GGML_CUDA_MMQ_Y);
+    __builtin_assume(i <  mmq_y);
     __builtin_assume(j >= 0);
-    __builtin_assume(j <  GGML_CUDA_MMQ_X);
+    __builtin_assume(j <  mmq_x);
     __builtin_assume(k >= 0);
     __builtin_assume(k <  WARP_SIZE);
     __builtin_assume(k % VDR_Q3_K_Q8_1_MMQ == 0);
@@ -4169,22 +4169,24 @@ static void ggml_mul_mat_q3_K_q8_1_cuda(
     const void * vx, const void * vy, float * dst, const int ncols_x, const int nrows_x,
     const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
 
-    const int block_num_x = (nrows_x + GGML_CUDA_MMQ_Y - 1) / GGML_CUDA_MMQ_Y;
-    const int block_num_y = (ncols_y + GGML_CUDA_MMQ_X - 1) / GGML_CUDA_MMQ_X;
+    const int mmq_x  = 64;
+    const int mmq_y  = 128;
+    const int nwarps = 4;
+
+    const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
+    const int block_num_y = (ncols_y + mmq_x - 1) / mmq_x;
     const dim3 block_nums(block_num_x, block_num_y, 1);
-    const dim3 block_dims(WARP_SIZE, WARP_SIZE/4, 1);
+    const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
-    const int mmq_x = 64;
-    const int mmq_y = 64;
-    const int nwarps = 8;
-
-    if (nrows_x % GGML_CUDA_MMQ_Y == 0) {
-        mul_mat_q<QK_K, QR3_K, QI3_K, false, block_q3_K, mmq_x, mmq_y, nwarps, allocate_tiles_q3_K,
-            load_tiles_q3_K<false>, VDR_Q3_K_Q8_1_MMQ, vec_dot_q3_K_q8_1_mul_mat>
+    if (nrows_x % mmq_y == 0) {
+        const bool need_check = false;
+        mul_mat_q<QK_K, QR3_K, QI3_K, false, block_q3_K, mmq_x, mmq_y, nwarps, allocate_tiles_q3_K<mmq_y>,
+            load_tiles_q3_K<mmq_y, nwarps, need_check>, VDR_Q3_K_Q8_1_MMQ, vec_dot_q3_K_q8_1_mul_mat<mmq_x, mmq_y>>
             <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
     } else {
-        mul_mat_q<QK_K, QR3_K, QI3_K, false, block_q3_K, mmq_x, mmq_y, nwarps, allocate_tiles_q3_K,
-            load_tiles_q3_K<true>, VDR_Q3_K_Q8_1_MMQ, vec_dot_q3_K_q8_1_mul_mat>
+        const bool need_check = true;
+        mul_mat_q<QK_K, QR3_K, QI3_K, false, block_q3_K, mmq_x, mmq_y, nwarps, allocate_tiles_q3_K<mmq_y>,
+            load_tiles_q3_K<mmq_y, nwarps, need_check>, VDR_Q3_K_Q8_1_MMQ, vec_dot_q3_K_q8_1_mul_mat<mmq_x, mmq_y>>
             <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
     }
 }
