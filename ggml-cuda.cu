@@ -3226,12 +3226,9 @@ static __global__ void mul_mat_q(
 
     const int & ncols_dst = ncols_y;
 
-    const int tid_x = threadIdx.x;
-    const int tid_y = threadIdx.y;
-
     const int row_dst_0 = blockIdx.x*GGML_CUDA_MMQ_Y;
     const int & row_x_0 = row_dst_0;
-    const int row_dst = row_dst_0 + tid_x;
+    const int row_dst = row_dst_0 + threadIdx.x;
 
     const int col_dst_0 = blockIdx.y*GGML_CUDA_MMQ_X;
     const int & col_y_0 = col_dst_0;
@@ -3251,27 +3248,27 @@ static __global__ void mul_mat_q(
     for (int ib0 = 0; ib0 < blocks_per_row_x; ib0 += blocks_per_warp) {
 
         load_tiles(x + row_x_0*blocks_per_row_x + ib0, tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc,
-                   tid_y, nrows_x-row_x_0-1, tid_x, blocks_per_row_x);
+                   threadIdx.y, nrows_x-row_x_0-1, threadIdx.x, blocks_per_row_x);
 
 #pragma unroll
         for (int ir = 0; ir < qr; ++ir) {
-            const int kqs = ir*WARP_SIZE + tid_x;
+            const int kqs = ir*WARP_SIZE + threadIdx.x;
             const int kbxd = kqs / QI8_1;
 
 #pragma unroll
             for (int i = 0; i < GGML_CUDA_MMQ_X; i += 8) {
-                const int col_y_eff = min(col_y_0 + tid_y + i, ncols_y-1); // to prevent out-of-bounds memory accesses
+                const int col_y_eff = min(col_y_0 + threadIdx.y + i, ncols_y-1); // to prevent out-of-bounds memory accesses
 
                 const block_q8_1 * by0 = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + kbxd];
 
-                const int index_y = (tid_y + i) * WARP_SIZE + kqs % WARP_SIZE;
-                tile_y_qs[index_y] = get_int_from_int8_aligned(by0->qs, tid_x % QI8_1);
+                const int index_y = (threadIdx.y + i) * WARP_SIZE + kqs % WARP_SIZE;
+                tile_y_qs[index_y] = get_int_from_int8_aligned(by0->qs, threadIdx.x % QI8_1);
             }
 
 #pragma unroll
             for (int ids0 = 0; ids0 < GGML_CUDA_MMQ_X; ids0 += 8 * QI8_1) {
-                const int ids = (ids0 + tid_y * QI8_1 + tid_x / (WARP_SIZE/QI8_1)) % GGML_CUDA_MMQ_X;
-                const int kby = tid_x % (WARP_SIZE/QI8_1);
+                const int ids = (ids0 + threadIdx.y * QI8_1 + threadIdx.x / (WARP_SIZE/QI8_1)) % GGML_CUDA_MMQ_X;
+                const int kby = threadIdx.x % (WARP_SIZE/QI8_1);
                 const int col_y_eff = min(col_y_0 + ids, ncols_y-1);
 
                 // if the sum is not needed it's faster to transform the scale to f32 ahead of time
@@ -3296,7 +3293,7 @@ static __global__ void mul_mat_q(
 #pragma unroll
                     for (int i = 0; i < GGML_CUDA_MMQ_Y; i += WARP_SIZE) {
                         sum[i/WARP_SIZE][j/8] += vec_dot(tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc, tile_y_qs, tile_y_ds,
-                                                        tid_x + i, tid_y + j, k);
+                                                        threadIdx.x + i, threadIdx.y + j, k);
                     }
                 }
             }
@@ -3311,7 +3308,7 @@ static __global__ void mul_mat_q(
     }
 
     for (int j = 0; j < GGML_CUDA_MMQ_X; j += 8) {
-        const int col_dst = col_dst_0 + j + tid_y;
+        const int col_dst = col_dst_0 + j + threadIdx.y;
 
         if (col_dst >= ncols_dst) {
             return;
