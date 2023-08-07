@@ -1890,8 +1890,8 @@ static __device__ __forceinline__ float vec_dot_q4_0_q8_1(
 
 template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q4_0(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc) {
 
-    __shared__ int  tile_x_qs[mmq_y * (WARP_SIZE)       + GGML_CUDA_MMQ_Y];
-    __shared__ float tile_x_d[mmq_y * (WARP_SIZE/QI4_0) + GGML_CUDA_MMQ_Y/QI4_0];
+    __shared__ int  tile_x_qs[mmq_y * (WARP_SIZE)       + mmq_y];
+    __shared__ float tile_x_d[mmq_y * (WARP_SIZE/QI4_0) + mmq_y/QI4_0];
 
     *x_ql = tile_x_qs;
     *x_dm = (half2 *) tile_x_d;
@@ -4091,8 +4091,8 @@ static void ggml_mul_mat_q5_1_q8_1_cuda(
     const void * vx, const void * vy, float * dst, const int ncols_x, const int nrows_x,
     const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
 
-    const int mmq_x = 128;
-    const int mmq_y = 64;
+    const int mmq_x  = 128;
+    const int mmq_y  = 64;
     const int nwarps = 8;
 
     const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
