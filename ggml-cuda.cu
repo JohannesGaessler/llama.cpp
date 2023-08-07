@@ -3298,9 +3298,9 @@ static __global__ void mul_mat_q(
                     }
                 }
             }
-        }
 
-        __syncthreads();
+            __syncthreads();
+        }
     }
 
 
