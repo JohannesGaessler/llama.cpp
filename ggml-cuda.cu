@@ -262,7 +262,7 @@ static_assert(sizeof(block_q6_K) == sizeof(ggml_fp16_t) + 13*QK_K/16, "wrong q6_
 #define CUDA_QUANTIZE_BLOCK_SIZE 256
 #define CUDA_DEQUANTIZE_BLOCK_SIZE 256
 
-#define GGML_CUDA_MMQ_X 32
+#define GGML_CUDA_MMQ_X 64
 
 #ifndef GGML_CUDA_MMQ_Y
 #define GGML_CUDA_MMQ_Y 64
