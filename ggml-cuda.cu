@@ -2090,21 +2090,21 @@ static __device__ __forceinline__ float vec_dot_q5_0_q8_1(
     return vec_dot_q5_0_q8_1_impl<VDR_Q5_0_Q8_1_MMVQ>(vl, vh, u, bq5_0->d, bq8_1->ds);
 }
 
-static __device__ __forceinline__ void allocate_tiles_q5_0(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc) {
+template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q5_0(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc) {
 
-    __shared__ int  tile_x_ql[GGML_CUDA_MMQ_Y * (2*WARP_SIZE)     + GGML_CUDA_MMQ_Y];
-    __shared__ float tile_x_d[GGML_CUDA_MMQ_Y * (WARP_SIZE/QI5_0) + GGML_CUDA_MMQ_Y/QI5_0];
+    __shared__ int  tile_x_ql[mmq_y * (2*WARP_SIZE)     + mmq_y];
+    __shared__ float tile_x_d[mmq_y * (WARP_SIZE/QI5_0) + mmq_y/QI5_0];
 
     *x_ql = tile_x_ql;
     *x_dm = (half2 *) tile_x_d;
 }
 
-template <bool need_check> static __device__ __forceinline__ void load_tiles_q5_0(
+template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q5_0(
     const void * __restrict__ vx, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
     int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & blocks_per_row) {
 
     __builtin_assume(i_offset >= 0);
-    __builtin_assume(i_offset <  8);
+    __builtin_assume(i_offset <  nwarps);
     __builtin_assume(k >= 0);
     __builtin_assume(k <  WARP_SIZE);
 
@@ -2114,7 +2114,7 @@ template <bool need_check> static __device__ __forceinline__ void load_tiles_q5_
     const block_q5_0 * bx0 = (block_q5_0 *) vx;
 
 #pragma unroll
-    for (int i0 = 0; i0 < GGML_CUDA_MMQ_Y; i0 += 8) {
+    for (int i0 = 0; i0 < mmq_y; i0 += nwarps) {
         int i = i0 + i_offset;
 
         if (need_check) {
@@ -2150,7 +2150,7 @@ template <bool need_check> static __device__ __forceinline__ void load_tiles_q5_
     float * x_dmf = (float *) x_dm;
 
 #pragma unroll
-    for (int i0 = 0; i0 < GGML_CUDA_MMQ_Y; i0 += 8 * QI5_0) {
+    for (int i0 = 0; i0 < mmq_y; i0 += nwarps * QI5_0) {
         int i = i0 + i_offset * QI5_0 + k / blocks_per_tile_x_row;
 
         if (need_check) {
@@ -2163,14 +2163,14 @@ template <bool need_check> static __device__ __forceinline__ void load_tiles_q5_
     }
 }
 
-static __device__ __forceinline__ float vec_dot_q5_0_q8_1_mul_mat(
+template <int mmq_x, int mmq_y> static __device__ __forceinline__ float vec_dot_q5_0_q8_1_mul_mat(
     const int * __restrict__ x_ql, const half2 * __restrict__ x_dm, const int * __restrict__ x_qh, const int * __restrict__ x_sc,
     const int * __restrict__ y_qs, const half2 * __restrict__ y_ds, const int & i, const int & j, const int & k) {
 
     __builtin_assume(i >= 0);
-    __builtin_assume(i <  GGML_CUDA_MMQ_Y);
+    __builtin_assume(i <  mmq_y);
     __builtin_assume(j >= 0);
-    __builtin_assume(j <  GGML_CUDA_MMQ_X);
+    __builtin_assume(j <  mmq_x);
     __builtin_assume(k >= 0);
     __builtin_assume(k <  WARP_SIZE);
     __builtin_assume(k % VDR_Q5_0_Q8_1_MMQ == 0);
@@ -4069,22 +4069,24 @@ static void ggml_mul_mat_q5_0_q8_1_cuda(
     const void * vx, const void * vy, float * dst, const int ncols_x, const int nrows_x,
     const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
 
-    const int block_num_x = (nrows_x + GGML_CUDA_MMQ_Y - 1) / GGML_CUDA_MMQ_Y;
-    const int block_num_y = (ncols_y + GGML_CUDA_MMQ_X - 1) / GGML_CUDA_MMQ_X;
+    const int mmq_x  = 64;
+    const int mmq_y  = 128;
+    const int nwarps = 4;
+
+    const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
+    const int block_num_y = (ncols_y + mmq_x - 1) / mmq_x;
     const dim3 block_nums(block_num_x, block_num_y, 1);
-    const dim3 block_dims(WARP_SIZE, WARP_SIZE/4, 1);
+    const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
-    const int mmq_x = 64;
-    const int mmq_y = 64;
-    const int nwarps = 8;
-
-    if (nrows_x % GGML_CUDA_MMQ_Y == 0) {
-        mul_mat_q<QK5_0, QR5_0, QI5_0, false, block_q5_0, mmq_x, mmq_y, nwarps, allocate_tiles_q5_0,
-            load_tiles_q5_0<false>, VDR_Q5_0_Q8_1_MMQ, vec_dot_q5_0_q8_1_mul_mat>
+    if (nrows_x % mmq_y == 0) {
+        const bool need_check = false;
+        mul_mat_q<QK5_0, QR5_0, QI5_0, false, block_q5_0, mmq_x, mmq_y, nwarps, allocate_tiles_q5_0<mmq_y>,
+            load_tiles_q5_0<mmq_y, nwarps, need_check>, VDR_Q5_0_Q8_1_MMQ, vec_dot_q5_0_q8_1_mul_mat<mmq_x, mmq_y>>
             <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
     } else {
-        mul_mat_q<QK5_0, QR5_0, QI5_0, false, block_q5_0, mmq_x, mmq_y, nwarps, allocate_tiles_q5_0,
-            load_tiles_q5_0<true>, VDR_Q5_0_Q8_1_MMQ, vec_dot_q5_0_q8_1_mul_mat>
+        const bool need_check = true;
+        mul_mat_q<QK5_0, QR5_0, QI5_0, false, block_q5_0, mmq_x, mmq_y, nwarps, allocate_tiles_q5_0<mmq_y>,
+            load_tiles_q5_0<mmq_y, nwarps, need_check>, VDR_Q5_0_Q8_1_MMQ, vec_dot_q5_0_q8_1_mul_mat<mmq_x, mmq_y>>
             <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
     }
 }
