@@ -1924,25 +1924,24 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
         const block_q4_0 * bxi = bx0 + i*blocks_per_row + kbx;
 
         x_ql[i * (WARP_SIZE + 1) + k] = get_int_from_uint8(bxi->qs, kqsx);
-        x_dmf[i * (WARP_SIZE/QI4_0) + i / QI4_0 + kbx] = bxi->d;
+        // x_dmf[i * (WARP_SIZE/QI4_0) + i / QI4_0 + kbx] = bxi->d;
     }
 
-//     const int blocks_per_tile_x_row = WARP_SIZE / QI4_0;
-//     const int kbxd = k % blocks_per_tile_x_row;
+    const int blocks_per_tile_x_row = WARP_SIZE / QI4_0;
+    const int kbxd = k % blocks_per_tile_x_row;
 
-// #pragma unroll
-//     for (int i0 = 0; i0 < GGML_CUDA_MMQ_Y; i0 += 8 * QI4_0) {
-//         FIXME out-of-bounds
-//         const int i = i0 + i_offset * QI4_0 + k / blocks_per_tile_x_row;
+#pragma unroll
+    for (int i0 = 0; i0 < mmq_y; i0 += nwarps * QI4_0) {
+        int i = i0 + i_offset * QI4_0 + k / blocks_per_tile_x_row;
 
-//         if (i >= GGML_CUDA_MMQ_Y) {
-//             return;
-//         }
+        if (need_check) {
+            i = min(i, i_max);
+        }
 
-//         const block_q4_0 * bxi = bx0 + i*blocks_per_row + kbxd;
+        const block_q4_0 * bxi = bx0 + i*blocks_per_row + kbxd;
 
-//         x_dm[i * (WARP_SIZE/QI4_0) + i / QI4_0 + kbxd].x = bxi->d;
-//     }
+        x_dmf[i * (WARP_SIZE/QI4_0) + i / QI4_0 + kbxd] = bxi->d;
+    }
 }
 
 template <int mmq_x, int mmq_y> static __device__ __forceinline__ float vec_dot_q4_0_q8_1_mul_mat(
@@ -4018,7 +4017,7 @@ static void ggml_mul_mat_q4_0_q8_1_cuda(
     const void * vx, const void * vy, float * dst, const int ncols_x, const int nrows_x,
     const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
 
-    const int mmq_x  = 128;
+    const int mmq_x  = 64;
     const int mmq_y  = 128;
     const int nwarps = 4;
 
