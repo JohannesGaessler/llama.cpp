@@ -4161,7 +4161,7 @@ static void ggml_mul_mat_q5_0_q8_1_cuda(
     } else {
         const int mmq_x  = 64;
         const int mmq_y  = 64;
-        const int nwarps = 4;
+        const int nwarps = 8;
 
         const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
         const int block_num_y = (ncols_y + mmq_x - 1) / mmq_x;
