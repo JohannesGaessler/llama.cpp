@@ -4504,52 +4504,25 @@ static void ggml_mul_mat_q6_K_q8_1_cuda(
     const void * vx, const void * vy, float * dst, const int ncols_x, const int nrows_x,
     const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
 
-    int id;
-    CUDA_CHECK(cudaGetDevice(&id));
-    const int compute_capability = g_compute_capabilities[id];
+    const int mmq_x  = 64;
+    const int mmq_y  = 64;
+    const int nwarps = 4;
 
-    if (compute_capability >= CC_TURING) {
-        const int mmq_x  = 64;
-        const int mmq_y  = 64;
-        const int nwarps = 4;
+    const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
+    const int block_num_y = (ncols_y + mmq_x - 1) / mmq_x;
+    const dim3 block_nums(block_num_x, block_num_y, 1);
+    const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
-        const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
-        const int block_num_y = (ncols_y + mmq_x - 1) / mmq_x;
-        const dim3 block_nums(block_num_x, block_num_y, 1);
-        const dim3 block_dims(WARP_SIZE, nwarps, 1);
-
-        if (nrows_x % mmq_y == 0) {
-            const bool need_check = false;
-            mul_mat_q<QK_K, QR6_K, QI6_K, false, block_q6_K, mmq_x, mmq_y, nwarps, allocate_tiles_q6_K<mmq_y>,
-                load_tiles_q6_K<mmq_y, nwarps, need_check>, VDR_Q6_K_Q8_1_MMQ, vec_dot_q6_K_q8_1_mul_mat<mmq_x, mmq_y>>
-                <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-        } else {
-            const bool need_check = true;
-            mul_mat_q<QK_K, QR6_K, QI6_K, false, block_q6_K, mmq_x, mmq_y, nwarps, allocate_tiles_q6_K<mmq_y>,
-                load_tiles_q6_K<mmq_y, nwarps, need_check>, VDR_Q6_K_Q8_1_MMQ, vec_dot_q6_K_q8_1_mul_mat<mmq_x, mmq_y>>
-                <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-        }
+    if (nrows_x % mmq_y == 0) {
+        const bool need_check = false;
+        mul_mat_q<QK_K, QR6_K, QI6_K, false, block_q6_K, mmq_x, mmq_y, nwarps, allocate_tiles_q6_K<mmq_y>,
+            load_tiles_q6_K<mmq_y, nwarps, need_check>, VDR_Q6_K_Q8_1_MMQ, vec_dot_q6_K_q8_1_mul_mat<mmq_x, mmq_y>>
+            <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
     } else {
-        const int mmq_x  = 64;
-        const int mmq_y  = 64;
-        const int nwarps = 4;
-
-        const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
-        const int block_num_y = (ncols_y + mmq_x - 1) / mmq_x;
-        const dim3 block_nums(block_num_x, block_num_y, 1);
-        const dim3 block_dims(WARP_SIZE, nwarps, 1);
-
-        if (nrows_x % mmq_y == 0) {
-            const bool need_check = false;
-            mul_mat_q<QK_K, QR6_K, QI6_K, false, block_q6_K, mmq_x, mmq_y, nwarps, allocate_tiles_q6_K<mmq_y>,
-                load_tiles_q6_K<mmq_y, nwarps, need_check>, VDR_Q6_K_Q8_1_MMQ, vec_dot_q6_K_q8_1_mul_mat<mmq_x, mmq_y>>
-                <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-        } else {
-            const bool need_check = true;
-            mul_mat_q<QK_K, QR6_K, QI6_K, false, block_q6_K, mmq_x, mmq_y, nwarps, allocate_tiles_q6_K<mmq_y>,
-                load_tiles_q6_K<mmq_y, nwarps, need_check>, VDR_Q6_K_Q8_1_MMQ, vec_dot_q6_K_q8_1_mul_mat<mmq_x, mmq_y>>
-                <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-        }
+        const bool need_check = true;
+        mul_mat_q<QK_K, QR6_K, QI6_K, false, block_q6_K, mmq_x, mmq_y, nwarps, allocate_tiles_q6_K<mmq_y>,
+            load_tiles_q6_K<mmq_y, nwarps, need_check>, VDR_Q6_K_Q8_1_MMQ, vec_dot_q6_K_q8_1_mul_mat<mmq_x, mmq_y>>
+            <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
     }
 }
 
