@@ -4265,7 +4265,7 @@ static void ggml_mul_mat_q8_0_q8_1_cuda(
                 <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
         }
     } else {
-        const int mmq_x  = 128;
+        const int mmq_x  = 64;
         const int mmq_y  = 64;
         const int nwarps = 4;
 
