@@ -4169,7 +4169,7 @@ static void ggml_mul_mat_q3_K_q8_1_cuda(
     const void * vx, const void * vy, float * dst, const int ncols_x, const int nrows_x,
     const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
 
-    const int mmq_x  = 64;
+    const int mmq_x  = 128;
     const int mmq_y  = 128;
     const int nwarps = 4;
 
