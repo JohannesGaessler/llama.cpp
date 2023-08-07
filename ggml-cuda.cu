@@ -4248,7 +4248,7 @@ static void ggml_mul_mat_q6_K_q8_1_cuda(
     const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
 
     const int mmq_x  = 64;
-    const int mmq_y  = 128;
+    const int mmq_y  = 64;
     const int nwarps = 4;
 
     const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
