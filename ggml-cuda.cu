@@ -2813,15 +2813,33 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
         const int ksc = k % (WARP_SIZE/8);
 
         // scale arrangement after the following two lines: sc0,...,sc3, sc4,...,sc7, m0,...,m3, m4,...,m8
-        int scales8 = (scales[(ksc%2) + (ksc!=0)] >> (4 * (ksc & (ksc/2)))) & 0x0F0F0F0F; // lower 4 bits
-        scales8    |= (scales[ksc/2]              >> (2 * (ksc % 2)))       & 0x30303030; // upper 2 bits
+        // int scales8 = (scales[(ksc%2) + (ksc!=0)] >> (4 * (ksc & (ksc/2)))) & 0x0F0F0F0F; // lower 4 bits
+        // scales8    |= (scales[ksc/2]              >> (2 * (ksc % 2)))       & 0x30303030; // upper 2 bits
+        // sc03: 0, 0, 0, 0
+        // sc47: 2, 0, 0, 1
+        //  m03: 1, 0, 1, 0
+        //  m47: 2, 1, 1, 1
+
+        int scales8 = 0;
+        if (ksc == 0) {
+            scales8 |= (scales[0] >>  0) & 0x00003F3F;
+            scales8 |= (scales[1] << 16) & 0x3F3F0000;
+        } else if (ksc == 1) {
+            scales8 |= (scales[0] >> 16) & 0x00003F3F;
+            scales8 |= (scales[1] <<  0) & 0x3F3F0000;
+        } else if (ksc == 2) {
+            scales8 |= (scales[2] >>  0) & 0x00000F0F;
+            scales8 |= (scales[0] >>  2) & 0x00003030;
+            scales8 |= (scales[2] << 12) & 0x0F0F0000;
+            scales8 |= (scales[1] << 14) & 0x30300000;
+        } else {
+            scales8 |= (scales[2] >>  4) & 0x00000F0F;
+            scales8 |= (scales[0] >> 18) & 0x00003030;
+            scales8 |= (scales[2] >>  4) & 0x0F0F0000;
+            scales8 |= (scales[1] >>  2) & 0x30300000;
+        }
 
         x_sc[i * (WARP_SIZE/8) + i / 8 + ksc] = scales8;
-        __syncthreads();
-        int scales8_2 =  (x_sc[i * (WARP_SIZE/8) + i / 8 + ksc/2 + 0] >> (16 * (ksc % 2))) & 0x0000FFFF;
-        scales8_2    |= ((x_sc[i * (WARP_SIZE/8) + i / 8 + ksc/2 + 2] >> (16 * (ksc % 2))) & 0x0000FFFF) << 16;
-        __syncthreads();
-        x_sc[i * (WARP_SIZE/8) + i / 8 + ksc] = scales8_2;
     }
 }
 
