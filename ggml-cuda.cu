@@ -2823,15 +2823,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
         int scales8 =  (scales[2*(ksc/2)] >> (16 * (ksc==1) + 4 * (ksc == 3)))           & 0x00000F0F;
         scales8    |=  (scales[0] >> (2*(ksc/2) + 16*(ksc%2)))                           & 0x00003030;
         scales8    |= ((scales[1+ksc/2] << (16*(ksc==0) + 12*(ksc==2))) >> (4*(ksc==3))) & 0x0F0F0000;
-        if (ksc == 0) {
-            scales8 |= (scales[1] << 16) & 0x30300000;
-        } else if (ksc == 1) {
-            scales8 |= (scales[1] <<  0) & 0x30300000;
-        } else if (ksc == 2) {
-            scales8 |= (scales[1] << 14) & 0x30300000;
-        } else {
-            scales8 |= (scales[1] >>  2) & 0x30300000;
-        }
+        scales8    |= ((scales[1] << (16*((ksc+1)%2))) >> (2*(ksc/2))) & 0x30300000;
 
         x_sc[i * (WARP_SIZE/8) + i / 8 + ksc] = scales8;
     }
