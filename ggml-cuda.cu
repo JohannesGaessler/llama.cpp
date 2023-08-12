@@ -3150,9 +3150,9 @@ static __device__ __forceinline__ float vec_dot_q6_K_q8_1_mul_mat(
     return vec_dot_q6_K_q8_1_impl_mmq(&x_ql[index_x], &y_qs[index_y], sc, x_dmf[i * (WARP_SIZE/QI6_K) + i/QI6_K], &y_df[index_y/QI8_1]);
 }
 
-__constant__ void *  mul_mat_q_vx[GGML_CUDA_MAX_DEVICES];
-__constant__ void *  mul_mat_q_vy[GGML_CUDA_MAX_DEVICES];
-__constant__ void * mul_mat_q_dst[GGML_CUDA_MAX_DEVICES];
+__constant__  void * mul_mat_q_vx[GGML_CUDA_MAX_DEVICES];
+__constant__  void * mul_mat_q_vy[GGML_CUDA_MAX_DEVICES];
+__constant__ float * mul_mat_q_dst[GGML_CUDA_MAX_DEVICES];
 
 __constant__ int mul_mat_q_ncols_x[GGML_CUDA_MAX_DEVICES];
 __constant__ int mul_mat_q_nrows_x[GGML_CUDA_MAX_DEVICES];
@@ -3165,16 +3165,18 @@ __constant__ int mul_mat_q_blocks_per_col_y[GGML_CUDA_MAX_DEVICES];
 
 template <int qk, int qr, int qi, bool need_sum, typename block_q_t, int mmq_x, int mmq_y, int nwarps,
               allocate_tiles_cuda_t allocate_tiles, load_tiles_cuda_t load_tiles, int vdr, vec_dot_q_mul_mat_cuda_t vec_dot>
-static __device__ __forceinline__ void mul_mat_q(
-    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int nrows_x, const int ncols_y, const int nrows_dst) {
+static __device__ __forceinline__ void mul_mat_q() {
 
-    const block_q_t  * x = (const block_q_t  *) vx;
-    const block_q8_1 * y = (const block_q8_1 *) vy;
+    const block_q_t  * x = (const block_q_t  *) mul_mat_q_vx[0];
+    const block_q8_1 * y = (const block_q8_1 *) mul_mat_q_vy[0];
 
-    const int & blocks_per_row_x = mul_mat_q_blocks_per_row_x[0];
-    const int & blocks_per_col_y = mul_mat_q_blocks_per_col_y[0];
-    const int blocks_per_warp = WARP_SIZE / qi;
+    const int & nrows_x   = mul_mat_q_nrows_x[0];
+    const int & ncols_y   = mul_mat_q_ncols_y[0];
+    const int & nrows_dst = mul_mat_q_nrows_dst[0];
+
+    const     int & blocks_per_row_x = mul_mat_q_blocks_per_row_x[0];
+    const     int & blocks_per_col_y = mul_mat_q_blocks_per_col_y[0];
+    constexpr int   blocks_per_warp = WARP_SIZE / qi;
 
     const int & ncols_dst = ncols_y;
 
@@ -3252,6 +3254,8 @@ static __device__ __forceinline__ void mul_mat_q(
         }
     }
 
+    float * dst = mul_mat_q_dst[0];
+
 #pragma unroll
     for (int j = 0; j < mmq_x; j += nwarps) {
         const int col_dst = col_dst_0 + j + threadIdx.y;
@@ -3280,9 +3284,7 @@ static __device__ __forceinline__ void mul_mat_q(
 #define  MMQ_Y_Q4_0_PASCAL 64
 #define NWARPS_Q4_0_PASCAL 8
 
-template <bool need_check> static __global__ void mul_mat_q4_0(
-    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int nrows_x, const int ncols_y, const int nrows_dst) {
+template <bool need_check> static __global__ void mul_mat_q4_0() {
 
 #if __CUDA_ARCH__ >= CC_TURING
     const int mmq_x  =  MMQ_X_Q4_0_AMPERE;
@@ -3290,8 +3292,7 @@ template <bool need_check> static __global__ void mul_mat_q4_0(
     const int nwarps = NWARPS_Q4_0_AMPERE;
 
     mul_mat_q<QK4_0, QR4_0, QI4_0, true, block_q4_0, mmq_x, mmq_y, nwarps, allocate_tiles_q4_0<mmq_y>,
-        load_tiles_q4_0<mmq_y, nwarps, need_check>, VDR_Q4_0_Q8_1_MMQ, vec_dot_q4_0_q8_1_mul_mat>
-        (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        load_tiles_q4_0<mmq_y, nwarps, need_check>, VDR_Q4_0_Q8_1_MMQ, vec_dot_q4_0_q8_1_mul_mat>();
 
 #elif __CUDA_ARCH__ >= MIN_CC_DP4A
     const int mmq_x  =  MMQ_X_Q4_0_PASCAL;
@@ -3299,8 +3300,7 @@ template <bool need_check> static __global__ void mul_mat_q4_0(
     const int nwarps = NWARPS_Q4_0_PASCAL;
 
     mul_mat_q<QK4_0, QR4_0, QI4_0, true, block_q4_0, mmq_x, mmq_y, nwarps, allocate_tiles_q4_0<mmq_y>,
-        load_tiles_q4_0<mmq_y, nwarps, need_check>, VDR_Q4_0_Q8_1_MMQ, vec_dot_q4_0_q8_1_mul_mat>
-        (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        load_tiles_q4_0<mmq_y, nwarps, need_check>, VDR_Q4_0_Q8_1_MMQ, vec_dot_q4_0_q8_1_mul_mat>();
 #else
     (void) vec_dot_q4_0_q8_1_mul_mat;
     assert(false);
@@ -3314,9 +3314,7 @@ template <bool need_check> static __global__ void mul_mat_q4_0(
 #define  MMQ_Y_Q4_1_PASCAL 64
 #define NWARPS_Q4_1_PASCAL 8
 
-template <bool need_check> static __global__ void mul_mat_q4_1(
-    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int nrows_x, const int ncols_y, const int nrows_dst) {
+template <bool need_check> static __global__ void mul_mat_q4_1() {
 
 #if __CUDA_ARCH__ >= CC_TURING
     const int mmq_x  =  MMQ_X_Q4_1_AMPERE;
@@ -3324,8 +3322,7 @@ template <bool need_check> static __global__ void mul_mat_q4_1(
     const int nwarps = NWARPS_Q4_1_AMPERE;
 
     mul_mat_q<QK4_1, QR4_1, QI4_1, true, block_q4_1, mmq_x, mmq_y, nwarps, allocate_tiles_q4_1<mmq_y>,
-        load_tiles_q4_1<mmq_y, nwarps, need_check>, VDR_Q4_1_Q8_1_MMQ, vec_dot_q4_1_q8_1_mul_mat>
-        (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        load_tiles_q4_1<mmq_y, nwarps, need_check>, VDR_Q4_1_Q8_1_MMQ, vec_dot_q4_1_q8_1_mul_mat>();
 
 #elif __CUDA_ARCH__ >= MIN_CC_DP4A
     const int mmq_x  =  MMQ_X_Q4_1_PASCAL;
@@ -3333,8 +3330,7 @@ template <bool need_check> static __global__ void mul_mat_q4_1(
     const int nwarps = NWARPS_Q4_1_PASCAL;
 
     mul_mat_q<QK4_1, QR4_1, QI4_1, true, block_q4_1, mmq_x, mmq_y, nwarps, allocate_tiles_q4_1<mmq_y>,
-        load_tiles_q4_1<mmq_y, nwarps, need_check>, VDR_Q4_1_Q8_1_MMQ, vec_dot_q4_1_q8_1_mul_mat>
-        (vx, vy, dst, nrows_x, nrows_y, nrows_dst);
+        load_tiles_q4_1<mmq_y, nwarps, need_check>, VDR_Q4_1_Q8_1_MMQ, vec_dot_q4_1_q8_1_mul_mat>();
 #else
     (void) vec_dot_q4_1_q8_1_mul_mat;
     assert(false);
@@ -3348,9 +3344,7 @@ template <bool need_check> static __global__ void mul_mat_q4_1(
 #define  MMQ_Y_Q5_0_PASCAL 64
 #define NWARPS_Q5_0_PASCAL 8
 
-template <bool need_check> static __global__ void mul_mat_q5_0(
-    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int nrows_x, const int ncols_y, const int nrows_dst) {
+template <bool need_check> static __global__ void mul_mat_q5_0() {
 
 #if __CUDA_ARCH__ >= CC_TURING
     const int mmq_x  =  MMQ_X_Q5_0_AMPERE;
@@ -3358,8 +3352,7 @@ template <bool need_check> static __global__ void mul_mat_q5_0(
     const int nwarps = NWARPS_Q5_0_AMPERE;
 
     mul_mat_q<QK5_0, QR5_0, QI5_0, false, block_q5_0, mmq_x, mmq_y, nwarps, allocate_tiles_q5_0<mmq_y>,
-        load_tiles_q5_0<mmq_y, nwarps, need_check>, VDR_Q5_0_Q8_1_MMQ, vec_dot_q5_0_q8_1_mul_mat>
-        (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        load_tiles_q5_0<mmq_y, nwarps, need_check>, VDR_Q5_0_Q8_1_MMQ, vec_dot_q5_0_q8_1_mul_mat>();
 
 #elif __CUDA_ARCH__ >= MIN_CC_DP4A
     const int mmq_x  =  MMQ_X_Q5_0_PASCAL;
@@ -3367,8 +3360,7 @@ template <bool need_check> static __global__ void mul_mat_q5_0(
     const int nwarps = NWARPS_Q5_0_PASCAL;
 
     mul_mat_q<QK5_0, QR5_0, QI5_0, false, block_q5_0, mmq_x, mmq_y, nwarps, allocate_tiles_q5_0<mmq_y>,
-        load_tiles_q5_0<mmq_y, nwarps, need_check>, VDR_Q5_0_Q8_1_MMQ, vec_dot_q5_0_q8_1_mul_mat>
-        (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        load_tiles_q5_0<mmq_y, nwarps, need_check>, VDR_Q5_0_Q8_1_MMQ, vec_dot_q5_0_q8_1_mul_mat>();
 #else
     (void) vec_dot_q5_0_q8_1_mul_mat;
     assert(false);
@@ -3382,9 +3374,7 @@ template <bool need_check> static __global__ void mul_mat_q5_0(
 #define  MMQ_Y_Q5_1_PASCAL 64
 #define NWARPS_Q5_1_PASCAL 8
 
-template <bool need_check> static __global__ void mul_mat_q5_1(
-    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int nrows_x, const int ncols_y, const int nrows_dst) {
+template <bool need_check> static __global__ void mul_mat_q5_1() {
 
 #if __CUDA_ARCH__ >= CC_TURING
     const int mmq_x  =  MMQ_X_Q5_1_AMPERE;
@@ -3392,8 +3382,7 @@ template <bool need_check> static __global__ void mul_mat_q5_1(
     const int nwarps = NWARPS_Q5_1_AMPERE;
 
     mul_mat_q<QK5_1, QR5_1, QI5_1, true, block_q5_1, mmq_x, mmq_y, nwarps, allocate_tiles_q5_1<mmq_y>,
-        load_tiles_q5_1<mmq_y, nwarps, need_check>, VDR_Q5_1_Q8_1_MMQ, vec_dot_q5_1_q8_1_mul_mat>
-        (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        load_tiles_q5_1<mmq_y, nwarps, need_check>, VDR_Q5_1_Q8_1_MMQ, vec_dot_q5_1_q8_1_mul_mat>();
 
 #elif __CUDA_ARCH__ >= MIN_CC_DP4A
     const int mmq_x  =  MMQ_X_Q5_1_PASCAL;
@@ -3401,8 +3390,7 @@ template <bool need_check> static __global__ void mul_mat_q5_1(
     const int nwarps = NWARPS_Q5_1_PASCAL;
 
     mul_mat_q<QK5_1, QR5_1, QI5_1, true, block_q5_1, mmq_x, mmq_y, nwarps, allocate_tiles_q5_1<mmq_y>,
-        load_tiles_q5_1<mmq_y, nwarps, need_check>, VDR_Q5_1_Q8_1_MMQ, vec_dot_q5_1_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
+        load_tiles_q5_1<mmq_y, nwarps, need_check>, VDR_Q5_1_Q8_1_MMQ, vec_dot_q5_1_q8_1_mul_mat>();
 #else
     (void) vec_dot_q5_1_q8_1_mul_mat;
     assert(false);
@@ -3416,9 +3404,7 @@ template <bool need_check> static __global__ void mul_mat_q5_1(
 #define  MMQ_Y_Q8_0_PASCAL 64
 #define NWARPS_Q8_0_PASCAL 8
 
-template <bool need_check> static __global__ void mul_mat_q8_0(
-    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int nrows_x, const int ncols_y, const int nrows_dst) {
+template <bool need_check> static __global__ void mul_mat_q8_0() {
 
 #if __CUDA_ARCH__ >= CC_TURING
     const int mmq_x  =  MMQ_X_Q8_0_AMPERE;
@@ -3426,8 +3412,7 @@ template <bool need_check> static __global__ void mul_mat_q8_0(
     const int nwarps = NWARPS_Q8_0_AMPERE;
 
     mul_mat_q<QK8_0, QR8_0, QI8_0, false, block_q8_0, mmq_x, mmq_y, nwarps, allocate_tiles_q8_0<mmq_y>,
-        load_tiles_q8_0<mmq_y, nwarps, need_check>, VDR_Q8_0_Q8_1_MMQ, vec_dot_q8_0_q8_1_mul_mat>
-        (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        load_tiles_q8_0<mmq_y, nwarps, need_check>, VDR_Q8_0_Q8_1_MMQ, vec_dot_q8_0_q8_1_mul_mat>();
 
 #elif __CUDA_ARCH__ >= MIN_CC_DP4A
     const int mmq_x  =  MMQ_X_Q8_0_PASCAL;
@@ -3435,8 +3420,7 @@ template <bool need_check> static __global__ void mul_mat_q8_0(
     const int nwarps = NWARPS_Q8_0_PASCAL;
 
     mul_mat_q<QK8_0, QR8_0, QI8_0, false, block_q8_0, mmq_x, mmq_y, nwarps, allocate_tiles_q8_0<mmq_y>,
-        load_tiles_q8_0<mmq_y, nwarps, need_check>, VDR_Q8_0_Q8_1_MMQ, vec_dot_q8_0_q8_1_mul_mat>
-        (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        load_tiles_q8_0<mmq_y, nwarps, need_check>, VDR_Q8_0_Q8_1_MMQ, vec_dot_q8_0_q8_1_mul_mat>();
 #else
     (void) vec_dot_q8_0_q8_1_mul_mat;
     assert(false);
@@ -3450,9 +3434,7 @@ template <bool need_check> static __global__ void mul_mat_q8_0(
 #define  MMQ_Y_Q2_K_PASCAL 64
 #define NWARPS_Q2_K_PASCAL 8
 
-template <bool need_check> static __global__ void mul_mat_q2_K(
-    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int nrows_x, const int ncols_y, const int nrows_dst) {
+template <bool need_check> static __global__ void mul_mat_q2_K() {
 
 #if __CUDA_ARCH__ >= CC_TURING
     const int mmq_x  =  MMQ_X_Q2_K_AMPERE;
@@ -3460,8 +3442,7 @@ template <bool need_check> static __global__ void mul_mat_q2_K(
     const int nwarps = NWARPS_Q2_K_AMPERE;
 
     mul_mat_q<QK_K, QR2_K, QI2_K, false, block_q2_K, mmq_x, mmq_y, nwarps, allocate_tiles_q2_K<mmq_y>,
-        load_tiles_q2_K<mmq_y, nwarps, need_check>, VDR_Q2_K_Q8_1_MMQ, vec_dot_q2_K_q8_1_mul_mat>
-        (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        load_tiles_q2_K<mmq_y, nwarps, need_check>, VDR_Q2_K_Q8_1_MMQ, vec_dot_q2_K_q8_1_mul_mat>();
 
 #elif __CUDA_ARCH__ >= MIN_CC_DP4A
     const int mmq_x  =  MMQ_X_Q2_K_PASCAL;
@@ -3469,8 +3450,7 @@ template <bool need_check> static __global__ void mul_mat_q2_K(
     const int nwarps = NWARPS_Q2_K_PASCAL;
 
     mul_mat_q<QK_K, QR2_K, QI2_K, false, block_q2_K, mmq_x, mmq_y, nwarps, allocate_tiles_q2_K<mmq_y>,
-        load_tiles_q2_K<mmq_y, nwarps, need_check>, VDR_Q2_K_Q8_1_MMQ, vec_dot_q2_K_q8_1_mul_mat>
-        (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        load_tiles_q2_K<mmq_y, nwarps, need_check>, VDR_Q2_K_Q8_1_MMQ, vec_dot_q2_K_q8_1_mul_mat>();
 #else
     (void) vec_dot_q2_K_q8_1_mul_mat;
     assert(false);
@@ -3484,9 +3464,7 @@ template <bool need_check> static __global__ void mul_mat_q2_K(
 #define  MMQ_Y_Q3_K_PASCAL 64
 #define NWARPS_Q3_K_PASCAL 8
 
-template <bool need_check> static __global__ void mul_mat_q3_K(
-    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int nrows_x, const int ncols_y, const int nrows_dst) {
+template <bool need_check> static __global__ void mul_mat_q3_K() {
 
 #if __CUDA_ARCH__ >= CC_TURING
     const int mmq_x  =  MMQ_X_Q3_K_AMPERE;
@@ -3494,8 +3472,7 @@ template <bool need_check> static __global__ void mul_mat_q3_K(
     const int nwarps = NWARPS_Q3_K_AMPERE;
 
     mul_mat_q<QK_K, QR3_K, QI3_K, false, block_q3_K, mmq_x, mmq_y, nwarps, allocate_tiles_q3_K<mmq_y>,
-        load_tiles_q3_K<mmq_y, nwarps, need_check>, VDR_Q3_K_Q8_1_MMQ, vec_dot_q3_K_q8_1_mul_mat>
-        (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        load_tiles_q3_K<mmq_y, nwarps, need_check>, VDR_Q3_K_Q8_1_MMQ, vec_dot_q3_K_q8_1_mul_mat>();
 
 #elif __CUDA_ARCH__ >= MIN_CC_DP4A
     const int mmq_x  =  MMQ_X_Q3_K_PASCAL;
@@ -3503,8 +3480,7 @@ template <bool need_check> static __global__ void mul_mat_q3_K(
     const int nwarps = NWARPS_Q3_K_PASCAL;
 
     mul_mat_q<QK_K, QR3_K, QI3_K, false, block_q3_K, mmq_x, mmq_y, nwarps, allocate_tiles_q3_K<mmq_y>,
-        load_tiles_q3_K<mmq_y, nwarps, need_check>, VDR_Q3_K_Q8_1_MMQ, vec_dot_q3_K_q8_1_mul_mat>
-        (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        load_tiles_q3_K<mmq_y, nwarps, need_check>, VDR_Q3_K_Q8_1_MMQ, vec_dot_q3_K_q8_1_mul_mat>();
 #else
     (void) vec_dot_q3_K_q8_1_mul_mat;
     assert(false);
@@ -3518,9 +3494,7 @@ template <bool need_check> static __global__ void mul_mat_q3_K(
 #define  MMQ_Y_Q4_K_PASCAL 64
 #define NWARPS_Q4_K_PASCAL 8
 
-template <bool need_check> static __global__ void mul_mat_q4_K(
-    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int nrows_x, const int ncols_y, const int nrows_dst) {
+template <bool need_check> static __global__ void mul_mat_q4_K() {
 
 #if __CUDA_ARCH__ >= CC_TURING
     const int mmq_x  =  MMQ_X_Q4_K_AMPERE;
@@ -3528,8 +3502,7 @@ template <bool need_check> static __global__ void mul_mat_q4_K(
     const int nwarps = NWARPS_Q4_K_AMPERE;
 
     mul_mat_q<QK_K, QR4_K, QI4_K, true, block_q4_K, mmq_x, mmq_y, nwarps, allocate_tiles_q4_K<mmq_y>,
-        load_tiles_q4_K<mmq_y, nwarps, need_check>, VDR_Q4_K_Q8_1_MMQ, vec_dot_q4_K_q8_1_mul_mat>
-        (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        load_tiles_q4_K<mmq_y, nwarps, need_check>, VDR_Q4_K_Q8_1_MMQ, vec_dot_q4_K_q8_1_mul_mat>();
 
 #elif __CUDA_ARCH__ >= MIN_CC_DP4A
     const int mmq_x  =  MMQ_X_Q4_K_PASCAL;
@@ -3537,8 +3510,7 @@ template <bool need_check> static __global__ void mul_mat_q4_K(
     const int nwarps = NWARPS_Q4_K_PASCAL;
 
     mul_mat_q<QK_K, QR4_K, QI4_K, true, block_q4_K, mmq_x, mmq_y, nwarps, allocate_tiles_q4_K<mmq_y>,
-        load_tiles_q4_K<mmq_y, nwarps, need_check>, VDR_Q4_K_Q8_1_MMQ, vec_dot_q4_K_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
+        load_tiles_q4_K<mmq_y, nwarps, need_check>, VDR_Q4_K_Q8_1_MMQ, vec_dot_q4_K_q8_1_mul_mat>();
 #else
     (void) vec_dot_q4_K_q8_1_mul_mat;
     assert(false);
@@ -3552,9 +3524,7 @@ template <bool need_check> static __global__ void mul_mat_q4_K(
 #define  MMQ_Y_Q5_K_PASCAL 64
 #define NWARPS_Q5_K_PASCAL 8
 
-template <bool need_check> static __global__ void mul_mat_q5_K(
-    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int nrows_x, const int ncols_y, const int nrows_dst) {
+template <bool need_check> static __global__ void mul_mat_q5_K() {
 
 #if __CUDA_ARCH__ >= CC_TURING
     const int mmq_x  =  MMQ_X_Q5_K_AMPERE;
@@ -3562,8 +3532,7 @@ template <bool need_check> static __global__ void mul_mat_q5_K(
     const int nwarps = NWARPS_Q5_K_AMPERE;
 
     mul_mat_q<QK_K, QR5_K, QI5_K, true, block_q5_K, mmq_x, mmq_y, nwarps, allocate_tiles_q5_K<mmq_y>,
-        load_tiles_q5_K<mmq_y, nwarps, need_check>, VDR_Q5_K_Q8_1_MMQ, vec_dot_q5_K_q8_1_mul_mat>
-        (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        load_tiles_q5_K<mmq_y, nwarps, need_check>, VDR_Q5_K_Q8_1_MMQ, vec_dot_q5_K_q8_1_mul_mat>();
 
 #elif __CUDA_ARCH__ >= MIN_CC_DP4A
     const int mmq_x  =  MMQ_X_Q5_K_PASCAL;
@@ -3571,8 +3540,7 @@ template <bool need_check> static __global__ void mul_mat_q5_K(
     const int nwarps = NWARPS_Q5_K_PASCAL;
 
     mul_mat_q<QK_K, QR5_K, QI5_K, true, block_q5_K, mmq_x, mmq_y, nwarps, allocate_tiles_q5_K<mmq_y>,
-        load_tiles_q5_K<mmq_y, nwarps, need_check>, VDR_Q5_K_Q8_1_MMQ, vec_dot_q5_K_q8_1_mul_mat>
-        (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        load_tiles_q5_K<mmq_y, nwarps, need_check>, VDR_Q5_K_Q8_1_MMQ, vec_dot_q5_K_q8_1_mul_mat>();
 #else
     (void) vec_dot_q5_K_q8_1_mul_mat;
     assert(false);
@@ -3586,9 +3554,7 @@ template <bool need_check> static __global__ void mul_mat_q5_K(
 #define  MMQ_Y_Q6_K_PASCAL 64
 #define NWARPS_Q6_K_PASCAL 8
 
-template <bool need_check> static __global__ void mul_mat_q6_K(
-    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int nrows_x, const int ncols_y, const int nrows_dst) {
+template <bool need_check> static __global__ void mul_mat_q6_K() {
 
 #if __CUDA_ARCH__ >= CC_TURING
     const int mmq_x  =  MMQ_X_Q6_K_AMPERE;
@@ -3596,8 +3562,7 @@ template <bool need_check> static __global__ void mul_mat_q6_K(
     const int nwarps = NWARPS_Q6_K_AMPERE;
 
     mul_mat_q<QK_K, QR6_K, QI6_K, false, block_q6_K, mmq_x, mmq_y, nwarps, allocate_tiles_q6_K<mmq_y>,
-        load_tiles_q6_K<mmq_y, nwarps, need_check>, VDR_Q6_K_Q8_1_MMQ, vec_dot_q6_K_q8_1_mul_mat>
-        (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        load_tiles_q6_K<mmq_y, nwarps, need_check>, VDR_Q6_K_Q8_1_MMQ, vec_dot_q6_K_q8_1_mul_mat>();
 
 #elif __CUDA_ARCH__ >= MIN_CC_DP4A
     const int mmq_x  =  MMQ_X_Q6_K_PASCAL;
@@ -3605,8 +3570,7 @@ template <bool need_check> static __global__ void mul_mat_q6_K(
     const int nwarps = NWARPS_Q6_K_PASCAL;
 
     mul_mat_q<QK_K, QR6_K, QI6_K, false, block_q6_K, mmq_x, mmq_y, nwarps, allocate_tiles_q6_K<mmq_y>,
-        load_tiles_q6_K<mmq_y, nwarps, need_check>, VDR_Q6_K_Q8_1_MMQ, vec_dot_q6_K_q8_1_mul_mat>
-        (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        load_tiles_q6_K<mmq_y, nwarps, need_check>, VDR_Q6_K_Q8_1_MMQ, vec_dot_q6_K_q8_1_mul_mat>();
 #else
     (void) vec_dot_q6_K_q8_1_mul_mat;
     assert(false);
@@ -4334,12 +4298,10 @@ static void ggml_mul_mat_q4_0_q8_1_cuda(
 
     if (nrows_x % mmq_y == 0) {
         const bool need_check = false;
-        mul_mat_q4_0<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        mul_mat_q4_0<need_check><<<block_nums, block_dims, 0, stream>>>();
     } else {
         const bool need_check = true;
-        mul_mat_q4_0<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        mul_mat_q4_0<need_check><<<block_nums, block_dims, 0, stream>>>();
     }
 }
 
@@ -4371,12 +4333,10 @@ static void ggml_mul_mat_q4_1_q8_1_cuda(
 
     if (nrows_x % mmq_y == 0) {
         const bool need_check = false;
-        mul_mat_q4_1<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        mul_mat_q4_1<need_check><<<block_nums, block_dims, 0, stream>>>();
     } else {
         const bool need_check = true;
-        mul_mat_q4_1<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        mul_mat_q4_1<need_check><<<block_nums, block_dims, 0, stream>>>();
     }
 }
 
@@ -4408,12 +4368,10 @@ static void ggml_mul_mat_q5_0_q8_1_cuda(
 
     if (nrows_x % mmq_y == 0) {
         const bool need_check = false;
-        mul_mat_q5_0<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        mul_mat_q5_0<need_check><<<block_nums, block_dims, 0, stream>>>();
     } else {
         const bool need_check = true;
-        mul_mat_q5_0<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        mul_mat_q5_0<need_check><<<block_nums, block_dims, 0, stream>>>();
     }
 }
 
@@ -4445,12 +4403,10 @@ static void ggml_mul_mat_q5_1_q8_1_cuda(
 
     if (nrows_x % mmq_y == 0) {
         const bool need_check = false;
-        mul_mat_q5_1<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        mul_mat_q5_1<need_check><<<block_nums, block_dims, 0, stream>>>();
     } else {
         const bool need_check = true;
-        mul_mat_q5_1<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        mul_mat_q5_1<need_check><<<block_nums, block_dims, 0, stream>>>();
     }
 }
 
@@ -4482,12 +4438,10 @@ static void ggml_mul_mat_q8_0_q8_1_cuda(
 
     if (nrows_x % mmq_y == 0) {
         const bool need_check = false;
-        mul_mat_q8_0<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        mul_mat_q8_0<need_check><<<block_nums, block_dims, 0, stream>>>();
     } else {
         const bool need_check = true;
-        mul_mat_q8_0<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        mul_mat_q8_0<need_check><<<block_nums, block_dims, 0, stream>>>();
     }
 }
 
@@ -4519,12 +4473,10 @@ static void ggml_mul_mat_q2_K_q8_1_cuda(
 
     if (nrows_x % mmq_y == 0) {
         const bool need_check = false;
-        mul_mat_q2_K<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        mul_mat_q2_K<need_check><<<block_nums, block_dims, 0, stream>>>();
     } else {
         const bool need_check = true;
-        mul_mat_q2_K<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        mul_mat_q2_K<need_check><<<block_nums, block_dims, 0, stream>>>();
     }
 }
 
@@ -4556,12 +4508,10 @@ static void ggml_mul_mat_q3_K_q8_1_cuda(
 
     if (nrows_x % mmq_y == 0) {
         const bool need_check = false;
-        mul_mat_q3_K<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        mul_mat_q3_K<need_check><<<block_nums, block_dims, 0, stream>>>();
     } else {
         const bool need_check = true;
-        mul_mat_q3_K<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        mul_mat_q3_K<need_check><<<block_nums, block_dims, 0, stream>>>();
     }
 }
 
@@ -4593,12 +4543,10 @@ static void ggml_mul_mat_q4_K_q8_1_cuda(
 
     if (nrows_x % mmq_y == 0) {
         const bool need_check = false;
-        mul_mat_q4_K<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        mul_mat_q4_K<need_check><<<block_nums, block_dims, 0, stream>>>();
     } else {
         const bool need_check = true;
-        mul_mat_q4_K<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        mul_mat_q4_K<need_check><<<block_nums, block_dims, 0, stream>>>();
     }
 }
 
@@ -4630,12 +4578,10 @@ static void ggml_mul_mat_q5_K_q8_1_cuda(
 
     if (nrows_x % mmq_y == 0) {
         const bool need_check = false;
-        mul_mat_q5_K<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        mul_mat_q5_K<need_check><<<block_nums, block_dims, 0, stream>>>();
     } else {
         const bool need_check = true;
-        mul_mat_q5_K<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        mul_mat_q5_K<need_check><<<block_nums, block_dims, 0, stream>>>();
     }
 }
 
@@ -4665,6 +4611,19 @@ static void ggml_mul_mat_q6_K_q8_1_cuda(
     const dim3 block_nums(block_num_x, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
+    CUDA_CHECK(cudaMemcpyToSymbolAsync(mul_mat_q_vx, &vx,
+                                       sizeof(void *), id*sizeof(void *), cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaMemcpyToSymbolAsync(mul_mat_q_vy, &vy,
+                                       sizeof(void *), id*sizeof(void *), cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaMemcpyToSymbolAsync(mul_mat_q_dst, &dst,
+                                       sizeof(float *), id*sizeof(float *), cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaMemcpyToSymbolAsync(mul_mat_q_nrows_x, &nrows_x,
+                                       sizeof(int), id*sizeof(int), cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaMemcpyToSymbolAsync(mul_mat_q_ncols_y, &ncols_y,
+                                       sizeof(int), id*sizeof(int), cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaMemcpyToSymbolAsync(mul_mat_q_nrows_dst, &nrows_dst,
+                                       sizeof(int), id*sizeof(int), cudaMemcpyHostToDevice, stream));
+
     const int blocks_per_row_x = ncols_x / QK_K;
     CUDA_CHECK(cudaMemcpyToSymbolAsync(mul_mat_q_blocks_per_row_x, &blocks_per_row_x,
                                        sizeof(int), id*sizeof(int), cudaMemcpyHostToDevice, stream));
@@ -4675,12 +4634,10 @@ static void ggml_mul_mat_q6_K_q8_1_cuda(
 
     if (nrows_x % mmq_y == 0) {
         const bool need_check = false;
-        mul_mat_q6_K<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        mul_mat_q6_K<need_check><<<block_nums, block_dims, 0, stream>>>();
     } else {
         const bool need_check = true;
-        mul_mat_q6_K<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, nrows_x, ncols_y, nrows_dst);
+        mul_mat_q6_K<need_check><<<block_nums, block_dims, 0, stream>>>();
     }
 }
 
