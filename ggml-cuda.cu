@@ -2813,8 +2813,8 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
         const int ksc = k % (WARP_SIZE/8);
 
         // scale arrangement after the following two lines: sc0,...,sc3, sc4,...,sc7, m0,...,m3, m4,...,m8
-        int scales8 = (scales[(ksc%2) + (ksc!=0)] >> (4 * (ksc & (ksc/2)))) & 0x0F0F0F0F; // lower 4 bits
-        scales8    |= (scales[ksc/2]              >> (2 * (ksc % 2)))       & 0x30303030; // upper 2 bits
+        int scales8 = (scales[(ksc%2) + (ksc!=0)] >> (4 * (ksc==3)))   & 0x0F0F0F0F; // lower 4 bits
+        scales8    |= (scales[ksc/2]              >> (2 * (ksc % 2)))  & 0x30303030; // upper 2 bits
 
         x_sc[i * (WARP_SIZE/8) + i / 8 + ksc] = scales8;
     }
