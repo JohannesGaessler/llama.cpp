@@ -1756,7 +1756,7 @@ static __device__ __forceinline__ float vec_dot_q4_K_q8_1_impl_vmmq(
 // also used for q5_K
 static __device__ __forceinline__ float vec_dot_q4_K_q8_1_impl_mmq(
     const int * __restrict__ v, const int * __restrict__ u, const int & sc,
-    const int & m, const half2 & dm4, const half2 * __restrict__ ds8) {
+    const half2 & dm4, const half2 * __restrict__ ds8) {
 
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
     float sumf_d = 0.0f;
@@ -1774,8 +1774,8 @@ static __device__ __forceinline__ float vec_dot_q4_K_q8_1_impl_mmq(
 
         const float2 ds8f = __half22float2(ds8[i0 / 4]);
 
-        sumf_d += ds8f.x * (((sc >> 8*(i0/4)) & 0x000000FF) * sumi_d);
-        sumf_m += ds8f.y *  ((m  >> 8*(i0/4)) & 0x000000FF); // sum of q8_1 block * q4_K min val
+        sumf_d += ds8f.x * (((sc >> (0  + 8*(i0/4))) & 0x000000FF) * sumi_d);
+        sumf_m += ds8f.y *  ((sc >> (16 + 8*(i0/4))) & 0x000000FF); // sum of q8_1 block * q4_K min val
     }
 
     const float2 dm4f = __half22float2(dm4);
@@ -2817,6 +2817,11 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
         scales8    |= (scales[ksc/2]              >> (2 * (ksc % 2)))       & 0x30303030; // upper 2 bits
 
         x_sc[i * (WARP_SIZE/8) + i / 8 + ksc] = scales8;
+        __syncthreads();
+        int scales8_2 =  (x_sc[i * (WARP_SIZE/8) + i / 8 + ksc/2 + 0] >> (16 * (ksc % 2))) & 0x0000FFFF;
+        scales8_2    |= ((x_sc[i * (WARP_SIZE/8) + i / 8 + ksc/2 + 2] >> (16 * (ksc % 2))) & 0x0000FFFF) << 16;
+        __syncthreads();
+        x_sc[i * (WARP_SIZE/8) + i / 8 + ksc] = scales8_2;
     }
 }
 
@@ -2832,11 +2837,10 @@ static __device__ __forceinline__ float vec_dot_q4_K_q8_1_mul_mat(
         v[l + (QI4_K/4)] = (x_ql[i * (WARP_SIZE + 1) + k + l] >> 4) & 0x0F0F0F0F;
     }
 
-    const int sc = x_sc[i * (WARP_SIZE/8) + i/8 + k/16 + 0] >> (16*((k % 16) / 8));
-    const int  m = x_sc[i * (WARP_SIZE/8) + i/8 + k/16 + 2] >> (16*((k % 16) / 8));
+    const int sc = x_sc[i * (WARP_SIZE/8) + i/8 + k/8];
 
     const int index_y = j * WARP_SIZE + (QR4_K*k) % WARP_SIZE;
-    return vec_dot_q4_K_q8_1_impl_mmq(v, &y_qs[index_y], sc, m, x_dm[i * (WARP_SIZE/QI4_K) + i/QI4_K], &y_ds[index_y/QI8_1]);
+    return vec_dot_q4_K_q8_1_impl_mmq(v, &y_qs[index_y], sc, x_dm[i * (WARP_SIZE/QI4_K) + i/QI4_K], &y_ds[index_y/QI8_1]);
 }
 
 static __device__ __forceinline__ float vec_dot_q5_K_q8_1(
