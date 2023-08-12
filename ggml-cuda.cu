@@ -4541,6 +4541,26 @@ static void ggml_mul_mat_q4_K_q8_1_cuda(
     const dim3 block_nums(block_num_x, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
+    CUDA_CHECK(cudaMemcpyToSymbolAsync(mul_mat_q_vx, &vx,
+                                       sizeof(void *), id*sizeof(void *), cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaMemcpyToSymbolAsync(mul_mat_q_vy, &vy,
+                                       sizeof(void *), id*sizeof(void *), cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaMemcpyToSymbolAsync(mul_mat_q_dst, &dst,
+                                       sizeof(float *), id*sizeof(float *), cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaMemcpyToSymbolAsync(mul_mat_q_nrows_x, &nrows_x,
+                                       sizeof(int), id*sizeof(int), cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaMemcpyToSymbolAsync(mul_mat_q_ncols_y, &ncols_y,
+                                       sizeof(int), id*sizeof(int), cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaMemcpyToSymbolAsync(mul_mat_q_nrows_dst, &nrows_dst,
+                                       sizeof(int), id*sizeof(int), cudaMemcpyHostToDevice, stream));
+
+    const int blocks_per_row_x = ncols_x / QK_K;
+    CUDA_CHECK(cudaMemcpyToSymbolAsync(mul_mat_q_blocks_per_row_x, &blocks_per_row_x,
+                                       sizeof(int), id*sizeof(int), cudaMemcpyHostToDevice, stream));
+
+    const int blocks_per_col_y = nrows_y / QK8_1;
+    CUDA_CHECK(cudaMemcpyToSymbolAsync(mul_mat_q_blocks_per_col_y, &blocks_per_col_y,
+                                       sizeof(int), id*sizeof(int), cudaMemcpyHostToDevice, stream));
     if (nrows_x % mmq_y == 0) {
         const bool need_check = false;
         mul_mat_q4_K<need_check><<<block_nums, block_dims, 0, stream>>>();
