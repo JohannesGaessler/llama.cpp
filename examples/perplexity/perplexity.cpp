@@ -3,9 +3,12 @@
 #include "build-info.h"
 
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 #include <ctime>
 #include <sstream>
-#include <cstring>
+#include <utility>
+#include <vector>
 
 #if defined(_MSC_VER)
 #pragma warning(disable: 4244 4267) // possible loss of data
@@ -27,18 +30,20 @@ std::vector<float> softmax(const std::vector<float>& logits) {
     return probs;
 }
 
-void perplexity_v2(llama_context * ctx, const gpt_params & params) {
+std::tuple<std::vector<llama_token>, std::vector<float>, float> perplexity_v2(llama_context * ctx, const gpt_params & params) {
 
     // Download: https://s3.amazonaws.com/research.metamind.io/wikitext/wikitext-2-raw-v1.zip?ref=salesforce-research
     // Run `./perplexity -m models/7B/ggml-model-q4_0.bin -f wiki.test.raw`
     // Output: `perplexity: 13.5106 [114/114]`
     // BOS tokens will be added for each chunk before eval
 
+    std::vector<llama_token> tokens = ::llama_tokenize(ctx, params.prompt, true);
+    std::vector<float>       probs;
+
     if (params.ppl_stride <= 0) {
         fprintf(stderr, "%s: stride is %d but must be greater than zero!\n",__func__,params.ppl_stride);
-        return;
+        return std::make_tuple(tokens, probs, -1);
     }
-    auto tokens = ::llama_tokenize(ctx, params.prompt, true);
 
     const int calc_chunk = params.n_ctx;
 
@@ -47,7 +52,7 @@ void perplexity_v2(llama_context * ctx, const gpt_params & params) {
     if (int(tokens.size()) <= calc_chunk) {
         fprintf(stderr, "%s: there are only %zu tokens, this is not enough for a context size of %d and stride %d\n",__func__,
                 tokens.size(), params.n_ctx, params.ppl_stride);
-        return;
+        return std::make_tuple(tokens, probs, -1);
     }
 
     const int n_chunk_max = (tokens.size() - calc_chunk + params.ppl_stride - 1)  / params.ppl_stride;
@@ -79,7 +84,7 @@ void perplexity_v2(llama_context * ctx, const gpt_params & params) {
             //fprintf(stderr, "    Batch %d: starts at %d, size is %d, n_past is %d\n",j,batch_start,batch_size,j * n_batch);
             if (llama_eval(ctx, tokens.data() + batch_start, batch_size, j * n_batch, params.n_threads)) {
                 //fprintf(stderr, "%s : failed to eval\n", __func__);
-                return;
+                return std::make_tuple(tokens, probs, -1);
             }
 
             // save original token and restore it after eval
@@ -133,20 +138,22 @@ void perplexity_v2(llama_context * ctx, const gpt_params & params) {
         fflush(stdout);
     }
     printf("\n");
+
+    return std::make_tuple(tokens, probs, std::exp(nll / count));
 }
 
-void perplexity(llama_context * ctx, const gpt_params & params) {
+std::tuple<std::vector<llama_token>, std::vector<float>, float> perplexity(llama_context * ctx, const gpt_params & params) {
 
     if (params.ppl_stride > 0) {
-        perplexity_v2(ctx, params);
-        return;
+        return perplexity_v2(ctx, params);
     }
 
     // Download: https://s3.amazonaws.com/research.metamind.io/wikitext/wikitext-2-raw-v1.zip?ref=salesforce-research
     // Run `./perplexity -m models/7B/ggml-model-q4_0.bin -f wiki.test.raw`
     // Output: `perplexity: 13.5106 [114/114]`
     // BOS tokens will be added for each chunk before eval
-    auto tokens = ::llama_tokenize(ctx, params.prompt, true);
+    std::vector<llama_token> tokens = ::llama_tokenize(ctx, params.prompt, true);
+    std::vector<float>       probs;
 
     const int n_chunk_max = tokens.size() / params.n_ctx;
 
@@ -183,7 +190,7 @@ void perplexity(llama_context * ctx, const gpt_params & params) {
 
             if (llama_eval(ctx, tokens.data() + batch_start, batch_size, j * n_batch, params.n_threads)) {
                 fprintf(stderr, "%s : failed to eval\n", __func__);
-                return;
+                return std::make_tuple(tokens, probs, -1);
             }
 
             // restore the original token in case it was set to BOS
@@ -225,6 +232,7 @@ void perplexity(llama_context * ctx, const gpt_params & params) {
                 logits.begin() + (j + 1) * n_vocab);
 
             const float prob = softmax(tok_logits)[tokens[start + j + 1]];
+            probs.push_back(prob);
 
             nll += -std::log(prob);
             ++count;
@@ -238,6 +246,8 @@ void perplexity(llama_context * ctx, const gpt_params & params) {
         fflush(stdout);
     }
     printf("\n");
+
+    return std::make_tuple(tokens, probs, std::exp(nll / count));
 }
 
 std::vector<float> hellaswag_evaluate_tokens(llama_context * ctx, const std::vector<int>& tokens, int n_past, int n_batch,
@@ -530,13 +540,49 @@ int main(int argc, char ** argv) {
                 params.n_threads, std::thread::hardware_concurrency(), llama_print_system_info());
     }
 
+    std::vector<llama_token> tokens;
+    std::vector<float>       probs;
+    double                   perplexity_value = -1;
     if (params.hellaswag) {
         hellaswag_score(ctx, params);
     } else {
-        perplexity(ctx, params);
+        auto ret = perplexity(ctx, params);
+        tokens           = std::get<0>(ret);
+        probs            = std::get<1>(ret);
+        perplexity_value = std::get<2>(ret);
     }
 
     llama_print_timings(ctx);
+
+    if (!params.logdir.empty()) {
+        const std::string timestamp = get_sortable_timestamp();
+
+        const bool success = create_directory_with_parents(params.logdir);
+        if (success) {
+
+            FILE * logfile = fopen((params.logdir + timestamp + ".yml").c_str(), "w");
+            fprintf(logfile, "binary: perplexity\n");
+            char model_type[128];
+            llama_model_type(model, model_type, sizeof(model_type));
+            dump_non_result_info_yaml(logfile, params, ctx, timestamp, tokens, model_type);
+
+            fprintf(logfile, "\n");
+            fprintf(logfile, "######################\n");
+            fprintf(logfile, "# Perplexity Results #\n");
+            fprintf(logfile, "######################\n");
+            fprintf(logfile, "\n");
+
+            fprintf(logfile, "perplexity: %f\n", perplexity_value);
+            dump_vector_float_yaml(logfile, "probs", probs);
+
+            llama_dump_timing_info_yaml(logfile, ctx);
+            fclose(logfile);
+        } else {
+            fprintf(stderr, "%s: warning: failed to create logdir %s, cannot write logfile\n",
+                    __func__, params.logdir.c_str());
+        }
+    }
+
     llama_free(ctx);
     llama_free_model(model);
 

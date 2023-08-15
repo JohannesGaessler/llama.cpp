@@ -17,6 +17,7 @@
 #include <ctime>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -394,6 +395,10 @@ int main(int argc, char ** argv) {
     int n_session_consumed = 0;
     int n_past_guidance    = 0;
 
+    std::vector<int>   input_tokens;
+    std::vector<int>   output_tokens;
+    std::ostringstream output_ss;
+
     // the first thing we will do is to output the prompt, so set color accordingly
     console::set_display(console::prompt);
 
@@ -659,7 +664,15 @@ int main(int argc, char ** argv) {
         // display text
         if (input_echo) {
             for (auto id : embd) {
-                printf("%s", llama_token_to_str(ctx, id).c_str());
+                const char * token_str = llama_token_to_str(ctx, id).c_str();
+                printf("%s", token_str);
+
+                if (embd.size() > 1) {
+                    input_tokens.push_back(id);
+                } else {
+                    output_tokens.push_back(id);
+                    output_ss << token_str;
+                }
             }
             fflush(stdout);
         }
@@ -808,6 +821,35 @@ int main(int argc, char ** argv) {
     }
 
     llama_print_timings(ctx);
+
+    if (!params.logdir.empty()) {
+        const std::string timestamp = get_sortable_timestamp();
+
+        const bool success = create_directory_with_parents(params.logdir);
+        if (success) {
+
+            FILE * logfile = fopen((params.logdir + timestamp + ".yml").c_str(), "w");
+            fprintf(logfile, "binary: main\n");
+            char model_type[128];
+            llama_model_type(model, model_type, sizeof(model_type));
+            dump_non_result_info_yaml(logfile, params, ctx, timestamp, input_tokens, model_type);
+
+            fprintf(logfile, "\n");
+            fprintf(logfile, "######################\n");
+            fprintf(logfile, "# Generation Results #\n");
+            fprintf(logfile, "######################\n");
+            fprintf(logfile, "\n");
+
+            dump_string_yaml_multiline(logfile, "output", output_ss.str().c_str(), false);
+            dump_vector_int_yaml(logfile, "output_tokens", output_tokens);
+
+            llama_dump_timing_info_yaml(logfile, ctx);
+            fclose(logfile);
+        } else {
+            fprintf(stderr, "%s: warning: failed to create logdir %s, cannot write logfile\n",
+                    __func__, params.logdir.c_str());
+        }
+    }
     if (ctx_guidance) { llama_free(ctx_guidance); }
     llama_free(ctx);
     llama_free_model(model);

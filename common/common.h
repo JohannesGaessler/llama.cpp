@@ -60,6 +60,7 @@ struct gpt_params {
     std::string input_suffix      = "";  // string to suffix user inputs with
     std::string grammar           = "";  // optional BNF-like grammar to constrain sampling
     std::vector<std::string> antiprompt; // string upon seeing which more user input is prompted
+    std::string logdir            = "";  // directory in which to save YAML log files
 
     std::string lora_adapter = "";  // lora adapter path
     std::string lora_base    = "";  // base model path for the lora adapter
@@ -81,6 +82,7 @@ struct gpt_params {
     bool prompt_cache_ro   = false; // open the prompt cache read-only and do not update it
 
     bool embedding         = false; // get only sentence embedding
+    bool escape            = false; // escape "\n", "\r", "\t", "\'", "\"", and "\\"
     bool interactive_first = false; // wait for user input immediately
     bool multiline_input   = false; // reverse the usage of `\`
     bool simple_io         = false; // improves compatibility with subprocesses and limited consoles
@@ -132,3 +134,13 @@ std::string llama_token_to_str(
 std::string llama_token_to_str_bpe(
     const struct llama_context * ctx,
                    llama_token   token);
+
+bool create_directory_with_parents(const std::string & path);
+void dump_vector_float_yaml(FILE * stream, const char * prop_name, const std::vector<float> & data);
+void dump_vector_int_yaml(FILE * stream, const char * prop_name, const std::vector<int> & data);
+void dump_string_yaml_multiline(FILE * stream, const char * prop_name, const char * data, bool remove_first);
+std::string get_sortable_timestamp();
+
+void dump_non_result_info_yaml(
+    FILE * stream, const gpt_params & params, const llama_context * lctx,
+    const std::string & timestamp, const std::vector<int> & prompt_tokens, const char * model);
