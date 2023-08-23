@@ -41,7 +41,13 @@ for cli_arg in CLI_ARGS_MAIN:
     if cli_arg == "logit-bias":
         for token, bias in value.items():
             command_list.append("--logit-bias")
-            command_list.append(f"{token}{bias}")
+            command_list.append(f"{token}{bias:+}")
+        continue
+
+    if cli_arg == "reverse-prompt" and not isinstance(value, str):
+        for rp in value:
+            command_list.append("--reverse-prompt")
+            command_list.append(str(rp))
         continue
 
     command_list.append(f"--{cli_arg}")
