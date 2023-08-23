@@ -664,8 +664,8 @@ int main(int argc, char ** argv) {
         // display text
         if (input_echo) {
             for (auto id : embd) {
-                const char * token_str = llama_token_to_str(ctx, id).c_str();
-                printf("%s", token_str);
+                const std::string token_str = llama_token_to_str(ctx, id);
+                printf("%s", token_str.c_str());
 
                 if (embd.size() > 1) {
                     input_tokens.push_back(id);
