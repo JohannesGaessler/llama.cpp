@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import signal
 import subprocess
 import sys
 
@@ -56,5 +57,12 @@ for cli_arg in CLI_ARGS_MAIN:
 
 print(command_list)
 
-result = subprocess.run(command_list)
-sys.exit(result.returncode)
+sp = subprocess.Popen(command_list)
+
+while sp.returncode is None:
+    try:
+        sp.wait()
+    except KeyboardInterrupt:
+        pass
+
+sys.exit(sp.returncode)
