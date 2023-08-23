@@ -941,6 +941,7 @@ void dump_non_result_info_yaml(FILE * stream, const gpt_params & params, const l
     fprintf(stream, "###############\n");
     fprintf(stream, "\n");
 
+    fprintf(stream, "alias: %s # default: unknown\n", params.model_alias.c_str());
     fprintf(stream, "batch_size: %d # default: 512\n", params.n_batch);
     dump_string_yaml_multiline(stream, "cfg_negative_prompt", params.cfg_negative_prompt.c_str(), false);
     fprintf(stream, "cfg_scale: %f # default: 1.0\n", params.cfg_scale);
@@ -987,7 +988,6 @@ void dump_non_result_info_yaml(FILE * stream, const gpt_params & params, const l
     fprintf(stream, "memory_f32: %s # default: false\n", !params.memory_f16 ? "true" : "false");
     fprintf(stream, "mlock: %s # default: false\n", params.use_mlock ? "true" : "false");
     fprintf(stream, "model: %s # default: models/7B/ggml-model.bin\n", params.model.c_str());
-    fprintf(stream, "model_alias: %s # default: unknown\n", params.model_alias.c_str());
     fprintf(stream, "mtest: %s # default: false\n", params.mem_test ? "true" : "false");
     fprintf(stream, "n_probs: %d # only used by server binary, default: 0\n", params.n_probs);
     fprintf(stream, "multiline_input: %s # default: false\n", params.multiline_input ? "true" : "false");

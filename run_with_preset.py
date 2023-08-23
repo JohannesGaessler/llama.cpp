@@ -7,7 +7,7 @@ import sys
 
 import yaml
 
-CLI_ARGS_MAIN = [
+CLI_ARGS_MAIN_PERPLEXITY = [
     "batch-size", "cfg-negative-prompt", "cfg-scale", "chunks", "color", "ctx-size", "escape",
     "export", "file", "frequency-penalty", "grammar", "grammar-file", "hellaswag",
     "hellaswag-tasks", "ignore-eos", "in-prefix", "in-prefix-bos", "in-suffix", "instruct",
@@ -21,8 +21,19 @@ CLI_ARGS_MAIN = [
     "temp", "tfs", "top-k", "top-p", "typical", "verbose-prompt"
 ]
 
+CLI_ARGS_LLAMA_BENCH = [
+    "batch-size", "memory-f32", "low-vram", "model", "mul-mat-q", "n-gen", "n-gpu-layers",
+    "n-prompt", "output", "repetitions", "tensor-split", "threads", "verbose"
+]
+
+CLI_ARGS_SERVER = [
+    "alias", "batch-size", "ctx-size", "embedding", "host", "memory-f32", "lora", "lora-base",
+    "low-vram", "main-gpu", "mlock", "model", "n-gpu-layers", "no-mmap", "no-mul-mat-q", "numa",
+    "path", "port", "rope-freq-base", "timeout", "rope-freq-scale", "tensor-split", "threads", "verbose"
+]
+
 description = """Run llama.cpp binaries with presets from YAML file(s).
-To specify which binary should be run, specify the "binary" property.
+To specify which binary should be run, specify the "binary" property (main, perplexity, llama-bench, and server are supported).
 To get a preset file template, run a llama.cpp binary with the "--logdir" CLI argument.
 
 Formatting considerations:
@@ -40,6 +51,7 @@ epilog = ("  --<ARG_NAME> specify additional CLI ars to be passed to the binary 
 
 parser = argparse.ArgumentParser(
     description=description, usage=usage, epilog=epilog, formatter_class=argparse.RawTextHelpFormatter)
+parser.add_argument("-bin", "--binary", help="The binary to run.")
 parser.add_argument("yaml_files", nargs="*",
                     help="Arbitrary number of YAML files from which to read preset values. "
                     "If two files specify the same values the later one will be used.")
@@ -59,12 +71,25 @@ for yaml_file in known_args.yaml_files:
 props = {prop.replace("_", "-"): val for prop, val in props.items()}
 
 binary = props.pop("binary", "main")
+if known_args.binary:
+    binary = known_args.binary
+
 if os.path.exists(f"./{binary}"):
     binary = f"./{binary}"
 
+if binary.endswith("main") or binary.endswith("perplexity"):
+    cli_args = CLI_ARGS_MAIN_PERPLEXITY
+elif binary.endswith("llama-bench"):
+    cli_args = CLI_ARGS_LLAMA_BENCH
+elif binary.endswith("server"):
+    cli_args = CLI_ARGS_SERVER
+else:
+    print(f"Unknown binary: {binary}")
+    sys.exit(1)
+
 command_list = [binary]
 
-for cli_arg in CLI_ARGS_MAIN:
+for cli_arg in cli_args:
     value = props.get(cli_arg, None)
 
     if not value or value == -1:
