@@ -573,7 +573,7 @@ int main(int argc, char ** argv) {
             fprintf(logfile, "######################\n");
             fprintf(logfile, "\n");
 
-            fprintf(logfile, "perplexity: %f\n", perplexity_value);
+            fprintf(logfile, "ppl_value: %f\n", perplexity_value);
             dump_vector_float_yaml(logfile, "probs", probs);
 
             llama_dump_timing_info_yaml(logfile, ctx);

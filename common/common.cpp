@@ -942,7 +942,7 @@ void dump_non_result_info_yaml(FILE * stream, const gpt_params & params, const l
     fprintf(stream, "\n");
 
     fprintf(stream, "batch_size: %d # default: 512\n", params.n_batch);
-    dump_string_yaml_multiline(stream, "cfg_negative_prompt", params.cfg_negative_prompt.c_str(), true);
+    dump_string_yaml_multiline(stream, "cfg_negative_prompt", params.cfg_negative_prompt.c_str(), false);
     fprintf(stream, "cfg_scale: %f # default: 1.0\n", params.cfg_scale);
     fprintf(stream, "chunks: %d # default: -1 (unlimited)\n", params.n_chunks);
     fprintf(stream, "color: %s # default: false\n", params.use_color ? "true" : "false");
@@ -951,7 +951,7 @@ void dump_non_result_info_yaml(FILE * stream, const gpt_params & params, const l
     fprintf(stream, "export: %s # default: false\n", params.export_cgraph ? "true" : "false");
     fprintf(stream, "file: # never logged, see prompt instead. Can still be specified for input.\n");
     fprintf(stream, "frequency_penalty: %f # default: 0.0 \n", params.frequency_penalty);
-    dump_string_yaml_multiline(stream, "grammar", params.grammar.c_str(), true);
+    dump_string_yaml_multiline(stream, "grammar", params.grammar.c_str(), false);
     fprintf(stream, "grammar-file: # never logged, see grammar instead. Can still be specified for input.\n");
     fprintf(stream, "hellaswag: %s # default: false\n", params.hellaswag ? "true" : "false");
     fprintf(stream, "hellaswag_tasks: %ld # default: 400\n", params.hellaswag_tasks);
@@ -984,23 +984,23 @@ void dump_non_result_info_yaml(FILE * stream, const gpt_params & params, const l
     fprintf(stream, "mirostat: %d # default: 0 (disabled)\n", params.mirostat);
     fprintf(stream, "mirostat_ent: %f # default: 5.0\n", params.mirostat_tau);
     fprintf(stream, "mirostat_lr: %f # default: 0.1\n", params.mirostat_eta);
-    fprintf(stream, "mtest: %s # default: false\n", params.mem_test ? "true" : "false");
-    fprintf(stream, "mul_mat_q: %s # default: false\n", params.mul_mat_q ? "true" : "false");
     fprintf(stream, "memory_f32: %s # default: false\n", !params.memory_f16 ? "true" : "false");
     fprintf(stream, "mlock: %s # default: false\n", params.use_mlock ? "true" : "false");
     fprintf(stream, "model: %s # default: models/7B/ggml-model.bin\n", params.model.c_str());
     fprintf(stream, "model_alias: %s # default: unknown\n", params.model_alias.c_str());
+    fprintf(stream, "mtest: %s # default: false\n", params.mem_test ? "true" : "false");
     fprintf(stream, "n_probs: %d # only used by server binary, default: 0\n", params.n_probs);
     fprintf(stream, "multiline_input: %s # default: false\n", params.multiline_input ? "true" : "false");
     fprintf(stream, "n_gpu_layers: %d # default: 0\n", params.n_gpu_layers);
     fprintf(stream, "n_predict: %d # default: -1 (unlimited)\n", params.n_predict);
     fprintf(stream, "no_mmap: %s # default: false\n", !params.use_mmap ? "true" : "false");
+    fprintf(stream, "no_mul_mat_q: %s # default: false\n", !params.mul_mat_q ? "true" : "false");
     fprintf(stream, "no_penalize_nl: %s # default: false\n", !params.penalize_nl ? "true" : "false");
     fprintf(stream, "numa: %s # default: false\n", params.numa ? "true" : "false");
     fprintf(stream, "ppl_output_type: %d # default: 0\n", params.ppl_output_type);
     fprintf(stream, "ppl_stride: %d # default: 0\n", params.ppl_stride);
     fprintf(stream, "presence_penalty: %f # default: 0.0\n", params.presence_penalty);
-    dump_string_yaml_multiline(stream, "prompt", params.prompt.c_str(), true);
+    dump_string_yaml_multiline(stream, "prompt", params.prompt.c_str(), false);
     fprintf(stream, "prompt_cache: %s\n", params.path_prompt_cache.c_str());
     fprintf(stream, "prompt_cache_all: %s # default: false\n", params.prompt_cache_all ? "true" : "false");
     fprintf(stream, "prompt_cache_ro: %s # default: false\n", params.prompt_cache_ro ? "true" : "false");
