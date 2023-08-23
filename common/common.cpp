@@ -829,19 +829,29 @@ bool create_directory_with_parents(const std::string & path) {
 }
 
 void dump_vector_float_yaml(FILE * stream, const char * prop_name, const std::vector<float> & data) {
-   fprintf(stream, "%s: [", prop_name);
-   for (size_t i = 0; i < data.size() - 1; ++i) {
-       fprintf(stream, "%e, ", data[i]);
-   }
-   fprintf(stream, "%e]\n", data.back());
+    if (data.empty()) {
+        fprintf(stream, "%s:\n", prop_name);
+        return;
+    }
+
+    fprintf(stream, "%s: [", prop_name);
+    for (size_t i = 0; i < data.size() - 1; ++i) {
+        fprintf(stream, "%e, ", data[i]);
+    }
+    fprintf(stream, "%e]\n", data.back());
 }
 
 void dump_vector_int_yaml(FILE * stream, const char * prop_name, const std::vector<int> & data) {
-   fprintf(stream, "%s: [", prop_name);
-   for (size_t i = 0; i < data.size() - 1; ++i) {
-       fprintf(stream, "%d, ", data[i]);
-   }
-   fprintf(stream, "%d]\n", data.back());
+    if (data.empty()) {
+        fprintf(stream, "%s:\n", prop_name);
+        return;
+    }
+
+    fprintf(stream, "%s: [", prop_name);
+    for (size_t i = 0; i < data.size() - 1; ++i) {
+        fprintf(stream, "%d, ", data[i]);
+    }
+    fprintf(stream, "%d]\n", data.back());
 }
 
 void dump_string_yaml_multiline(FILE * stream, const char * prop_name, const char * data,
