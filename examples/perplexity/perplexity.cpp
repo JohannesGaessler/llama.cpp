@@ -125,6 +125,7 @@ std::tuple<std::vector<llama_token>, std::vector<float>, float> perplexity_v2(ll
                 logits.begin() + (j + 1) * n_vocab);
 
             const float prob = softmax(tok_logits)[tokens[start + j + 1]];
+            probs.push_back(prob);
 
             nll += -std::log(prob);
             ++count;

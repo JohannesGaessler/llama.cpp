@@ -12,11 +12,12 @@ CLI_ARGS_MAIN = [
     "hellaswag-tasks", "ignore-eos", "in-prefix", "in-prefix-bos", "in-suffix", "instruct",
     "interactive", "interactive-first", "keep", "logdir", "logit-bias", "lora", "lora-base",
     "low-vram", "main-gpu", "memory-f32", "mirostat", "mirostat-ent", "mirostat-lr", "mlock",
-    "model", "mtest", "mul-mat-q", "multiline-input", "n-gpu-layers", "n-predict", "no-mmap",
-    "np-penalize-nl", "numa", "perplexity", "presence-penalty", "prompt", "prompt-cache",
-    "prompt-cache-all", "prompt-cache-ro", "random-prompt", "repeat-last-n", "repeat-penalty",
-    "reverse-prompt", "rope-freq-base", "rope-freq-scale", "rope-scale", "seed", "simple-io",
-    "tensor-split", "threads", "temp", "tfs", "top-k", "top-p", "typical", "verbose-prompt"
+    "model", "mtest", "mul-mat-q", "multiline-input", "n-gpu-layers", "n-predict", "n_probs",
+    "no-mmap", "np-penalize-nl", "numa", "perplexity", "ppl_output_type", "ppl_stride",
+    "presence-penalty", "prompt", "prompt-cache", "prompt-cache-all", "prompt-cache-ro",
+    "random-prompt", "repeat-last-n", "repeat-penalty", "reverse-prompt", "rope-freq-base",
+    "rope-freq-scale", "rope-scale", "seed", "simple-io", "tensor-split", "threads",
+    "temp", "tfs", "top-k", "top-p", "typical", "verbose-prompt"
 ]
 
 with open(sys.argv[1], "r") as f:

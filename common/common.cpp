@@ -990,12 +990,15 @@ void dump_non_result_info_yaml(FILE * stream, const gpt_params & params, const l
     fprintf(stream, "mlock: %s # default: false\n", params.use_mlock ? "true" : "false");
     fprintf(stream, "model: %s # default: models/7B/ggml-model.bin\n", params.model.c_str());
     fprintf(stream, "model_alias: %s # default: unknown\n", params.model_alias.c_str());
+    fprintf(stream, "n_probs: %d # only used by server binary, default: 0\n", params.n_probs);
     fprintf(stream, "multiline_input: %s # default: false\n", params.multiline_input ? "true" : "false");
     fprintf(stream, "n_gpu_layers: %d # default: 0\n", params.n_gpu_layers);
     fprintf(stream, "n_predict: %d # default: -1 (unlimited)\n", params.n_predict);
     fprintf(stream, "no_mmap: %s # default: false\n", !params.use_mmap ? "true" : "false");
     fprintf(stream, "no_penalize_nl: %s # default: false\n", !params.penalize_nl ? "true" : "false");
     fprintf(stream, "numa: %s # default: false\n", params.numa ? "true" : "false");
+    fprintf(stream, "ppl_output_type: %d # default: 0\n", params.ppl_output_type);
+    fprintf(stream, "ppl_stride: %d # default: 0\n", params.ppl_stride);
     fprintf(stream, "presence_penalty: %f # default: 0.0\n", params.presence_penalty);
     dump_string_yaml_multiline(stream, "prompt", params.prompt.c_str(), true);
     fprintf(stream, "prompt_cache: %s\n", params.path_prompt_cache.c_str());
