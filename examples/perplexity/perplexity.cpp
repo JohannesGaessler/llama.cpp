@@ -30,7 +30,8 @@ std::vector<float> softmax(const std::vector<float>& logits) {
     return probs;
 }
 
-std::tuple<std::vector<llama_token>, std::vector<float>, float> perplexity_v2(llama_context * ctx, const gpt_params & params) {
+std::tuple<std::vector<llama_token>, std::vector<float>, std::vector<float>, float>
+        perplexity_v2(llama_context * ctx, const gpt_params & params) {
 
     // Download: https://s3.amazonaws.com/research.metamind.io/wikitext/wikitext-2-raw-v1.zip?ref=salesforce-research
     // Run `./perplexity -m models/7B/ggml-model-q4_0.bin -f wiki.test.raw`
@@ -38,11 +39,12 @@ std::tuple<std::vector<llama_token>, std::vector<float>, float> perplexity_v2(ll
     // BOS tokens will be added for each chunk before eval
 
     std::vector<llama_token> tokens = ::llama_tokenize(ctx, params.prompt, true);
+    std::vector<float>       logit_history;
     std::vector<float>       probs;
 
     if (params.ppl_stride <= 0) {
         fprintf(stderr, "%s: stride is %d but must be greater than zero!\n",__func__,params.ppl_stride);
-        return std::make_tuple(tokens, probs, -1);
+        return std::make_tuple(tokens, logit_history, probs, -1);
     }
 
     const int calc_chunk = params.n_ctx;
@@ -52,7 +54,7 @@ std::tuple<std::vector<llama_token>, std::vector<float>, float> perplexity_v2(ll
     if (int(tokens.size()) <= calc_chunk) {
         fprintf(stderr, "%s: there are only %zu tokens, this is not enough for a context size of %d and stride %d\n",__func__,
                 tokens.size(), params.n_ctx, params.ppl_stride);
-        return std::make_tuple(tokens, probs, -1);
+        return std::make_tuple(tokens, logit_history, probs, -1);
     }
 
     const int n_chunk_max = (tokens.size() - calc_chunk + params.ppl_stride - 1)  / params.ppl_stride;
@@ -84,7 +86,7 @@ std::tuple<std::vector<llama_token>, std::vector<float>, float> perplexity_v2(ll
             //fprintf(stderr, "    Batch %d: starts at %d, size is %d, n_past is %d\n",j,batch_start,batch_size,j * n_batch);
             if (llama_eval(ctx, tokens.data() + batch_start, batch_size, j * n_batch, params.n_threads)) {
                 //fprintf(stderr, "%s : failed to eval\n", __func__);
-                return std::make_tuple(tokens, probs, -1);
+                return std::make_tuple(tokens, logit_history, probs, -1);
             }
 
             // save original token and restore it after eval
@@ -125,6 +127,7 @@ std::tuple<std::vector<llama_token>, std::vector<float>, float> perplexity_v2(ll
                 logits.begin() + (j + 1) * n_vocab);
 
             const float prob = softmax(tok_logits)[tokens[start + j + 1]];
+            logit_history.push_back(tok_logits[tokens[start + j + 1]]);
             probs.push_back(prob);
 
             nll += -std::log(prob);
@@ -140,10 +143,11 @@ std::tuple<std::vector<llama_token>, std::vector<float>, float> perplexity_v2(ll
     }
     printf("\n");
 
-    return std::make_tuple(tokens, probs, std::exp(nll / count));
+    return std::make_tuple(tokens, logit_history, probs, std::exp(nll / count));
 }
 
-std::tuple<std::vector<llama_token>, std::vector<float>, float> perplexity(llama_context * ctx, const gpt_params & params) {
+std::tuple<std::vector<llama_token>, std::vector<float>, std::vector<float>, float>
+        perplexity(llama_context * ctx, const gpt_params & params) {
 
     if (params.ppl_stride > 0) {
         return perplexity_v2(ctx, params);
@@ -154,6 +158,7 @@ std::tuple<std::vector<llama_token>, std::vector<float>, float> perplexity(llama
     // Output: `perplexity: 13.5106 [114/114]`
     // BOS tokens will be added for each chunk before eval
     std::vector<llama_token> tokens = ::llama_tokenize(ctx, params.prompt, true);
+    std::vector<float>       logit_history;
     std::vector<float>       probs;
 
     const int n_chunk_max = tokens.size() / params.n_ctx;
@@ -191,7 +196,7 @@ std::tuple<std::vector<llama_token>, std::vector<float>, float> perplexity(llama
 
             if (llama_eval(ctx, tokens.data() + batch_start, batch_size, j * n_batch, params.n_threads)) {
                 fprintf(stderr, "%s : failed to eval\n", __func__);
-                return std::make_tuple(tokens, probs, -1);
+                return std::make_tuple(tokens, logit_history, probs, -1);
             }
 
             // restore the original token in case it was set to BOS
@@ -233,6 +238,7 @@ std::tuple<std::vector<llama_token>, std::vector<float>, float> perplexity(llama
                 logits.begin() + (j + 1) * n_vocab);
 
             const float prob = softmax(tok_logits)[tokens[start + j + 1]];
+            logit_history.push_back(tok_logits[tokens[start + j + 1]]);
             probs.push_back(prob);
 
             nll += -std::log(prob);
@@ -248,7 +254,7 @@ std::tuple<std::vector<llama_token>, std::vector<float>, float> perplexity(llama
     }
     printf("\n");
 
-    return std::make_tuple(tokens, probs, std::exp(nll / count));
+    return std::make_tuple(tokens, logit_history, probs, std::exp(nll / count));
 }
 
 std::vector<float> hellaswag_evaluate_tokens(llama_context * ctx, const std::vector<int>& tokens, int n_past, int n_batch,
@@ -542,6 +548,7 @@ int main(int argc, char ** argv) {
     }
 
     std::vector<llama_token> tokens;
+    std::vector<float>       logits;
     std::vector<float>       probs;
     double                   perplexity_value = -1;
     if (params.hellaswag) {
@@ -549,8 +556,9 @@ int main(int argc, char ** argv) {
     } else {
         auto ret = perplexity(ctx, params);
         tokens           = std::get<0>(ret);
-        probs            = std::get<1>(ret);
-        perplexity_value = std::get<2>(ret);
+        logits           = std::get<1>(ret);
+        probs            = std::get<2>(ret);
+        perplexity_value = std::get<3>(ret);
     }
 
     llama_print_timings(ctx);
@@ -573,6 +581,7 @@ int main(int argc, char ** argv) {
             fprintf(logfile, "######################\n");
             fprintf(logfile, "\n");
 
+            dump_vector_float_yaml(logfile, "logits", logits);
             fprintf(logfile, "ppl_value: %f\n", perplexity_value);
             dump_vector_float_yaml(logfile, "probs", probs);
 
