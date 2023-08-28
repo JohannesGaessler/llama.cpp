@@ -49,9 +49,9 @@ void write_logfile(
     }
 
     fprintf(logfile, "binary: main\n");
-    char model_type[128];
-    llama_model_desc(model, model_type, sizeof(model_type));
-    dump_non_result_info_yaml(logfile, params, ctx, timestamp, input_tokens, model_type);
+    char model_desc[128];
+    llama_model_desc(model, model_desc, sizeof(model_desc));
+    dump_non_result_info_yaml(logfile, params, ctx, timestamp, input_tokens, model_desc);
 
     fprintf(logfile, "\n");
     fprintf(logfile, "######################\n");

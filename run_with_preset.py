@@ -13,12 +13,12 @@ CLI_ARGS_MAIN_PERPLEXITY = [
     "hellaswag-tasks", "ignore-eos", "in-prefix", "in-prefix-bos", "in-suffix", "instruct",
     "interactive", "interactive-first", "keep", "logdir", "logit-bias", "lora", "lora-base",
     "low-vram", "main-gpu", "memory-f32", "mirostat", "mirostat-ent", "mirostat-lr", "mlock",
-    "model", "mtest", "multiline-input", "n-gpu-layers", "n-predict", "n_probs", "no-mmap",
-    "no-mul-mat-q", "np-penalize-nl", "numa", "ppl_value", "ppl_output_type", "ppl_stride",
-    "presence-penalty", "prompt", "prompt-cache", "prompt-cache-all", "prompt-cache-ro",
-    "random-prompt", "repeat-last-n", "repeat-penalty", "reverse-prompt", "rope-freq-base",
-    "rope-freq-scale", "rope-scale", "seed", "simple-io", "tensor-split", "threads",
-    "temp", "tfs", "top-k", "top-p", "typical", "verbose-prompt"
+    "model", "mtest", "multiline-input", "n-gpu-layers", "n-predict", "no-mmap", "no-mul-mat-q",
+    "np-penalize-nl", "numa", "ppl-output-type", "ppl-stride", "presence-penalty", "prompt",
+    "prompt-cache", "prompt-cache-all", "prompt-cache-ro", "random-prompt", "repeat-last-n",
+    "repeat-penalty", "reverse-prompt", "rope-freq-base", "rope-freq-scale", "rope-scale", "seed",
+    "simple-io", "tensor-split", "threads", "temp", "tfs", "top-k", "top-p", "typical",
+    "verbose-prompt"
 ]
 
 CLI_ARGS_LLAMA_BENCH = [
@@ -28,8 +28,9 @@ CLI_ARGS_LLAMA_BENCH = [
 
 CLI_ARGS_SERVER = [
     "alias", "batch-size", "ctx-size", "embedding", "host", "memory-f32", "lora", "lora-base",
-    "low-vram", "main-gpu", "mlock", "model", "n-gpu-layers", "no-mmap", "no-mul-mat-q", "numa",
-    "path", "port", "rope-freq-base", "timeout", "rope-freq-scale", "tensor-split", "threads", "verbose"
+    "low-vram", "main-gpu", "mlock", "model", "n-gpu-layers", "n-probs", "no-mmap", "no-mul-mat-q",
+    "numa", "path", "port", "rope-freq-base", "timeout", "rope-freq-scale", "tensor-split",
+    "threads", "verbose"
 ]
 
 description = """Run llama.cpp binaries with presets from YAML file(s).
@@ -77,11 +78,11 @@ if known_args.binary:
 if os.path.exists(f"./{binary}"):
     binary = f"./{binary}"
 
-if binary.endswith("main") or binary.endswith("perplexity"):
+if binary.lower().endswith("main") or binary.lower().endswith("perplexity"):
     cli_args = CLI_ARGS_MAIN_PERPLEXITY
-elif binary.endswith("llama-bench"):
+elif binary.lower().endswith("llama-bench"):
     cli_args = CLI_ARGS_LLAMA_BENCH
-elif binary.endswith("server"):
+elif binary.lower().endswith("server"):
     cli_args = CLI_ARGS_SERVER
 else:
     print(f"Unknown binary: {binary}")
@@ -90,7 +91,7 @@ else:
 command_list = [binary]
 
 for cli_arg in cli_args:
-    value = props.get(cli_arg, None)
+    value = props.pop(cli_arg, None)
 
     if not value or value == -1:
         continue
@@ -117,6 +118,14 @@ for cli_arg in cli_args:
 
     if value != "True":
         command_list.append(str(value))
+
+num_unused = len(props)
+if num_unused > 10:
+    print(f"The preset file contained a total of {num_unused} unused properties.")
+elif num_unused > 0:
+    print("The preset file contained the following unused properties:")
+    for prop, value in props.items():
+        print(f"  {prop}: {value}")
 
 command_list += unknown_args
 

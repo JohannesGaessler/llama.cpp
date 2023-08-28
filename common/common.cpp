@@ -950,7 +950,7 @@ std::string get_sortable_timestamp() {
 }
 
 void dump_non_result_info_yaml(FILE * stream, const gpt_params & params, const llama_context * lctx,
-                               const std::string & timestamp, const std::vector<int> & prompt_tokens, const char * model) {
+                               const std::string & timestamp, const std::vector<int> & prompt_tokens, const char * model_desc) {
     fprintf(stream, "build_commit: %s\n", BUILD_COMMIT);
     fprintf(stream, "build_number: %d\n", BUILD_NUMBER);
     fprintf(stream, "cpu_has_arm_fma: %s\n", ggml_cpu_has_arm_fma() ? "true" : "false");
@@ -978,7 +978,7 @@ void dump_non_result_info_yaml(FILE * stream, const gpt_params & params, const l
     fprintf(stream, "debug: true\n");
 #endif // NDEBUG
 
-    fprintf(stream, "model: %s\n", model);
+    fprintf(stream, "model_desc: %s\n", model_desc);
 
 #ifdef __OPTIMIZE__
     fprintf(stream, "optimize: true\n");
