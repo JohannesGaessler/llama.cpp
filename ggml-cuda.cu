@@ -5094,7 +5094,7 @@ void ggml_init_cublas() {
             CUBLAS_CHECK(cublasSetMathMode(g_cublas_handles[id], CUBLAS_TF32_TENSOR_OP_MATH));
         }
 
-#ifdef NDEBUG
+// #ifdef NDEBUG
         for (int id = 0; id < g_device_count; ++id) {
             CUDA_CHECK(cudaSetDevice(id));
 
@@ -5119,7 +5119,7 @@ void ggml_init_cublas() {
                 }
             }
         }
-#endif // NDEBUG
+// #endif // NDEBUG
 
         // configure logging to stdout
         // CUBLAS_CHECK(cublasLoggerConfigure(1, 1, 0, nullptr));
@@ -5964,7 +5964,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
         if (use_src1 && !src1_stays_on_host) {
             if (src1_on_device && src1_is_contiguous) {
                 src1_ddf[id] = (float *) src1_extra->data_device[id];
-            } else if (g_can_access_main[id] && src1_is_contiguous) {
+            } else if (src1->backend == GGML_BACKEND_GPU && g_can_access_main[id] && src1_is_contiguous) {
                 src1_ddf[id] = (float *) src1_extra->data_device[g_main_device];
             } else {
                 src1_ddf[id] = (float *) ggml_cuda_pool_malloc(num_iters*src1_stride * sizeof(float), &src1_asf[id]);
