@@ -5390,7 +5390,8 @@ inline void ggml_cuda_op_mul_mat_q(
 
     // the main device has a larger memory buffer to hold the results from all GPUs
     // nrows_dst == nrows of the matrix that the dequantize_mul_mat kernel writes into
-    const int64_t nrows_dst = dst->backend == GGML_BACKEND_GPU && id == g_main_device ? ne0 : i01_diff;
+    const bool has_final_buffer = dst->backend == GGML_BACKEND_GPU && (id == g_main_device || g_can_access_main[id]);
+    const int64_t nrows_dst = has_final_buffer ? ne0 : i01_diff;
 
     const int64_t padded_row_size = ne10 % MATRIX_ROW_PADDING == 0 ?
         ne10 : ne10 - ne10 % MATRIX_ROW_PADDING + MATRIX_ROW_PADDING;
@@ -5653,7 +5654,8 @@ inline void ggml_cuda_op_mul_mat_cublas(
 
     // the main device has a larger memory buffer to hold the results from all GPUs
     // ldc == nrows of the matrix that cuBLAS writes into
-    int ldc = dst->backend == GGML_BACKEND_GPU && id == g_main_device ? ne0 : i01_diff;
+    const bool has_final_buffer = dst->backend == GGML_BACKEND_GPU && (id == g_main_device || g_can_access_main[id]);
+    const int ldc = has_final_buffer ? ne0 : i01_diff;
 
     CUBLAS_CHECK(cublasSetStream(g_cublas_handles[id], cudaStream_main));
     CUBLAS_CHECK(
@@ -5972,6 +5974,8 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
         }
         if (dst_on_device) {
             dst_ddf[id] = (float *) dst_extra->data_device[id];
+        } else if (dst->backend == GGML_BACKEND_GPU && g_can_access_main[id]) {
+            dst_ddf[id] = (float *) dst_extra->data_device[g_main_device];
         } else {
             size_t size_dst_ddf = split ? row_diff*ne1 * sizeof(float) : num_iters*dst_stride * sizeof(float);
             dst_ddf[id] = (float *) ggml_cuda_pool_malloc(size_dst_ddf, &dst_asf[id]);
@@ -6032,7 +6036,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
 
                 // the main device memory buffer can be on VRAM scratch, with space for all partial results
                 // in that case an offset on dst_ddf_i is needed
-                if (dst->backend == GGML_BACKEND_GPU && id == g_main_device) {
+                if (dst->backend == GGML_BACKEND_GPU && (id == g_main_device || g_can_access_main[id])) {
                     dst_ddf_i += i01_low; // offset is 0 if no tensor split
                 }
 
@@ -6077,7 +6081,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
                 CUDA_CHECK(cudaGetLastError());
 
                 // copy dst to host or other device if necessary
-                if (!dst_on_device) {
+                if (!dst_on_device && !(dst->backend == GGML_BACKEND_GPU && g_can_access_main[id])) {
                     void * dst_off_device;
                     cudaMemcpyKind kind;
                     if (dst->backend == GGML_BACKEND_CPU) {
