@@ -5114,7 +5114,7 @@ void ggml_init_cublas() {
                     if (id == g_main_device) {
                         g_main_can_access[id_other] = true;
                     } else {
-                        g_can_access_main[id_other] = true;
+                        g_can_access_main[id] = true;
                     }
                 }
             }
