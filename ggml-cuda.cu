@@ -5966,8 +5966,6 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
         if (use_src1 && !src1_stays_on_host) {
             if (src1_on_device && src1_is_contiguous) {
                 src1_ddf[id] = (float *) src1_extra->data_device[id];
-            } else if (src1->backend == GGML_BACKEND_GPU && g_can_access_main[id] && src1_is_contiguous) {
-                src1_ddf[id] = (float *) src1_extra->data_device[g_main_device];
             } else {
                 src1_ddf[id] = (float *) ggml_cuda_pool_malloc(num_iters*src1_stride * sizeof(float), &src1_asf[id]);
             }
@@ -6047,7 +6045,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
                         int64_t nrows1 = flatten_rows ? nrows0 : ne11;
                         CUDA_CHECK(ggml_cuda_cpy_tensor_2d(src1_ddf_i, src1, i03, i02, 0, nrows1, cudaStream_main));
                     } else if (src1->backend == GGML_BACKEND_GPU && src1_is_contiguous) {
-                        if (id != g_main_device && !g_can_access_main[id]) {
+                        if (id != g_main_device) {
                             GGML_ASSERT(!flatten_rows);
                             float * src1_ddf_i_source = (float *) src1_extra->data_device[g_main_device];
                             src1_ddf_i_source += i11*src1_stride;
