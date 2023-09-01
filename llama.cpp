@@ -920,12 +920,29 @@ struct llama_hparams {
         return n_embd/n_gqa();
     }
 
-    size_t kv_size() const {
-        size_t result = 2ull;
+    size_t kv_size(ggml_type type) const {
+        return kv_size_k(type) + kv_size_v(type);
+    }
+
+    size_t kv_size_k(ggml_type type) const {
+        size_t result = 1ull;
         result *= (size_t) n_embd_gqa();
         result *= (size_t) n_ctx;
         result *= (size_t) n_layer;
-        result *= sizeof(ggml_fp16_t);
+        result *= ggml_type_size(type);
+        result /= ggml_blck_size(type);
+        return result;
+    }
+
+    size_t kv_size_v(ggml_type type) const {
+        const size_t row_padding = type == GGML_TYPE_Q8_0 ? 128 : 0;
+
+        size_t result = 1ull;
+        result *= (size_t) n_embd_gqa();
+        result *= (size_t) n_ctx + row_padding;
+        result *= (size_t) n_layer;
+        result *= ggml_type_size(type);
+        result /= ggml_blck_size(type);
         return result;
     }
 };
@@ -1150,10 +1167,26 @@ static bool llama_kv_cache_init(
     const int n_embd  = hparams.n_embd_gqa();
     const int n_layer = hparams.n_layer;
 
+    if (n_ctx % ggml_blck_size(wtype) != 0) {
+        LLAMA_LOG_ERROR("error: for KV type %s n_ctx must be a multiple of %d but received n_ctx=%d\n",
+                        ggml_type_name(wtype), ggml_blck_size(wtype), n_ctx);
+        return false;
+    }
+
+    if (n_embd % ggml_blck_size(wtype) != 0) {
+        LLAMA_LOG_ERROR("error: for KV type %s n_ctx must be a multiple of %d but received n_embd=%d\n",
+                        ggml_type_name(wtype), ggml_blck_size(wtype), n_embd);
+        return false;
+    }
+
     const int64_t n_mem      = n_layer*n_ctx;
     const int64_t n_elements = n_embd*n_mem;
 
-    cache.buf.resize(2u*n_elements*ggml_type_size(wtype) + 2u*MB);
+    // if the KV cache is quantized we need a little extra space for each row to store the
+    // unquantized values between evals (this avoids precision loss when rebuilding the block)
+    const int64_t v_quant_buffer = wtype == GGML_TYPE_Q8_0 ? 128*n_layer*n_embd : 0;
+
+    cache.buf.resize((2u*n_elements + v_quant_buffer)*ggml_type_size(wtype)/ggml_blck_size(wtype) + 2u*MB);
     cache.n = 0;
 
     struct ggml_init_params params;
@@ -1169,7 +1202,7 @@ static bool llama_kv_cache_init(
     }
 
     cache.k = ggml_new_tensor_1d(cache.ctx, wtype, n_elements);
-    cache.v = ggml_new_tensor_1d(cache.ctx, wtype, n_elements);
+    cache.v = ggml_new_tensor_1d(cache.ctx, wtype, n_elements + v_quant_buffer);
     ggml_set_name(cache.k, "cache_k");
     ggml_set_name(cache.v, "cache_v");
 
@@ -2075,15 +2108,13 @@ static void llm_load_tensors(
 
     // print memory requirements
     {
-        const size_t scale = memory_type == GGML_TYPE_F32 ? 2 : 1;
-
         // this is the total memory required to run the inference
         size_t mem_required =
             ctx_size +
             mmapped_size - vram_weights; // weights in VRAM not in memory
 
         // this is the memory required by one llama_state
-        const size_t mem_required_state = scale*hparams.kv_size();
+        const size_t mem_required_state = hparams.kv_size(memory_type);
 
         LLAMA_LOG_INFO("%s: mem required  = %7.2f MB (+ %7.2f MB per state)\n", __func__,
                 mem_required / 1024.0 / 1024.0, mem_required_state / 1024.0 / 1024.0);
@@ -2107,7 +2138,7 @@ static void llm_load_tensors(
                 LLAMA_LOG_INFO("%s: cannot offload v cache to GPU due to low VRAM option\n", __func__);
             } else {
                 LLAMA_LOG_INFO("%s: offloading v cache to GPU\n", __func__);
-                vram_kv_cache += hparams.kv_size() / 2;
+                vram_kv_cache += hparams.kv_size_v(memory_type);
             }
         }
         if (n_gpu_layers > (int) hparams.n_layer + 2) {
@@ -2115,7 +2146,7 @@ static void llm_load_tensors(
                 LLAMA_LOG_WARN("%s: cannot offload k cache to GPU due to low VRAM option\n", __func__);
             } else {
                 LLAMA_LOG_INFO("%s: offloading k cache to GPU\n", __func__);
-                vram_kv_cache += hparams.kv_size() / 2;
+                vram_kv_cache += hparams.kv_size_k(memory_type);
             }
         }
 #elif defined(GGML_USE_CLBLAST)
@@ -2367,13 +2398,17 @@ static struct ggml_cgraph * llm_build_llama(
                 offload_func_v(Vcur);
                 ggml_set_name(Vcur, "Vcur");
 
-                struct ggml_tensor * k = ggml_view_1d(ctx0, kv_self.k, N*n_embd_gqa, (ggml_element_size(kv_self.k)*n_embd_gqa)*(il*n_ctx + n_past));
+                struct ggml_tensor * k = ggml_view_1d(
+                    ctx0, kv_self.k, N*n_embd_gqa,
+                    (ggml_element_size(kv_self.k)*n_embd_gqa)*(il*n_ctx + n_past)/ggml_blck_size(kv_self.k->type));
                 offload_func_kq(k);
                 ggml_set_name(k, "k");
 
-                struct ggml_tensor * v = ggml_view_2d(ctx0, kv_self.v, N, n_embd_gqa,
-                        (   n_ctx)*ggml_element_size(kv_self.v),
-                        (il*n_ctx)*ggml_element_size(kv_self.v)*n_embd_gqa + n_past*ggml_element_size(kv_self.v));
+                const int64_t v_row_size = kv_self.v->type == GGML_TYPE_Q8_0 ? n_ctx + 128 : n_ctx;
+                struct ggml_tensor * v = ggml_view_blck_2d(ctx0, kv_self.v, N, n_embd_gqa,
+                        (   v_row_size)*ggml_element_size(kv_self.v)/ggml_blck_size(kv_self.v->type),
+                        (il*v_row_size)*ggml_element_size(kv_self.v)*n_embd_gqa/ggml_blck_size(kv_self.v->type) + ggml_element_size(kv_self.v)*(n_past/ggml_blck_size(kv_self.v->type)),
+                        n_past % ggml_blck_size(kv_self.v->type));
                 offload_func_v(v);
                 ggml_set_name(v, "v");
 
@@ -2389,9 +2424,9 @@ static struct ggml_cgraph * llm_build_llama(
             struct ggml_tensor * K =
                 ggml_view_3d(ctx0, kv_self.k,
                         n_embd_head, n_past + N, n_head_kv,
-                        ggml_element_size(kv_self.k)*n_embd_gqa,
-                        ggml_element_size(kv_self.k)*n_embd_head,
-                        ggml_element_size(kv_self.k)*n_embd_gqa*n_ctx*il);
+                        ggml_element_size(kv_self.k)*n_embd_gqa/ggml_blck_size(kv_self.k->type),
+                        ggml_element_size(kv_self.k)*n_embd_head/ggml_blck_size(kv_self.k->type),
+                        ggml_element_size(kv_self.k)*n_embd_gqa*n_ctx*il/ggml_blck_size(kv_self.k->type));
             offload_func_kq(K);
             ggml_set_name(K, "K");
 
@@ -2416,13 +2451,17 @@ static struct ggml_cgraph * llm_build_llama(
             offload_func_v(KQ_soft_max);
             ggml_set_name(KQ_soft_max, "KQ_soft_max");
 
+
             // split cached V into n_head heads
+            int64_t v_nelements_padded = n_past + N + ggml_blck_size(kv_self.v->type) - 1;
+            v_nelements_padded -= v_nelements_padded % ggml_blck_size(kv_self.v->type);
+            const int64_t v_row_size = kv_self.v->type == GGML_TYPE_Q8_0 ? n_ctx + 128 : n_ctx;
             struct ggml_tensor * V =
                 ggml_view_3d(ctx0, kv_self.v,
-                        n_past + N, n_embd_head, n_head_kv,
-                        ggml_element_size(kv_self.v)*n_ctx,
-                        ggml_element_size(kv_self.v)*n_ctx*n_embd_head,
-                        ggml_element_size(kv_self.v)*n_ctx*n_embd_gqa*il);
+                        v_nelements_padded, n_embd_head, n_head_kv,
+                        ggml_element_size(kv_self.v)*v_row_size/ggml_blck_size(kv_self.v->type),
+                        ggml_element_size(kv_self.v)*v_row_size*n_embd_head/ggml_blck_size(kv_self.v->type),
+                        ggml_element_size(kv_self.v)*v_row_size*n_embd_gqa*il/ggml_blck_size(kv_self.v->type));
             offload_func_v(V);
             ggml_set_name(V, "V");
 
@@ -5371,9 +5410,9 @@ struct llama_context_params llama_context_default_params() {
         /*.rope_freq_scale             =*/ 1.0f,
         /*.progress_callback           =*/ nullptr,
         /*.progress_callback_user_data =*/ nullptr,
+        /*.kv_type                     =*/ GGML_TYPE_Q8_0,
         /*.low_vram                    =*/ false,
         /*.mul_mat_q                   =*/ true,
-        /*.f16_kv                      =*/ true,
         /*.logits_all                  =*/ false,
         /*.vocab_only                  =*/ false,
         /*.use_mmap                    =*/ true,
@@ -5448,8 +5487,6 @@ struct llama_model * llama_load_model_from_file(
 
     llama_model * model = new llama_model;
 
-    ggml_type memory_type = params.f16_kv ? GGML_TYPE_F16 : GGML_TYPE_F32;
-
     unsigned cur_percentage = 0;
     if (params.progress_callback == NULL) {
         params.progress_callback_user_data = &cur_percentage;
@@ -5468,7 +5505,7 @@ struct llama_model * llama_load_model_from_file(
 
     if (!llama_model_load(path_model, *model, params.n_ctx, params.n_batch, params.n_gpu_layers,
                 params.main_gpu, params.tensor_split, params.mul_mat_q, params.rope_freq_base, params.rope_freq_scale,
-                params.low_vram, memory_type, params.use_mmap, params.use_mlock, params.vocab_only,
+                params.low_vram, params.kv_type, params.use_mmap, params.use_mlock, params.vocab_only,
                 params.progress_callback, params.progress_callback_user_data)) {
         LLAMA_LOG_ERROR("%s: failed to load model\n", __func__);
         delete model;
@@ -5499,11 +5536,9 @@ struct llama_context * llama_new_context_with_model(
     ctx->rng = std::mt19937(params.seed);
     ctx->logits_all = params.logits_all;
 
-    ggml_type memory_type = params.f16_kv ? GGML_TYPE_F16 : GGML_TYPE_F32;
-
     // reserve memory for context buffers
     if (!params.vocab_only) {
-        if (!llama_kv_cache_init(ctx->model.hparams, ctx->kv_self, memory_type, ctx->model.hparams.n_ctx, params.n_gpu_layers)) {
+        if (!llama_kv_cache_init(ctx->model.hparams, ctx->kv_self, params.kv_type, ctx->model.hparams.n_ctx, params.n_gpu_layers)) {
             LLAMA_LOG_ERROR("%s: llama_kv_cache_init() failed for self-attention cache\n", __func__);
             llama_free(ctx);
             return nullptr;
