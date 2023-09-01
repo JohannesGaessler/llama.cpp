@@ -198,8 +198,30 @@ bool gpt_params_parse(int argc, char ** argv, gpt_params & params) {
                 break;
             }
             params.rope_freq_scale = 1.0f/std::stof(argv[i]);
+        } else if (arg == "--kv-type" || arg == "-kvt") {
+            if (++i >= argc) {
+                invalid_param = true;
+                break;
+            }
+
+            std::string type_name(argv[i]);
+            for (char & c : type_name) {
+                c = std::tolower(c);
+            }
+
+            if (type_name == "q8_0") {
+                params.kv_type = GGML_TYPE_Q8_0;
+            } else if (type_name == "f16") {
+                params.kv_type = GGML_TYPE_F16;
+            } else if (type_name == "f32") {
+                params.kv_type = GGML_TYPE_F32;
+            } else {
+                fprintf(stderr, "error: unknown KV type: %s. Known types: Q8_0, F16, F32.\n", argv[i]);
+                invalid_param = true;
+                break;
+            }
         } else if (arg == "--memory-f32") {
-            params.memory_f16 = false;
+            params.kv_type = GGML_TYPE_F32;
         } else if (arg == "--top-p") {
             if (++i >= argc) {
                 invalid_param = true;
@@ -643,8 +665,7 @@ void gpt_print_usage(int /*argc*/, char ** argv, const gpt_params & params) {
     fprintf(stdout, "  --rope-freq-scale N   RoPE frequency linear scaling factor, inverse of --rope-scale (default: %g)\n", params.rope_freq_scale);
     fprintf(stdout, "  --ignore-eos          ignore end of stream token and continue generating (implies --logit-bias 2-inf)\n");
     fprintf(stdout, "  --no-penalize-nl      do not penalize newline token\n");
-    fprintf(stdout, "  --memory-f32          use f32 instead of f16 for memory key+value (default: disabled)\n");
-    fprintf(stdout, "                        not recommended: doubles context memory required and no measurable increase in quality\n");
+    fprintf(stdout, "  -kvt, --kv-type       the type to use for the KV cache (default: q8_0; alternatives: f16, f32)\n");
     fprintf(stdout, "  --temp N              temperature (default: %.1f)\n", (double)params.temp);
     fprintf(stdout, "  --perplexity          compute perplexity over each ctx window of the prompt\n");
     fprintf(stdout, "  --hellaswag           compute HellaSwag score over random tasks from datafile supplied with -f\n");
@@ -725,7 +746,7 @@ struct llama_context_params llama_context_params_from_gpt_params(const gpt_param
     lparams.low_vram        = params.low_vram;
     lparams.mul_mat_q       = params.mul_mat_q;
     lparams.seed            = params.seed;
-    lparams.f16_kv          = params.memory_f16;
+    lparams.kv_type         = params.kv_type;
     lparams.use_mmap        = params.use_mmap;
     lparams.use_mlock       = params.use_mlock;
     lparams.logits_all      = params.perplexity;
@@ -1191,6 +1212,7 @@ void dump_non_result_info_yaml(FILE * stream, const gpt_params & params, const l
     fprintf(stream, "interactive: %s # default: false\n", params.interactive ? "true" : "false");
     fprintf(stream, "interactive_first: %s # default: false\n", params.interactive_first ? "true" : "false");
     fprintf(stream, "keep: %d # default: 0\n", params.n_keep);
+    fprintf(stream, "kv_type: %s # default: false\n", ggml_type_name(params.kv_type));
     fprintf(stream, "logdir: %s # default: unset (no logging)\n", params.logdir.c_str());
 
     fprintf(stream, "logit_bias:\n");
@@ -1205,7 +1227,6 @@ void dump_non_result_info_yaml(FILE * stream, const gpt_params & params, const l
     fprintf(stream, "lora_base: %s\n", params.lora_base.c_str());
     fprintf(stream, "low_vram: %s # default: false\n", params.low_vram ? "true" : "false");
     fprintf(stream, "main_gpu: %d # default: 0\n", params.main_gpu);
-    fprintf(stream, "memory_f32: %s # default: false\n", !params.memory_f16 ? "true" : "false");
     fprintf(stream, "mirostat: %d # default: 0 (disabled)\n", params.mirostat);
     fprintf(stream, "mirostat_ent: %f # default: 5.0\n", params.mirostat_tau);
     fprintf(stream, "mirostat_lr: %f # default: 0.1\n", params.mirostat_eta);
