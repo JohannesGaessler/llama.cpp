@@ -56,6 +56,7 @@
 #define cudaMemcpyHostToDevice hipMemcpyHostToDevice
 #define cudaMemcpyKind hipMemcpyKind
 #define cudaMemset hipMemset
+#define cudaMemsetAsync hipMemsetAsync
 #define cudaOccupancyMaxPotentialBlockSize hipOccupancyMaxPotentialBlockSize
 #define cudaSetDevice hipSetDevice
 #define cudaStreamCreateWithFlags hipStreamCreateWithFlags
@@ -1464,23 +1465,30 @@ static __device__ void convert_f16(const void * vx, const int ib, const int iqs,
     v.y = x[ib + iqs + 1];
 }
 
-static __global__ void quantize_q8_1(const float * __restrict__ x, void * __restrict__ vy, const int kx, const int kx_padded) {
+static __global__ void quantize_q8_1(
+    const float * __restrict__ src, void * __restrict__ vdst, const int kx, const int kx_padded, const int ky,
+    const int ky_stride, const int channel_stride) {
+
     const int ix = blockDim.x*blockIdx.x + threadIdx.x;
 
     if (ix >= kx_padded) {
         return;
     }
 
-    const int iy = blockDim.y*blockIdx.y + threadIdx.y;
+    const int iy      = blockDim.y*blockIdx.y + threadIdx.y;
+    const int channel = blockDim.z*blockIdx.z + threadIdx.z;
 
-    const int i_padded = iy*kx_padded + ix;
+    // padded and contiguous:
+    const int i_padded = channel*ky*kx_padded + iy*kx_padded + ix;
 
-    block_q8_1 * y = (block_q8_1 *) vy;
+    block_q8_1 * dst = (block_q8_1 *) vdst;
 
     const int ib = i_padded / QK8_1; // block index
     const int iqs = i_padded % QK8_1; // quant index
 
-    const float xi = ix < kx ? x[iy*kx + ix] : 0.0f;
+    // not padded and not necessarily contiguous:
+    const float xi = ix < kx ? src[channel*channel_stride + iy*ky_stride + ix] : 0.0f;
+
     float amax = fabsf(xi);
     float sum = xi;
 
@@ -1493,14 +1501,14 @@ static __global__ void quantize_q8_1(const float * __restrict__ x, void * __rest
     const float d = amax / 127;
     const int8_t q = amax == 0.0f ? 0 : roundf(xi / d);
 
-    y[ib].qs[iqs] = q;
+    dst[ib].qs[iqs] = q;
 
     if (iqs > 0) {
         return;
     }
 
-    reinterpret_cast<half&>(y[ib].ds.x) = d;
-    reinterpret_cast<half&>(y[ib].ds.y) = sum;
+    reinterpret_cast<half&>(dst[ib].ds.x) = d;
+    reinterpret_cast<half&>(dst[ib].ds.y) = sum;
 }
 
 template <int qk, int qr, dequantize_kernel_t dequantize_kernel>
@@ -3338,10 +3346,11 @@ template <int qk, int qr, int qi, bool need_sum, typename block_q_t, int mmq_x, 
               allocate_tiles_cuda_t allocate_tiles, load_tiles_cuda_t load_tiles, int vdr, vec_dot_q_mul_mat_cuda_t vec_dot>
 static __device__ __forceinline__ void mul_mat_q(
     const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
+    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst,
+    const int row_stride_x, const int channel_stride_x, const int channel_stride_y) {
 
-    const block_q_t  * x = (const block_q_t  *) vx;
-    const block_q8_1 * y = (const block_q8_1 *) vy;
+    const block_q_t  * x = ((const block_q_t  *) vx) + blockIdx.z*channel_stride_x;
+    const block_q8_1 * y = ((const block_q8_1 *) vy) + blockIdx.z*channel_stride_y;
 
     const int blocks_per_row_x = ncols_x / qk;
     const int blocks_per_col_y = nrows_y / QK8_1;
@@ -3369,8 +3378,8 @@ static __device__ __forceinline__ void mul_mat_q(
 
     for (int ib0 = 0; ib0 < blocks_per_row_x; ib0 += blocks_per_warp) {
 
-        load_tiles(x + row_x_0*blocks_per_row_x + ib0, tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc,
-                   threadIdx.y, nrows_x-row_x_0-1, threadIdx.x, blocks_per_row_x);
+        load_tiles(x + row_x_0*row_stride_x + ib0, tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc,
+                   threadIdx.y, nrows_x-row_x_0-1, threadIdx.x, row_stride_x);
 
 #pragma unroll
         for (int ir = 0; ir < qr; ++ir) {
@@ -3439,7 +3448,7 @@ static __device__ __forceinline__ void mul_mat_q(
                 continue;
             }
 
-            dst[col_dst*nrows_dst + row_dst] = sum[i/WARP_SIZE][j/nwarps];
+            dst[blockIdx.z*ncols_dst*nrows_dst + col_dst*nrows_dst + row_dst] = sum[i/WARP_SIZE][j/nwarps];
         }
     }
 }
@@ -3453,29 +3462,27 @@ static __device__ __forceinline__ void mul_mat_q(
 
 template <bool need_check> static __global__ void mul_mat_q4_0(
     const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
+    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst,
+    const int row_stride_x, const int channel_stride_x, const int channel_stride_y) {
 
 #if __CUDA_ARCH__ >= CC_TURING
     const int mmq_x  =  MMQ_X_Q4_0_AMPERE;
     const int mmq_y  =  MMQ_Y_Q4_0_AMPERE;
     const int nwarps = NWARPS_Q4_0_AMPERE;
-
-    mul_mat_q<QK4_0, QR4_0, QI4_0, true, block_q4_0, mmq_x, mmq_y, nwarps, allocate_tiles_q4_0<mmq_y>,
-        load_tiles_q4_0<mmq_y, nwarps, need_check>, VDR_Q4_0_Q8_1_MMQ, vec_dot_q4_0_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-
 #elif __CUDA_ARCH__ >= MIN_CC_DP4A
     const int mmq_x  =  MMQ_X_Q4_0_PASCAL;
     const int mmq_y  =  MMQ_Y_Q4_0_PASCAL;
     const int nwarps = NWARPS_Q4_0_PASCAL;
+#else
+    const int mmq_x  = 32;
+    const int mmq_y  = 32;
+    const int nwarps = 32;
+    assert(false);
+#endif // __CUDA_ARCH__ >= CC_TURING
 
     mul_mat_q<QK4_0, QR4_0, QI4_0, true, block_q4_0, mmq_x, mmq_y, nwarps, allocate_tiles_q4_0<mmq_y>,
         load_tiles_q4_0<mmq_y, nwarps, need_check>, VDR_Q4_0_Q8_1_MMQ, vec_dot_q4_0_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-#else
-    (void) vec_dot_q4_0_q8_1_mul_mat;
-    assert(false);
-#endif // __CUDA_ARCH__ >= CC_TURING
+        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, row_stride_x, channel_stride_x, channel_stride_y);
 }
 
 #define  MMQ_X_Q4_1_AMPERE 64
@@ -3491,29 +3498,27 @@ template <bool need_check> static __global__ void
 #endif // __CUDA_ARCH__ < CC_TURING
     mul_mat_q4_1(
     const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
+    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst,
+    const int row_stride_x, const int channel_stride_x, const int channel_stride_y) {
 
 #if __CUDA_ARCH__ >= CC_TURING
     const int mmq_x  =  MMQ_X_Q4_1_AMPERE;
     const int mmq_y  =  MMQ_Y_Q4_1_AMPERE;
     const int nwarps = NWARPS_Q4_1_AMPERE;
-
-    mul_mat_q<QK4_1, QR4_1, QI4_1, true, block_q4_1, mmq_x, mmq_y, nwarps, allocate_tiles_q4_1<mmq_y>,
-        load_tiles_q4_1<mmq_y, nwarps, need_check>, VDR_Q4_1_Q8_1_MMQ, vec_dot_q4_1_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-
 #elif __CUDA_ARCH__ >= MIN_CC_DP4A
     const int mmq_x  =  MMQ_X_Q4_1_PASCAL;
     const int mmq_y  =  MMQ_Y_Q4_1_PASCAL;
     const int nwarps = NWARPS_Q4_1_PASCAL;
+#else
+    const int mmq_x  = 32;
+    const int mmq_y  = 32;
+    const int nwarps = 32;
+    assert(false);
+#endif // __CUDA_ARCH__ >= CC_TURING
 
     mul_mat_q<QK4_1, QR4_1, QI4_1, true, block_q4_1, mmq_x, mmq_y, nwarps, allocate_tiles_q4_1<mmq_y>,
         load_tiles_q4_1<mmq_y, nwarps, need_check>, VDR_Q4_1_Q8_1_MMQ, vec_dot_q4_1_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-#else
-    (void) vec_dot_q4_1_q8_1_mul_mat;
-    assert(false);
-#endif // __CUDA_ARCH__ >= CC_TURING
+        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, row_stride_x, channel_stride_x, channel_stride_y);
 }
 
 #define  MMQ_X_Q5_0_AMPERE 128
@@ -3525,29 +3530,27 @@ template <bool need_check> static __global__ void
 
 template <bool need_check> static __global__ void mul_mat_q5_0(
     const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
+    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst,
+    const int row_stride_x, const int channel_stride_x, const int channel_stride_y) {
 
 #if __CUDA_ARCH__ >= CC_TURING
     const int mmq_x  =  MMQ_X_Q5_0_AMPERE;
     const int mmq_y  =  MMQ_Y_Q5_0_AMPERE;
     const int nwarps = NWARPS_Q5_0_AMPERE;
-
-    mul_mat_q<QK5_0, QR5_0, QI5_0, false, block_q5_0, mmq_x, mmq_y, nwarps, allocate_tiles_q5_0<mmq_y>,
-        load_tiles_q5_0<mmq_y, nwarps, need_check>, VDR_Q5_0_Q8_1_MMQ, vec_dot_q5_0_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-
 #elif __CUDA_ARCH__ >= MIN_CC_DP4A
     const int mmq_x  =  MMQ_X_Q5_0_PASCAL;
     const int mmq_y  =  MMQ_Y_Q5_0_PASCAL;
     const int nwarps = NWARPS_Q5_0_PASCAL;
+#else
+    const int mmq_x  = 32;
+    const int mmq_y  = 32;
+    const int nwarps = 32;
+    assert(false);
+#endif // __CUDA_ARCH__ >= CC_TURING
 
     mul_mat_q<QK5_0, QR5_0, QI5_0, false, block_q5_0, mmq_x, mmq_y, nwarps, allocate_tiles_q5_0<mmq_y>,
         load_tiles_q5_0<mmq_y, nwarps, need_check>, VDR_Q5_0_Q8_1_MMQ, vec_dot_q5_0_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-#else
-    (void) vec_dot_q5_0_q8_1_mul_mat;
-    assert(false);
-#endif // __CUDA_ARCH__ >= CC_TURING
+        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, row_stride_x, channel_stride_x, channel_stride_y);
 }
 
 #define  MMQ_X_Q5_1_AMPERE 128
@@ -3559,29 +3562,27 @@ template <bool need_check> static __global__ void mul_mat_q5_0(
 
 template <bool need_check> static __global__ void mul_mat_q5_1(
     const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
+    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst,
+    const int row_stride_x, const int channel_stride_x, const int channel_stride_y) {
 
 #if __CUDA_ARCH__ >= CC_TURING
     const int mmq_x  =  MMQ_X_Q5_1_AMPERE;
     const int mmq_y  =  MMQ_Y_Q5_1_AMPERE;
     const int nwarps = NWARPS_Q5_1_AMPERE;
-
-    mul_mat_q<QK5_1, QR5_1, QI5_1, true, block_q5_1, mmq_x, mmq_y, nwarps, allocate_tiles_q5_1<mmq_y>,
-        load_tiles_q5_1<mmq_y, nwarps, need_check>, VDR_Q5_1_Q8_1_MMQ, vec_dot_q5_1_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-
 #elif __CUDA_ARCH__ >= MIN_CC_DP4A
     const int mmq_x  =  MMQ_X_Q5_1_PASCAL;
     const int mmq_y  =  MMQ_Y_Q5_1_PASCAL;
     const int nwarps = NWARPS_Q5_1_PASCAL;
+#else
+    const int mmq_x  = 32;
+    const int mmq_y  = 32;
+    const int nwarps = 32;
+    assert(false);
+#endif // __CUDA_ARCH__ >= CC_TURING
 
     mul_mat_q<QK5_1, QR5_1, QI5_1, true, block_q5_1, mmq_x, mmq_y, nwarps, allocate_tiles_q5_1<mmq_y>,
         load_tiles_q5_1<mmq_y, nwarps, need_check>, VDR_Q5_1_Q8_1_MMQ, vec_dot_q5_1_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-#else
-    (void) vec_dot_q5_1_q8_1_mul_mat;
-    assert(false);
-#endif // __CUDA_ARCH__ >= CC_TURING
+        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, row_stride_x, channel_stride_x, channel_stride_y);
 }
 
 #define  MMQ_X_Q8_0_AMPERE 128
@@ -3593,29 +3594,27 @@ template <bool need_check> static __global__ void mul_mat_q5_1(
 
 template <bool need_check> static __global__ void mul_mat_q8_0(
     const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
+    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst,
+    const int row_stride_x, const int channel_stride_x, const int channel_stride_y) {
 
 #if __CUDA_ARCH__ >= CC_TURING
     const int mmq_x  =  MMQ_X_Q8_0_AMPERE;
     const int mmq_y  =  MMQ_Y_Q8_0_AMPERE;
     const int nwarps = NWARPS_Q8_0_AMPERE;
-
-    mul_mat_q<QK8_0, QR8_0, QI8_0, false, block_q8_0, mmq_x, mmq_y, nwarps, allocate_tiles_q8_0<mmq_y>,
-        load_tiles_q8_0<mmq_y, nwarps, need_check>, VDR_Q8_0_Q8_1_MMQ, vec_dot_q8_0_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-
 #elif __CUDA_ARCH__ >= MIN_CC_DP4A
     const int mmq_x  =  MMQ_X_Q8_0_PASCAL;
     const int mmq_y  =  MMQ_Y_Q8_0_PASCAL;
     const int nwarps = NWARPS_Q8_0_PASCAL;
+#else
+    const int mmq_x  = 32;
+    const int mmq_y  = 32;
+    const int nwarps = 32;
+    assert(false);
+#endif // __CUDA_ARCH__ >= CC_TURING
 
     mul_mat_q<QK8_0, QR8_0, QI8_0, false, block_q8_0, mmq_x, mmq_y, nwarps, allocate_tiles_q8_0<mmq_y>,
         load_tiles_q8_0<mmq_y, nwarps, need_check>, VDR_Q8_0_Q8_1_MMQ, vec_dot_q8_0_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-#else
-    (void) vec_dot_q8_0_q8_1_mul_mat;
-    assert(false);
-#endif // __CUDA_ARCH__ >= CC_TURING
+        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, row_stride_x, channel_stride_x, channel_stride_y);
 }
 
 #define  MMQ_X_Q2_K_AMPERE 64
@@ -3627,29 +3626,27 @@ template <bool need_check> static __global__ void mul_mat_q8_0(
 
 template <bool need_check> static __global__ void mul_mat_q2_K(
     const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
+    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst,
+    const int row_stride_x, const int channel_stride_x, const int channel_stride_y) {
 
 #if __CUDA_ARCH__ >= CC_TURING
     const int mmq_x  =  MMQ_X_Q2_K_AMPERE;
     const int mmq_y  =  MMQ_Y_Q2_K_AMPERE;
     const int nwarps = NWARPS_Q2_K_AMPERE;
-
-    mul_mat_q<QK_K, QR2_K, QI2_K, false, block_q2_K, mmq_x, mmq_y, nwarps, allocate_tiles_q2_K<mmq_y>,
-        load_tiles_q2_K<mmq_y, nwarps, need_check>, VDR_Q2_K_Q8_1_MMQ, vec_dot_q2_K_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-
 #elif __CUDA_ARCH__ >= MIN_CC_DP4A
     const int mmq_x  =  MMQ_X_Q2_K_PASCAL;
     const int mmq_y  =  MMQ_Y_Q2_K_PASCAL;
     const int nwarps = NWARPS_Q2_K_PASCAL;
+#else
+    const int mmq_x  = 32;
+    const int mmq_y  = 32;
+    const int nwarps = 32;
+    assert(false);
+#endif // __CUDA_ARCH__ >= CC_TURING
 
     mul_mat_q<QK_K, QR2_K, QI2_K, false, block_q2_K, mmq_x, mmq_y, nwarps, allocate_tiles_q2_K<mmq_y>,
         load_tiles_q2_K<mmq_y, nwarps, need_check>, VDR_Q2_K_Q8_1_MMQ, vec_dot_q2_K_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-#else
-    (void) vec_dot_q2_K_q8_1_mul_mat;
-    assert(false);
-#endif // __CUDA_ARCH__ >= CC_TURING
+        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, row_stride_x, channel_stride_x, channel_stride_y);
 }
 
 #define  MMQ_X_Q3_K_AMPERE 128
@@ -3665,29 +3662,27 @@ template <bool need_check> static __global__ void
 #endif // __CUDA_ARCH__ < CC_TURING
     mul_mat_q3_K(
     const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
+    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst,
+    const int row_stride_x, const int channel_stride_x, const int channel_stride_y) {
 
 #if __CUDA_ARCH__ >= CC_TURING
     const int mmq_x  =  MMQ_X_Q3_K_AMPERE;
     const int mmq_y  =  MMQ_Y_Q3_K_AMPERE;
     const int nwarps = NWARPS_Q3_K_AMPERE;
-
-    mul_mat_q<QK_K, QR3_K, QI3_K, false, block_q3_K, mmq_x, mmq_y, nwarps, allocate_tiles_q3_K<mmq_y>,
-        load_tiles_q3_K<mmq_y, nwarps, need_check>, VDR_Q3_K_Q8_1_MMQ, vec_dot_q3_K_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-
 #elif __CUDA_ARCH__ >= MIN_CC_DP4A
     const int mmq_x  =  MMQ_X_Q3_K_PASCAL;
     const int mmq_y  =  MMQ_Y_Q3_K_PASCAL;
     const int nwarps = NWARPS_Q3_K_PASCAL;
+#else
+    const int mmq_x  = 32;
+    const int mmq_y  = 32;
+    const int nwarps = 32;
+    assert(false);
+#endif // __CUDA_ARCH__ >= CC_TURING
 
     mul_mat_q<QK_K, QR3_K, QI3_K, false, block_q3_K, mmq_x, mmq_y, nwarps, allocate_tiles_q3_K<mmq_y>,
         load_tiles_q3_K<mmq_y, nwarps, need_check>, VDR_Q3_K_Q8_1_MMQ, vec_dot_q3_K_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-#else
-    (void) vec_dot_q3_K_q8_1_mul_mat;
-    assert(false);
-#endif // __CUDA_ARCH__ >= CC_TURING
+        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, row_stride_x, channel_stride_x, channel_stride_y);
 }
 
 #define  MMQ_X_Q4_K_AMPERE 64
@@ -3703,29 +3698,27 @@ template <bool need_check> static __global__ void
 #endif // __CUDA_ARCH__ < CC_TURING
     mul_mat_q4_K(
     const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
+    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst,
+    const int row_stride_x, const int channel_stride_x, const int channel_stride_y) {
 
 #if __CUDA_ARCH__ >= CC_TURING
     const int mmq_x  =  MMQ_X_Q4_K_AMPERE;
     const int mmq_y  =  MMQ_Y_Q4_K_AMPERE;
     const int nwarps = NWARPS_Q4_K_AMPERE;
-
-    mul_mat_q<QK_K, QR4_K, QI4_K, true, block_q4_K, mmq_x, mmq_y, nwarps, allocate_tiles_q4_K<mmq_y>,
-        load_tiles_q4_K<mmq_y, nwarps, need_check>, VDR_Q4_K_Q8_1_MMQ, vec_dot_q4_K_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-
 #elif __CUDA_ARCH__ >= MIN_CC_DP4A
     const int mmq_x  =  MMQ_X_Q4_K_PASCAL;
     const int mmq_y  =  MMQ_Y_Q4_K_PASCAL;
     const int nwarps = NWARPS_Q4_K_PASCAL;
+#else
+    const int mmq_x  = 32;
+    const int mmq_y  = 32;
+    const int nwarps = 32;
+    assert(false);
+#endif // __CUDA_ARCH__ >= CC_TURING
 
     mul_mat_q<QK_K, QR4_K, QI4_K, true, block_q4_K, mmq_x, mmq_y, nwarps, allocate_tiles_q4_K<mmq_y>,
         load_tiles_q4_K<mmq_y, nwarps, need_check>, VDR_Q4_K_Q8_1_MMQ, vec_dot_q4_K_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-#else
-    (void) vec_dot_q4_K_q8_1_mul_mat;
-    assert(false);
-#endif // __CUDA_ARCH__ >= CC_TURING
+        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, row_stride_x, channel_stride_x, channel_stride_y);
 }
 
 #define  MMQ_X_Q5_K_AMPERE 64
@@ -3737,29 +3730,27 @@ template <bool need_check> static __global__ void
 
 template <bool need_check> static __global__ void mul_mat_q5_K(
     const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
+    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst,
+    const int row_stride_x, const int channel_stride_x, const int channel_stride_y) {
 
 #if __CUDA_ARCH__ >= CC_TURING
     const int mmq_x  =  MMQ_X_Q5_K_AMPERE;
     const int mmq_y  =  MMQ_Y_Q5_K_AMPERE;
     const int nwarps = NWARPS_Q5_K_AMPERE;
-
-    mul_mat_q<QK_K, QR5_K, QI5_K, true, block_q5_K, mmq_x, mmq_y, nwarps, allocate_tiles_q5_K<mmq_y>,
-        load_tiles_q5_K<mmq_y, nwarps, need_check>, VDR_Q5_K_Q8_1_MMQ, vec_dot_q5_K_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-
 #elif __CUDA_ARCH__ >= MIN_CC_DP4A
     const int mmq_x  =  MMQ_X_Q5_K_PASCAL;
     const int mmq_y  =  MMQ_Y_Q5_K_PASCAL;
     const int nwarps = NWARPS_Q5_K_PASCAL;
+#else
+    const int mmq_x  = 32;
+    const int mmq_y  = 32;
+    const int nwarps = 32;
+    assert(false);
+#endif // __CUDA_ARCH__ >= CC_TURING
 
     mul_mat_q<QK_K, QR5_K, QI5_K, true, block_q5_K, mmq_x, mmq_y, nwarps, allocate_tiles_q5_K<mmq_y>,
         load_tiles_q5_K<mmq_y, nwarps, need_check>, VDR_Q5_K_Q8_1_MMQ, vec_dot_q5_K_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-#else
-    (void) vec_dot_q5_K_q8_1_mul_mat;
-    assert(false);
-#endif // __CUDA_ARCH__ >= CC_TURING
+        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, row_stride_x, channel_stride_x, channel_stride_y);
 }
 
 #define  MMQ_X_Q6_K_AMPERE 64
@@ -3775,38 +3766,41 @@ template <bool need_check> static __global__ void
 #endif // __CUDA_ARCH__ < CC_TURING
     mul_mat_q6_K(
     const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
+    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst,
+    const int row_stride_x, const int channel_stride_x, const int channel_stride_y) {
 
 #if __CUDA_ARCH__ >= CC_TURING
     const int mmq_x  =  MMQ_X_Q6_K_AMPERE;
     const int mmq_y  =  MMQ_Y_Q6_K_AMPERE;
     const int nwarps = NWARPS_Q6_K_AMPERE;
-
-    mul_mat_q<QK_K, QR6_K, QI6_K, false, block_q6_K, mmq_x, mmq_y, nwarps, allocate_tiles_q6_K<mmq_y>,
-        load_tiles_q6_K<mmq_y, nwarps, need_check>, VDR_Q6_K_Q8_1_MMQ, vec_dot_q6_K_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-
 #elif __CUDA_ARCH__ >= MIN_CC_DP4A
     const int mmq_x  =  MMQ_X_Q6_K_PASCAL;
     const int mmq_y  =  MMQ_Y_Q6_K_PASCAL;
     const int nwarps = NWARPS_Q6_K_PASCAL;
+#else
+    const int mmq_x  = 32;
+    const int mmq_y  = 32;
+    const int nwarps = 32;
+    assert(false);
+#endif // __CUDA_ARCH__ >= CC_TURING
 
     mul_mat_q<QK_K, QR6_K, QI6_K, false, block_q6_K, mmq_x, mmq_y, nwarps, allocate_tiles_q6_K<mmq_y>,
         load_tiles_q6_K<mmq_y, nwarps, need_check>, VDR_Q6_K_Q8_1_MMQ, vec_dot_q6_K_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-#else
-    (void) vec_dot_q6_K_q8_1_mul_mat;
-    assert(false);
-#endif // __CUDA_ARCH__ >= CC_TURING
+        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst, row_stride_x, channel_stride_x, channel_stride_y);
 }
 
 template <int qk, int qi, typename block_q_t, int vdr, vec_dot_q_cuda_t vec_dot_q_cuda>
-static __global__ void mul_mat_vec_q(const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst, const int ncols, const int nrows) {
+static __global__ void mul_mat_vec_q(
+    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
+    const int ncols, const int nrows, const int row_stride, const int channel_stride_x, const int channel_stride_y) {
+
     const int row = blockIdx.y*blockDim.y + threadIdx.y;
 
     if (row >= nrows) {
         return;
     }
+
+    const int channel = blockIdx.z*blockDim.z + threadIdx.z;
 
     const int blocks_per_row = ncols / qk;
     const int blocks_per_warp = vdr * WARP_SIZE / qi;
@@ -3814,11 +3808,11 @@ static __global__ void mul_mat_vec_q(const void * __restrict__ vx, const void * 
 // partial sum for each thread
     float tmp = 0.0f;
 
-    const block_q_t  * x = (const block_q_t  *) vx;
-    const block_q8_1 * y = (const block_q8_1 *) vy;
+    const block_q_t  * x = ((const block_q_t  *) vx) + channel*channel_stride_x;
+    const block_q8_1 * y = ((const block_q8_1 *) vy) + channel*channel_stride_y;
 
     for (int i = 0; i < blocks_per_row; i += blocks_per_warp) {
-        const int ibx = row*blocks_per_row + i + threadIdx.x / (qi/vdr); // x block index
+        const int ibx = row*row_stride + i + threadIdx.x / (qi/vdr); // x block index
 
         const int iby = (i + threadIdx.x / (qi/vdr)) * (qk/QK8_1); // y block index that aligns with ibx
 
@@ -3834,7 +3828,7 @@ static __global__ void mul_mat_vec_q(const void * __restrict__ vx, const void * 
     }
 
     if (threadIdx.x == 0) {
-        dst[row] = tmp;
+        dst[channel*nrows + row] = tmp;
     }
 }
 
@@ -4039,6 +4033,60 @@ static __global__ void cpy_f32_f16(const char * cx, char * cdst, const int ne,
     const int dst_offset = i10*nb10 + i11*nb11 + i12*nb12;
 
     cpy_1(cx + x_offset, cdst + dst_offset);
+}
+
+template <bool first_incomplete, bool last_incomplete>
+static __global__ void cpy_f32_q8_0(
+    const char * cx, char * cdst, const int i_blck_0, const int ne00, const int ne01, const int ne02,
+    const int nb00, const int nb01, const int nb02, const int nb11, const int nb12) {
+
+    const int i0 = blockDim.x*blockIdx.x + threadIdx.x;
+    const int i1 = blockDim.y*blockIdx.y + threadIdx.y;
+    const int i2 = blockDim.z*blockIdx.z + threadIdx.z;
+
+    float * x        = (float *)      (cx   + (i0 - i_blck_0)*nb00 + i1*nb01 + i2*nb02);
+    block_q8_0 * dst = (block_q8_0 *) (cdst +                        i1*nb11 + i2*nb12);
+    dst += i0 / QK8_0;
+    const int iqs = i0 % QK8_0;
+
+    float zero = 0.0f;
+    void * src = x;
+
+    if (first_incomplete && i0 < i_blck_0) {
+        src = &dst[1 + iqs/8].qs[sizeof(float) * (iqs % 8)];
+    }
+    if (last_incomplete && i0 >= (i_blck_0 + ne00)) {
+        src = &zero;
+    }
+
+    float val;
+    if (first_incomplete) {
+        memcpy(&val, src, sizeof(float));
+    } else {
+        val = *((float *) src);
+    }
+
+    if (last_incomplete && i0 / QK8_0 == (i_blck_0 + ne00) / QK8_0) {
+        memcpy(&dst[1 + iqs/8].qs[sizeof(float) * (iqs % 8)], src, sizeof(float));
+    }
+
+    float amax = fabsf(val);
+
+#pragma unroll
+    for (int mask = 16; mask > 0; mask >>= 1) {
+        amax = fmaxf(amax, __shfl_xor_sync(0xffffffff, amax, mask, 32));
+    }
+
+    const float d = amax / 127;
+    const int8_t q = amax == 0.0f ? 0 : roundf(val / d);
+
+    dst->qs[iqs] = q;
+
+    if (threadIdx.x != 0) {
+        return;
+    }
+
+    dst->d = d;
 }
 
 // rope == RoPE == rotary positional embedding
@@ -4256,11 +4304,14 @@ static void rms_norm_f32_cuda(const float * x, float * dst, const int ncols, con
     }
 }
 
-static void quantize_row_q8_1_cuda(const float * x, void * vy, const int kx, const int ky, const int kx_padded, cudaStream_t stream) {
+static void quantize_row_q8_1_cuda(
+    const float * x, void * vy, const int kx, const int ky, const int kx_padded, const int nchannels,
+    const int row_stride, const int channel_stride, cudaStream_t stream) {
+
     const int block_num_x = (kx_padded + CUDA_QUANTIZE_BLOCK_SIZE - 1) / CUDA_QUANTIZE_BLOCK_SIZE;
-    const dim3 num_blocks(block_num_x, ky, 1);
+    const dim3 num_blocks(block_num_x, ky, nchannels);
     const dim3 block_size(CUDA_DEQUANTIZE_BLOCK_SIZE, 1, 1);
-    quantize_q8_1<<<num_blocks, block_size, 0, stream>>>(x, vy, kx, kx_padded);
+    quantize_q8_1<<<num_blocks, block_size, 0, stream>>>(x, vy, kx, kx_padded, ky, row_stride, channel_stride);
 }
 
 static void dequantize_row_q4_0_cuda(const void * vx, float * y, const int k, cudaStream_t stream) {
@@ -4416,94 +4467,124 @@ static void dequantize_mul_mat_vec_q6_K_cuda(const void * vx, const float * y, f
     dequantize_mul_mat_vec_q6_k<<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols, nrows);
 }
 
-static void mul_mat_vec_q4_0_q8_1_cuda(const void * vx, const void * vy, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
+static void mul_mat_vec_q4_0_q8_1_cuda(
+    const void * vx, const void * vy, float * dst, const int ncols, const int nrows, const int nchannels,
+    const int row_stride, const int channel_stride, const int channel_stride_y, cudaStream_t stream) {
+
     GGML_ASSERT(ncols % QK4_0 == 0);
     const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-    const dim3 block_nums(1, block_num_y, 1);
+    const dim3 block_nums(1, block_num_y, nchannels);
     const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
     mul_mat_vec_q<QK4_0, QI4_0, block_q4_0, VDR_Q4_0_Q8_1_MMVQ, vec_dot_q4_0_q8_1>
-        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows);
+        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows, row_stride, channel_stride, channel_stride_y);
 }
 
-static void mul_mat_vec_q4_1_q8_1_cuda(const void * vx, const void * vy, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
+static void mul_mat_vec_q4_1_q8_1_cuda(
+    const void * vx, const void * vy, float * dst, const int ncols, const int nrows, const int nchannels,
+    const int row_stride, const int channel_stride, const int channel_stride_y, cudaStream_t stream) {
+
     GGML_ASSERT(ncols % QK4_1 == 0);
     const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-    const dim3 block_nums(1, block_num_y, 1);
+    const dim3 block_nums(1, block_num_y, nchannels);
     const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
     mul_mat_vec_q<QK4_0, QI4_1, block_q4_1, VDR_Q4_1_Q8_1_MMVQ, vec_dot_q4_1_q8_1>
-        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows);
+        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows, row_stride, channel_stride, channel_stride_y);
 }
 
-static void mul_mat_vec_q5_0_q8_1_cuda(const void * vx, const void * vy, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
+static void mul_mat_vec_q5_0_q8_1_cuda(
+    const void * vx, const void * vy, float * dst, const int ncols, const int nrows, const int nchannels,
+    const int row_stride, const int channel_stride, const int channel_stride_y, cudaStream_t stream) {
+
     GGML_ASSERT(ncols % QK5_0 == 0);
     const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-    const dim3 block_nums(1, block_num_y, 1);
+    const dim3 block_nums(1, block_num_y, nchannels);
     const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
     mul_mat_vec_q<QK5_0, QI5_0, block_q5_0, VDR_Q5_0_Q8_1_MMVQ, vec_dot_q5_0_q8_1>
-        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows);
+        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows, row_stride, channel_stride, channel_stride_y);
 }
 
-static void mul_mat_vec_q5_1_q8_1_cuda(const void * vx, const void * vy, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
+static void mul_mat_vec_q5_1_q8_1_cuda(
+    const void * vx, const void * vy, float * dst, const int ncols, const int nrows, const int nchannels,
+    const int row_stride, const int channel_stride, const int channel_stride_y, cudaStream_t stream) {
+
     GGML_ASSERT(ncols % QK5_1 == 0);
     const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-    const dim3 block_nums(1, block_num_y, 1);
+    const dim3 block_nums(1, block_num_y, nchannels);
     const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
     mul_mat_vec_q<QK5_1, QI5_1, block_q5_1, VDR_Q5_1_Q8_1_MMVQ, vec_dot_q5_1_q8_1>
-        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows);
+        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows, row_stride, channel_stride, channel_stride_y);
 }
 
-static void mul_mat_vec_q8_0_q8_1_cuda(const void * vx, const void * vy, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
+static void mul_mat_vec_q8_0_q8_1_cuda(
+    const void * vx, const void * vy, float * dst, const int ncols, const int nrows, const int nchannels,
+    const int row_stride, const int channel_stride, const int channel_stride_y, cudaStream_t stream) {
+
     GGML_ASSERT(ncols % QK8_0 == 0);
     const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-    const dim3 block_nums(1, block_num_y, 1);
+    const dim3 block_nums(1, block_num_y, nchannels);
     const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
     mul_mat_vec_q<QK8_0, QI8_0, block_q8_0, VDR_Q8_0_Q8_1_MMVQ, vec_dot_q8_0_q8_1>
-        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows);
+        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows, row_stride, channel_stride, channel_stride_y);
 }
 
-static void mul_mat_vec_q2_K_q8_1_cuda(const void * vx, const void * vy, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
+static void mul_mat_vec_q2_K_q8_1_cuda(
+    const void * vx, const void * vy, float * dst, const int ncols, const int nrows, const int nchannels,
+    const int row_stride, const int channel_stride, const int channel_stride_y, cudaStream_t stream) {
+
     GGML_ASSERT(ncols % QK_K == 0);
     const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-    const dim3 block_nums(1, block_num_y, 1);
+    const dim3 block_nums(1, block_num_y, nchannels);
     const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
     mul_mat_vec_q<QK_K, QI2_K, block_q2_K, VDR_Q2_K_Q8_1_MMVQ, vec_dot_q2_K_q8_1>
-        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows);
+        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows, row_stride, channel_stride, channel_stride_y);
 }
 
-static void mul_mat_vec_q3_K_q8_1_cuda(const void * vx, const void * vy, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
+static void mul_mat_vec_q3_K_q8_1_cuda(
+    const void * vx, const void * vy, float * dst, const int ncols, const int nrows, const int nchannels,
+    const int row_stride, const int channel_stride, const int channel_stride_y, cudaStream_t stream) {
+
     GGML_ASSERT(ncols % QK_K == 0);
     const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-    const dim3 block_nums(1, block_num_y, 1);
+    const dim3 block_nums(1, block_num_y, nchannels);
     const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
     mul_mat_vec_q<QK_K, QI3_K, block_q3_K, VDR_Q3_K_Q8_1_MMVQ, vec_dot_q3_K_q8_1>
-        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows);
+        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows, row_stride, channel_stride, channel_stride_y);
 }
 
-static void mul_mat_vec_q4_K_q8_1_cuda(const void * vx, const void * vy, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
+static void mul_mat_vec_q4_K_q8_1_cuda(
+    const void * vx, const void * vy, float * dst, const int ncols, const int nrows, const int nchannels,
+    const int row_stride, const int channel_stride, const int channel_stride_y, cudaStream_t stream) {
+
     GGML_ASSERT(ncols % QK_K == 0);
     const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-    const dim3 block_nums(1, block_num_y, 1);
+    const dim3 block_nums(1, block_num_y, nchannels);
     const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
     mul_mat_vec_q<QK_K, QI4_K, block_q4_K, VDR_Q4_K_Q8_1_MMVQ, vec_dot_q4_K_q8_1>
-        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows);
+        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows, row_stride, channel_stride, channel_stride_y);
 }
 
-static void mul_mat_vec_q5_K_q8_1_cuda(const void * vx, const void * vy, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
+static void mul_mat_vec_q5_K_q8_1_cuda(
+    const void * vx, const void * vy, float * dst, const int ncols, const int nrows, const int nchannels,
+    const int row_stride, const int channel_stride, const int channel_stride_y, cudaStream_t stream) {
+
     GGML_ASSERT(ncols % QK_K == 0);
     const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-    const dim3 block_nums(1, block_num_y, 1);
+    const dim3 block_nums(1, block_num_y, nchannels);
     const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
     mul_mat_vec_q<QK_K, QI5_K, block_q5_K, VDR_Q5_K_Q8_1_MMVQ, vec_dot_q5_K_q8_1>
-        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows);
+        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows, row_stride, channel_stride, channel_stride_y);
 }
 
-static void mul_mat_vec_q6_K_q8_1_cuda(const void * vx, const void * vy, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
+static void mul_mat_vec_q6_K_q8_1_cuda(
+    const void * vx, const void * vy, float * dst, const int ncols, const int nrows, const int nchannels,
+    const int row_stride, const int channel_stride, const int channel_stride_y, cudaStream_t stream) {
+
     GGML_ASSERT(ncols % QK_K == 0);
     const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
-    const dim3 block_nums(1, block_num_y, 1);
+    const dim3 block_nums(1, block_num_y, nchannels);
     const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
     mul_mat_vec_q<QK_K, QI6_K, block_q6_K, VDR_Q6_K_Q8_1_MMVQ, vec_dot_q6_K_q8_1>
-        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows);
+        <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols, nrows, row_stride, channel_stride, channel_stride_y);
 }
 
 static void convert_fp16_to_fp32_cuda(const void * vx, float * y, const int k, cudaStream_t stream) {
@@ -4551,7 +4632,8 @@ static to_fp32_cuda_t ggml_get_to_fp32_cuda(ggml_type type) {
 
 static void ggml_mul_mat_q4_0_q8_1_cuda(
     const void * vx, const void * vy, float * dst, const int ncols_x, const int nrows_x,
-    const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
+    const int ncols_y, const int nrows_y, const int nrows_dst, const int nchannels,
+    const int row_stride, const int channel_stride_x, const int channel_stride_y, cudaStream_t stream) {
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
@@ -4572,23 +4654,26 @@ static void ggml_mul_mat_q4_0_q8_1_cuda(
 
     const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
     const int block_num_y = (ncols_y + mmq_x - 1) / mmq_x;
-    const dim3 block_nums(block_num_x, block_num_y, 1);
+    const dim3 block_nums(block_num_x, block_num_y, nchannels);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
     if (nrows_x % mmq_y == 0) {
         const bool need_check = false;
         mul_mat_q4_0<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
+            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst,
+             row_stride, channel_stride_x, channel_stride_y);
     } else {
         const bool need_check = true;
         mul_mat_q4_0<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
+            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst,
+             row_stride, channel_stride_x, channel_stride_y);
     }
 }
 
 static void ggml_mul_mat_q4_1_q8_1_cuda(
     const void * vx, const void * vy, float * dst, const int ncols_x, const int nrows_x,
-    const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
+    const int ncols_y, const int nrows_y, const int nrows_dst, const int nchannels,
+    const int row_stride, const int channel_stride_x, const int channel_stride_y, cudaStream_t stream) {
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
@@ -4609,23 +4694,26 @@ static void ggml_mul_mat_q4_1_q8_1_cuda(
 
     const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
     const int block_num_y = (ncols_y + mmq_x - 1) / mmq_x;
-    const dim3 block_nums(block_num_x, block_num_y, 1);
+    const dim3 block_nums(block_num_x, block_num_y, nchannels);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
     if (nrows_x % mmq_y == 0) {
         const bool need_check = false;
         mul_mat_q4_1<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
+            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst,
+             row_stride, channel_stride_x, channel_stride_y);
     } else {
         const bool need_check = true;
         mul_mat_q4_1<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
+            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst,
+             row_stride, channel_stride_x, channel_stride_y);
     }
 }
 
 static void ggml_mul_mat_q5_0_q8_1_cuda(
     const void * vx, const void * vy, float * dst, const int ncols_x, const int nrows_x,
-    const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
+    const int ncols_y, const int nrows_y, const int nrows_dst, const int nchannels,
+    const int row_stride, const int channel_stride_x, const int channel_stride_y, cudaStream_t stream) {
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
@@ -4646,23 +4734,26 @@ static void ggml_mul_mat_q5_0_q8_1_cuda(
 
     const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
     const int block_num_y = (ncols_y + mmq_x - 1) / mmq_x;
-    const dim3 block_nums(block_num_x, block_num_y, 1);
+    const dim3 block_nums(block_num_x, block_num_y, nchannels);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
     if (nrows_x % mmq_y == 0) {
         const bool need_check = false;
         mul_mat_q5_0<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
+            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst,
+             row_stride, channel_stride_x, channel_stride_y);
     } else {
         const bool need_check = true;
         mul_mat_q5_0<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
+            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst,
+             row_stride, channel_stride_x, channel_stride_y);
     }
 }
 
 static void ggml_mul_mat_q5_1_q8_1_cuda(
     const void * vx, const void * vy, float * dst, const int ncols_x, const int nrows_x,
-    const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
+    const int ncols_y, const int nrows_y, const int nrows_dst, const int nchannels,
+    const int row_stride, const int channel_stride_x, const int channel_stride_y, cudaStream_t stream) {
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
@@ -4683,23 +4774,26 @@ static void ggml_mul_mat_q5_1_q8_1_cuda(
 
     const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
     const int block_num_y = (ncols_y + mmq_x - 1) / mmq_x;
-    const dim3 block_nums(block_num_x, block_num_y, 1);
+    const dim3 block_nums(block_num_x, block_num_y, nchannels);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
     if (nrows_x % mmq_y == 0) {
         const bool need_check = false;
         mul_mat_q5_1<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
+            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst,
+             row_stride, channel_stride_x, channel_stride_y);
     } else {
         const bool need_check = true;
         mul_mat_q5_1<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
+            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst,
+             row_stride, channel_stride_x, channel_stride_y);
     }
 }
 
 static void ggml_mul_mat_q8_0_q8_1_cuda(
     const void * vx, const void * vy, float * dst, const int ncols_x, const int nrows_x,
-    const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
+    const int ncols_y, const int nrows_y, const int nrows_dst, const int nchannels,
+    const int row_stride, const int channel_stride_x, const int channel_stride_y, cudaStream_t stream) {
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
@@ -4720,23 +4814,26 @@ static void ggml_mul_mat_q8_0_q8_1_cuda(
 
     const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
     const int block_num_y = (ncols_y + mmq_x - 1) / mmq_x;
-    const dim3 block_nums(block_num_x, block_num_y, 1);
+    const dim3 block_nums(block_num_x, block_num_y, nchannels);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
     if (nrows_x % mmq_y == 0) {
         const bool need_check = false;
         mul_mat_q8_0<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
+            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst,
+             row_stride, channel_stride_x, channel_stride_y);
     } else {
         const bool need_check = true;
         mul_mat_q8_0<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
+            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst,
+             row_stride, channel_stride_x, channel_stride_y);
     }
 }
 
 static void ggml_mul_mat_q2_K_q8_1_cuda(
     const void * vx, const void * vy, float * dst, const int ncols_x, const int nrows_x,
-    const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
+    const int ncols_y, const int nrows_y, const int nrows_dst, const int nchannels,
+    const int row_stride, const int channel_stride_x, const int channel_stride_y, cudaStream_t stream) {
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
@@ -4757,23 +4854,26 @@ static void ggml_mul_mat_q2_K_q8_1_cuda(
 
     const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
     const int block_num_y = (ncols_y + mmq_x - 1) / mmq_x;
-    const dim3 block_nums(block_num_x, block_num_y, 1);
+    const dim3 block_nums(block_num_x, block_num_y, nchannels);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
     if (nrows_x % mmq_y == 0) {
         const bool need_check = false;
         mul_mat_q2_K<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
+            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst,
+             row_stride, channel_stride_x, channel_stride_y);
     } else {
         const bool need_check = true;
         mul_mat_q2_K<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
+            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst,
+             row_stride, channel_stride_x, channel_stride_y);
     }
 }
 
 static void ggml_mul_mat_q3_K_q8_1_cuda(
     const void * vx, const void * vy, float * dst, const int ncols_x, const int nrows_x,
-    const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
+    const int ncols_y, const int nrows_y, const int nrows_dst, const int nchannels,
+    const int row_stride, const int channel_stride_x, const int channel_stride_y, cudaStream_t stream) {
 
 #if QK_K == 256
 
@@ -4796,24 +4896,27 @@ static void ggml_mul_mat_q3_K_q8_1_cuda(
 
     const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
     const int block_num_y = (ncols_y + mmq_x - 1) / mmq_x;
-    const dim3 block_nums(block_num_x, block_num_y, 1);
+    const dim3 block_nums(block_num_x, block_num_y, nchannels);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
     if (nrows_x % mmq_y == 0) {
         const bool need_check = false;
         mul_mat_q3_K<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
+            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst,
+             row_stride, channel_stride_x, channel_stride_y);
     } else {
         const bool need_check = true;
         mul_mat_q3_K<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
+            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst,
+             row_stride, channel_stride_x, channel_stride_y);
     }
 #endif
 }
 
 static void ggml_mul_mat_q4_K_q8_1_cuda(
     const void * vx, const void * vy, float * dst, const int ncols_x, const int nrows_x,
-    const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
+    const int ncols_y, const int nrows_y, const int nrows_dst, const int nchannels,
+    const int row_stride, const int channel_stride_x, const int channel_stride_y, cudaStream_t stream) {
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
@@ -4834,23 +4937,26 @@ static void ggml_mul_mat_q4_K_q8_1_cuda(
 
     const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
     const int block_num_y = (ncols_y + mmq_x - 1) / mmq_x;
-    const dim3 block_nums(block_num_x, block_num_y, 1);
+    const dim3 block_nums(block_num_x, block_num_y, nchannels);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
     if (nrows_x % mmq_y == 0) {
         const bool need_check = false;
         mul_mat_q4_K<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
+            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst,
+             row_stride, channel_stride_x, channel_stride_y);
     } else {
         const bool need_check = true;
         mul_mat_q4_K<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
+            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst,
+             row_stride, channel_stride_x, channel_stride_y);
     }
 }
 
 static void ggml_mul_mat_q5_K_q8_1_cuda(
     const void * vx, const void * vy, float * dst, const int ncols_x, const int nrows_x,
-    const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
+    const int ncols_y, const int nrows_y, const int nrows_dst, const int nchannels,
+    const int row_stride, const int channel_stride_x, const int channel_stride_y, cudaStream_t stream) {
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
@@ -4871,23 +4977,26 @@ static void ggml_mul_mat_q5_K_q8_1_cuda(
 
     const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
     const int block_num_y = (ncols_y + mmq_x - 1) / mmq_x;
-    const dim3 block_nums(block_num_x, block_num_y, 1);
+    const dim3 block_nums(block_num_x, block_num_y, nchannels);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
     if (nrows_x % mmq_y == 0) {
         const bool need_check = false;
         mul_mat_q5_K<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
+            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst,
+             row_stride, channel_stride_x, channel_stride_y);
     } else {
         const bool need_check = true;
         mul_mat_q5_K<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
+            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst,
+             row_stride, channel_stride_x, channel_stride_y);
     }
 }
 
 static void ggml_mul_mat_q6_K_q8_1_cuda(
     const void * vx, const void * vy, float * dst, const int ncols_x, const int nrows_x,
-    const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
+    const int ncols_y, const int nrows_y, const int nrows_dst, const int nchannels,
+    const int row_stride, const int channel_stride_x, const int channel_stride_y, cudaStream_t stream) {
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
@@ -4908,17 +5017,19 @@ static void ggml_mul_mat_q6_K_q8_1_cuda(
 
     const int block_num_x = (nrows_x + mmq_y - 1) / mmq_y;
     const int block_num_y = (ncols_y + mmq_x - 1) / mmq_x;
-    const dim3 block_nums(block_num_x, block_num_y, 1);
+    const dim3 block_nums(block_num_x, block_num_y, nchannels);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
     if (nrows_x % mmq_y == 0) {
         const bool need_check = false;
         mul_mat_q6_K<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
+            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst,
+             row_stride, channel_stride_x, channel_stride_y);
     } else {
         const bool need_check = true;
         mul_mat_q6_K<need_check><<<block_nums, block_dims, 0, stream>>>
-            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
+            (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst,
+             row_stride, channel_stride_x, channel_stride_y);
     }
 }
 
@@ -4959,6 +5070,33 @@ static void ggml_cpy_f32_f16_cuda(
     const int num_blocks = (ne + CUDA_CPY_BLOCK_SIZE - 1) / CUDA_CPY_BLOCK_SIZE;
     cpy_f32_f16<cpy_1_f32_f16><<<num_blocks, CUDA_CPY_BLOCK_SIZE, 0, stream>>>
         (cx, cdst, ne, ne00, ne01, nb00, nb01, nb02, ne10, ne11, nb10, nb11, nb12);
+}
+
+static void ggml_cpy_f32_q8_0_cuda(
+    const char * cx, char * cdst, const int i_blck_0, const int ne00, const int ne01, const int ne02,
+    const int nb00, const int nb01, const int nb02, const int nb11, const int nb12, cudaStream_t stream) {
+
+    const int num_blocks_x = (i_blck_0 + ne00 + WARP_SIZE - 1) / WARP_SIZE;
+    const dim3 block_nums(num_blocks_x, ne01, ne02);
+    const dim3 block_dims(WARP_SIZE, 1 , 1);
+
+    const bool first_incomplete = i_blck_0 != 0;
+    const bool  last_incomplete = (i_blck_0 + ne00) % QK8_0 != 0;
+
+    if (first_incomplete && last_incomplete) {
+        GGML_ASSERT(i_blck_0 + ne00 < QK8_0); // otherwise there would be a race condition
+        cpy_f32_q8_0<true, true><<<block_nums, block_dims, 0, stream>>>
+            (cx, cdst, i_blck_0, ne00, ne01, ne02, nb00, nb01, nb02, nb11, nb12);
+    } else if (first_incomplete && !last_incomplete) {
+        cpy_f32_q8_0<true, false><<<block_nums, block_dims, 0, stream>>>
+            (cx, cdst, i_blck_0, ne00, ne01, ne02, nb00, nb01, nb02, nb11, nb12);
+    } else if (!first_incomplete && last_incomplete) {
+        cpy_f32_q8_0<false, true><<<block_nums, block_dims, 0, stream>>>
+            (cx, cdst, i_blck_0, ne00, ne01, ne02, nb00, nb01, nb02, nb11, nb12);
+    } else if (!first_incomplete && !last_incomplete) {
+        cpy_f32_q8_0<false, false><<<block_nums, block_dims, 0, stream>>>
+            (cx, cdst, i_blck_0, ne00, ne01, ne02, nb00, nb01, nb02, nb11, nb12);
+    }
 }
 
 static void scale_f32_cuda(const float * x, float * dst, const float scale, const int k, cudaStream_t stream) {
@@ -5397,6 +5535,7 @@ inline void ggml_cuda_op_rms_norm(
     (void) i1;
 }
 
+template <bool buffers_contiguous>
 inline void ggml_cuda_op_mul_mat_q(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
     float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
@@ -5407,12 +5546,19 @@ inline void ggml_cuda_op_mul_mat_q(
     GGML_ASSERT(dst_ddf_i != nullptr);
 
     const int64_t ne00 = src0->ne[0];
+    const int64_t ne02 = src0->ne[2];
 
     const int64_t ne10 = src1->ne[0];
     const int64_t ne11 = src1->ne[1];
-    GGML_ASSERT(ne10 % QK8_1 == 0);
 
     const int64_t ne0 = dst->ne[0];
+
+    GGML_ASSERT(src0->nb[0] == ggml_type_size(src0->type));
+    const size_t nb01 = src0->nb[1];
+    const size_t nb02 = src0->nb[2];
+
+    const size_t nb11 = src1->nb[1];
+    const size_t nb12 = src1->nb[2];
 
     const int64_t i01_diff = i01_high - i01_low;
 
@@ -5423,42 +5569,72 @@ inline void ggml_cuda_op_mul_mat_q(
     // nrows_dst == nrows of the matrix that the dequantize_mul_mat kernel writes into
     const int64_t nrows_dst = dst->backend == GGML_BACKEND_GPU && id == g_main_device ? ne0 : i01_diff;
 
+    const int nchannels = buffers_contiguous ? 1 : ne02;
+
     const int64_t padded_row_size = ne10 % MATRIX_ROW_PADDING == 0 ?
         ne10 : ne10 - ne10 % MATRIX_ROW_PADDING + MATRIX_ROW_PADDING;
     size_t as;
-    void * src1_q8_1 = ggml_cuda_pool_malloc(padded_row_size*ne11*sizeof(block_q8_1)/QK8_1, &as);
-    quantize_row_q8_1_cuda(src1_ddf_i, src1_q8_1, ne10, ne11, padded_row_size, cudaStream_main);
+    void * src1_q8_1 = ggml_cuda_pool_malloc(padded_row_size*ne11*nchannels*sizeof(block_q8_1)/QK8_1, &as);
+    const int64_t src1_row_stride     = buffers_contiguous ? ne10      : nb11 / sizeof(float);
+    const int64_t src1_channel_stride = buffers_contiguous ? ne10*ne11 : nb12 / sizeof(float);
+    quantize_row_q8_1_cuda(src1_ddf_i, src1_q8_1, ne10, ne11, padded_row_size, nchannels,
+                           src1_row_stride, src1_channel_stride, cudaStream_main);
+
+    const int row_stride       = buffers_contiguous ? ne10      / ggml_blck_size(src0->type) : nb01 / ggml_type_size(src0->type);
+    const int channel_stride_x = buffers_contiguous ? ne10*ne11 / ggml_blck_size(src0->type) : nb02 / ggml_type_size(src0->type);
+    const int channel_stride_y = padded_row_size*ne11 / QK8_1;
 
     switch (src0->type) {
         case GGML_TYPE_Q4_0:
-            ggml_mul_mat_q4_0_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, i01_diff, ne11, padded_row_size, nrows_dst, cudaStream_main);
+            ggml_mul_mat_q4_0_q8_1_cuda(
+                src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, i01_diff, ne11, padded_row_size, nrows_dst, nchannels,
+                row_stride, channel_stride_x, channel_stride_y, cudaStream_main);
             break;
         case GGML_TYPE_Q4_1:
-            ggml_mul_mat_q4_1_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, i01_diff, ne11, padded_row_size, nrows_dst, cudaStream_main);
+            ggml_mul_mat_q4_1_q8_1_cuda(
+                src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, i01_diff, ne11, padded_row_size, nrows_dst, nchannels,
+                row_stride, channel_stride_x, channel_stride_y, cudaStream_main);
             break;
         case GGML_TYPE_Q5_0:
-            ggml_mul_mat_q5_0_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, i01_diff, ne11, padded_row_size, nrows_dst, cudaStream_main);
+            ggml_mul_mat_q5_0_q8_1_cuda(
+                src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, i01_diff, ne11, padded_row_size, nrows_dst, nchannels,
+                row_stride, channel_stride_x, channel_stride_y, cudaStream_main);
             break;
         case GGML_TYPE_Q5_1:
-            ggml_mul_mat_q5_1_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, i01_diff, ne11, padded_row_size, nrows_dst, cudaStream_main);
+            ggml_mul_mat_q5_1_q8_1_cuda(
+                src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, i01_diff, ne11, padded_row_size, nrows_dst, nchannels,
+                row_stride, channel_stride_x, channel_stride_y, cudaStream_main);
             break;
         case GGML_TYPE_Q8_0:
-            ggml_mul_mat_q8_0_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, i01_diff, ne11, padded_row_size, nrows_dst, cudaStream_main);
+            ggml_mul_mat_q8_0_q8_1_cuda(
+                src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, i01_diff, ne11, padded_row_size, nrows_dst, nchannels,
+                row_stride, channel_stride_x, channel_stride_y, cudaStream_main);
+            CUDA_CHECK(cudaDeviceSynchronize());
             break;
         case GGML_TYPE_Q2_K:
-            ggml_mul_mat_q2_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, i01_diff, ne11, padded_row_size, nrows_dst, cudaStream_main);
+            ggml_mul_mat_q2_K_q8_1_cuda(
+                src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, i01_diff, ne11, padded_row_size, nrows_dst, nchannels,
+                row_stride, channel_stride_x, channel_stride_y, cudaStream_main);
             break;
         case GGML_TYPE_Q3_K:
-            ggml_mul_mat_q3_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, i01_diff, ne11, padded_row_size, nrows_dst, cudaStream_main);
+            ggml_mul_mat_q3_K_q8_1_cuda(
+                src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, i01_diff, ne11, padded_row_size, nrows_dst, nchannels,
+                row_stride, channel_stride_x, channel_stride_y, cudaStream_main);
             break;
         case GGML_TYPE_Q4_K:
-            ggml_mul_mat_q4_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, i01_diff, ne11, padded_row_size, nrows_dst, cudaStream_main);
+            ggml_mul_mat_q4_K_q8_1_cuda(
+                src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, i01_diff, ne11, padded_row_size, nrows_dst, nchannels,
+                row_stride, channel_stride_x, channel_stride_y, cudaStream_main);
             break;
         case GGML_TYPE_Q5_K:
-            ggml_mul_mat_q5_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, i01_diff, ne11, padded_row_size, nrows_dst, cudaStream_main);
+            ggml_mul_mat_q5_K_q8_1_cuda(
+                src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, i01_diff, ne11, padded_row_size, nrows_dst, nchannels,
+                row_stride, channel_stride_x, channel_stride_y, cudaStream_main);
             break;
         case GGML_TYPE_Q6_K:
-            ggml_mul_mat_q6_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, i01_diff, ne11, padded_row_size, nrows_dst, cudaStream_main);
+            ggml_mul_mat_q6_K_q8_1_cuda(
+                src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, i01_diff, ne11, padded_row_size, nrows_dst, nchannels,
+                row_stride, channel_stride_x, channel_stride_y, cudaStream_main);
             break;
         default:
             GGML_ASSERT(false);
@@ -5505,6 +5681,7 @@ static int64_t get_row_rounding(ggml_type type) {
     }
 }
 
+template <bool buffers_contiguous>
 inline void ggml_cuda_op_mul_mat_vec(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
     float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
@@ -5515,6 +5692,16 @@ inline void ggml_cuda_op_mul_mat_vec(
     GGML_ASSERT(dst_ddf_i != nullptr);
 
     const int64_t ne00 = src0->ne[0];
+    const int64_t ne02 = src0->ne[2];
+
+    const int64_t ne10 = src1->ne[0];
+
+    const int64_t nb01 = src0->nb[1];
+    const int64_t nb02 = src0->nb[2];
+
+    const int64_t nb11 = src1->nb[1];
+    const int64_t nb12 = src1->nb[2];
+
     const int64_t nrows = i01_high - i01_low;
 
 #ifdef GGML_CUDA_FORCE_DMMV
@@ -5540,45 +5727,50 @@ inline void ggml_cuda_op_mul_mat_vec(
 #endif // QK_K == 256
 
     const bool use_mul_mat_vec_q = g_compute_capabilities[id] >= MIN_CC_DP4A && mul_mat_vec_q_implemented;
-#endif
+#endif // GGML_CUDA_FORCE_DMMV
 
     if (use_mul_mat_vec_q) {
-        const int64_t padded_row_size = ne00 % MATRIX_ROW_PADDING == 0 ?
-            ne00 : ne00 - ne00 % MATRIX_ROW_PADDING + MATRIX_ROW_PADDING;
+        const int64_t padded_row_size = ne10 % MATRIX_ROW_PADDING == 0 ?
+            ne10 : ne10 - ne10 % MATRIX_ROW_PADDING + MATRIX_ROW_PADDING;
         size_t as;
-        void * src1_q8_1 = ggml_cuda_pool_malloc(padded_row_size*sizeof(block_q8_1)/QK8_1, &as);
-        quantize_row_q8_1_cuda(src1_ddf_i, src1_q8_1, ne00, 1, padded_row_size, cudaStream_main);
+        void * src1_q8_1 = ggml_cuda_pool_malloc(padded_row_size*ne02*sizeof(block_q8_1)/QK8_1, &as);
+        const int64_t row_stride_q     = src1->backend == GGML_BACKEND_CPU ? ne10   : nb11 / sizeof(float);
+        const int64_t channel_stride_q = src1->backend == GGML_BACKEND_CPU ? ne10*1 : nb12 / sizeof(float);
+        quantize_row_q8_1_cuda(src1_ddf_i, src1_q8_1, ne10, 1, padded_row_size, ne02, row_stride_q, channel_stride_q, cudaStream_main);
 
+        const int row_stride_x     = nb01 / ggml_type_size(src0->type);
+        const int channel_stride_x = nb02 / ggml_type_size(src0->type);
+        const int channel_stride_y = padded_row_size / QK8_1;
         switch (src0->type) {
             case GGML_TYPE_Q4_0:
-                mul_mat_vec_q4_0_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, cudaStream_main);
+                mul_mat_vec_q4_0_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, ne02, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
                 break;
             case GGML_TYPE_Q4_1:
-                mul_mat_vec_q4_1_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, cudaStream_main);
+                mul_mat_vec_q4_1_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, ne02, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
                 break;
             case GGML_TYPE_Q5_0:
-                mul_mat_vec_q5_0_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, cudaStream_main);
+                mul_mat_vec_q5_0_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, ne02, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
                 break;
             case GGML_TYPE_Q5_1:
-                mul_mat_vec_q5_1_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, cudaStream_main);
+                mul_mat_vec_q5_1_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, ne02, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
                 break;
             case GGML_TYPE_Q8_0:
-                mul_mat_vec_q8_0_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, cudaStream_main);
+                mul_mat_vec_q8_0_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, ne02, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
                 break;
             case GGML_TYPE_Q2_K:
-                mul_mat_vec_q2_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, cudaStream_main);
+                mul_mat_vec_q2_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, ne02, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
                 break;
             case GGML_TYPE_Q3_K:
-                mul_mat_vec_q3_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, cudaStream_main);
+                mul_mat_vec_q3_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, ne02, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
                 break;
             case GGML_TYPE_Q4_K:
-                mul_mat_vec_q4_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, cudaStream_main);
+                mul_mat_vec_q4_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, ne02, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
                 break;
             case GGML_TYPE_Q5_K:
-                mul_mat_vec_q5_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, cudaStream_main);
+                mul_mat_vec_q5_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, ne02, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
                 break;
             case GGML_TYPE_Q6_K:
-                mul_mat_vec_q6_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, cudaStream_main);
+                mul_mat_vec_q6_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, ne02, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
                 break;
             default:
                 GGML_ASSERT(false);
@@ -5587,6 +5779,8 @@ inline void ggml_cuda_op_mul_mat_vec(
 
         ggml_cuda_pool_free(src1_q8_1, as);
     } else {
+        GGML_ASSERT(buffers_contiguous || ne02 == 1);
+
         // on some GPUs it is faster to convert src1 to half and to use half precision intrinsics
 #ifdef GGML_CUDA_F16
         size_t ash;
@@ -5782,6 +5976,7 @@ inline void ggml_cuda_op_alibi(
     (void) src0_ddq_i;
     (void) src1_ddf_i;
     (void) i1;
+    (void) i02;
 }
 
 inline void ggml_cuda_op_diag_mask_inf(
@@ -5984,7 +6179,16 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
             if (src0_is_f32) {
                 src0_ddf[id] = (float *) ggml_cuda_pool_malloc(row_diff*ne00 * sizeof(float), &src0_asf[id]);
             } else {
-                src0_ddq[id] = (char *) ggml_cuda_pool_malloc(row_diff*ne00 * src0_ts/src0_bs, &src0_asq[id]);
+                const int64_t nelements = row_diff*ne00;
+                const int64_t nelements_padded = ne00 % MATRIX_ROW_PADDING == 0 ?
+                    nelements : nelements - ne00 % MATRIX_ROW_PADDING + MATRIX_ROW_PADDING;
+                const size_t size_padded = nelements_padded * src0_ts/src0_bs;
+
+                src0_ddq[id] = (char *) ggml_cuda_pool_malloc(size_padded, &src0_asq[id]);
+
+                if (nelements_padded > nelements) {
+                    CUDA_CHECK(cudaMemsetAsync(src0_ddq[id], 0, size_padded, cudaStream_main));
+                }
             }
         }
 
@@ -6232,12 +6436,36 @@ bool ggml_cuda_can_mul_mat(const struct ggml_tensor * src0, const struct ggml_te
     return false;
 }
 
+void ggml_cuda_mul_mat_nc(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst){
+    GGML_ASSERT(src0->backend == GGML_BACKEND_GPU);
+    GGML_ASSERT(src1->backend == GGML_BACKEND_GPU);
+    GGML_ASSERT(dst->backend  == GGML_BACKEND_GPU);
+    GGML_ASSERT(ggml_is_quantized(src0->type));
+    GGML_ASSERT(src1->type == GGML_TYPE_F32);
+
+    const int64_t ne01 = src0->ne[1];
+
+    CUDA_CHECK(cudaSetDevice(g_main_device));
+    cudaStream_t cudaStream_main = g_cudaStreams_main[g_main_device];
+
+    struct ggml_tensor_extra_gpu * src0_extra = (ggml_tensor_extra_gpu *) src0->extra;
+    char * src0_ddq = (char *) src0_extra->data_device[g_main_device];
+
+    struct ggml_tensor_extra_gpu * src1_extra = (ggml_tensor_extra_gpu *) src1->extra;
+    float * src1_ddf = (float *) src1_extra->data_device[g_main_device];
+
+    struct ggml_tensor_extra_gpu * dst_extra = (ggml_tensor_extra_gpu *) dst->extra;
+    float * dst_ddf = (float *) dst_extra->data_device[g_main_device];
+
+    ggml_cuda_op_mul_mat_q<false>(src0, src1, dst, src0_ddq, nullptr, src1_ddf, dst_ddf, 0, 0, ne01, 0, cudaStream_main);
+    CUDA_CHECK(cudaGetLastError());
+}
+
 void ggml_cuda_mul_mat_vec_p021(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst){
     GGML_ASSERT(ggml_is_permuted(src0) && ggml_is_permuted(src1));
     GGML_ASSERT(src0->backend != GGML_BACKEND_GPU_SPLIT);
     GGML_ASSERT(src0->nb[0] <= src0->nb[1] && src0->nb[2] <= src0->nb[3]); // 0213 permutation
     GGML_ASSERT(src1->nb[0] <= src1->nb[1] && src1->nb[2] <= src1->nb[3]); // 0213 permutation
-    GGML_ASSERT(src0->type == GGML_TYPE_F16);
     GGML_ASSERT(src1->type == GGML_TYPE_F32);
 
     const int64_t ne00 = src0->ne[0];
@@ -6250,7 +6478,7 @@ void ggml_cuda_mul_mat_vec_p021(const ggml_tensor * src0, const ggml_tensor * sr
     cudaStream_t cudaStream_main = g_cudaStreams_main[g_main_device];
 
     struct ggml_tensor_extra_gpu * src0_extra = (ggml_tensor_extra_gpu *) src0->extra;
-    void * src0_ddq = src0_extra->data_device[g_main_device];
+    char * src0_ddq = (char *) src0_extra->data_device[g_main_device];
 
     struct ggml_tensor_extra_gpu * src1_extra = (ggml_tensor_extra_gpu *) src1->extra;
     float * src1_ddf = (float *) src1_extra->data_device[g_main_device];
@@ -6258,14 +6486,19 @@ void ggml_cuda_mul_mat_vec_p021(const ggml_tensor * src0, const ggml_tensor * sr
     struct ggml_tensor_extra_gpu * dst_extra = (ggml_tensor_extra_gpu *) dst->extra;
     float * dst_ddf = (float *) dst_extra->data_device[g_main_device];
 
-    ggml_mul_mat_p021_f16_f32_cuda(src0_ddq, src1_ddf, dst_ddf, ne00, ne01, ne02, ne12, cudaStream_main);
+    if (src0->type == GGML_TYPE_F16) {
+        ggml_mul_mat_p021_f16_f32_cuda(src0_ddq, src1_ddf, dst_ddf, ne00, ne01, ne02, ne12, cudaStream_main);
+    } else if (ggml_is_quantized(src0->type)) {
+        ggml_cuda_op_mul_mat_vec<false>(src0, src1, dst, src0_ddq, nullptr, src1_ddf, dst_ddf, 0, 0, ne01, 0, cudaStream_main);
+    } else {
+        GGML_ASSERT(false);
+    }
 }
 
 void ggml_cuda_mul_mat_vec_nc(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst){
     GGML_ASSERT(!ggml_is_contiguous(src0) && ggml_is_contiguous(src1));
     GGML_ASSERT(!ggml_is_permuted(src0));
     GGML_ASSERT(src0->backend != GGML_BACKEND_GPU_SPLIT);
-    GGML_ASSERT(src0->type == GGML_TYPE_F16);
     GGML_ASSERT(src1->type == GGML_TYPE_F32);
 
     const int64_t ne00 = src0->ne[0];
@@ -6281,7 +6514,7 @@ void ggml_cuda_mul_mat_vec_nc(const ggml_tensor * src0, const ggml_tensor * src1
     cudaStream_t cudaStream_main = g_cudaStreams_main[g_main_device];
 
     struct ggml_tensor_extra_gpu * src0_extra = (ggml_tensor_extra_gpu *) src0->extra;
-    void * src0_ddq = src0_extra->data_device[g_main_device];
+    char * src0_ddq = (char *) src0_extra->data_device[g_main_device];
 
     struct ggml_tensor_extra_gpu * src1_extra = (ggml_tensor_extra_gpu *) src1->extra;
     float * src1_ddf = (float *) src1_extra->data_device[g_main_device];
@@ -6289,15 +6522,22 @@ void ggml_cuda_mul_mat_vec_nc(const ggml_tensor * src0, const ggml_tensor * src1
     struct ggml_tensor_extra_gpu * dst_extra = (ggml_tensor_extra_gpu *) dst->extra;
     float * dst_ddf = (float *) dst_extra->data_device[g_main_device];
 
-    const int row_stride_x = nb01 / sizeof(half);
-    const int channel_stride_x = nb02 / sizeof(half);
+    if (src0->type == GGML_TYPE_F16) {
+        const int row_stride_x = nb01 / sizeof(half);
+        const int channel_stride_x = nb02 / sizeof(half);
 
-    ggml_mul_mat_vec_nc_f16_f32_cuda(src0_ddq, src1_ddf, dst_ddf, ne00, ne01, row_stride_x, ne02, ne12, channel_stride_x, cudaStream_main);
+        ggml_mul_mat_vec_nc_f16_f32_cuda(src0_ddq, src1_ddf, dst_ddf, ne00, ne01, row_stride_x, ne02, ne12, channel_stride_x, cudaStream_main);
+    } else if (ggml_is_quantized(src0->type)) {
+        ggml_cuda_op_mul_mat_vec<false>(src0, src1, dst, src0_ddq, nullptr, src1_ddf, dst_ddf, 0, 0, ne01, 0, cudaStream_main);
+    } else {
+        GGML_ASSERT(false);
+    }
 }
 
 void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
-    bool all_on_device = (src0->backend == GGML_BACKEND_GPU || src0->backend == GGML_BACKEND_GPU_SPLIT) &&
+    const bool all_on_device = (src0->backend == GGML_BACKEND_GPU || src0->backend == GGML_BACKEND_GPU_SPLIT) &&
         src1->backend == GGML_BACKEND_GPU && dst->backend == GGML_BACKEND_GPU;
+    const bool src0_is_quantized = ggml_is_quantized(src0->type);
 
     if (all_on_device && ggml_is_permuted(src0) && ggml_is_permuted(src1) && src1->ne[1] == 1) {
         ggml_cuda_mul_mat_vec_p021(src0, src1, dst);
@@ -6307,7 +6547,7 @@ void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_
         ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, true, false);
     } else if (ggml_is_quantized(src0->type) || src0->type == GGML_TYPE_F16) {
         if (src1->ne[1] == 1 && src0->ne[0] % GGML_CUDA_DMMV_X == 0) {
-            ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_vec, false, false);
+            ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_vec<true>, false, false);
         } else {
             int min_compute_capability = INT_MAX;
             for (int id = 0; id < g_device_count; ++id) {
@@ -6318,7 +6558,11 @@ void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_
             }
 
             if (g_mul_mat_q && ggml_is_quantized(src0->type) && min_compute_capability >= MIN_CC_DP4A) {
-                ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_q, false, false);
+                if (all_on_device && src0->backend != GGML_BACKEND_GPU_SPLIT) {
+                    ggml_cuda_mul_mat_nc(src0, src1, dst);
+                } else {
+                    ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_q<true>, false, false);
+                }
             } else {
                 ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, true, false);
             }
@@ -6345,6 +6589,7 @@ void ggml_cuda_cpy(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tens
 
     const int64_t ne00 = src0->ne[0];
     const int64_t ne01 = src0->ne[1];
+    const int64_t ne02 = src0->ne[2];
     GGML_ASSERT(src0->ne[3] == 1);
 
     const int64_t nb00 = src0->nb[0];
@@ -6374,6 +6619,21 @@ void ggml_cuda_cpy(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tens
     } else if (src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_F16) {
         ggml_cpy_f32_f16_cuda(src0_ddc, src1_ddc, ne, ne00, ne01, nb00, nb01, nb02,
                               ne10, ne11, nb10, nb11, nb12, cudaStream_main);
+    } else if (src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_Q8_0) {
+        GGML_ASSERT(nb10 == sizeof(block_q8_0));
+
+        const size_t * op_params = (const size_t *) src1->op_params;
+        const size_t i_blck_0 = op_params[1];
+
+        if (ggml_is_contiguous(src1)) {
+            ggml_cpy_f32_q8_0_cuda(
+                src0_ddc, src1_ddc, i_blck_0, ne00, ne01, ne02, nb00, nb01, nb02,
+                ne00*sizeof(block_q8_0)/QK8_0, ne00*ne01*sizeof(block_q8_0)/QK8_0, cudaStream_main);
+        } else {
+            ggml_cpy_f32_q8_0_cuda(src0_ddc, src1_ddc, i_blck_0, ne00, ne01, ne02,
+                                nb00, nb01, nb02, nb11, nb12, cudaStream_main);
+        }
+
     } else {
         GGML_ASSERT(false);
     }
