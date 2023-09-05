@@ -5730,47 +5730,49 @@ inline void ggml_cuda_op_mul_mat_vec(
 #endif // GGML_CUDA_FORCE_DMMV
 
     if (use_mul_mat_vec_q) {
+        const int nchannels = buffers_contiguous ? 1 : ne02;
+
         const int64_t padded_row_size = ne10 % MATRIX_ROW_PADDING == 0 ?
             ne10 : ne10 - ne10 % MATRIX_ROW_PADDING + MATRIX_ROW_PADDING;
         size_t as;
-        void * src1_q8_1 = ggml_cuda_pool_malloc(padded_row_size*ne02*sizeof(block_q8_1)/QK8_1, &as);
-        const int64_t row_stride_q     = src1->backend == GGML_BACKEND_CPU ? ne10   : nb11 / sizeof(float);
-        const int64_t channel_stride_q = src1->backend == GGML_BACKEND_CPU ? ne10*1 : nb12 / sizeof(float);
-        quantize_row_q8_1_cuda(src1_ddf_i, src1_q8_1, ne10, 1, padded_row_size, ne02, row_stride_q, channel_stride_q, cudaStream_main);
+        void * src1_q8_1 = ggml_cuda_pool_malloc(padded_row_size*nchannels*sizeof(block_q8_1)/QK8_1, &as);
+        const int64_t row_stride_q     = buffers_contiguous ? ne10   : nb11 / sizeof(float);
+        const int64_t channel_stride_q = buffers_contiguous ? ne10*1 : nb12 / sizeof(float);
+        quantize_row_q8_1_cuda(src1_ddf_i, src1_q8_1, ne10, 1, padded_row_size, nchannels, row_stride_q, channel_stride_q, cudaStream_main);
 
-        const int row_stride_x     = nb01 / ggml_type_size(src0->type);
-        const int channel_stride_x = nb02 / ggml_type_size(src0->type);
+        const int row_stride_x     = buffers_contiguous ? ne00   / ggml_blck_size(src0->type) : nb01 / ggml_type_size(src0->type);
+        const int channel_stride_x = buffers_contiguous ? ne00*1 / ggml_blck_size(src0->type) : nb02 / ggml_type_size(src0->type);
         const int channel_stride_y = padded_row_size / QK8_1;
         switch (src0->type) {
             case GGML_TYPE_Q4_0:
-                mul_mat_vec_q4_0_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, ne02, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
+                mul_mat_vec_q4_0_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, nchannels, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
                 break;
             case GGML_TYPE_Q4_1:
-                mul_mat_vec_q4_1_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, ne02, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
+                mul_mat_vec_q4_1_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, nchannels, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
                 break;
             case GGML_TYPE_Q5_0:
-                mul_mat_vec_q5_0_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, ne02, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
+                mul_mat_vec_q5_0_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, nchannels, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
                 break;
             case GGML_TYPE_Q5_1:
-                mul_mat_vec_q5_1_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, ne02, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
+                mul_mat_vec_q5_1_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, nchannels, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
                 break;
             case GGML_TYPE_Q8_0:
-                mul_mat_vec_q8_0_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, ne02, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
+                mul_mat_vec_q8_0_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, nchannels, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
                 break;
             case GGML_TYPE_Q2_K:
-                mul_mat_vec_q2_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, ne02, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
+                mul_mat_vec_q2_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, nchannels, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
                 break;
             case GGML_TYPE_Q3_K:
-                mul_mat_vec_q3_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, ne02, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
+                mul_mat_vec_q3_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, nchannels, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
                 break;
             case GGML_TYPE_Q4_K:
-                mul_mat_vec_q4_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, ne02, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
+                mul_mat_vec_q4_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, nchannels, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
                 break;
             case GGML_TYPE_Q5_K:
-                mul_mat_vec_q5_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, ne02, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
+                mul_mat_vec_q5_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, nchannels, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
                 break;
             case GGML_TYPE_Q6_K:
-                mul_mat_vec_q6_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, ne02, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
+                mul_mat_vec_q6_K_q8_1_cuda(src0_ddq_i, src1_q8_1, dst_ddf_i, ne00, nrows, nchannels, row_stride_x, channel_stride_x, channel_stride_y, cudaStream_main);
                 break;
             default:
                 GGML_ASSERT(false);
@@ -5779,7 +5781,7 @@ inline void ggml_cuda_op_mul_mat_vec(
 
         ggml_cuda_pool_free(src1_q8_1, as);
     } else {
-        GGML_ASSERT(buffers_contiguous || ne02 == 1);
+        GGML_ASSERT(buffers_contiguous);
 
         // on some GPUs it is faster to convert src1 to half and to use half precision intrinsics
 #ifdef GGML_CUDA_F16
@@ -6548,7 +6550,8 @@ void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_
     }
 
     // no quantized non-contiguous support for lower CC kernels implemented
-    const bool nc_okay = src0->type == GGML_TYPE_F16 || g_compute_capabilities[g_main_device] >= MIN_CC_DP4A;
+    // const bool nc_okay = src0->type == GGML_TYPE_F16 || g_compute_capabilities[g_main_device] >= MIN_CC_DP4A;
+    const bool nc_okay = false;
 
     if (all_on_device && nc_okay && ggml_is_permuted(src0) && ggml_is_permuted(src1) && src1->ne[1] == 1) {
         ggml_cuda_mul_mat_vec_p021(src0, src1, dst);
