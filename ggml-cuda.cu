@@ -3832,13 +3832,16 @@ static __global__ void mul_mat_vec_q(
     }
 }
 
-template <int qk, int qr, dequantize_kernel_t dequantize_kernel>
-static __global__ void dequantize_mul_mat_vec(const void * __restrict__ vx, const dfloat * __restrict__ y, float * __restrict__ dst, const int ncols, const int nrows) {
+template <int qk, int qr, dequantize_kernel_t dequantize_kernel, bool need_check>
+static __global__ void dequantize_mul_mat_vec(
+    const void * __restrict__ vx, const dfloat * __restrict__ y, float * __restrict__ dst,
+    const int ncols, const int nrows_x, const int nrows_y) {
+
     // qk = quantized weights per x block
     // qr = number of quantized weights per data value in x block
     const int row = blockIdx.y*blockDim.y + threadIdx.y;
 
-    if (row >= nrows) {
+    if (row >= nrows_x) {
         return;
     }
 
@@ -3871,16 +3874,22 @@ static __global__ void dequantize_mul_mat_vec(const void * __restrict__ vx, cons
             dfloat2 v;
             dequantize_kernel(vx, ib, iqs + j/qr, v);
 
+            const int iy0 = iybs + iqs + j/qr + 0;
+            const int iy1 = iybs + iqs + j/qr + y_offset;
+
             // matrix multiplication
             // for qr = 2 the y index needs to increase by 1 per j iter because of y_offset = qk/2
 #ifdef GGML_CUDA_F16
-            tmp += __hmul2(v, {
-                y[iybs + iqs + j/qr + 0],
-                y[iybs + iqs + j/qr + y_offset]
-            });
+            const half yi0 = need_check && iy0 >= nrows_y ? __float2half(0.0f) : y[iy0];
+            const half yi1 = need_check && iy1 >= nrows_y ? __float2half(0.0f) : y[iy1];
+
+            tmp += __hmul2(v, {yi0, yi1});
 #else
-            tmp += v.x * y[iybs + iqs + j/qr + 0];
-            tmp += v.y * y[iybs + iqs + j/qr + y_offset];
+            const float yi0 = need_check && iy0 >= nrows_y ? 0.0f : y[iy0];
+            const float yi1 = need_check && iy1 >= nrows_y ? 0.0f : y[iy1];
+
+            tmp += v.x * yi0;
+            tmp += v.y * yi1;
 #endif // GGML_CUDA_F16
         }
     }
@@ -4380,91 +4389,120 @@ static void dequantize_row_q6_K_cuda(const void * vx, float * y, const int k, cu
 #endif
 }
 
-static void dequantize_mul_mat_vec_q4_0_cuda(const void * vx, const dfloat * y, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
+static void dequantize_mul_mat_vec_q4_0_cuda(
+    const void * vx, const dfloat * y, float * dst, const int ncols, const int nrows_x, const int nrows_y, cudaStream_t stream) {
+
     GGML_ASSERT(ncols % GGML_CUDA_DMMV_X == 0);
-    const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
+    const int block_num_y = (nrows_x + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
     const dim3 block_nums(1, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-    dequantize_mul_mat_vec<QK4_0, QR4_0, dequantize_q4_0>
-        <<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols, nrows);
+    dequantize_mul_mat_vec<QK4_0, QR4_0, dequantize_q4_0, false>
+        <<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols, nrows_x, nrows_y);
 }
 
-static void dequantize_mul_mat_vec_q4_1_cuda(const void * vx, const dfloat * y, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
+static void dequantize_mul_mat_vec_q4_1_cuda(
+    const void * vx, const dfloat * y, float * dst, const int ncols, const int nrows_x, const int nrows_y, cudaStream_t stream) {
+
     GGML_ASSERT(ncols % GGML_CUDA_DMMV_X == 0);
-    const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
+    const int block_num_y = (nrows_x + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
     const dim3 block_nums(1, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-    dequantize_mul_mat_vec<QK4_1, QR4_1, dequantize_q4_1>
-        <<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols, nrows);
+    dequantize_mul_mat_vec<QK4_1, QR4_1, dequantize_q4_1, false>
+        <<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols, nrows_x, nrows_y);
 }
 
-static void dequantize_mul_mat_vec_q5_0_cuda(const void * vx, const dfloat * y, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
+static void dequantize_mul_mat_vec_q5_0_cuda(
+    const void * vx, const dfloat * y, float * dst, const int ncols, const int nrows_x, const int nrows_y, cudaStream_t stream) {
+
     GGML_ASSERT(ncols % GGML_CUDA_DMMV_X == 0);
-    const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
+    const int block_num_y = (nrows_x + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
     const dim3 block_nums(1, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-    dequantize_mul_mat_vec<QK5_0, QR5_0, dequantize_q5_0>
-        <<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols, nrows);
+    dequantize_mul_mat_vec<QK5_0, QR5_0, dequantize_q5_0, false>
+        <<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols, nrows_x, nrows_y);
 }
 
-static void dequantize_mul_mat_vec_q5_1_cuda(const void * vx, const dfloat * y, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
+static void dequantize_mul_mat_vec_q5_1_cuda(
+    const void * vx, const dfloat * y, float * dst, const int ncols, const int nrows_x, const int nrows_y, cudaStream_t stream) {
+
     GGML_ASSERT(ncols % GGML_CUDA_DMMV_X == 0);
-    const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
+    const int block_num_y = (nrows_x + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
     const dim3 block_nums(1, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-    dequantize_mul_mat_vec<QK5_1, QR5_1, dequantize_q5_1>
-        <<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols, nrows);
+    dequantize_mul_mat_vec<QK5_1, QR5_1, dequantize_q5_1, false>
+        <<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols, nrows_x, nrows_y);
 }
 
-static void dequantize_mul_mat_vec_q8_0_cuda(const void * vx, const dfloat * y, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
-    GGML_ASSERT(ncols % GGML_CUDA_DMMV_X == 0);
-    const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
+static void dequantize_mul_mat_vec_q8_0_cuda(
+    const void * vx, const dfloat * y, float * dst, const int ncols, const int nrows_x, const int nrows_y, cudaStream_t stream) {
+
+    const int block_num_y = (nrows_x + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
     const dim3 block_nums(1, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-    dequantize_mul_mat_vec<QK8_0, QR8_0, dequantize_q8_0>
-        <<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols, nrows);
+    if (ncols == nrows_y && ncols % GGML_CUDA_DMMV_X == 0) {
+        dequantize_mul_mat_vec<QK8_0, QR8_0, dequantize_q8_0, false>
+            <<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols, nrows_x, nrows_y);
+    } else {
+        dequantize_mul_mat_vec<QK8_0, QR8_0, dequantize_q8_0, true>
+            <<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols, nrows_x, nrows_y);
+    }
 }
 
-static void dequantize_mul_mat_vec_q2_K_cuda(const void * vx, const float * y, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
+static void dequantize_mul_mat_vec_q2_K_cuda(
+    const void * vx, const float * y, float * dst, const int ncols, const int nrows, const int nrows_y, cudaStream_t stream) {
+
     GGML_ASSERT(ncols % QK_K == 0);
     const int ny = 2; // very slightly faster than 1 even when K_QUANTS_PER_ITERATION = 2
     const int block_num_y = (nrows + ny - 1) / ny;
     const dim3 block_nums(1, block_num_y, 1);
     const dim3 block_dims(32, ny, 1);
     dequantize_mul_mat_vec_q2_k<<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols, nrows);
+    (void) nrows_y;
 }
 
-static void dequantize_mul_mat_vec_q3_K_cuda(const void * vx, const float * y, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
+static void dequantize_mul_mat_vec_q3_K_cuda(
+    const void * vx, const float * y, float * dst, const int ncols, const int nrows, const int nrows_y, cudaStream_t stream) {
+
     GGML_ASSERT(ncols % QK_K == 0);
     const int ny = 2 / K_QUANTS_PER_ITERATION;
     const int block_num_y = (nrows + ny - 1) / ny;
     const dim3 block_nums(1, block_num_y, 1);
     const dim3 block_dims(32, ny, 1);
     dequantize_mul_mat_vec_q3_k<<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols, nrows);
+    (void) nrows_y;
 }
 
-static void dequantize_mul_mat_vec_q4_K_cuda(const void * vx, const float * y, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
+static void dequantize_mul_mat_vec_q4_K_cuda(
+    const void * vx, const float * y, float * dst, const int ncols, const int nrows, const int nrows_y, cudaStream_t stream) {
+
     GGML_ASSERT(ncols % QK_K == 0);
     const int ny = 2 / K_QUANTS_PER_ITERATION;
     const int block_num_y = (nrows + ny - 1) / ny;
     const dim3 block_nums(1, block_num_y, 1);
     const dim3 block_dims(32, ny, 1);
     dequantize_mul_mat_vec_q4_k<<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols, nrows);
+    (void) nrows_y;
 }
 
-static void dequantize_mul_mat_vec_q5_K_cuda(const void * vx, const float * y, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
+static void dequantize_mul_mat_vec_q5_K_cuda(
+    const void * vx, const float * y, float * dst, const int ncols, const int nrows, const int nrows_y, cudaStream_t stream) {
+
     GGML_ASSERT(ncols % QK_K == 0);
     const dim3 block_dims(32, 1, 1);
     dequantize_mul_mat_vec_q5_k<<<nrows, block_dims, 0, stream>>>(vx, y, dst, ncols);
+    (void) nrows_y;
 }
 
-static void dequantize_mul_mat_vec_q6_K_cuda(const void * vx, const float * y, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
+static void dequantize_mul_mat_vec_q6_K_cuda(
+    const void * vx, const float * y, float * dst, const int ncols, const int nrows, const int nrows_y, cudaStream_t stream) {
+
     GGML_ASSERT(ncols % QK_K == 0);
     const int ny = 2 / K_QUANTS_PER_ITERATION;
     const int block_num_y = (nrows + ny - 1) / ny;
     const dim3 block_nums(1, block_num_y, 1);
     const dim3 block_dims(32, ny, 1);
     dequantize_mul_mat_vec_q6_k<<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols, nrows);
+    (void) nrows_y;
 }
 
 static void mul_mat_vec_q4_0_q8_1_cuda(
@@ -4592,13 +4630,15 @@ static void convert_fp16_to_fp32_cuda(const void * vx, float * y, const int k, c
     dequantize_block<1, 1, convert_f16><<<num_blocks, CUDA_DEQUANTIZE_BLOCK_SIZE, 0, stream>>>(vx, y, k);
 }
 
-static void convert_mul_mat_vec_f16_cuda(const void * vx, const dfloat * y, float * dst, const int ncols, const int nrows, cudaStream_t stream) {
+static void convert_mul_mat_vec_f16_cuda(
+    const void * vx, const dfloat * y, float * dst, const int ncols, const int nrows_x, const int nrows_y, cudaStream_t stream) {
+
     GGML_ASSERT(ncols % GGML_CUDA_DMMV_X == 0);
-    const int block_num_y = (nrows + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
+    const int block_num_y = (nrows_x + GGML_CUDA_MMV_Y - 1) / GGML_CUDA_MMV_Y;
     const dim3 block_nums(1, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, GGML_CUDA_MMV_Y, 1);
-    dequantize_mul_mat_vec<1, 1, convert_f16>
-        <<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols, nrows);
+    dequantize_mul_mat_vec<1, 1, convert_f16, false>
+        <<<block_nums, block_dims, 0, stream>>>(vx, y, dst, ncols, nrows_x, nrows_y);
 }
 
 static to_fp32_cuda_t ggml_get_to_fp32_cuda(ggml_type type) {
@@ -5804,37 +5844,37 @@ inline void ggml_cuda_op_mul_mat_vec(
 
         switch (src0->type) {
             case GGML_TYPE_Q4_0:
-                dequantize_mul_mat_vec_q4_0_cuda(src0_ddq_i, src1_dfloat, dst_ddf_i, ne00, nrows, cudaStream_main);
+                dequantize_mul_mat_vec_q4_0_cuda(src0_ddq_i, src1_dfloat, dst_ddf_i, ne00, nrows, ne10, cudaStream_main);
                 break;
             case GGML_TYPE_Q4_1:
-                dequantize_mul_mat_vec_q4_1_cuda(src0_ddq_i, src1_dfloat, dst_ddf_i, ne00, nrows, cudaStream_main);
+                dequantize_mul_mat_vec_q4_1_cuda(src0_ddq_i, src1_dfloat, dst_ddf_i, ne00, nrows, ne10, cudaStream_main);
                 break;
             case GGML_TYPE_Q5_0:
-                dequantize_mul_mat_vec_q5_0_cuda(src0_ddq_i, src1_dfloat, dst_ddf_i, ne00, nrows, cudaStream_main);
+                dequantize_mul_mat_vec_q5_0_cuda(src0_ddq_i, src1_dfloat, dst_ddf_i, ne00, nrows, ne10, cudaStream_main);
                 break;
             case GGML_TYPE_Q5_1:
-                dequantize_mul_mat_vec_q5_1_cuda(src0_ddq_i, src1_dfloat, dst_ddf_i, ne00, nrows, cudaStream_main);
+                dequantize_mul_mat_vec_q5_1_cuda(src0_ddq_i, src1_dfloat, dst_ddf_i, ne00, nrows, ne10, cudaStream_main);
                 break;
             case GGML_TYPE_Q8_0:
-                dequantize_mul_mat_vec_q8_0_cuda(src0_ddq_i, src1_dfloat, dst_ddf_i, ne00, nrows, cudaStream_main);
+                dequantize_mul_mat_vec_q8_0_cuda(src0_ddq_i, src1_dfloat, dst_ddf_i, ne00, nrows, ne10, cudaStream_main);
                 break;
             case GGML_TYPE_Q2_K:
-                dequantize_mul_mat_vec_q2_K_cuda(src0_ddq_i, src1_ddf_i, dst_ddf_i, ne00, nrows, cudaStream_main);
+                dequantize_mul_mat_vec_q2_K_cuda(src0_ddq_i, src1_ddf_i, dst_ddf_i, ne00, nrows, ne10, cudaStream_main);
                 break;
             case GGML_TYPE_Q3_K:
-                dequantize_mul_mat_vec_q3_K_cuda(src0_ddq_i, src1_ddf_i, dst_ddf_i, ne00, nrows, cudaStream_main);
+                dequantize_mul_mat_vec_q3_K_cuda(src0_ddq_i, src1_ddf_i, dst_ddf_i, ne00, nrows, ne10, cudaStream_main);
                 break;
             case GGML_TYPE_Q4_K:
-                dequantize_mul_mat_vec_q4_K_cuda(src0_ddq_i, src1_ddf_i, dst_ddf_i, ne00, nrows, cudaStream_main);
+                dequantize_mul_mat_vec_q4_K_cuda(src0_ddq_i, src1_ddf_i, dst_ddf_i, ne00, nrows, ne10, cudaStream_main);
                 break;
             case GGML_TYPE_Q5_K:
-                dequantize_mul_mat_vec_q5_K_cuda(src0_ddq_i, src1_ddf_i, dst_ddf_i, ne00, nrows, cudaStream_main);
+                dequantize_mul_mat_vec_q5_K_cuda(src0_ddq_i, src1_ddf_i, dst_ddf_i, ne00, nrows, ne10, cudaStream_main);
                 break;
             case GGML_TYPE_Q6_K:
-                dequantize_mul_mat_vec_q6_K_cuda(src0_ddq_i, src1_ddf_i, dst_ddf_i, ne00, nrows, cudaStream_main);
+                dequantize_mul_mat_vec_q6_K_cuda(src0_ddq_i, src1_ddf_i, dst_ddf_i, ne00, nrows, ne10, cudaStream_main);
                 break;
             case GGML_TYPE_F16:
-                convert_mul_mat_vec_f16_cuda(src0_ddq_i, src1_dfloat, dst_ddf_i, ne00, nrows, cudaStream_main);
+                convert_mul_mat_vec_f16_cuda(src0_ddq_i, src1_dfloat, dst_ddf_i, ne00, nrows, ne10, cudaStream_main);
                 break;
             default:
                 GGML_ASSERT(false);
@@ -6550,8 +6590,7 @@ void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_
     }
 
     // no quantized non-contiguous support for lower CC kernels implemented
-    // const bool nc_okay = src0->type == GGML_TYPE_F16 || g_compute_capabilities[g_main_device] >= MIN_CC_DP4A;
-    const bool nc_okay = false;
+    const bool nc_okay = src0->type == GGML_TYPE_F16 || g_compute_capabilities[g_main_device] >= MIN_CC_DP4A;
 
     if (all_on_device && nc_okay && ggml_is_permuted(src0) && ggml_is_permuted(src1) && src1->ne[1] == 1) {
         ggml_cuda_mul_mat_vec_p021(src0, src1, dst);
