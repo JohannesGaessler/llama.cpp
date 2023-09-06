@@ -181,7 +181,7 @@ static void print_usage(int /* argc */, char ** argv) {
         }
         kv_type_default += ggml_type_name(cmd_params_defaults.kv_type[i]);
     }
-    printf("  -kvt, kv_type <q8_0|f16|f32>      (default: %s)\n", kv_type_default.c_str());
+    printf("  -kvt, --kv_type <q8_0|f16|f32>    (default: %s)\n", kv_type_default.c_str());
 
     printf("  -t, --threads <n>                 (default: %s)\n", join(cmd_params_defaults.n_threads, ",").c_str());
     printf("  -ngl N, --n-gpu-layers <n>        (default: %s)\n", join(cmd_params_defaults.n_gpu_layers, ",").c_str());
