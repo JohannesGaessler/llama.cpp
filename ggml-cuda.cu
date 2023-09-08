@@ -5945,14 +5945,14 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
     GGML_ASSERT(!(split && ne02 < ne12));
 
     // dd = data device
-    char  * src0_ddq[GGML_CUDA_MAX_DEVICES] = {nullptr}; // quantized
-    float * src1_ddf[GGML_CUDA_MAX_DEVICES] = {nullptr};
-    float *  dst_ddf[GGML_CUDA_MAX_DEVICES] = {nullptr};
+    char  * src0_dd[GGML_CUDA_MAX_DEVICES] = {nullptr}; // quantized
+    float * src1_dd[GGML_CUDA_MAX_DEVICES] = {nullptr};
+    float *  dst_dd[GGML_CUDA_MAX_DEVICES] = {nullptr};
 
-    // asq = actual size quantized, asf = actual size float
-    size_t src0_asq[GGML_CUDA_MAX_DEVICES] = {0};
-    size_t src1_asf[GGML_CUDA_MAX_DEVICES] = {0};
-    size_t  dst_asf[GGML_CUDA_MAX_DEVICES] = {0};
+    // as = actual size
+    size_t src0_as[GGML_CUDA_MAX_DEVICES] = {0};
+    size_t src1_as[GGML_CUDA_MAX_DEVICES] = {0};
+    size_t  dst_as[GGML_CUDA_MAX_DEVICES] = {0};
 
     // if multiple devices are used they need to wait for the main device
     // here an event is recorded that signifies that the main device has finished calculating the input data
@@ -5999,23 +5999,23 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
         }
 
         if (src0_on_device && src0_is_contiguous) {
-            src0_ddq[id] = (char *) src0_extra->data_device[id];
+            src0_dd[id] = (char *) src0_extra->data_device[id];
         } else {
             const size_t size_src0_ddq = split ? row_diff*ne00 * src0_ts/src0_bs : ggml_nbytes(src0);
-            src0_ddq[id] = (char *) ggml_cuda_pool_malloc(ggml_nbytes(src0), &src0_asq[id]);
+            src0_dd[id] = (char *) ggml_cuda_pool_malloc(ggml_nbytes(src0), &src0_as[id]);
         }
 
         if (src1_on_device && src1_is_contiguous) {
-            src1_ddf[id] = (float *) src1_extra->data_device[id];
+            src1_dd[id] = (float *) src1_extra->data_device[id];
         } else {
-            src1_ddf[id] = (float *) ggml_cuda_pool_malloc(ggml_nbytes(src1), &src1_asf[id]);
+            src1_dd[id] = (float *) ggml_cuda_pool_malloc(ggml_nbytes(src1), &src1_as[id]);
         }
 
         if (dst_on_device) {
-            dst_ddf[id] = (float *) dst_extra->data_device[id];
+            dst_dd[id] = (float *) dst_extra->data_device[id];
         } else {
             const size_t size_dst_ddf = split ? row_diff*ne1*sizeof(float) : ggml_nbytes(dst);
-            dst_ddf[id] = (float *) ggml_cuda_pool_malloc(size_dst_ddf, &dst_asf[id]);
+            dst_dd[id] = (float *) ggml_cuda_pool_malloc(size_dst_ddf, &dst_as[id]);
         }
 
         for (int64_t i0 = 0; i0 < ne13*ne12; ++i0) {
@@ -6023,40 +6023,40 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
             const int i02 = i0 % ne12;
 
             // for split tensors the data begins at i0 == i0_offset_low
-            char  * src0_ddq_i = src0_ddq[id] + (i0/i02_divisor)*ne01*ne00*src0_ts/src0_bs;
-            float * src1_ddf_i = src1_ddf[id] +  i0             *ne11*ne10;
-            float * dst_ddf_i  =  dst_ddf[id] +  i0             *ne1*ne0;
+            char  * src0_dd_i = src0_dd[id] + (i0/i02_divisor)*ne01*ne00*src0_ts/src0_bs;
+            float * src1_dd_i = src1_dd[id] +  i0             *ne11*ne10;
+            float *  dst_dd_i =  dst_dd[id] +  i0             *ne1*ne0;
 
             // the main device memory buffer can be on VRAM scratch, with space for all partial results
             // in that case an offset on dst_ddf_i is needed
             if (dst->backend == GGML_BACKEND_GPU && id == g_main_device) {
-                dst_ddf_i += row_low; // offset is 0 if no tensor split
+                dst_dd_i += row_low; // offset is 0 if no tensor split
             }
 
             // copy src0, src1 to device if necessary
             if (src1->backend == GGML_BACKEND_CPU) {
                 int64_t nrows1 = ne11;
-                CUDA_CHECK(ggml_cuda_cpy_tensor_2d(src1_ddf_i, src1, i03, i02, 0, nrows1, cudaStream_main));
+                CUDA_CHECK(ggml_cuda_cpy_tensor_2d(src1_dd_i, src1, i03, i02, 0, nrows1, cudaStream_main));
             } else if (src1->backend == GGML_BACKEND_GPU && src1_is_contiguous) {
                 if (id != g_main_device) {
                     float * src1_ddf_i_source = (float *) src1_extra->data_device[g_main_device];
                     src1_ddf_i_source += i0*ne11*ne10;
-                    CUDA_CHECK(cudaMemcpyAsync(src1_ddf_i, src1_ddf_i_source, ne11*ne10*sizeof(float),
+                    CUDA_CHECK(cudaMemcpyAsync(src1_dd_i, src1_ddf_i_source, ne11*ne10*sizeof(float),
                                             cudaMemcpyDeviceToDevice, cudaStream_main));
                 }
             } else if (src1_on_device && !src1_is_contiguous) {
                 GGML_ASSERT(!split);
-                CUDA_CHECK(ggml_cuda_cpy_tensor_2d(src1_ddf_i, src1, i03, i02, 0, ne11, cudaStream_main));
+                CUDA_CHECK(ggml_cuda_cpy_tensor_2d(src1_dd_i, src1, i03, i02, 0, ne11, cudaStream_main));
             } else {
                 GGML_ASSERT(false);
             }
 
             if ((!src0_on_device || !src0_is_contiguous) && i02 % i02_divisor == 0) {
-                CUDA_CHECK(ggml_cuda_cpy_tensor_2d(src0_ddq_i, src0, i03, i02/i02_divisor, row_low, row_high, cudaStream_main));
+                CUDA_CHECK(ggml_cuda_cpy_tensor_2d(src0_dd_i, src0, i03, i02/i02_divisor, row_low, row_high, cudaStream_main));
             }
 
             // do the computation
-            op(src0, src1, dst, src0_ddq_i, nullptr, src1_ddf_i, dst_ddf_i, i02, row_low, row_high, i0, cudaStream_main);
+            op(src0, src1, dst, src0_dd_i, nullptr, src1_dd_i, dst_dd_i, i02, row_low, row_high, i0, cudaStream_main);
             CUDA_CHECK(cudaGetLastError());
 
             // copy dst to host or other device if necessary
@@ -6079,11 +6079,11 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
                     // Instead they need to be copied to the correct slice in ne0 = dst row index.
                     // If dst is a vector with ne0 == 1 then you don't have to do this but it still produces correct results.
                     float * dhf_dst_i = (float *) ((char *) dst_off_device + row_low*sizeof(float) + i02*nb2 + i03*nb3);
-                    CUDA_CHECK(cudaMemcpy2DAsync(dhf_dst_i, ne0*sizeof(float), dst_ddf_i, row_diff*sizeof(float),
+                    CUDA_CHECK(cudaMemcpy2DAsync(dhf_dst_i, ne0*sizeof(float), dst_dd_i, row_diff*sizeof(float),
                                                 row_diff*sizeof(float), ne1, kind, cudaStream_main));
                 } else {
                     float * dhf_dst_i = (float *) ((char *) dst_off_device + i02*nb2 + i03*nb3);
-                    CUDA_CHECK(cudaMemcpyAsync(dhf_dst_i, dst_ddf_i, ne1*ne0*sizeof(float), kind, cudaStream_main));
+                    CUDA_CHECK(cudaMemcpyAsync(dhf_dst_i, dst_dd_i, ne1*ne0*sizeof(float), kind, cudaStream_main));
                 }
             }
 
@@ -6096,20 +6096,20 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
 
     // wait until each device is finished, then free their buffers
     for (int id = 0; id < g_device_count; ++id) {
-        if (src0_asq[id] == 0 && src1_asf[id] == 0 && dst_asf[id] == 0) {
+        if (src0_as[id] == 0 && src1_as[id] == 0 && dst_as[id] == 0) {
             continue;
         }
 
         CUDA_CHECK(cudaSetDevice(id));
 
-        if (src0_asq[id] > 0) {
-            ggml_cuda_pool_free(src0_ddq[id], src0_asq[id]);
+        if (src0_as[id] > 0) {
+            ggml_cuda_pool_free(src0_dd[id], src0_as[id]);
         }
-        if (src1_asf[id] > 0) {
-            ggml_cuda_pool_free(src1_ddf[id], src1_asf[id]);
+        if (src1_as[id] > 0) {
+            ggml_cuda_pool_free(src1_dd[id], src1_as[id]);
         }
-        if (dst_asf[id] > 0) {
-            ggml_cuda_pool_free(dst_ddf[id], dst_asf[id]);
+        if (dst_as[id] > 0) {
+            ggml_cuda_pool_free(dst_dd[id], dst_as[id]);
         }
     }
 
