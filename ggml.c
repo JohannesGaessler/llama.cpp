@@ -11391,8 +11391,8 @@ static void ggml_compute_forward_mul_mat(
     if (params->type == GGML_TASK_INIT) {
         if (src1->type != vec_dot_type) {
             char * wdata = params->wdata;
-            const size_t row_size = ggml_type_size(vec_dot_type)*(ne10 + ggml_blck_size(vec_dot_type) - 1)
-                / ggml_blck_size(vec_dot_type);
+            const size_t row_size = ggml_type_size(vec_dot_type)*((ne10 + ggml_blck_size(vec_dot_type) - 1)
+                / ggml_blck_size(vec_dot_type));
 
             for (int64_t i13 = 0; i13 < ne13; ++i13) {
                 for (int64_t i12 = 0; i12 < ne12; ++i12) {
@@ -11412,8 +11412,8 @@ static void ggml_compute_forward_mul_mat(
     }
 
     const void * wdata    = (src1->type == vec_dot_type) ? src1->data : params->wdata;
-    const size_t row_size = ggml_type_size(vec_dot_type)*(ne10 + ggml_blck_size(vec_dot_type) - 1)
-        / ggml_blck_size(vec_dot_type);
+    const size_t row_size = ggml_type_size(vec_dot_type)*((ne10 + ggml_blck_size(vec_dot_type) - 1)
+        / ggml_blck_size(vec_dot_type));
 
     const int64_t nr0 = ne01;           // src0 rows
     const int64_t nr1 = ne11*ne12*ne13; // src1 rows
