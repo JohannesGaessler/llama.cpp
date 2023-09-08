@@ -5263,17 +5263,13 @@ inline void ggml_cuda_op_add(
     GGML_ASSERT(src1->type == GGML_TYPE_F32);
     GGML_ASSERT( dst->type == GGML_TYPE_F32);
 
-    const int64_t ne00 = src0->ne[0];
-    const int64_t nrows = ggml_nrows(src0);
-
     const int64_t ne10 = src1->ne[0];
     const int64_t ne11 = src1->ne[1];
 
-    // compute
     if (src0->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32) {
-        add_f32_cuda(src0_dd, src1_dd, dst_dd, ne00*nrows, ne10*ne11, cudaStream_main);
+        add_f32_cuda(src0_dd, src1_dd, dst_dd, ggml_nelements(src0), ne10*ne11, cudaStream_main);
     } else if (src0->type == GGML_TYPE_F16 && dst->type == GGML_TYPE_F16) {
-        add_f16_f32_f16_cuda((half *) src0_dd, src1_dd, (half *) dst_dd, ne00*nrows, cudaStream_main);
+        add_f16_f32_f16_cuda((half *) src0_dd, src1_dd, (half *) dst_dd, ggml_nelements(src0), cudaStream_main);
     } else {
         GGML_ASSERT(false);
     }
@@ -5283,29 +5279,19 @@ inline void ggml_cuda_op_add(
 }
 
 inline void ggml_cuda_op_mul(
-    const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
-    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
-    cudaStream_t & cudaStream_main){
+    const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst,
+    const float * src0_dd, const float * src1_dd, float * dst_dd, cudaStream_t & cudaStream_main) {
 
     GGML_ASSERT(src0->type == GGML_TYPE_F32);
     GGML_ASSERT(src1->type == GGML_TYPE_F32);
     GGML_ASSERT( dst->type == GGML_TYPE_F32);
-    GGML_ASSERT(src0_ddf_i != nullptr);
-    GGML_ASSERT(src1_ddf_i != nullptr);
-    GGML_ASSERT(dst_ddf_i  != nullptr);
-
-    const int64_t ne00 = src0->ne[0];
-    const int64_t i01_diff = i01_high - i01_low;
 
     const int64_t ne10 = src1->ne[0];
     const int64_t ne11 = src1->ne[1];
 
-    mul_f32_cuda(src0_ddf_i, src1_ddf_i, dst_ddf_i, ne00*i01_diff, ne10*ne11, cudaStream_main);
+    mul_f32_cuda(src0_dd, src1_dd, dst_dd, ggml_nelements(src0), ne10*ne11, cudaStream_main);
 
     (void) dst;
-    (void) src0_ddq_i;
-    (void) i02;
-    (void) i1;
 }
 
 inline void ggml_cuda_op_gelu(
@@ -6391,7 +6377,7 @@ void ggml_cuda_add(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tens
 }
 
 void ggml_cuda_mul(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
-    ggml_cuda_op_flatten(src0, src1, dst, ggml_cuda_op_mul);
+    ggml_cuda_op_flatten_new(src0, src1, dst, ggml_cuda_op_mul);
 }
 
 void ggml_cuda_gelu(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
