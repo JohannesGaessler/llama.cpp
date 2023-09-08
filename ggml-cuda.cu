@@ -6023,8 +6023,8 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
             const int i03 = i0 / ne12;
             const int i02 = i0 % ne12;
 
-            int64_t i01_low  = split ? row_low  % ne01 : 0;
-            int64_t i01_high = (split && row_high != ne01) ? row_high % ne01 : ne01;
+            const int64_t i01_low  = split ? row_low  : 0;
+            const int64_t i01_high = split ? row_high : ne01;
 
             // There is possibly a bug in the Windows nvcc compiler regarding instruction reordering or optimizing out local variables.
             // Removing the first assert or changing the order of the arguments causes the second assert to fail.
