@@ -6015,7 +6015,7 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
         if (dst_on_device) {
             dst_ddf[id] = (float *) dst_extra->data_device[id];
         } else {
-            const size_t size_dst_ddf = (split ? row_diff*ne1 : ggml_nelements(src0)) * sizeof(float);
+            const size_t size_dst_ddf = split ? row_diff*ne1*sizeof(float) : ggml_nbytes(dst);
             dst_ddf[id] = (float *) ggml_cuda_pool_malloc(size_dst_ddf, &dst_asf[id]);
         }
 
