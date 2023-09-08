@@ -5553,12 +5553,12 @@ inline void ggml_cuda_op_mul_mat_vec(
 
         if (src1_convert_f16) {
             src1_dfloat = (half *) ggml_cuda_pool_malloc(ne00*sizeof(half), &ash);
-            ggml_cpy_f32_f16_cuda((char *) src1_dd_i, (char *) src1_dfloat, ne00,
+            ggml_cpy_f32_f16_cuda((const char *) src1_dd_i, (char *) src1_dfloat, ne00,
                                     ne00, 1, sizeof(float), 0, 0,
                                     ne00, 1, sizeof(half),  0, 0, cudaStream_main);
         }
 #else
-        dfloat * src1_dfloat = (dfloat *) src1_dd_i; // dfloat == float, no conversion
+        const dfloat * src1_dfloat = (const dfloat *) src1_dd_i; // dfloat == float, no conversion
 #endif // GGML_CUDA_F16
 
         switch (src0->type) {
