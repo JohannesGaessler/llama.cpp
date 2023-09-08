@@ -5257,6 +5257,9 @@ inline void ggml_cuda_op_add(
     float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
     cudaStream_t & cudaStream_main){
 
+    GGML_ASSERT(src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16);
+    GGML_ASSERT(src1->type == GGML_TYPE_F32);
+    GGML_ASSERT( dst->type == GGML_TYPE_F32);
     GGML_ASSERT(src0_ddq_i != nullptr || src0_ddf_i != nullptr);
     GGML_ASSERT(src1_ddf_i != nullptr);
     GGML_ASSERT(dst_ddf_i  != nullptr);
@@ -5288,6 +5291,9 @@ inline void ggml_cuda_op_mul(
     float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
     cudaStream_t & cudaStream_main){
 
+    GGML_ASSERT(src0->type == GGML_TYPE_F32);
+    GGML_ASSERT(src1->type == GGML_TYPE_F32);
+    GGML_ASSERT( dst->type == GGML_TYPE_F32);
     GGML_ASSERT(src0_ddf_i != nullptr);
     GGML_ASSERT(src1_ddf_i != nullptr);
     GGML_ASSERT(dst_ddf_i  != nullptr);
@@ -5311,6 +5317,8 @@ inline void ggml_cuda_op_gelu(
     float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
     cudaStream_t & cudaStream_main){
 
+    GGML_ASSERT(src0->type == GGML_TYPE_F32);
+    GGML_ASSERT( dst->type == GGML_TYPE_F32);
     GGML_ASSERT(src0_ddf_i != nullptr);
     GGML_ASSERT(dst_ddf_i != nullptr);
 
@@ -5333,6 +5341,8 @@ inline void ggml_cuda_op_silu(
     float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
     cudaStream_t & cudaStream_main){
 
+    GGML_ASSERT(src0->type == GGML_TYPE_F32);
+    GGML_ASSERT( dst->type == GGML_TYPE_F32);
     GGML_ASSERT(src0_ddf_i != nullptr);
     GGML_ASSERT(dst_ddf_i != nullptr);
 
@@ -5355,6 +5365,8 @@ inline void ggml_cuda_op_norm(
     float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
     cudaStream_t & cudaStream_main){
 
+    GGML_ASSERT(src0->type == GGML_TYPE_F32);
+    GGML_ASSERT( dst->type == GGML_TYPE_F32);
     GGML_ASSERT(src0_ddf_i != nullptr);
     GGML_ASSERT(dst_ddf_i != nullptr);
 
@@ -5377,6 +5389,8 @@ inline void ggml_cuda_op_rms_norm(
     float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
     cudaStream_t & cudaStream_main){
 
+    GGML_ASSERT(src0->type == GGML_TYPE_F32);
+    GGML_ASSERT( dst->type == GGML_TYPE_F32);
     GGML_ASSERT(src0_ddf_i != nullptr);
     GGML_ASSERT(dst_ddf_i != nullptr);
 
@@ -5705,6 +5719,8 @@ inline void ggml_cuda_op_rope(
     float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
     cudaStream_t & cudaStream_main){
 
+    GGML_ASSERT(src0->type == GGML_TYPE_F32);
+    GGML_ASSERT( dst->type == GGML_TYPE_F32);
     GGML_ASSERT(src0_ddf_i != nullptr);
     GGML_ASSERT(dst_ddf_i != nullptr);
 
@@ -5754,6 +5770,8 @@ inline void ggml_cuda_op_alibi(
     float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
     cudaStream_t & cudaStream_main){
 
+    GGML_ASSERT(src0->type == GGML_TYPE_F32);
+    GGML_ASSERT( dst->type == GGML_TYPE_F32);
     GGML_ASSERT(src0_ddf_i != nullptr);
     GGML_ASSERT(dst_ddf_i != nullptr);
 
@@ -5789,6 +5807,8 @@ inline void ggml_cuda_op_diag_mask_inf(
     float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
     cudaStream_t & cudaStream_main){
 
+    GGML_ASSERT(src0->type == GGML_TYPE_F32);
+    GGML_ASSERT( dst->type == GGML_TYPE_F32);
     GGML_ASSERT(src0_ddf_i != nullptr);
     GGML_ASSERT(dst_ddf_i != nullptr);
 
@@ -5814,6 +5834,8 @@ inline void ggml_cuda_op_soft_max(
     float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
     cudaStream_t & cudaStream_main){
 
+    GGML_ASSERT(src0->type == GGML_TYPE_F32);
+    GGML_ASSERT( dst->type == GGML_TYPE_F32);
     GGML_ASSERT(src0_ddf_i != nullptr);
     GGML_ASSERT(dst_ddf_i != nullptr);
 
@@ -5836,6 +5858,9 @@ inline void ggml_cuda_op_scale(
     float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
     cudaStream_t & cudaStream_main){
 
+    GGML_ASSERT(src0->type == GGML_TYPE_F32);
+    GGML_ASSERT(src1->type == GGML_TYPE_F32);
+    GGML_ASSERT( dst->type == GGML_TYPE_F32);
     GGML_ASSERT(src0_ddf_i != nullptr);
     GGML_ASSERT(dst_ddf_i != nullptr);
 
@@ -5880,9 +5905,6 @@ static void ggml_cuda_op_flatten(const ggml_tensor * src0, const ggml_tensor * s
     GGML_ASSERT(             src0->backend != GGML_BACKEND_GPU_SPLIT);
     GGML_ASSERT(!use_src1 || src1->backend != GGML_BACKEND_GPU_SPLIT);
     GGML_ASSERT(              dst->backend != GGML_BACKEND_GPU_SPLIT);
-    GGML_ASSERT(             src0->type == GGML_TYPE_F32);
-    GGML_ASSERT(!use_src1 || src1->type == GGML_TYPE_F32);
-    GGML_ASSERT(              dst->type == GGML_TYPE_F32);
 
     struct ggml_tensor_extra_gpu * src0_extra =            (ggml_tensor_extra_gpu *) src0->extra;
     struct ggml_tensor_extra_gpu * src1_extra = use_src1 ? (ggml_tensor_extra_gpu *) src1->extra : nullptr;
