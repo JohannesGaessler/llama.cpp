@@ -5983,7 +5983,7 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
             }
         } else {
             row_low = 0;
-            row_high = nrows0*i02_divisor;
+            row_high = ne01;
         }
         if (row_low == row_high) {
             continue;
@@ -6002,7 +6002,8 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
         if (src0_on_device && src0_is_contiguous) {
             src0_ddq[id] = (char *) src0_extra->data_device[id];
         } else {
-            src0_ddq[id] = (char *) ggml_cuda_pool_malloc(row_diff*ne00 * src0_ts/src0_bs, &src0_asq[id]);
+            const size_t size_src0_ddq = split ? row_diff*ne00 * src0_ts/src0_bs : ggml_nbytes(src0);
+            src0_ddq[id] = (char *) ggml_cuda_pool_malloc(ggml_nbytes(src0), &src0_asq[id]);
         }
 
         if (src1_on_device && src1_is_contiguous) {
@@ -6022,16 +6023,6 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
             const int i03 = i0 / ne12;
             const int i02 = i0 % ne12;
 
-            const int64_t i01_low  = split ? row_low  : 0;
-            const int64_t i01_high = split ? row_high : ne01;
-
-            // There is possibly a bug in the Windows nvcc compiler regarding instruction reordering or optimizing out local variables.
-            // Removing the first assert or changing the order of the arguments causes the second assert to fail.
-            // Removing both asserts results in i01_high becoming 0 which in turn results in garbage output.
-            // The root cause seems to be a problem with i0_offset_high becoming 0 when it should always be >0 (for single GPU).
-            GGML_ASSERT(i01_low == 0 || g_device_count > 1);
-            GGML_ASSERT(i01_high == ne01 || g_device_count > 1);
-
             // for split tensors the data begins at i0 == i0_offset_low
             char  * src0_ddq_i = src0_ddq[id] + (i0/i02_divisor)*ne01*ne00*src0_ts/src0_bs;
             float * src1_ddf_i = src1_ddf[id] +  i0             *ne11*ne10;
@@ -6040,7 +6031,7 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
             // the main device memory buffer can be on VRAM scratch, with space for all partial results
             // in that case an offset on dst_ddf_i is needed
             if (dst->backend == GGML_BACKEND_GPU && id == g_main_device) {
-                dst_ddf_i += i01_low; // offset is 0 if no tensor split
+                dst_ddf_i += row_low; // offset is 0 if no tensor split
             }
 
             // copy src0, src1 to device if necessary
@@ -6062,11 +6053,11 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
             }
 
             if ((!src0_on_device || !src0_is_contiguous) && i02 % i02_divisor == 0) {
-                CUDA_CHECK(ggml_cuda_cpy_tensor_2d(src0_ddq_i, src0, i03, i02/i02_divisor, i01_low, i01_high, cudaStream_main));
+                CUDA_CHECK(ggml_cuda_cpy_tensor_2d(src0_ddq_i, src0, i03, i02/i02_divisor, row_low, row_high, cudaStream_main));
             }
 
             // do the computation
-            op(src0, src1, dst, src0_ddq_i, nullptr, src1_ddf_i, dst_ddf_i, i02, i01_low, i01_high, i0, cudaStream_main);
+            op(src0, src1, dst, src0_ddq_i, nullptr, src1_ddf_i, dst_ddf_i, i02, row_low, row_high, i0, cudaStream_main);
             CUDA_CHECK(cudaGetLastError());
 
             // copy dst to host or other device if necessary
@@ -6088,7 +6079,7 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
                     // The outputs of matrix matrix multiplications can therefore NOT simply be concatenated for >1 GPU.
                     // Instead they need to be copied to the correct slice in ne0 = dst row index.
                     // If dst is a vector with ne0 == 1 then you don't have to do this but it still produces correct results.
-                    float * dhf_dst_i = (float *) ((char *) dst_off_device + i01_low*sizeof(float) + i02*nb2 + i03*nb3);
+                    float * dhf_dst_i = (float *) ((char *) dst_off_device + row_low*sizeof(float) + i02*nb2 + i03*nb3);
                     CUDA_CHECK(cudaMemcpy2DAsync(dhf_dst_i, ne0*sizeof(float), dst_ddf_i, row_diff*sizeof(float),
                                                 row_diff*sizeof(float), ne1, kind, cudaStream_main));
                 } else {
