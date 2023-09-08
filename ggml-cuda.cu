@@ -5343,30 +5343,23 @@ inline void ggml_cuda_op_norm(
 }
 
 inline void ggml_cuda_op_rms_norm(
-    const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, char * src0_ddq_i,
-    float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
-    cudaStream_t & cudaStream_main){
+    const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst,
+    const float * src0_dd, const float * src1_dd, float * dst_dd, cudaStream_t & cudaStream_main) {
 
     GGML_ASSERT(src0->type == GGML_TYPE_F32);
     GGML_ASSERT( dst->type == GGML_TYPE_F32);
-    GGML_ASSERT(src0_ddf_i != nullptr);
-    GGML_ASSERT(dst_ddf_i != nullptr);
 
     const int64_t ne00 = src0->ne[0];
-    const int64_t i01_diff = i01_high - i01_low;
+    const int64_t nrows = ggml_nrows(src0);
 
     float eps;
     memcpy(&eps, dst->op_params, sizeof(float));
 
-    // compute
-    rms_norm_f32_cuda(src0_ddf_i, dst_ddf_i, ne00, i01_diff, eps, cudaStream_main);
+    rms_norm_f32_cuda(src0_dd, dst_dd, ne00, nrows, eps, cudaStream_main);
 
     (void) src1;
     (void) dst;
-    (void) src0_ddq_i;
-    (void) src1_ddf_i;
-    (void) i02;
-    (void) i1;
+    (void) src1_dd;
 }
 
 inline void ggml_cuda_op_mul_mat_q(
@@ -6365,7 +6358,7 @@ void ggml_cuda_norm(const ggml_tensor * src0, const ggml_tensor * src1, ggml_ten
 }
 
 void ggml_cuda_rms_norm(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
-    ggml_cuda_op_flatten(src0, src1, dst, ggml_cuda_op_rms_norm);
+    ggml_cuda_op_flatten_new(src0, src1, dst, ggml_cuda_op_rms_norm);
 }
 
 bool ggml_cuda_can_mul_mat(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst) {
