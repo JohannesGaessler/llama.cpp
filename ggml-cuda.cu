@@ -5917,12 +5917,10 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
     GGML_ASSERT(src1->backend != GGML_BACKEND_GPU_SPLIT);
 
     // strides for iteration over dims 3 and 2
-    const int64_t num_iters_0 = ne02 >= ne12 ? ne02*ne03 : ne12*ne13;
-    const int64_t num_iters = num_iters_0;
-    const int64_t stride_mod = 1;
-    const int64_t src0_stride = ne00 * ne01 * stride_mod;
-    const int64_t src1_stride = ne10 * ne11 * stride_mod;
-    const int64_t dst_stride = ne0 * ne1 * stride_mod;
+    const int64_t num_iters = ne02 >= ne12 ? ne02*ne03 : ne12*ne13;
+    const int64_t src0_stride = ne00 * ne01;
+    const int64_t src1_stride = ne10 * ne11;
+    const int64_t dst_stride = ne0 * ne1;
 
     const int64_t rows_per_iter = ne01;
     const int64_t i03_max = ne03;
