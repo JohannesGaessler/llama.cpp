@@ -6025,12 +6025,8 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
 
                 const int64_t i0 = i03*ne12 + i02;
 
-                // i0 values that contain the lower/upper rows for a split tensor when using multiple GPUs
-                const int64_t i0_offset_low  =  row_low/ne01;
-                const int64_t i0_offset_high = row_high/ne01;
-
-                int64_t i01_low  = 0;
-                int64_t i01_high = ne01;
+                int64_t i01_low  = split ? row_low  % ne01 : 0;
+                int64_t i01_high = (split && row_high != ne01) ? row_high % ne01 : ne01;
 
                 // There is possibly a bug in the Windows nvcc compiler regarding instruction reordering or optimizing out local variables.
                 // Removing the first assert or changing the order of the arguments causes the second assert to fail.
@@ -6045,16 +6041,9 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
                 }
 
                 // for split tensors the data begins at i0 == i0_offset_low
-                char  * src0_ddq_i = src0_ddq[id] + (i0/i02_divisor - i0_offset_low)*ne00*ne01*src0_ts/src0_bs;
-                float * src1_ddf_i = src1_ddf[id] +  i0*ne11*ne10;
-                float * dst_ddf_i  =  dst_ddf[id] + (i0             - i0_offset_low)*ne1*ne0;
-
-                // for split tensors the data pointer needs to be rounded down
-                // to the bin edge for i03, i02 bins beyond the first
-                if (i0 - i0_offset_low > 0) {
-                    src0_ddq_i -= (row_low % ne01)*ne00 * src0_ts/src0_bs;
-                    dst_ddf_i  -= (row_low % ne0)*ne1;
-                }
+                char  * src0_ddq_i = src0_ddq[id] + (i0/i02_divisor)*ne01*ne00*src0_ts/src0_bs;
+                float * src1_ddf_i = src1_ddf[id] +  i0             *ne11*ne10;
+                float * dst_ddf_i  =  dst_ddf[id] +  i0             *ne1*ne0;
 
                 // the main device memory buffer can be on VRAM scratch, with space for all partial results
                 // in that case an offset on dst_ddf_i is needed
