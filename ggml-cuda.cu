@@ -6021,29 +6021,16 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
         }
 
         for (int64_t i03 = 0; i03 < ne13; i03++) {
-            const int64_t i13 = i03 % ne13;
             for (int64_t i02 = 0; i02 < ne12; i02++) {
-                const int64_t i12 = i02 % ne12;
 
                 const int64_t i0 = i03*ne12 + i02;
 
                 // i0 values that contain the lower/upper rows for a split tensor when using multiple GPUs
-                const int64_t i0_offset_low = row_low/ne01;
+                const int64_t i0_offset_low  =  row_low/ne01;
                 const int64_t i0_offset_high = row_high/ne01;
 
-                int64_t i01_low = 0;
+                int64_t i01_low  = 0;
                 int64_t i01_high = ne01;
-                if (split) {
-                    if (i0 < i0_offset_low || i0 > i0_offset_high) {
-                        continue;
-                    }
-                    if (i0 == i0_offset_low) {
-                        i01_low = row_low % ne01;
-                    }
-                    if (i0 == i0_offset_high) {
-                        i01_high = row_high % ne01;
-                    }
-                }
 
                 // There is possibly a bug in the Windows nvcc compiler regarding instruction reordering or optimizing out local variables.
                 // Removing the first assert or changing the order of the arguments causes the second assert to fail.
@@ -6056,11 +6043,10 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
                 if (i01_diff == 0) {
                     continue;
                 }
-                const int64_t i11 = i13*ne12 + i12;
 
                 // for split tensors the data begins at i0 == i0_offset_low
                 char  * src0_ddq_i = src0_ddq[id] + (i0/i02_divisor - i0_offset_low)*ne00*ne01*src0_ts/src0_bs;
-                float * src1_ddf_i = src1_ddf[id] + i11*ne11*ne10;
+                float * src1_ddf_i = src1_ddf[id] +  i0*ne11*ne10;
                 float * dst_ddf_i  =  dst_ddf[id] + (i0             - i0_offset_low)*ne1*ne0;
 
                 // for split tensors the data pointer needs to be rounded down
@@ -6083,7 +6069,7 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
                 } else if (src1->backend == GGML_BACKEND_GPU && src1_is_contiguous) {
                     if (id != g_main_device) {
                         float * src1_ddf_i_source = (float *) src1_extra->data_device[g_main_device];
-                        src1_ddf_i_source += i11*ne11*ne10;
+                        src1_ddf_i_source += i0*ne11*ne10;
                         CUDA_CHECK(cudaMemcpyAsync(src1_ddf_i, src1_ddf_i_source, ne11*ne10*sizeof(float),
                                                 cudaMemcpyDeviceToDevice, cudaStream_main));
                     }
@@ -6099,7 +6085,7 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
                 }
 
                 // do the computation
-                op(src0, src1, dst, src0_ddq_i, nullptr, src1_ddf_i, dst_ddf_i, i02, i01_low, i01_high, i11, cudaStream_main);
+                op(src0, src1, dst, src0_ddq_i, nullptr, src1_ddf_i, dst_ddf_i, i02, i01_low, i01_high, i0, cudaStream_main);
                 CUDA_CHECK(cudaGetLastError());
 
                 // copy dst to host or other device if necessary
