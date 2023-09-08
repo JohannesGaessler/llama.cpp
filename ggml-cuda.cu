@@ -5918,17 +5918,14 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
     const int64_t ne0 = dst->ne[0];
     const int64_t ne1 = dst->ne[1];
 
-    const int nb2  = dst->nb[2];
-    const int nb3  = dst->nb[3];
+    const int nb2 = dst->nb[2];
+    const int nb3 = dst->nb[3];
 
     GGML_ASSERT(dst->backend != GGML_BACKEND_GPU_SPLIT);
     GGML_ASSERT(src1->backend != GGML_BACKEND_GPU_SPLIT);
 
     GGML_ASSERT(ne12 >= ne02 && ne12 % ne02 == 0);
 
-    const int64_t rows_per_iter = ne01;
-    const int64_t i03_max = ne03;
-    const int64_t i02_max = ne12;
     const int64_t i02_divisor = ne12 / ne02;
 
     const size_t src0_ts = ggml_type_size(src0->type);
@@ -5971,7 +5968,7 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
         }
 
         const bool src1_on_device = src1->backend == GGML_BACKEND_GPU && id == g_main_device;
-        const bool dst_on_device = dst->backend == GGML_BACKEND_GPU && id == g_main_device;
+        const bool  dst_on_device =  dst->backend == GGML_BACKEND_GPU && id == g_main_device;
 
         int64_t row_low, row_high;
         if (split) {
@@ -6023,28 +6020,28 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
             dst_ddf[id] = (float *) ggml_cuda_pool_malloc(size_dst_ddf, &dst_asf[id]);
         }
 
-        for (int64_t i03 = 0; i03 < i03_max; i03++) {
+        for (int64_t i03 = 0; i03 < ne13; i03++) {
             const int64_t i13 = i03 % ne13;
-            for (int64_t i02 = 0; i02 < i02_max; i02++) {
+            for (int64_t i02 = 0; i02 < ne12; i02++) {
                 const int64_t i12 = i02 % ne12;
 
-                const int64_t i0 = i03*i02_max + i02;
+                const int64_t i0 = i03*ne12 + i02;
 
                 // i0 values that contain the lower/upper rows for a split tensor when using multiple GPUs
-                const int64_t i0_offset_low = row_low/rows_per_iter;
-                const int64_t i0_offset_high = row_high/rows_per_iter;
+                const int64_t i0_offset_low = row_low/ne01;
+                const int64_t i0_offset_high = row_high/ne01;
 
                 int64_t i01_low = 0;
-                int64_t i01_high = rows_per_iter;
+                int64_t i01_high = ne01;
                 if (split) {
                     if (i0 < i0_offset_low || i0 > i0_offset_high) {
                         continue;
                     }
                     if (i0 == i0_offset_low) {
-                        i01_low = row_low % rows_per_iter;
+                        i01_low = row_low % ne01;
                     }
                     if (i0 == i0_offset_high) {
-                        i01_high = row_high % rows_per_iter;
+                        i01_high = row_high % ne01;
                     }
                 }
 
@@ -6053,7 +6050,7 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
                 // Removing both asserts results in i01_high becoming 0 which in turn results in garbage output.
                 // The root cause seems to be a problem with i0_offset_high becoming 0 when it should always be >0 (for single GPU).
                 GGML_ASSERT(i01_low == 0 || g_device_count > 1);
-                GGML_ASSERT(i01_high == rows_per_iter || g_device_count > 1);
+                GGML_ASSERT(i01_high == ne01 || g_device_count > 1);
 
                 const int64_t i01_diff = i01_high - i01_low;
                 if (i01_diff == 0) {
