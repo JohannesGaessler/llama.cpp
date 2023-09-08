@@ -6032,11 +6032,6 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
             GGML_ASSERT(i01_low == 0 || g_device_count > 1);
             GGML_ASSERT(i01_high == ne01 || g_device_count > 1);
 
-            const int64_t i01_diff = i01_high - i01_low;
-            if (i01_diff == 0) {
-                continue;
-            }
-
             // for split tensors the data begins at i0 == i0_offset_low
             char  * src0_ddq_i = src0_ddq[id] + (i0/i02_divisor)*ne01*ne00*src0_ts/src0_bs;
             float * src1_ddf_i = src1_ddf[id] +  i0             *ne11*ne10;
@@ -6094,8 +6089,8 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
                     // Instead they need to be copied to the correct slice in ne0 = dst row index.
                     // If dst is a vector with ne0 == 1 then you don't have to do this but it still produces correct results.
                     float * dhf_dst_i = (float *) ((char *) dst_off_device + i01_low*sizeof(float) + i02*nb2 + i03*nb3);
-                    CUDA_CHECK(cudaMemcpy2DAsync(dhf_dst_i, ne0*sizeof(float), dst_ddf_i, i01_diff*sizeof(float),
-                                                i01_diff*sizeof(float), ne1, kind, cudaStream_main));
+                    CUDA_CHECK(cudaMemcpy2DAsync(dhf_dst_i, ne0*sizeof(float), dst_ddf_i, row_diff*sizeof(float),
+                                                row_diff*sizeof(float), ne1, kind, cudaStream_main));
                 } else {
                     float * dhf_dst_i = (float *) ((char *) dst_off_device + i02*nb2 + i03*nb3);
                     CUDA_CHECK(cudaMemcpyAsync(dhf_dst_i, dst_ddf_i, ne1*ne0*sizeof(float), kind, cudaStream_main));
