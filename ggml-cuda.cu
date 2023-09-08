@@ -5924,7 +5924,6 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
     GGML_ASSERT(src1->backend != GGML_BACKEND_GPU_SPLIT);
 
     // strides for iteration over dims 3 and 2
-    const int64_t num_iters = ne12*ne03;
     GGML_ASSERT(ne12 >= ne02 && ne12 % ne02 == 0);
     const int64_t src0_stride = ne00 * ne01;
     const int64_t src1_stride = ne10 * ne11;
@@ -5948,9 +5947,9 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
     const bool src1_is_contiguous = ggml_is_contiguous(src1);
 
     const bool split = src0->backend == GGML_BACKEND_GPU_SPLIT;
+    GGML_ASSERT(!(split && ne02 > 1));
+    GGML_ASSERT(!(split && ne03 > 1));
     GGML_ASSERT(!(split && ne02 < ne12));
-
-    const to_fp32_cuda_t to_fp32_cuda = ggml_get_to_fp32_cuda(src0->type);
 
     // dd = data device
     char  * src0_ddq[GGML_CUDA_MAX_DEVICES] = {nullptr}; // quantized
@@ -6017,13 +6016,13 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
         if (src1_on_device && src1_is_contiguous) {
             src1_ddf[id] = (float *) src1_extra->data_device[id];
         } else {
-            src1_ddf[id] = (float *) ggml_cuda_pool_malloc(num_iters*src1_stride * sizeof(float), &src1_asf[id]);
+            src1_ddf[id] = (float *) ggml_cuda_pool_malloc(ggml_nbytes(src1), &src1_asf[id]);
         }
 
         if (dst_on_device) {
             dst_ddf[id] = (float *) dst_extra->data_device[id];
         } else {
-            size_t size_dst_ddf = split ? row_diff*ne1 * sizeof(float) : num_iters*dst_stride * sizeof(float);
+            const size_t size_dst_ddf = (split ? row_diff*ne1 : ggml_nelements(src0)) * sizeof(float);
             dst_ddf[id] = (float *) ggml_cuda_pool_malloc(size_dst_ddf, &dst_asf[id]);
         }
 
