@@ -5969,28 +5969,26 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
         const bool src1_on_device = src1->backend == GGML_BACKEND_GPU && id == g_main_device;
         const bool  dst_on_device =  dst->backend == GGML_BACKEND_GPU && id == g_main_device;
 
-        int64_t row_low, row_high;
+        int64_t row_low  = 0;
+        int64_t row_high = ne01;
         if (split) {
             const int64_t rounding = get_row_rounding(src0->type);
 
-            row_low = id == 0 ? 0 : nrows0*g_tensor_split[id];
-            row_low -= row_low % rounding;
+            if (id != 0) {
+                row_low  = ne01*g_tensor_split[id];
+                row_low -= row_low % rounding;
+            }
 
-            if (id == g_device_count - 1) {
-                row_high = nrows0;
-            } else {
-                row_high = nrows0*g_tensor_split[id + 1];
+            if (id != g_device_count - 1) {
+                row_high  = ne01*g_tensor_split[id + 1];
                 row_high -= row_high % rounding;
             }
-        } else {
-            row_low = 0;
-            row_high = ne01;
         }
         if (row_low == row_high) {
             continue;
         }
 
-        int64_t row_diff = row_high - row_low;
+        const int64_t row_diff = row_high - row_low;
 
         cudaSetDevice(id);
         cudaStream_t cudaStream_main = g_cudaStreams_main[id];
