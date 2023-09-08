@@ -5629,7 +5629,7 @@ inline void ggml_cuda_op_mul_mat_cublas(
     float * src0_ddf_i, float * src1_ddf_i, float * dst_ddf_i, int64_t i02, int64_t i01_low, int64_t i01_high, int i1,
     cudaStream_t & cudaStream_main){
 
-    GGML_ASSERT(src0_ddf_i != nullptr);
+    GGML_ASSERT(src0_ddq_i != nullptr);
     GGML_ASSERT(src1_ddf_i != nullptr);
     GGML_ASSERT(dst_ddf_i != nullptr);
 
@@ -5643,6 +5643,11 @@ inline void ggml_cuda_op_mul_mat_cublas(
 
     const int64_t ne0 = dst->ne[0];
     const int64_t i01_diff = i01_high - i01_low;
+
+    const to_fp32_cuda_t to_fp32_cuda = ggml_get_to_fp32_cuda(src0->type);
+    size_t src0_asf;
+    src0_ddf_i = (float *) ggml_cuda_pool_malloc(i01_diff*ne00 * sizeof(float), &src0_asf);
+    to_fp32_cuda(src0_ddq_i, src0_ddf_i, i01_diff*ne00, cudaStream_main);
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
@@ -5658,6 +5663,8 @@ inline void ggml_cuda_op_mul_mat_cublas(
                 &alpha, src0_ddf_i, ne00,
                         src1_ddf_i, ne10,
                 &beta,  dst_ddf_i,  ldc));
+
+    ggml_cuda_pool_free(src0_ddf_i, src0_asf);
 
     (void) dst;
     (void) src0_ddq_i;
@@ -5937,7 +5944,6 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
 
     const bool src0_on_device = src0->backend == GGML_BACKEND_GPU || src0->backend == GGML_BACKEND_GPU_SPLIT;
     const bool src0_is_contiguous = ggml_is_contiguous(src0);
-    const bool src0_is_f32 = src0->type == GGML_TYPE_F32;
 
     const bool src1_is_contiguous = ggml_is_contiguous(src1);
 
@@ -5948,13 +5954,11 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
 
     // dd = data device
     char  * src0_ddq[GGML_CUDA_MAX_DEVICES] = {nullptr}; // quantized
-    float * src0_ddf[GGML_CUDA_MAX_DEVICES] = {nullptr}; // float
     float * src1_ddf[GGML_CUDA_MAX_DEVICES] = {nullptr};
     float *  dst_ddf[GGML_CUDA_MAX_DEVICES] = {nullptr};
 
     // asq = actual size quantized, asf = actual size float
     size_t src0_asq[GGML_CUDA_MAX_DEVICES] = {0};
-    size_t src0_asf[GGML_CUDA_MAX_DEVICES] = {0};
     size_t src1_asf[GGML_CUDA_MAX_DEVICES] = {0};
     size_t  dst_asf[GGML_CUDA_MAX_DEVICES] = {0};
 
@@ -6005,21 +6009,9 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
         }
 
         if (src0_on_device && src0_is_contiguous) {
-            if (src0_is_f32) {
-                src0_ddf[id] = (float *) src0_extra->data_device[id];
-            } else {
-                src0_ddq[id] = (char *) src0_extra->data_device[id];
-            }
+            src0_ddq[id] = (char *) src0_extra->data_device[id];
         } else {
-            if (src0_is_f32) {
-                src0_ddf[id] = (float *) ggml_cuda_pool_malloc(row_diff*ne00 * sizeof(float), &src0_asf[id]);
-            } else {
-                src0_ddq[id] = (char *) ggml_cuda_pool_malloc(row_diff*ne00 * src0_ts/src0_bs, &src0_asq[id]);
-            }
-        }
-
-        if (src0_needs_f32 && !src0_is_f32) {
-            src0_ddf[id] = (float *) ggml_cuda_pool_malloc(row_diff*ne00 * sizeof(float), &src0_asf[id]);
+            src0_ddq[id] = (char *) ggml_cuda_pool_malloc(row_diff*ne00 * src0_ts/src0_bs, &src0_asq[id]);
         }
 
         if (src1_on_device && src1_is_contiguous) {
@@ -6075,7 +6067,6 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
 
                 // for split tensors the data begins at i0 == i0_offset_low
                 char  * src0_ddq_i = src0_ddq[id] + (i0/i02_divisor - i0_offset_low)*src0_stride*src0_ts/src0_bs;
-                float * src0_ddf_i = src0_ddf[id] + (i0/i02_divisor - i0_offset_low)*src0_stride;
                 float * src1_ddf_i = src1_ddf[id] + i11*src1_stride;
                 float * dst_ddf_i  =  dst_ddf[id] + (i0             - i0_offset_low)*dst_stride;
 
@@ -6083,7 +6074,6 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
                 // to the bin edge for i03, i02 bins beyond the first
                 if (i0 - i0_offset_low > 0) {
                     src0_ddq_i -= (row_low % ne01)*ne00 * src0_ts/src0_bs;
-                    src0_ddf_i -= (row_low % ne01)*ne00;
                     dst_ddf_i  -= (row_low % ne0)*ne1;
                 }
 
@@ -6112,21 +6102,11 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
                 }
 
                 if ((!src0_on_device || !src0_is_contiguous) && i02 % i02_divisor == 0) {
-                    if (src0_is_f32) {
-                        CUDA_CHECK(ggml_cuda_cpy_tensor_2d(src0_ddf_i, src0, i03, i02/i02_divisor, i01_low, i01_high, cudaStream_main));
-                    } else {
-                        CUDA_CHECK(ggml_cuda_cpy_tensor_2d(src0_ddq_i, src0, i03, i02/i02_divisor, i01_low, i01_high, cudaStream_main));
-                    }
-                }
-
-                // convert src0 to f32 if it is necessary for the ggml_cuda_op
-                if (src0_needs_f32 && !src0_is_f32) {
-                    to_fp32_cuda(src0_ddq_i, src0_ddf_i, i01_diff*ne00, cudaStream_main);
-                    CUDA_CHECK(cudaGetLastError());
+                    CUDA_CHECK(ggml_cuda_cpy_tensor_2d(src0_ddq_i, src0, i03, i02/i02_divisor, i01_low, i01_high, cudaStream_main));
                 }
 
                 // do the computation
-                op(src0, src1, dst, src0_ddq_i, src0_ddf_i, src1_ddf_i, dst_ddf_i, i02, i01_low, i01_high, i11, cudaStream_main);
+                op(src0, src1, dst, src0_ddq_i, nullptr, src1_ddf_i, dst_ddf_i, i02, i01_low, i01_high, i11, cudaStream_main);
                 CUDA_CHECK(cudaGetLastError());
 
                 // copy dst to host or other device if necessary
@@ -6167,7 +6147,7 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
 
     // wait until each device is finished, then free their buffers
     for (int id = 0; id < g_device_count; ++id) {
-        if (src0_asq[id] == 0 && src0_asf[id] == 0 && src1_asf[id] == 0 && dst_asf[id] == 0) {
+        if (src0_asq[id] == 0 && src1_asf[id] == 0 && dst_asf[id] == 0) {
             continue;
         }
 
@@ -6175,9 +6155,6 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
 
         if (src0_asq[id] > 0) {
             ggml_cuda_pool_free(src0_ddq[id], src0_asq[id]);
-        }
-        if (src0_asf[id] > 0) {
-            ggml_cuda_pool_free(src0_ddf[id], src0_asf[id]);
         }
         if (src1_asf[id] > 0) {
             ggml_cuda_pool_free(src1_ddf[id], src1_asf[id]);
