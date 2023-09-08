@@ -5877,12 +5877,12 @@ static void ggml_cuda_op_flatten(const ggml_tensor * src0, const ggml_tensor * s
     // const int nb2  = dst->nb[2];
     // const int nb3  = dst->nb[3];
 
-    GGML_ASSERT(src0->backend != GGML_BACKEND_GPU_SPLIT);
+    GGML_ASSERT(             src0->backend != GGML_BACKEND_GPU_SPLIT);
     GGML_ASSERT(!use_src1 || src1->backend != GGML_BACKEND_GPU_SPLIT);
-    GGML_ASSERT(dst->backend != GGML_BACKEND_GPU_SPLIT);
-    GGML_ASSERT(src0->type == GGML_TYPE_F32);
-    GGML_ASSERT(src1->type == GGML_TYPE_F32);
-    GGML_ASSERT( dst->type == GGML_TYPE_F32);
+    GGML_ASSERT(              dst->backend != GGML_BACKEND_GPU_SPLIT);
+    GGML_ASSERT(             src0->type == GGML_TYPE_F32);
+    GGML_ASSERT(!use_src1 || src1->type == GGML_TYPE_F32);
+    GGML_ASSERT(              dst->type == GGML_TYPE_F32);
 
     struct ggml_tensor_extra_gpu * src0_extra =            (ggml_tensor_extra_gpu *) src0->extra;
     struct ggml_tensor_extra_gpu * src1_extra = use_src1 ? (ggml_tensor_extra_gpu *) src1->extra : nullptr;
@@ -6276,39 +6276,27 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
 }
 
 void ggml_cuda_add(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
-    // ggml_cuda_add permits f16 dst even though this could in theory cause problems with the pointer arithmetic in ggml_cuda_op.
-    // Due to flatten_rows == true this does in practice not make a difference however.
-    // Better solution would be nice but right now that would require disproportionate changes.
-    GGML_ASSERT(
-        (src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16) &&
-        src1->type == GGML_TYPE_F32 &&
-        (dst->type == GGML_TYPE_F32 || dst->type == GGML_TYPE_F16));
-    ggml_cuda_op(src0, src1, dst, ggml_cuda_op_add, false, true);
+    ggml_cuda_op_flatten(src0, src1, dst, ggml_cuda_op_add);
 }
 
 void ggml_cuda_mul(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
-    GGML_ASSERT(src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32);
-    ggml_cuda_op(src0, src1, dst, ggml_cuda_op_mul, true, true); // TODO ggml_cuda_op needs modification for flatten
+    ggml_cuda_op_flatten(src0, src1, dst, ggml_cuda_op_mul);
 }
 
 void ggml_cuda_gelu(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
-    GGML_ASSERT(src0->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32);
-    ggml_cuda_op(src0, src1, dst, ggml_cuda_op_gelu, true, true);
+    ggml_cuda_op_flatten(src0, src1, dst, ggml_cuda_op_gelu);
 }
 
 void ggml_cuda_silu(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
-    GGML_ASSERT(src0->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32);
-    ggml_cuda_op(src0, src1, dst, ggml_cuda_op_silu, true, true);
+    ggml_cuda_op_flatten(src0, src1, dst, ggml_cuda_op_silu);
 }
 
 void ggml_cuda_norm(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
-    GGML_ASSERT(src0->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32);
-    ggml_cuda_op(src0, src1, dst, ggml_cuda_op_norm, true, true);
+    ggml_cuda_op_flatten(src0, src1, dst, ggml_cuda_op_norm);
 }
 
 void ggml_cuda_rms_norm(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
-    GGML_ASSERT(src0->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32);
-    ggml_cuda_op(src0, src1, dst, ggml_cuda_op_rms_norm, true, true);
+    ggml_cuda_op_flatten(src0, src1, dst, ggml_cuda_op_rms_norm);
 }
 
 bool ggml_cuda_can_mul_mat(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst) {
@@ -6425,7 +6413,6 @@ void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_
 }
 
 void ggml_cuda_scale(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
-    GGML_ASSERT(src0->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32);
     ggml_cuda_op_flatten(src0, src1, dst, ggml_cuda_op_scale);
 }
 
@@ -6483,28 +6470,20 @@ void ggml_cuda_dup(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tens
 }
 
 void ggml_cuda_diag_mask_inf(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
-    GGML_ASSERT(src0->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32);
-    ggml_cuda_op(src0, src1, dst, ggml_cuda_op_diag_mask_inf, true, true);
+    ggml_cuda_op_flatten(src0, src1, dst, ggml_cuda_op_diag_mask_inf);
 }
 
 void ggml_cuda_soft_max(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
-    GGML_ASSERT(src0->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32);
-    ggml_cuda_op(src0, src1, dst, ggml_cuda_op_soft_max, true, true);
+    ggml_cuda_op_flatten(src0, src1, dst, ggml_cuda_op_soft_max);
 }
 
 void ggml_cuda_rope(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
-    GGML_ASSERT(src0->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32);
     GGML_ASSERT(ggml_is_contiguous(src0)); // TODO: this restriction is temporary until non-cont support is implemented
-
-    const int mode = ((int32_t *) dst->op_params)[2];
-    const bool is_glm = mode & 4;
-
-    ggml_cuda_op(src0, src1, dst, ggml_cuda_op_rope, true, !is_glm); // flatten support not implemented for glm
+    ggml_cuda_op_flatten(src0, src1, dst, ggml_cuda_op_rope);
 }
 
 void ggml_cuda_alibi(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
-    GGML_ASSERT(src0->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32);
-    ggml_cuda_op(src0, src1, dst, ggml_cuda_op_alibi, true, true);
+    ggml_cuda_op_flatten(src0, src1, dst, ggml_cuda_op_alibi);
 }
 
 void ggml_cuda_nop(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
