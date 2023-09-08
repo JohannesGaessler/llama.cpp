@@ -5924,11 +5924,7 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
     GGML_ASSERT(dst->backend != GGML_BACKEND_GPU_SPLIT);
     GGML_ASSERT(src1->backend != GGML_BACKEND_GPU_SPLIT);
 
-    // strides for iteration over dims 3 and 2
     GGML_ASSERT(ne12 >= ne02 && ne12 % ne02 == 0);
-    const int64_t src0_stride = ne00 * ne01;
-    const int64_t src1_stride = ne10 * ne11;
-    const int64_t dst_stride = ne0 * ne1;
 
     const int64_t rows_per_iter = ne01;
     const int64_t i03_max = ne03;
@@ -6066,9 +6062,9 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
                 const int64_t i11 = i13*ne12 + i12;
 
                 // for split tensors the data begins at i0 == i0_offset_low
-                char  * src0_ddq_i = src0_ddq[id] + (i0/i02_divisor - i0_offset_low)*src0_stride*src0_ts/src0_bs;
-                float * src1_ddf_i = src1_ddf[id] + i11*src1_stride;
-                float * dst_ddf_i  =  dst_ddf[id] + (i0             - i0_offset_low)*dst_stride;
+                char  * src0_ddq_i = src0_ddq[id] + (i0/i02_divisor - i0_offset_low)*ne00*ne01*src0_ts/src0_bs;
+                float * src1_ddf_i = src1_ddf[id] + i11*ne11*ne10;
+                float * dst_ddf_i  =  dst_ddf[id] + (i0             - i0_offset_low)*ne1*ne0;
 
                 // for split tensors the data pointer needs to be rounded down
                 // to the bin edge for i03, i02 bins beyond the first
@@ -6090,8 +6086,8 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
                 } else if (src1->backend == GGML_BACKEND_GPU && src1_is_contiguous) {
                     if (id != g_main_device) {
                         float * src1_ddf_i_source = (float *) src1_extra->data_device[g_main_device];
-                        src1_ddf_i_source += i11*src1_stride;
-                        CUDA_CHECK(cudaMemcpyAsync(src1_ddf_i, src1_ddf_i_source, src1_stride*sizeof(float),
+                        src1_ddf_i_source += i11*ne11*ne10;
+                        CUDA_CHECK(cudaMemcpyAsync(src1_ddf_i, src1_ddf_i_source, ne11*ne10*sizeof(float),
                                                 cudaMemcpyDeviceToDevice, cudaStream_main));
                     }
                 } else if (src1_on_device && !src1_is_contiguous) {
@@ -6133,7 +6129,7 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
                                                      i01_diff*sizeof(float), ne1, kind, cudaStream_main));
                     } else {
                         float * dhf_dst_i = (float *) ((char *) dst_off_device + i02*nb2 + i03*nb3);
-                        CUDA_CHECK(cudaMemcpyAsync(dhf_dst_i, dst_ddf_i, dst_stride*sizeof(float), kind, cudaStream_main));
+                        CUDA_CHECK(cudaMemcpyAsync(dhf_dst_i, dst_ddf_i, ne1*ne0*sizeof(float), kind, cudaStream_main));
                     }
                 }
 
