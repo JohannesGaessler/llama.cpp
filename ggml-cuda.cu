@@ -6112,7 +6112,9 @@ static void ggml_cuda_op_mul_mat(
                 CUDA_CHECK(cudaEventRecord(src0_extra->events[id], cudaStream_main));
             }
         }
+    }
 
+    for (int id = 0; id < g_device_count; ++id) {
         // free buffers again when done
         if (src0_as[id] > 0) {
             ggml_cuda_pool_free(src0_dd[id], src0_as[id]);
