@@ -5880,7 +5880,7 @@ static void ggml_cuda_op_flatten(const ggml_tensor * src0, const ggml_tensor * s
 
 static void ggml_cuda_op_mul_mat(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, ggml_cuda_op_mul_mat_t op,
-    const bool convert_src1_to_q8_1) {
+    const bool convert_src1_to_q8_1, int64_t src1_col_stride) {
 
     const int64_t ne00 = src0->ne[0];
     const int64_t ne01 = src0->ne[1];
@@ -5906,6 +5906,10 @@ static void ggml_cuda_op_mul_mat(
     GGML_ASSERT(src1->backend != GGML_BACKEND_GPU_SPLIT);
 
     GGML_ASSERT(ne12 >= ne02 && ne12 % ne02 == 0);
+
+    if (src1_col_stride == -1) {
+       src1_col_stride = ne11;
+    }
 
     const int64_t i02_divisor = ne12 / ne02;
 
@@ -6015,7 +6019,7 @@ static void ggml_cuda_op_mul_mat(
         CUDA_CHECK(cudaEventRecord(src0_extra->events[g_main_device], g_cudaStreams_main[g_main_device]));
     }
 
-    for (int64_t src1_col_0 = 0; src1_col_0 < ne11; src1_col_0 += ne11) {
+    for (int64_t src1_col = 0; src1_col < ne11; src1_col += src1_col_stride) {
         for (int64_t i0 = 0; i0 < ne13*ne12; ++i0) {
             const int i03 = i0 / ne12;
             const int i02 = i0 % ne12;
@@ -6036,13 +6040,13 @@ static void ggml_cuda_op_mul_mat(
                     CUDA_CHECK(cudaStreamWaitEvent(cudaStream_main, src0_extra->events[g_main_device]));
                 }
 
-                const size_t src1_ddq_i_offset = i0 * ne11*src1_padded_row_size*q8_1_ts/q8_1_bs;
+                const size_t src1_ddq_i_offset = (i0*ne11 + src1_col) * src1_padded_row_size*q8_1_ts/q8_1_bs;
 
                 // for split tensors the data begins at i0 == i0_offset_low
                 char  *  src0_dd_i =  src0_dd[id] + (i0/i02_divisor) * ne01*ne00*src0_ts/src0_bs;
-                float * src1_ddf_i = src1_ddf[id] +  i0              * ne11*ne10;
+                float * src1_ddf_i = src1_ddf[id] + (i0*ne11 + src1_col) * ne10;
                 char  * src1_ddq_i = src1_ddq[id] +  src1_ddq_i_offset;
-                float *   dst_dd_i =   dst_dd[id] +  i0              * ne1*ne0;
+                float *   dst_dd_i =   dst_dd[id] + (i0*ne1  + src1_col) * ne0;
 
                 // the main device memory buffer can be on VRAM scratch, with space for all partial results
                 // in that case an offset on dst_ddf_i is needed
@@ -6055,27 +6059,27 @@ static void ggml_cuda_op_mul_mat(
                     if (id != g_main_device) {
                         if (convert_src1_to_q8_1) {
                             char * src1_ddq_i_source = src1_ddq[g_main_device] + src1_ddq_i_offset;
-                            CUDA_CHECK(cudaMemcpyAsync(src1_ddq_i, src1_ddq_i_source, ne11*src1_padded_row_size*q8_1_ts/q8_1_bs,
+                            CUDA_CHECK(cudaMemcpyAsync(src1_ddq_i, src1_ddq_i_source, src1_col_stride*src1_padded_row_size*q8_1_ts/q8_1_bs,
                                                     cudaMemcpyDeviceToDevice, cudaStream_main));
                         } else {
                             float * src1_ddf_i_source = (float *) src1_extra->data_device[g_main_device];
-                            src1_ddf_i_source += i0*ne11*ne10;
-                            CUDA_CHECK(cudaMemcpyAsync(src1_ddf_i, src1_ddf_i_source, ne11*ne10*sizeof(float),
+                            src1_ddf_i_source += (i0*ne11 + src1_col) * ne10;
+                            CUDA_CHECK(cudaMemcpyAsync(src1_ddf_i, src1_ddf_i_source, src1_col_stride*ne10*sizeof(float),
                                                     cudaMemcpyDeviceToDevice, cudaStream_main));
                         }
                     }
                 } else if (src1->backend == GGML_BACKEND_CPU || (src1_on_device && !src1_is_contiguous)) {
-                    CUDA_CHECK(ggml_cuda_cpy_tensor_2d(src1_ddf_i, src1, i03, i02, 0, ne11, cudaStream_main));
+                    CUDA_CHECK(ggml_cuda_cpy_tensor_2d(src1_ddf_i, src1, i03, i02, src1_col, src1_col_stride, cudaStream_main));
                 } else {
                     GGML_ASSERT(false);
                 }
 
                 if (convert_src1_to_q8_1 && src1->backend == GGML_BACKEND_CPU) {
-                    quantize_row_q8_1_cuda(src1_ddf_i, src1_ddq_i, ne10, ne11, src1_padded_row_size, cudaStream_main);
+                    quantize_row_q8_1_cuda(src1_ddf_i, src1_ddq_i, ne10, src1_col_stride, src1_padded_row_size, cudaStream_main);
                     CUDA_CHECK(cudaGetLastError());
                 }
 
-                if ((!src0_on_device || !src0_is_contiguous) && i02 % i02_divisor == 0) {
+                if (src1_col == 0 && (!src0_on_device || !src0_is_contiguous) && i02 % i02_divisor == 0) {
                     CUDA_CHECK(ggml_cuda_cpy_tensor_2d(src0_dd_i, src0, i03, i02/i02_divisor, row_low[id], row_high[id], cudaStream_main));
                 }
 
@@ -6106,10 +6110,10 @@ static void ggml_cuda_op_mul_mat(
                         float * dhf_dst_i = (float *) ((char *) dst_off_device + row_low[id]*sizeof(float) + i02*nb2 + i03*nb3);
                         const int64_t row_diff = row_high[id] - row_low[id];
                         CUDA_CHECK(cudaMemcpy2DAsync(dhf_dst_i, ne0*sizeof(float), dst_dd_i, row_diff*sizeof(float),
-                                                    row_diff*sizeof(float), ne1, kind, cudaStream_main));
+                                                    row_diff*sizeof(float), src1_col_stride, kind, cudaStream_main));
                     } else {
                         float * dhf_dst_i = (float *) ((char *) dst_off_device + i02*nb2 + i03*nb3);
-                        CUDA_CHECK(cudaMemcpyAsync(dhf_dst_i, dst_dd_i, ne1*ne0*sizeof(float), kind, cudaStream_main));
+                        CUDA_CHECK(cudaMemcpyAsync(dhf_dst_i, dst_dd_i, src1_col_stride*ne0*sizeof(float), kind, cudaStream_main));
                     }
                 }
 
@@ -6266,10 +6270,10 @@ void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_
     } else if (all_on_device && !ggml_is_contiguous(src0) && ggml_is_contiguous(src1) && src1->ne[1] == 1) {
         ggml_cuda_mul_mat_vec_nc(src0, src1, dst);
     }else if (src0->type == GGML_TYPE_F32) {
-        ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, false);
+        ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, false, -1);
     } else if (ggml_is_quantized(src0->type) || src0->type == GGML_TYPE_F16) {
         if (src1->ne[1] == 1 && src0->ne[0] % GGML_CUDA_DMMV_X == 0) {
-            ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_vec, false);
+            ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_vec, false, -1);
         } else {
             int min_compute_capability = INT_MAX;
             for (int id = 0; id < g_device_count; ++id) {
@@ -6280,9 +6284,9 @@ void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_
             }
 
             if (g_mul_mat_q && ggml_is_quantized(src0->type) && min_compute_capability >= MIN_CC_DP4A) {
-                ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_q, true);
+                ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_q, true, -1);
             } else {
-                ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, false);
+                ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, false, -1);
             }
         }
     } else {
