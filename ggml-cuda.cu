@@ -5426,6 +5426,7 @@ inline void ggml_cuda_op_mul_mat_q(
 
     (void) src1;
     (void) dst;
+    (void) src1_ddf_i;
 }
 
 static int64_t get_row_rounding(ggml_type type) {
@@ -5461,7 +5462,7 @@ static int64_t get_row_rounding(ggml_type type) {
 
 inline void ggml_cuda_op_mul_mat_vec(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, const char * src0_dd_i, const float * src1_ddf_i,
-    const char * src1_ddq_i, float * dst_dd_i, const int64_t row_low, const int64_t row_high, const int64_t sr1_padded_row_size,
+    const char * src1_ddq_i, float * dst_dd_i, const int64_t row_low, const int64_t row_high, const int64_t src1_padded_row_size,
     cudaStream_t & cudaStream_main) {
 
     const int64_t ne00 = src0->ne[0];
@@ -5604,6 +5605,8 @@ inline void ggml_cuda_op_mul_mat_vec(
 
     (void) src1;
     (void) dst;
+    (void) src1_ddq_i;
+    (void) src1_padded_row_size;
 }
 
 inline void ggml_cuda_op_mul_mat_cublas(
@@ -5650,6 +5653,8 @@ inline void ggml_cuda_op_mul_mat_cublas(
 
     (void) dst;
     (void) src0_dd_i;
+    (void) src1_ddq_i;
+    (void) src1_padded_row_size;
 }
 
 inline void ggml_cuda_op_rope(
