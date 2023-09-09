@@ -6061,21 +6061,13 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
                 }
             }
 
-            // signify to main device that other device is done
+            // add event for the main device to wait on until other device is done
             if (split && g_device_count > 1 && id != g_main_device) {
                 CUDA_CHECK(cudaEventRecord(src0_extra->events[id], cudaStream_main));
             }
         }
-    }
 
-    // wait until each device is finished, then free their buffers
-    for (int id = 0; id < g_device_count; ++id) {
-        if (src0_as[id] == 0 && src1_as[id] == 0 && dst_as[id] == 0) {
-            continue;
-        }
-
-        CUDA_CHECK(cudaSetDevice(id));
-
+        // free buffers again when done
         if (src0_as[id] > 0) {
             ggml_cuda_pool_free(src0_dd[id], src0_as[id]);
         }
