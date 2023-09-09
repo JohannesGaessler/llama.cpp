@@ -6001,9 +6001,9 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
             const int i02 = i0 % ne12;
 
             // for split tensors the data begins at i0 == i0_offset_low
-            char  * src0_dd_i = src0_dd[id] + (i0/i02_divisor)*ne01*ne00*src0_ts/src0_bs;
-            float * src1_dd_i = src1_dd[id] +  i0             *ne11*ne10;
-            float *  dst_dd_i =  dst_dd[id] +  i0             *ne1*ne0;
+            char  * src0_dd_i = src0_dd[id] + (i0/i02_divisor) * ne01*ne00*src0_ts/src0_bs;
+            float * src1_dd_i = src1_dd[id] +  i0              * ne11*ne10;
+            float *  dst_dd_i =  dst_dd[id] +  i0              * ne1*ne0;
 
             // the main device memory buffer can be on VRAM scratch, with space for all partial results
             // in that case an offset on dst_ddf_i is needed
@@ -6012,18 +6012,14 @@ static void ggml_cuda_op_mul_mat(const ggml_tensor * src0, const ggml_tensor * s
             }
 
             // copy src0, src1 to device if necessary
-            if (src1->backend == GGML_BACKEND_CPU) {
-                int64_t nrows1 = ne11;
-                CUDA_CHECK(ggml_cuda_cpy_tensor_2d(src1_dd_i, src1, i03, i02, 0, nrows1, cudaStream_main));
-            } else if (src1->backend == GGML_BACKEND_GPU && src1_is_contiguous) {
+            if (src1->backend == GGML_BACKEND_GPU && src1_is_contiguous) {
                 if (id != g_main_device) {
                     float * src1_ddf_i_source = (float *) src1_extra->data_device[g_main_device];
                     src1_ddf_i_source += i0*ne11*ne10;
                     CUDA_CHECK(cudaMemcpyAsync(src1_dd_i, src1_ddf_i_source, ne11*ne10*sizeof(float),
                                             cudaMemcpyDeviceToDevice, cudaStream_main));
                 }
-            } else if (src1_on_device && !src1_is_contiguous) {
-                GGML_ASSERT(!split);
+            } else if (src1->backend == GGML_BACKEND_CPU || (src1_on_device && !src1_is_contiguous)) {
                 CUDA_CHECK(ggml_cuda_cpy_tensor_2d(src1_dd_i, src1, i03, i02, 0, ne11, cudaStream_main));
             } else {
                 GGML_ASSERT(false);
