@@ -5997,13 +5997,13 @@ static void ggml_cuda_op_mul_mat(
             const size_t size_dst_ddf = split ? row_diff*ne1*sizeof(float) : ggml_nbytes(dst);
             dst_dd[id] = (float *) ggml_cuda_pool_malloc(size_dst_ddf, &dst_as[id]);
         }
+    }
 
-        // if multiple devices are used they need to wait for the main device
-        // here an event is recorded that signifies that the main device has finished calculating the input data
-        if (split && g_device_count > 1) {
-            CUDA_CHECK(cudaSetDevice(g_main_device));
-            CUDA_CHECK(cudaEventRecord(src0_extra->events[g_main_device], g_cudaStreams_main[g_main_device]));
-        }
+    // if multiple devices are used they need to wait for the main device
+    // here an event is recorded that signals that the main device has finished calculating the input data
+    if (split && g_device_count > 1) {
+        CUDA_CHECK(cudaSetDevice(g_main_device));
+        CUDA_CHECK(cudaEventRecord(src0_extra->events[g_main_device], g_cudaStreams_main[g_main_device]));
     }
 
     for (int id = 0; id < g_device_count; ++id) {
@@ -6081,7 +6081,7 @@ static void ggml_cuda_op_mul_mat(
                 GGML_ASSERT(false);
             }
 
-            if (convert_src1_to_q8_1 && !(split && src1_on_device && src1_is_contiguous)) {
+            if (convert_src1_to_q8_1 && !split) {
                 quantize_row_q8_1_cuda(src1_ddf_i, src1_ddq_i, ne10, ne11, src1_padded_row_size, cudaStream_main);
                 CUDA_CHECK(cudaGetLastError());
             }
