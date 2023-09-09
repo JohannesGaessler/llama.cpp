@@ -6014,10 +6014,12 @@ static void ggml_cuda_op_mul_mat(
             const int i03 = i0 / ne12;
             const int i02 = i0 % ne12;
 
+            const size_t src1_ddq_i_offset = i0 * ne11*src1_padded_row_size*q8_1_ts/q8_1_bs;
+
             // for split tensors the data begins at i0 == i0_offset_low
             char  *  src0_dd_i =  src0_dd[id] + (i0/i02_divisor) * ne01*ne00*src0_ts/src0_bs;
             float * src1_ddf_i = src1_ddf[id] +  i0              * ne11*ne10;
-            char  * src1_ddq_i = src1_ddq[id] +  i0              * ne11*src1_padded_row_size*q8_1_ts/q8_1_bs;
+            char  * src1_ddq_i = src1_ddq[id] +  src1_ddq_i_offset;
             float *   dst_dd_i =   dst_dd[id] +  i0              * ne1*ne0;
 
             // the main device memory buffer can be on VRAM scratch, with space for all partial results
@@ -6030,8 +6032,7 @@ static void ggml_cuda_op_mul_mat(
             if (src1->backend == GGML_BACKEND_GPU && src1_is_contiguous) {
                 if (id != g_main_device) {
                     if (convert_src1_to_q8_1) {
-                        char * src1_ddq_i_source = (char *) src1_extra->data_device[g_main_device];
-                        src1_ddq_i_source += i0*ne11*src1_padded_row_size*q8_1_ts/q8_1_bs;
+                        char * src1_ddq_i_source = src1_ddq[g_main_device] + src1_ddq_i_offset;
                         CUDA_CHECK(cudaMemcpyAsync(src1_ddq_i, src1_ddq_i_source, ne11*src1_padded_row_size*q8_1_ts/q8_1_bs,
                                                 cudaMemcpyDeviceToDevice, cudaStream_main));
                     } else {
