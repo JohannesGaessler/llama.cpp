@@ -5374,8 +5374,6 @@ inline void ggml_cuda_op_mul_mat_q(
     const int64_t ne00 = src0->ne[0];
 
     const int64_t ne10 = src1->ne[0];
-    const int64_t ne11 = src1->ne[1];
-    GGML_ASSERT(ne11 == src1_ncols);
     GGML_ASSERT(ne10 % QK8_1 == 0);
 
     const int64_t ne0 = dst->ne[0];
@@ -5625,7 +5623,6 @@ inline void ggml_cuda_op_mul_mat_cublas(
     const int64_t ne00 = src0->ne[0];
 
     const int64_t ne10 = src1->ne[0];
-    const int64_t ne11 = src1->ne[1];
 
     const int64_t ne0 = dst->ne[0];
     const int64_t row_diff = row_high - row_low;
@@ -5645,7 +5642,7 @@ inline void ggml_cuda_op_mul_mat_cublas(
     CUBLAS_CHECK(cublasSetStream(g_cublas_handles[id], cudaStream_main));
     CUBLAS_CHECK(
         cublasSgemm(g_cublas_handles[id], CUBLAS_OP_T, CUBLAS_OP_N,
-                row_diff, ne11, ne10,
+                row_diff, src1_ncols, ne10,
                 &alpha, src0_ddf_i, ne00,
                         src1_ddf_i,  ne10,
                 &beta,  dst_dd_i,   ldc));
@@ -6072,7 +6069,8 @@ static void ggml_cuda_op_mul_mat(
                         }
                     }
                 } else if (src1->backend == GGML_BACKEND_CPU || (src1_on_device && !src1_is_contiguous)) {
-                    CUDA_CHECK(ggml_cuda_cpy_tensor_2d(src1_ddf_i, src1, i03, i02, src1_col_0, src1_ncols, cudaStream_main));
+                    CUDA_CHECK(ggml_cuda_cpy_tensor_2d(
+                                   src1_ddf_i, src1, i03, i02, src1_col_0, src1_col_0+src1_ncols, cudaStream_main));
                 } else {
                     GGML_ASSERT(false);
                 }
@@ -6111,11 +6109,15 @@ static void ggml_cuda_op_mul_mat(
                         // Instead they need to be copied to the correct slice in ne0 = dst row index.
                         // If dst is a vector with ne0 == 1 then you don't have to do this but it still produces correct results.
                         float * dhf_dst_i = (float *) ((char *) dst_off_device + row_low[id]*sizeof(float) + i02*nb2 + i03*nb3);
+                        GGML_ASSERT(dst->nb[1] == ne0*sizeof(float));
+                        dhf_dst_i += src1_col_0*ne0;
                         const int64_t row_diff = row_high[id] - row_low[id];
                         CUDA_CHECK(cudaMemcpy2DAsync(dhf_dst_i, ne0*sizeof(float), dst_dd_i, row_diff*sizeof(float),
                                                     row_diff*sizeof(float), src1_ncols, kind, cudaStream_main));
                     } else {
                         float * dhf_dst_i = (float *) ((char *) dst_off_device + i02*nb2 + i03*nb3);
+                        GGML_ASSERT(dst->nb[1] == ne0*sizeof(float));
+                        dhf_dst_i += src1_col_0*ne0;
                         CUDA_CHECK(cudaMemcpyAsync(dhf_dst_i, dst_dd_i, src1_ncols*ne0*sizeof(float), kind, cudaStream_main));
                     }
                 }
@@ -6291,7 +6293,7 @@ void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1, ggml_
             if (g_mul_mat_q && ggml_is_quantized(src0->type) && min_compute_capability >= MIN_CC_DP4A) {
                 ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_q, true, -1);
             } else {
-                ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, false, -1);
+                ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, false, 128);
             }
         }
     } else {
