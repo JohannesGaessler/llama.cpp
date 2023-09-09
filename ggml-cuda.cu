@@ -6011,7 +6011,7 @@ static void ggml_cuda_op_mul_mat(
     }
 
     for (int id = 0; id < g_device_count; ++id) {
-        if (!split && id != g_main_device) {
+        if ((!split && id != g_main_device) || row_low[id] == row_high[id]) {
             continue;
         }
 
