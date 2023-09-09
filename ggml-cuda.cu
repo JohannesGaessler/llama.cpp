@@ -5937,13 +5937,6 @@ static void ggml_cuda_op_mul_mat(
     size_t src1_asq[GGML_CUDA_MAX_DEVICES] = {0};
     size_t   dst_as[GGML_CUDA_MAX_DEVICES] = {0};
 
-    // if multiple devices are used they need to wait for the main device
-    // here an event is recorded that signifies that the main device has finished calculating the input data
-    if (split && g_device_count > 1) {
-        CUDA_CHECK(cudaSetDevice(g_main_device));
-        CUDA_CHECK(cudaEventRecord(src0_extra->events[g_main_device], g_cudaStreams_main[g_main_device]));
-    }
-
     for (int id = 0; id < g_device_count; ++id) {
         if (!split && id != g_main_device) {
             continue;
@@ -5976,11 +5969,6 @@ static void ggml_cuda_op_mul_mat(
         cudaSetDevice(id);
         cudaStream_t cudaStream_main = g_cudaStreams_main[id];
 
-        // wait for main GPU data if necessary
-        if (split && id != g_main_device) {
-            CUDA_CHECK(cudaStreamWaitEvent(cudaStream_main, src0_extra->events[g_main_device]));
-        }
-
         if (src0_on_device && src0_is_contiguous) {
             src0_dd[id] = (char *) src0_extra->data_device[id];
         } else {
@@ -5995,7 +5983,7 @@ static void ggml_cuda_op_mul_mat(
         }
 
         if (convert_src1_to_q8_1) {
-            src1_ddq[id] = (char *) ggml_cuda_pool_malloc(src1_padded_row_size*nrows1*sizeof(block_q8_1)/QK8_1, &src1_asq[id]);
+            src1_ddq[id] = (char *) ggml_cuda_pool_malloc(nrows1*src1_padded_row_size*q8_1_ts/q8_1_bs, &src1_asq[id]);
 
             if (split && src1_on_device && src1_is_contiguous) {
                 quantize_row_q8_1_cuda(src1_ddf[id], src1_ddq[id], ne10, nrows1, src1_padded_row_size, cudaStream_main);
@@ -6008,6 +5996,24 @@ static void ggml_cuda_op_mul_mat(
         } else {
             const size_t size_dst_ddf = split ? row_diff*ne1*sizeof(float) : ggml_nbytes(dst);
             dst_dd[id] = (float *) ggml_cuda_pool_malloc(size_dst_ddf, &dst_as[id]);
+        }
+
+        // if multiple devices are used they need to wait for the main device
+        // here an event is recorded that signifies that the main device has finished calculating the input data
+        if (split && g_device_count > 1) {
+            CUDA_CHECK(cudaSetDevice(g_main_device));
+            CUDA_CHECK(cudaEventRecord(src0_extra->events[g_main_device], g_cudaStreams_main[g_main_device]));
+        }
+    }
+
+    for (int id = 0; id < g_device_count; ++id) {
+        if (!split && id != g_main_device) {
+            continue;
+        }
+
+        // wait for main GPU data if necessary
+        if (split && id != g_main_device) {
+            CUDA_CHECK(cudaStreamWaitEvent(cudaStream_main, src0_extra->events[g_main_device]));
         }
 
         for (int64_t i0 = 0; i0 < ne13*ne12; ++i0) {
