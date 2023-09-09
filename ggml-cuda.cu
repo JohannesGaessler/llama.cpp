@@ -6015,25 +6015,25 @@ static void ggml_cuda_op_mul_mat(
         CUDA_CHECK(cudaEventRecord(src0_extra->events[g_main_device], g_cudaStreams_main[g_main_device]));
     }
 
-    for (int id = 0; id < g_device_count; ++id) {
-        if ((!split && id != g_main_device) || row_low[id] == row_high[id]) {
-            continue;
-        }
+    for (int64_t i0 = 0; i0 < ne13*ne12; ++i0) {
+        const int i03 = i0 / ne12;
+        const int i02 = i0 % ne12;
 
-        const bool src1_on_device = src1->backend == GGML_BACKEND_GPU && id == g_main_device;
-        const bool  dst_on_device =  dst->backend == GGML_BACKEND_GPU && id == g_main_device;
+        for (int id = 0; id < g_device_count; ++id) {
+            if ((!split && id != g_main_device) || row_low[id] == row_high[id]) {
+                continue;
+            }
 
-        cudaSetDevice(id);
-        cudaStream_t cudaStream_main = g_cudaStreams_main[id];
+            const bool src1_on_device = src1->backend == GGML_BACKEND_GPU && id == g_main_device;
+            const bool  dst_on_device =  dst->backend == GGML_BACKEND_GPU && id == g_main_device;
 
-        // wait for main GPU data if necessary
-        if (split && id != g_main_device) {
-            CUDA_CHECK(cudaStreamWaitEvent(cudaStream_main, src0_extra->events[g_main_device]));
-        }
+            cudaSetDevice(id);
+            cudaStream_t cudaStream_main = g_cudaStreams_main[id];
 
-        for (int64_t i0 = 0; i0 < ne13*ne12; ++i0) {
-            const int i03 = i0 / ne12;
-            const int i02 = i0 % ne12;
+            // wait for main GPU data if necessary
+            if (split && id != g_main_device) {
+                CUDA_CHECK(cudaStreamWaitEvent(cudaStream_main, src0_extra->events[g_main_device]));
+            }
 
             const size_t src1_ddq_i_offset = i0 * ne11*src1_padded_row_size*q8_1_ts/q8_1_bs;
 
