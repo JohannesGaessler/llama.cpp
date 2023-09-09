@@ -6029,10 +6029,17 @@ static void ggml_cuda_op_mul_mat(
             // copy src0, src1 to device if necessary
             if (src1->backend == GGML_BACKEND_GPU && src1_is_contiguous) {
                 if (id != g_main_device) {
-                    float * src1_ddf_i_source = (float *) src1_extra->data_device[g_main_device];
-                    src1_ddf_i_source += i0*ne11*ne10;
-                    CUDA_CHECK(cudaMemcpyAsync(src1_ddf_i, src1_ddf_i_source, ne11*ne10*sizeof(float),
-                                            cudaMemcpyDeviceToDevice, cudaStream_main));
+                    if (convert_src1_to_q8_1) {
+                        char * src1_ddq_i_source = (char *) src1_extra->data_device[g_main_device];
+                        src1_ddq_i_source += i0*ne11*src1_padded_row_size*q8_1_ts/q8_1_bs;
+                        CUDA_CHECK(cudaMemcpyAsync(src1_ddq_i, src1_ddq_i_source, ne11*src1_padded_row_size*q8_1_ts/q8_1_bs,
+                                                cudaMemcpyDeviceToDevice, cudaStream_main));
+                    } else {
+                        float * src1_ddf_i_source = (float *) src1_extra->data_device[g_main_device];
+                        src1_ddf_i_source += i0*ne11*ne10;
+                        CUDA_CHECK(cudaMemcpyAsync(src1_ddf_i, src1_ddf_i_source, ne11*ne10*sizeof(float),
+                                                cudaMemcpyDeviceToDevice, cudaStream_main));
+                    }
                 }
             } else if (src1->backend == GGML_BACKEND_CPU || (src1_on_device && !src1_is_contiguous)) {
                 CUDA_CHECK(ggml_cuda_cpy_tensor_2d(src1_ddf_i, src1, i03, i02, 0, ne11, cudaStream_main));
