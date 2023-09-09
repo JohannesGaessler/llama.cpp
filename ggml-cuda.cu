@@ -5924,7 +5924,7 @@ static void ggml_cuda_op_mul_mat(
     const bool src0_is_contiguous = ggml_is_contiguous(src0);
 
     const bool src1_is_contiguous = ggml_is_contiguous(src1);
-    const int64_t src1_padded_row_size = ne10 % MATRIX_ROW_PADDING == 0 ?
+    const int64_t src1_padded_col_size = ne10 % MATRIX_ROW_PADDING == 0 ?
         ne10 : ne10 - ne10 % MATRIX_ROW_PADDING + MATRIX_ROW_PADDING;
 
     const bool split = src0->backend == GGML_BACKEND_GPU_SPLIT;
@@ -5994,10 +5994,10 @@ static void ggml_cuda_op_mul_mat(
         }
 
         if (convert_src1_to_q8_1) {
-            src1_ddq[id] = (char *) ggml_cuda_pool_malloc(nrows1*src1_padded_row_size*q8_1_ts/q8_1_bs, &src1_asq[id]);
+            src1_ddq[id] = (char *) ggml_cuda_pool_malloc(nrows1*src1_padded_col_size*q8_1_ts/q8_1_bs, &src1_asq[id]);
 
             if (split && src1_on_device && src1_is_contiguous) {
-                quantize_row_q8_1_cuda(src1_ddf[id], src1_ddq[id], ne10, nrows1, src1_padded_row_size, cudaStream_main);
+                quantize_row_q8_1_cuda(src1_ddf[id], src1_ddq[id], ne10, nrows1, src1_padded_col_size, cudaStream_main);
                 CUDA_CHECK(cudaGetLastError());
             }
         }
@@ -6040,7 +6040,7 @@ static void ggml_cuda_op_mul_mat(
                     CUDA_CHECK(cudaStreamWaitEvent(cudaStream_main, src0_extra->events[g_main_device]));
                 }
 
-                const size_t src1_ddq_i_offset = (i0*ne11 + src1_col_0) * src1_padded_row_size*q8_1_ts/q8_1_bs;
+                const size_t src1_ddq_i_offset = (i0*ne11 + src1_col_0) * src1_padded_col_size*q8_1_ts/q8_1_bs;
 
                 // for split tensors the data begins at i0 == i0_offset_low
                 char  *  src0_dd_i =  src0_dd[id] + (i0/i02_divisor) * ne01*ne00*src0_ts/src0_bs;
@@ -6059,7 +6059,7 @@ static void ggml_cuda_op_mul_mat(
                     if (id != g_main_device) {
                         if (convert_src1_to_q8_1) {
                             char * src1_ddq_i_source = src1_ddq[g_main_device] + src1_ddq_i_offset;
-                            CUDA_CHECK(cudaMemcpyAsync(src1_ddq_i, src1_ddq_i_source, src1_ncols*src1_padded_row_size*q8_1_ts/q8_1_bs,
+                            CUDA_CHECK(cudaMemcpyAsync(src1_ddq_i, src1_ddq_i_source, src1_ncols*src1_padded_col_size*q8_1_ts/q8_1_bs,
                                                     cudaMemcpyDeviceToDevice, cudaStream_main));
                         } else {
                             float * src1_ddf_i_source = (float *) src1_extra->data_device[g_main_device];
@@ -6076,7 +6076,7 @@ static void ggml_cuda_op_mul_mat(
                 }
 
                 if (convert_src1_to_q8_1 && src1->backend == GGML_BACKEND_CPU) {
-                    quantize_row_q8_1_cuda(src1_ddf_i, src1_ddq_i, ne10, src1_ncols, src1_padded_row_size, cudaStream_main);
+                    quantize_row_q8_1_cuda(src1_ddf_i, src1_ddq_i, ne10, src1_ncols, src1_padded_col_size, cudaStream_main);
                     CUDA_CHECK(cudaGetLastError());
                 }
 
@@ -6086,7 +6086,7 @@ static void ggml_cuda_op_mul_mat(
 
                 // do the computation
                 op(src0, src1, dst, src0_dd_i, src1_ddf_i, src1_ddq_i, dst_dd_i,
-                   row_low[id], row_high[id], src1_ncols, src1_padded_row_size, cudaStream_main);
+                   row_low[id], row_high[id], src1_ncols, src1_padded_col_size, cudaStream_main);
                 CUDA_CHECK(cudaGetLastError());
 
                 // copy dst to host or other device if necessary
