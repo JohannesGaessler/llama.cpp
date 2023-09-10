@@ -6022,7 +6022,7 @@ static void ggml_cuda_op_mul_mat(
 
     src1_col_stride = split ? src1_col_stride : ne11;
     for (int64_t src1_col_0 = 0; src1_col_0 < ne11; src1_col_0 += src1_col_stride) {
-        const int64_t is = split ? src1_col_0/src1_col_stride : 0;
+        const int64_t is = split ? (src1_col_0/src1_col_stride) % MAX_STREAMS : 0;
         const int64_t src1_ncols = src1_col_0 + src1_col_stride > ne11 ? ne11 - src1_col_0 : src1_col_stride;
 
         for (int64_t i0 = 0; i0 < ne13*ne12; ++i0) {
