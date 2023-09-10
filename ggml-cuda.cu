@@ -405,11 +405,10 @@ static_assert(K_QUANTS_PER_ITERATION == 1 || K_QUANTS_PER_ITERATION == 2, "K_QUA
 
 #define MAX_STREAMS 8
 static cudaStream_t g_cudaStreams_main[GGML_CUDA_MAX_DEVICES][MAX_STREAMS] = { nullptr };
-static cudaEvent_t g_cudaEvents_cpu[MAX_STREAMS];
 
 struct ggml_tensor_extra_gpu {
     void * data_device[GGML_CUDA_MAX_DEVICES]; // 1 pointer for each device for split tensors
-    cudaEvent_t events[GGML_CUDA_MAX_DEVICES]; // events for synchronizing multiple GPUs
+    cudaEvent_t events[GGML_CUDA_MAX_DEVICES][MAX_STREAMS]; // events for synchronizing multiple GPUs
 };
 
 static int g_device_count = -1;
@@ -6018,10 +6017,11 @@ static void ggml_cuda_op_mul_mat(
     // here an event is recorded that signals that the main device has finished calculating the input data
     if (split && g_device_count > 1) {
         CUDA_CHECK(cudaSetDevice(g_main_device));
-        CUDA_CHECK(cudaEventRecord(src0_extra->events[g_main_device], g_cudaStreams_main[g_main_device][0]));
+        CUDA_CHECK(cudaEventRecord(src0_extra->events[g_main_device][0], g_cudaStreams_main[g_main_device][0]));
     }
 
     for (int64_t src1_col_0 = 0; src1_col_0 < ne11; src1_col_0 += src1_col_stride) {
+        const int64_t is = dst->backend == GGML_BACKEND_CPU ? src1_col_0/src1_col_stride : 0;
         const int64_t src1_ncols = src1_col_0 + src1_col_stride > ne11 ? ne11 - src1_col_0 : src1_col_stride;
 
         for (int64_t i0 = 0; i0 < ne13*ne12; ++i0) {
@@ -6042,7 +6042,7 @@ static void ggml_cuda_op_mul_mat(
 
                 // wait for main GPU data if necessary
                 if (split && id != g_main_device) {
-                    CUDA_CHECK(cudaStreamWaitEvent(cudaStream_main, src0_extra->events[g_main_device]));
+                    CUDA_CHECK(cudaStreamWaitEvent(cudaStream_main, src0_extra->events[g_main_device][0]));
                 }
 
                 const size_t src1_ddq_i_offset = (i0*ne11 + src1_col_0) * src1_padded_col_size*q8_1_ts/q8_1_bs;
@@ -6128,7 +6128,7 @@ static void ggml_cuda_op_mul_mat(
 
                 // add event for the main device to wait on until other device is done
                 if (split && g_device_count > 1 && id != g_main_device) {
-                    CUDA_CHECK(cudaEventRecord(src0_extra->events[id], cudaStream_main));
+                    CUDA_CHECK(cudaEventRecord(src0_extra->events[id][0], cudaStream_main));
                 }
             }
         }
@@ -6156,8 +6156,8 @@ static void ggml_cuda_op_mul_mat(
     if (split && g_device_count > 1) {
         CUDA_CHECK(cudaSetDevice(g_main_device));
         for (int id = 0; id < g_device_count; ++id) {
-            if (id != g_main_device && src0_extra->events[id]) {
-                CUDA_CHECK(cudaStreamWaitEvent(g_cudaStreams_main[g_main_device][0], src0_extra->events[id]));
+            if (id != g_main_device && src0_extra->events[id][0]) {
+                CUDA_CHECK(cudaStreamWaitEvent(g_cudaStreams_main[g_main_device][0], src0_extra->events[id][0]));
             }
         }
     }
@@ -6453,7 +6453,9 @@ void ggml_cuda_transform_tensor(void * data, struct ggml_tensor * tensor) {
         extra->data_device[id] = buf;
 
         if (backend == GGML_BACKEND_GPU_SPLIT) {
-            CUDA_CHECK(cudaEventCreateWithFlags(&extra->events[id], cudaEventDisableTiming));
+            for (int64_t is = 0; is < MAX_STREAMS; ++is) {
+                CUDA_CHECK(cudaEventCreateWithFlags(&extra->events[id][is], cudaEventDisableTiming));
+            }
         }
     }
 
@@ -6467,15 +6469,17 @@ void ggml_cuda_free_data(struct ggml_tensor * tensor) {
 
     ggml_tensor_extra_gpu * extra = (ggml_tensor_extra_gpu *) tensor->extra;
 
-    for (int id = 0; id < g_device_count; ++id) {
+    for (int64_t id = 0; id < g_device_count; ++id) {
         if (extra->data_device[id] != nullptr) {
             CUDA_CHECK(cudaSetDevice(id));
             CUDA_CHECK(cudaFree(extra->data_device[id]));
         }
 
-        if (extra->events[id] != nullptr) {
-            CUDA_CHECK(cudaSetDevice(id));
-            CUDA_CHECK(cudaEventDestroy(extra->events[id]));
+        for (int64_t is = 0; is < MAX_STREAMS; ++is) {
+            if (extra->events[id][is] != nullptr) {
+                CUDA_CHECK(cudaSetDevice(id));
+                CUDA_CHECK(cudaEventDestroy(extra->events[id][is]));
+            }
         }
     }
 
