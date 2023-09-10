@@ -6047,7 +6047,7 @@ static void ggml_cuda_op_mul_mat(
                 char  *  src0_dd_i =  src0_dd[id] + (i0/i02_divisor) * ne01*ne00*src0_ts/src0_bs;
                 float * src1_ddf_i = src1_ddf[id] + (i0*ne11 + src1_col_0) * ne10;
                 char  * src1_ddq_i = src1_ddq[id] +  src1_ddq_i_offset;
-                float *   dst_dd_i =   dst_dd[id] + (i0*ne1  + src1_col_0) * (id == g_main_device ? ne0 : row_diff);
+                float *   dst_dd_i =   dst_dd[id] + (i0*ne1  + src1_col_0) * (dst_on_device ? ne0 : row_diff);
 
                 // the main device memory buffer can be on VRAM scratch, with space for all partial results
                 // in that case an offset on dst_ddf_i is needed
