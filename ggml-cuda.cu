@@ -6015,13 +6015,14 @@ static void ggml_cuda_op_mul_mat(
 
     // if multiple devices are used they need to wait for the main device
     // here an event is recorded that signals that the main device has finished calculating the input data
-    if (split && g_device_count > 1) {
+    if (split) {
         CUDA_CHECK(cudaSetDevice(g_main_device));
         CUDA_CHECK(cudaEventRecord(src0_extra->events[g_main_device][0], g_cudaStreams_main[g_main_device][0]));
     }
 
+    src1_col_stride = split ? src1_col_stride : ne11;
     for (int64_t src1_col_0 = 0; src1_col_0 < ne11; src1_col_0 += src1_col_stride) {
-        const int64_t is = dst->backend == GGML_BACKEND_CPU ? src1_col_0/src1_col_stride : 0;
+        const int64_t is = split ? src1_col_0/src1_col_stride : 0;
         const int64_t src1_ncols = src1_col_0 + src1_col_stride > ne11 ? ne11 - src1_col_0 : src1_col_stride;
 
         for (int64_t i0 = 0; i0 < ne13*ne12; ++i0) {
@@ -6038,10 +6039,10 @@ static void ggml_cuda_op_mul_mat(
                 const int64_t row_diff = row_high[id] - row_low[id];
 
                 cudaSetDevice(id);
-                cudaStream_t cudaStream_main = g_cudaStreams_main[id][0];
+                cudaStream_t cudaStream_main = g_cudaStreams_main[id][is];
 
                 // wait for main GPU data if necessary
-                if (split && id != g_main_device) {
+                if (split && (id != g_main_device || is != 0)) {
                     CUDA_CHECK(cudaStreamWaitEvent(cudaStream_main, src0_extra->events[g_main_device][0]));
                 }
 
@@ -6127,8 +6128,8 @@ static void ggml_cuda_op_mul_mat(
                 }
 
                 // add event for the main device to wait on until other device is done
-                if (split && g_device_count > 1 && id != g_main_device) {
-                    CUDA_CHECK(cudaEventRecord(src0_extra->events[id][0], cudaStream_main));
+                if (split && (id != g_main_device || is != 0)) {
+                    CUDA_CHECK(cudaEventRecord(src0_extra->events[id][is], cudaStream_main));
                 }
             }
         }
@@ -6153,11 +6154,11 @@ static void ggml_cuda_op_mul_mat(
     }
 
     // main device waits for all other devices to be finished
-    if (split && g_device_count > 1) {
+    if (split) {
         CUDA_CHECK(cudaSetDevice(g_main_device));
         for (int id = 0; id < g_device_count; ++id) {
-            if (id != g_main_device && src0_extra->events[id][0]) {
-                CUDA_CHECK(cudaStreamWaitEvent(g_cudaStreams_main[g_main_device][0], src0_extra->events[id][0]));
+            for (int64_t is = 0; is < MAX_STREAMS; ++is) {
+                CUDA_CHECK(cudaStreamWaitEvent(g_cudaStreams_main[g_main_device][0], src0_extra->events[id][is]));
             }
         }
     }
