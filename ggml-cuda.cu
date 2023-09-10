@@ -6031,6 +6031,7 @@ static void ggml_cuda_op_mul_mat(
 
                 const bool src1_on_device = src1->backend == GGML_BACKEND_GPU && id == g_main_device;
                 const bool  dst_on_device =  dst->backend == GGML_BACKEND_GPU && id == g_main_device;
+                const int64_t row_diff = row_high[id] - row_low[id];
 
                 cudaSetDevice(id);
                 cudaStream_t cudaStream_main = g_cudaStreams_main[id];
@@ -6046,7 +6047,7 @@ static void ggml_cuda_op_mul_mat(
                 char  *  src0_dd_i =  src0_dd[id] + (i0/i02_divisor) * ne01*ne00*src0_ts/src0_bs;
                 float * src1_ddf_i = src1_ddf[id] + (i0*ne11 + src1_col_0) * ne10;
                 char  * src1_ddq_i = src1_ddq[id] +  src1_ddq_i_offset;
-                float *   dst_dd_i =   dst_dd[id] + (i0*ne1  + src1_col_0) * ne0;
+                float *   dst_dd_i =   dst_dd[id] + (i0*ne1  + src1_col_0) * row_diff;
 
                 // the main device memory buffer can be on VRAM scratch, with space for all partial results
                 // in that case an offset on dst_ddf_i is needed
@@ -6111,7 +6112,6 @@ static void ggml_cuda_op_mul_mat(
                         float * dhf_dst_i = (float *) ((char *) dst_off_device + row_low[id]*sizeof(float) + i02*nb2 + i03*nb3);
                         GGML_ASSERT(dst->nb[1] == ne0*sizeof(float));
                         dhf_dst_i += src1_col_0*ne0;
-                        const int64_t row_diff = row_high[id] - row_low[id];
                         CUDA_CHECK(cudaMemcpy2DAsync(dhf_dst_i, ne0*sizeof(float), dst_dd_i, row_diff*sizeof(float),
                                                     row_diff*sizeof(float), src1_ncols, kind, cudaStream_main));
                     } else {
