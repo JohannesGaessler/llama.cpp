@@ -215,10 +215,10 @@ typedef void (*ggml_cuda_func_t)(const ggml_tensor * src0, const ggml_tensor * s
 typedef void (*ggml_cuda_op_mul_mat_t)(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, const char * src0_dd_i, const float * src1_ddf_i,
     const char * src1_ddq_i, float * dst_dd_i, const int64_t row_low, const int64_t row_high, const int64_t src1_ncols,
-    const int64_t src1_padded_row_size, cudaStream_t & cudaStream_main);
+    const int64_t src1_padded_row_size, const cudaStream_t & stream);
 typedef void (*ggml_cuda_op_flatten_t)(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst,
-    const float * src0_dd, const float * src1_dd, float * dst_dd, cudaStream_t & cudaStream_main);
+    const float * src0_dd, const float * src1_dd, float * dst_dd, const cudaStream_t & main_stream);
 
 // QK = number of values after dequantization
 // QR = QK / number of values before dequantization
@@ -5263,7 +5263,7 @@ static cudaError_t ggml_cuda_cpy_tensor_2d(
 
 inline void ggml_cuda_op_add(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst,
-    const float * src0_dd, const float * src1_dd, float * dst_dd, cudaStream_t & cudaStream_main) {
+    const float * src0_dd, const float * src1_dd, float * dst_dd, const cudaStream_t & main_stream) {
 
     GGML_ASSERT(src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16);
     GGML_ASSERT(src1->type == GGML_TYPE_F32);
@@ -5273,9 +5273,9 @@ inline void ggml_cuda_op_add(
     const int64_t ne11 = src1->ne[1];
 
     if (src0->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32) {
-        add_f32_cuda(src0_dd, src1_dd, dst_dd, ggml_nelements(src0), ne10*ne11, cudaStream_main);
+        add_f32_cuda(src0_dd, src1_dd, dst_dd, ggml_nelements(src0), ne10*ne11, main_stream);
     } else if (src0->type == GGML_TYPE_F16 && dst->type == GGML_TYPE_F16) {
-        add_f16_f32_f16_cuda((const half *) src0_dd, src1_dd, (half *) dst_dd, ggml_nelements(src0), cudaStream_main);
+        add_f16_f32_f16_cuda((const half *) src0_dd, src1_dd, (half *) dst_dd, ggml_nelements(src0), main_stream);
     } else {
         GGML_ASSERT(false);
     }
@@ -5286,7 +5286,7 @@ inline void ggml_cuda_op_add(
 
 inline void ggml_cuda_op_mul(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst,
-    const float * src0_dd, const float * src1_dd, float * dst_dd, cudaStream_t & cudaStream_main) {
+    const float * src0_dd, const float * src1_dd, float * dst_dd, const cudaStream_t & main_stream) {
 
     GGML_ASSERT(src0->type == GGML_TYPE_F32);
     GGML_ASSERT(src1->type == GGML_TYPE_F32);
@@ -5295,19 +5295,19 @@ inline void ggml_cuda_op_mul(
     const int64_t ne10 = src1->ne[0];
     const int64_t ne11 = src1->ne[1];
 
-    mul_f32_cuda(src0_dd, src1_dd, dst_dd, ggml_nelements(src0), ne10*ne11, cudaStream_main);
+    mul_f32_cuda(src0_dd, src1_dd, dst_dd, ggml_nelements(src0), ne10*ne11, main_stream);
 
     (void) dst;
 }
 
 inline void ggml_cuda_op_gelu(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst,
-    const float * src0_dd, const float * src1_dd, float * dst_dd, cudaStream_t & cudaStream_main) {
+    const float * src0_dd, const float * src1_dd, float * dst_dd, const cudaStream_t & main_stream) {
 
     GGML_ASSERT(src0->type == GGML_TYPE_F32);
     GGML_ASSERT( dst->type == GGML_TYPE_F32);
 
-    gelu_f32_cuda(src0_dd, dst_dd, ggml_nelements(src0), cudaStream_main);
+    gelu_f32_cuda(src0_dd, dst_dd, ggml_nelements(src0), main_stream);
 
     (void) src1;
     (void) dst;
@@ -5316,12 +5316,12 @@ inline void ggml_cuda_op_gelu(
 
 inline void ggml_cuda_op_silu(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst,
-    const float * src0_dd, const float * src1_dd, float * dst_dd, cudaStream_t & cudaStream_main) {
+    const float * src0_dd, const float * src1_dd, float * dst_dd, const cudaStream_t & main_stream) {
 
     GGML_ASSERT(src0->type == GGML_TYPE_F32);
     GGML_ASSERT( dst->type == GGML_TYPE_F32);
 
-    silu_f32_cuda(src0_dd, dst_dd, ggml_nelements(src0), cudaStream_main);
+    silu_f32_cuda(src0_dd, dst_dd, ggml_nelements(src0), main_stream);
 
     (void) src1;
     (void) dst;
@@ -5330,7 +5330,7 @@ inline void ggml_cuda_op_silu(
 
 inline void ggml_cuda_op_norm(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst,
-    const float * src0_dd, const float * src1_dd, float * dst_dd, cudaStream_t & cudaStream_main) {
+    const float * src0_dd, const float * src1_dd, float * dst_dd, const cudaStream_t & main_stream) {
 
     GGML_ASSERT(src0->type == GGML_TYPE_F32);
     GGML_ASSERT( dst->type == GGML_TYPE_F32);
@@ -5338,7 +5338,7 @@ inline void ggml_cuda_op_norm(
     const int64_t ne00 = src0->ne[0];
     const int64_t nrows = ggml_nrows(src0);
 
-    norm_f32_cuda(src0_dd, dst_dd, ne00, nrows, cudaStream_main);
+    norm_f32_cuda(src0_dd, dst_dd, ne00, nrows, main_stream);
 
     (void) src1;
     (void) dst;
@@ -5347,7 +5347,7 @@ inline void ggml_cuda_op_norm(
 
 inline void ggml_cuda_op_rms_norm(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst,
-    const float * src0_dd, const float * src1_dd, float * dst_dd, cudaStream_t & cudaStream_main) {
+    const float * src0_dd, const float * src1_dd, float * dst_dd, const cudaStream_t & main_stream) {
 
     GGML_ASSERT(src0->type == GGML_TYPE_F32);
     GGML_ASSERT( dst->type == GGML_TYPE_F32);
@@ -5358,7 +5358,7 @@ inline void ggml_cuda_op_rms_norm(
     float eps;
     memcpy(&eps, dst->op_params, sizeof(float));
 
-    rms_norm_f32_cuda(src0_dd, dst_dd, ne00, nrows, eps, cudaStream_main);
+    rms_norm_f32_cuda(src0_dd, dst_dd, ne00, nrows, eps, main_stream);
 
     (void) src1;
     (void) dst;
@@ -5368,7 +5368,7 @@ inline void ggml_cuda_op_rms_norm(
 inline void ggml_cuda_op_mul_mat_q(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, const char * src0_dd_i, const float * src1_ddf_i,
     const char * src1_ddq_i, float * dst_dd_i, const int64_t row_low, const int64_t row_high, const int64_t src1_ncols,
-    const int64_t src1_padded_row_size, cudaStream_t & cudaStream_main) {
+    const int64_t src1_padded_row_size, const cudaStream_t & stream) {
 
     const int64_t ne00 = src0->ne[0];
 
@@ -5388,34 +5388,34 @@ inline void ggml_cuda_op_mul_mat_q(
 
     switch (src0->type) {
         case GGML_TYPE_Q4_0:
-            ggml_mul_mat_q4_0_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, cudaStream_main);
+            ggml_mul_mat_q4_0_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, stream);
             break;
         case GGML_TYPE_Q4_1:
-            ggml_mul_mat_q4_1_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, cudaStream_main);
+            ggml_mul_mat_q4_1_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, stream);
             break;
         case GGML_TYPE_Q5_0:
-            ggml_mul_mat_q5_0_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, cudaStream_main);
+            ggml_mul_mat_q5_0_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, stream);
             break;
         case GGML_TYPE_Q5_1:
-            ggml_mul_mat_q5_1_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, cudaStream_main);
+            ggml_mul_mat_q5_1_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, stream);
             break;
         case GGML_TYPE_Q8_0:
-            ggml_mul_mat_q8_0_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, cudaStream_main);
+            ggml_mul_mat_q8_0_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, stream);
             break;
         case GGML_TYPE_Q2_K:
-            ggml_mul_mat_q2_K_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, cudaStream_main);
+            ggml_mul_mat_q2_K_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, stream);
             break;
         case GGML_TYPE_Q3_K:
-            ggml_mul_mat_q3_K_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, cudaStream_main);
+            ggml_mul_mat_q3_K_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, stream);
             break;
         case GGML_TYPE_Q4_K:
-            ggml_mul_mat_q4_K_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, cudaStream_main);
+            ggml_mul_mat_q4_K_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, stream);
             break;
         case GGML_TYPE_Q5_K:
-            ggml_mul_mat_q5_K_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, cudaStream_main);
+            ggml_mul_mat_q5_K_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, stream);
             break;
         case GGML_TYPE_Q6_K:
-            ggml_mul_mat_q6_K_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, cudaStream_main);
+            ggml_mul_mat_q6_K_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, stream);
             break;
         default:
             GGML_ASSERT(false);
@@ -5461,52 +5461,58 @@ static int64_t get_row_rounding(ggml_type type) {
 inline void ggml_cuda_op_mul_mat_vec_q(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, const char * src0_dd_i, const float * src1_ddf_i,
     const char * src1_ddq_i, float * dst_dd_i, const int64_t row_low, const int64_t row_high, const int64_t src1_ncols,
-    const int64_t src1_padded_row_size, cudaStream_t & cudaStream_main) {
+    const int64_t src1_padded_row_size, const cudaStream_t & stream) {
 
     const int64_t ne00 = src0->ne[0];
     const int64_t row_diff = row_high - row_low;
 
     switch (src0->type) {
         case GGML_TYPE_Q4_0:
-            mul_mat_vec_q4_0_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, cudaStream_main);
+            mul_mat_vec_q4_0_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, stream);
             break;
         case GGML_TYPE_Q4_1:
-            mul_mat_vec_q4_1_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, cudaStream_main);
+            mul_mat_vec_q4_1_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, stream);
             break;
         case GGML_TYPE_Q5_0:
-            mul_mat_vec_q5_0_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, cudaStream_main);
+            mul_mat_vec_q5_0_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, stream);
             break;
         case GGML_TYPE_Q5_1:
-            mul_mat_vec_q5_1_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, cudaStream_main);
+            mul_mat_vec_q5_1_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, stream);
             break;
         case GGML_TYPE_Q8_0:
-            mul_mat_vec_q8_0_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, cudaStream_main);
+            mul_mat_vec_q8_0_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, stream);
             break;
         case GGML_TYPE_Q2_K:
-            mul_mat_vec_q2_K_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, cudaStream_main);
+            mul_mat_vec_q2_K_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, stream);
             break;
         case GGML_TYPE_Q3_K:
-            mul_mat_vec_q3_K_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, cudaStream_main);
+            mul_mat_vec_q3_K_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, stream);
             break;
         case GGML_TYPE_Q4_K:
-            mul_mat_vec_q4_K_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, cudaStream_main);
+            mul_mat_vec_q4_K_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, stream);
             break;
         case GGML_TYPE_Q5_K:
-            mul_mat_vec_q5_K_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, cudaStream_main);
+            mul_mat_vec_q5_K_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, stream);
             break;
         case GGML_TYPE_Q6_K:
-            mul_mat_vec_q6_K_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, cudaStream_main);
+            mul_mat_vec_q6_K_q8_1_cuda(src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, stream);
             break;
         default:
             GGML_ASSERT(false);
             break;
     }
+
+    (void) src1;
+    (void) dst;
+    (void) src1_ddf_i;
+    (void) src1_ncols;
+    (void) src1_padded_row_size;
 }
 
 inline void ggml_cuda_op_dequantize_mul_mat_vec(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, const char * src0_dd_i, const float * src1_ddf_i,
     const char * src1_ddq_i, float * dst_dd_i, const int64_t row_low, const int64_t row_high, const int64_t src1_ncols,
-    const int64_t src1_padded_row_size, cudaStream_t & cudaStream_main) {
+    const int64_t src1_padded_row_size, const cudaStream_t & stream) {
 
     const int64_t ne00 = src0->ne[0];
     const int64_t row_diff = row_high - row_low;
@@ -5524,7 +5530,7 @@ inline void ggml_cuda_op_dequantize_mul_mat_vec(
         src1_dfloat = (half *) ggml_cuda_pool_malloc(ne00*sizeof(half), &ash);
         ggml_cpy_f32_f16_cuda((const char *) src1_ddf_i, (char *) src1_dfloat, ne00,
                                 ne00, 1, sizeof(float), 0, 0,
-                                ne00, 1, sizeof(half),  0, 0, cudaStream_main);
+                                ne00, 1, sizeof(half),  0, 0, stream);
     }
 #else
     const dfloat * src1_dfloat = (const dfloat *) src1_ddf_i; // dfloat == float, no conversion
@@ -5532,37 +5538,37 @@ inline void ggml_cuda_op_dequantize_mul_mat_vec(
 
     switch (src0->type) {
         case GGML_TYPE_Q4_0:
-            dequantize_mul_mat_vec_q4_0_cuda(src0_dd_i, src1_dfloat, dst_dd_i, ne00, row_diff, cudaStream_main);
+            dequantize_mul_mat_vec_q4_0_cuda(src0_dd_i, src1_dfloat, dst_dd_i, ne00, row_diff, stream);
             break;
         case GGML_TYPE_Q4_1:
-            dequantize_mul_mat_vec_q4_1_cuda(src0_dd_i, src1_dfloat, dst_dd_i, ne00, row_diff, cudaStream_main);
+            dequantize_mul_mat_vec_q4_1_cuda(src0_dd_i, src1_dfloat, dst_dd_i, ne00, row_diff, stream);
             break;
         case GGML_TYPE_Q5_0:
-            dequantize_mul_mat_vec_q5_0_cuda(src0_dd_i, src1_dfloat, dst_dd_i, ne00, row_diff, cudaStream_main);
+            dequantize_mul_mat_vec_q5_0_cuda(src0_dd_i, src1_dfloat, dst_dd_i, ne00, row_diff, stream);
             break;
         case GGML_TYPE_Q5_1:
-            dequantize_mul_mat_vec_q5_1_cuda(src0_dd_i, src1_dfloat, dst_dd_i, ne00, row_diff, cudaStream_main);
+            dequantize_mul_mat_vec_q5_1_cuda(src0_dd_i, src1_dfloat, dst_dd_i, ne00, row_diff, stream);
             break;
         case GGML_TYPE_Q8_0:
-            dequantize_mul_mat_vec_q8_0_cuda(src0_dd_i, src1_dfloat, dst_dd_i, ne00, row_diff, cudaStream_main);
+            dequantize_mul_mat_vec_q8_0_cuda(src0_dd_i, src1_dfloat, dst_dd_i, ne00, row_diff, stream);
             break;
         case GGML_TYPE_Q2_K:
-            dequantize_mul_mat_vec_q2_K_cuda(src0_dd_i, src1_ddf_i, dst_dd_i, ne00, row_diff, cudaStream_main);
+            dequantize_mul_mat_vec_q2_K_cuda(src0_dd_i, src1_ddf_i, dst_dd_i, ne00, row_diff, stream);
             break;
         case GGML_TYPE_Q3_K:
-            dequantize_mul_mat_vec_q3_K_cuda(src0_dd_i, src1_ddf_i, dst_dd_i, ne00, row_diff, cudaStream_main);
+            dequantize_mul_mat_vec_q3_K_cuda(src0_dd_i, src1_ddf_i, dst_dd_i, ne00, row_diff, stream);
             break;
         case GGML_TYPE_Q4_K:
-            dequantize_mul_mat_vec_q4_K_cuda(src0_dd_i, src1_ddf_i, dst_dd_i, ne00, row_diff, cudaStream_main);
+            dequantize_mul_mat_vec_q4_K_cuda(src0_dd_i, src1_ddf_i, dst_dd_i, ne00, row_diff, stream);
             break;
         case GGML_TYPE_Q5_K:
-            dequantize_mul_mat_vec_q5_K_cuda(src0_dd_i, src1_ddf_i, dst_dd_i, ne00, row_diff, cudaStream_main);
+            dequantize_mul_mat_vec_q5_K_cuda(src0_dd_i, src1_ddf_i, dst_dd_i, ne00, row_diff, stream);
             break;
         case GGML_TYPE_Q6_K:
-            dequantize_mul_mat_vec_q6_K_cuda(src0_dd_i, src1_ddf_i, dst_dd_i, ne00, row_diff, cudaStream_main);
+            dequantize_mul_mat_vec_q6_K_cuda(src0_dd_i, src1_ddf_i, dst_dd_i, ne00, row_diff, stream);
             break;
         case GGML_TYPE_F16:
-            convert_mul_mat_vec_f16_cuda(src0_dd_i, src1_dfloat, dst_dd_i, ne00, row_diff, cudaStream_main);
+            convert_mul_mat_vec_f16_cuda(src0_dd_i, src1_dfloat, dst_dd_i, ne00, row_diff, stream);
             break;
         default:
             GGML_ASSERT(false);
@@ -5578,13 +5584,14 @@ inline void ggml_cuda_op_dequantize_mul_mat_vec(
     (void) src1;
     (void) dst;
     (void) src1_ddq_i;
+    (void) src1_ncols;
     (void) src1_padded_row_size;
 }
 
 inline void ggml_cuda_op_mul_mat_cublas(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, const char * src0_dd_i, const float * src1_ddf_i,
     const char * src1_ddq_i, float * dst_dd_i, const int64_t row_low, const int64_t row_high, const int64_t src1_ncols,
-    const int64_t src1_padded_row_size, cudaStream_t & cudaStream_main) {
+    const int64_t src1_padded_row_size, const cudaStream_t & stream) {
 
     GGML_ASSERT(src0_dd_i != nullptr);
     GGML_ASSERT(src1_ddf_i != nullptr);
@@ -5603,7 +5610,7 @@ inline void ggml_cuda_op_mul_mat_cublas(
     const to_fp32_cuda_t to_fp32_cuda = ggml_get_to_fp32_cuda(src0->type);
     size_t src0_as;
     float * src0_ddf_i = (float *) ggml_cuda_pool_malloc(row_diff*ne00 * sizeof(float), &src0_as);
-    to_fp32_cuda(src0_dd_i, src0_ddf_i, row_diff*ne00, cudaStream_main);
+    to_fp32_cuda(src0_dd_i, src0_ddf_i, row_diff*ne00, stream);
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
@@ -5612,7 +5619,7 @@ inline void ggml_cuda_op_mul_mat_cublas(
     // ldc == nrows of the matrix that cuBLAS writes into
     int ldc = dst->backend == GGML_BACKEND_GPU && id == g_main_device ? ne0 : row_diff;
 
-    CUBLAS_CHECK(cublasSetStream(g_cublas_handles[id], cudaStream_main));
+    CUBLAS_CHECK(cublasSetStream(g_cublas_handles[id], stream));
     CUBLAS_CHECK(
         cublasSgemm(g_cublas_handles[id], CUBLAS_OP_T, CUBLAS_OP_N,
                 row_diff, src1_ncols, ne10,
@@ -5630,7 +5637,7 @@ inline void ggml_cuda_op_mul_mat_cublas(
 
 inline void ggml_cuda_op_rope(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst,
-    const float * src0_dd, const float * src1_dd, float * dst_dd, cudaStream_t & cudaStream_main) {
+    const float * src0_dd, const float * src1_dd, float * dst_dd, const cudaStream_t & main_stream) {
 
     GGML_ASSERT(src0->type == GGML_TYPE_F32);
     GGML_ASSERT( dst->type == GGML_TYPE_F32);
@@ -5657,12 +5664,12 @@ inline void ggml_cuda_op_rope(
 
     // compute
     if (is_glm) {
-        rope_glm_f32_cuda(src0_dd, dst_dd, ne00, nrows, p0, freq_scale, ne01, theta_scale, n_ctx, cudaStream_main);
+        rope_glm_f32_cuda(src0_dd, dst_dd, ne00, nrows, p0, freq_scale, ne01, theta_scale, n_ctx, main_stream);
     } else if (is_neox) {
         GGML_ASSERT(ne00 == n_dims && "ne00 != n_dims is not implemented for CUDA yet");
-        rope_neox_f32_cuda(src0_dd, dst_dd, ne00, nrows, p0, freq_scale, ne01, theta_scale, cudaStream_main);
+        rope_neox_f32_cuda(src0_dd, dst_dd, ne00, nrows, p0, freq_scale, ne01, theta_scale, main_stream);
     } else {
-        rope_f32_cuda(src0_dd, dst_dd, ne00, nrows, p0, freq_scale, ne01, theta_scale, cudaStream_main);
+        rope_f32_cuda(src0_dd, dst_dd, ne00, nrows, p0, freq_scale, ne01, theta_scale, main_stream);
     }
 
     (void) src1;
@@ -5672,7 +5679,7 @@ inline void ggml_cuda_op_rope(
 
 inline void ggml_cuda_op_alibi(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst,
-    const float * src0_dd, const float * src1_dd, float * dst_dd, cudaStream_t & cudaStream_main) {
+    const float * src0_dd, const float * src1_dd, float * dst_dd, const cudaStream_t & main_stream) {
 
     GGML_ASSERT(src0->type == GGML_TYPE_F32);
     GGML_ASSERT( dst->type == GGML_TYPE_F32);
@@ -5695,7 +5702,7 @@ inline void ggml_cuda_op_alibi(
     const float m0 = powf(2.0f, -(max_bias) / n_heads_log2_floor);
     const float m1 = powf(2.0f, -(max_bias / 2.0f) / n_heads_log2_floor);
 
-    alibi_f32_cuda(src0_dd, dst_dd, ne00, nrows, ne01, n_heads_log2_floor, m0, m1, cudaStream_main);
+    alibi_f32_cuda(src0_dd, dst_dd, ne00, nrows, ne01, n_heads_log2_floor, m0, m1, main_stream);
 
     (void) src1;
     (void) src1_dd;
@@ -5703,7 +5710,7 @@ inline void ggml_cuda_op_alibi(
 
 inline void ggml_cuda_op_diag_mask_inf(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst,
-    const float * src0_dd, const float * src1_dd, float * dst_dd, cudaStream_t & cudaStream_main) {
+    const float * src0_dd, const float * src1_dd, float * dst_dd, const cudaStream_t & main_stream) {
 
     GGML_ASSERT(src0->type == GGML_TYPE_F32);
     GGML_ASSERT( dst->type == GGML_TYPE_F32);
@@ -5714,7 +5721,7 @@ inline void ggml_cuda_op_diag_mask_inf(
 
     const int n_past = ((int32_t *) dst->op_params)[0];
 
-    diag_mask_inf_f32_cuda(src0_dd, dst_dd, ne00, nrows0, ne01, n_past, cudaStream_main);
+    diag_mask_inf_f32_cuda(src0_dd, dst_dd, ne00, nrows0, ne01, n_past, main_stream);
 
     (void) src1;
     (void) dst;
@@ -5723,7 +5730,7 @@ inline void ggml_cuda_op_diag_mask_inf(
 
 inline void ggml_cuda_op_soft_max(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst,
-    const float * src0_dd, const float * src1_dd, float * dst_dd, cudaStream_t & cudaStream_main) {
+    const float * src0_dd, const float * src1_dd, float * dst_dd, const cudaStream_t & main_stream) {
 
     GGML_ASSERT(src0->type == GGML_TYPE_F32);
     GGML_ASSERT( dst->type == GGML_TYPE_F32);
@@ -5731,7 +5738,7 @@ inline void ggml_cuda_op_soft_max(
     const int64_t ne00 = src0->ne[0];
     const int64_t nrows = ggml_nrows(src0);
 
-    soft_max_f32_cuda(src0_dd, dst_dd, ne00, nrows, cudaStream_main);
+    soft_max_f32_cuda(src0_dd, dst_dd, ne00, nrows, main_stream);
 
     (void) src1;
     (void) dst;
@@ -5740,7 +5747,7 @@ inline void ggml_cuda_op_soft_max(
 
 inline void ggml_cuda_op_scale(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst,
-    const float * src0_dd, const float * src1_dd, float * dst_dd, cudaStream_t & cudaStream_main) {
+    const float * src0_dd, const float * src1_dd, float * dst_dd, const cudaStream_t & main_stream) {
 
     GGML_ASSERT(src0->type == GGML_TYPE_F32);
     GGML_ASSERT(src1->type == GGML_TYPE_F32);
@@ -5748,7 +5755,7 @@ inline void ggml_cuda_op_scale(
 
     const float scale = ((float *) src1->data)[0];
 
-    scale_f32_cuda(src0_dd, dst_dd, scale, ggml_nelements(src0), cudaStream_main);
+    scale_f32_cuda(src0_dd, dst_dd, scale, ggml_nelements(src0), main_stream);
     CUDA_CHECK(cudaGetLastError());
 
     (void) src1;
