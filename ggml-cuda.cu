@@ -5985,26 +5985,26 @@ static void ggml_cuda_op_mul_mat(
         const int64_t is = split ? (src1_col_0/src1_col_stride) % MAX_STREAMS : 0;
         const int64_t src1_ncols = src1_col_0 + src1_col_stride > ne11 ? ne11 - src1_col_0 : src1_col_stride;
 
-        for (int64_t i0 = 0; i0 < ne13*ne12; ++i0) {
-            const int64_t i03 = i0 / ne12;
-            const int64_t i02 = i0 % ne12;
+        for (int64_t id = 0; id < g_device_count; ++id) {
+            if ((!split && id != g_main_device) || row_low[id] == row_high[id]) {
+                continue;
+            }
 
-            for (int64_t id = 0; id < g_device_count; ++id) {
-                if ((!split && id != g_main_device) || row_low[id] == row_high[id]) {
-                    continue;
-                }
+            const bool src1_on_device = src1->backend == GGML_BACKEND_GPU && id == g_main_device;
+            const bool  dst_on_device =  dst->backend == GGML_BACKEND_GPU && id == g_main_device;
+            const int64_t row_diff = row_high[id] - row_low[id];
 
-                const bool src1_on_device = src1->backend == GGML_BACKEND_GPU && id == g_main_device;
-                const bool  dst_on_device =  dst->backend == GGML_BACKEND_GPU && id == g_main_device;
-                const int64_t row_diff = row_high[id] - row_low[id];
+            cudaSetDevice(id);
+            const cudaStream_t stream = g_cudaStreams[id][is];
 
-                cudaSetDevice(id);
-                const cudaStream_t stream = g_cudaStreams[id][is];
+            // wait for main GPU data if necessary
+            if (split && (id != g_main_device || is != 0)) {
+                CUDA_CHECK(cudaStreamWaitEvent(stream, src0_extra->events[g_main_device][0]));
+            }
 
-                // wait for main GPU data if necessary
-                if (split && (id != g_main_device || is != 0)) {
-                    CUDA_CHECK(cudaStreamWaitEvent(stream, src0_extra->events[g_main_device][0]));
-                }
+            for (int64_t i0 = 0; i0 < ne13*ne12; ++i0) {
+                const int64_t i03 = i0 / ne12;
+                const int64_t i02 = i0 % ne12;
 
                 const size_t src1_ddq_i_offset = (i0*ne11 + src1_col_0) * src1_padded_col_size*q8_1_ts/q8_1_bs;
 
