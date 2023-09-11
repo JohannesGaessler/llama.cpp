@@ -5975,7 +5975,7 @@ static void ggml_cuda_op_mul_mat(
 
     // if multiple devices are used they need to wait for the main device
     // here an event is recorded that signals that the main device has finished calculating the input data
-    if (split) {
+    if (split && g_device_count > 1) {
         CUDA_CHECK(cudaSetDevice(g_main_device));
         CUDA_CHECK(cudaEventRecord(src0_extra->events[g_main_device][0], g_cudaStreams[g_main_device][0]));
     }
@@ -6114,10 +6114,13 @@ static void ggml_cuda_op_mul_mat(
     }
 
     // main device waits for all other devices to be finished
-    if (split) {
+    if (split && g_device_count > 1) {
+        int64_t is_max = (ne11 + MUL_MAT_SRC1_COL_STRIDE - 1) / MUL_MAT_SRC1_COL_STRIDE;
+        is_max = is_max <= MAX_STREAMS ? is_max : MAX_STREAMS;
+
         CUDA_CHECK(cudaSetDevice(g_main_device));
         for (int64_t id = 0; id < g_device_count; ++id) {
-            for (int64_t is = 0; is < MAX_STREAMS; ++is) {
+            for (int64_t is = 0; is < is_max; ++is) {
                 CUDA_CHECK(cudaStreamWaitEvent(g_cudaStreams[g_main_device][0], src0_extra->events[id][is]));
             }
         }
