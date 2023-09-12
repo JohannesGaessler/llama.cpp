@@ -1129,6 +1129,9 @@ struct llama_context {
     // key + value cache for the self attention
     struct llama_kv_cache kv_self;
 
+    std::vector<llama_token> token_history;
+    int64_t previous_v_blck;
+
     // decode output (2-dimensional array: [n_tokens][n_vocab])
     std::vector<float> logits;
     bool logits_all = false;
@@ -2955,9 +2958,29 @@ static bool llama_eval_internal(
     const int64_t n_embd  = hparams.n_embd;
     const int64_t n_vocab = hparams.n_vocab;
 
+    std::vector<llama_token> tokens_v_redo;
+    const int64_t     v_blck_size = ggml_blck_size(kv_self.v->type);
+    const int64_t  current_v_blck = n_past / v_blck_size;
+
+    // if the v component of the KV cache is q8_0 the unquantized temporary values may have already been overwritten
+    // in that case we need to roll back to the beginning of a q8_0 block
+    const int64_t n_v_redo = lctx.previous_v_blck > current_v_blck ? n_past % v_blck_size : 0;
+    if (n_v_redo > 0) {
+        tokens_v_redo.insert(tokens_v_redo.end(),
+            lctx.token_history.begin() + n_past - n_v_redo,
+            lctx.token_history.begin() + n_past);
+        for (int64_t i = 0; i < n_tokens; ++i) {
+            tokens_v_redo.push_back(tokens[i]);
+        }
+
+        n_tokens = tokens_v_redo.size();
+        n_past  -= n_v_redo;
+    }
+    const llama_token * tokens_eff = n_v_redo > 0 ? tokens_v_redo.data() : tokens;
+
     ggml_allocr_reset(lctx.alloc);
 
-    ggml_cgraph * gf = llama_build_graph(lctx, tokens, embd, n_tokens, n_past);
+    ggml_cgraph * gf = llama_build_graph(lctx, tokens_eff, embd, n_tokens, n_past);
 
     ggml_allocr_alloc_graph(lctx.alloc, gf);
 
@@ -2984,7 +3007,7 @@ static bool llama_eval_internal(
     // TODO: this is mostly important for Apple Silicon where CBLAS is still performing very well
     //       we still need some threads to process all non-mul_mat ops, but not too much to avoid interfering
     //       with the BLAS calls. need a better solution
-    if (N >= 32 && ggml_cpu_has_blas() && !ggml_cpu_has_gpublas()) {
+    if (n_tokens >= 32 && ggml_cpu_has_blas() && !ggml_cpu_has_gpublas()) {
         n_threads = std::min(4, n_threads);
     }
 
@@ -3042,11 +3065,11 @@ static bool llama_eval_internal(
 
         if (lctx.logits_all) {
             logits_out.resize(n_vocab * N);
-            memcpy(logits_out.data(), (float *) ggml_get_data(res), sizeof(float)*n_vocab*N);
+            memcpy(logits_out.data(), (float *) ggml_get_data(res) + n_vocab*n_v_redo, sizeof(float)*n_vocab*N);
         } else {
             // return result for just the last token
             logits_out.resize(n_vocab);
-            memcpy(logits_out.data(), (float *) ggml_get_data(res) + (n_vocab*(N-1)), sizeof(float)*n_vocab);
+            memcpy(logits_out.data(), (float *) ggml_get_data(res) + n_vocab*(n_v_redo+N-1), sizeof(float)*n_vocab);
         }
     }
 
@@ -3057,6 +3080,12 @@ static bool llama_eval_internal(
         embedding_out.resize(n_embd);
         memcpy(embedding_out.data(), (float *) ggml_get_data(embeddings) + (n_embd*(N - 1)), sizeof(float)*n_embd);
     }
+
+    // update token history and how far the v component of the KV cache was filled (for q8_0 rollback)
+    for (int64_t i = 0; i < n_tokens; ++i) {
+        lctx.token_history[n_past + i] = tokens_eff[i];
+    }
+    lctx.previous_v_blck = (n_past + n_tokens) / v_blck_size;
 
     // measure the performance only for the single-token evals
     if (N == 1) {
@@ -5550,6 +5579,9 @@ struct llama_context * llama_new_context_with_model(
         }
 
         const auto & hparams = ctx->model.hparams;
+
+        ctx->token_history.resize(hparams.n_ctx);
+        ctx->previous_v_blck = 0;
 
         // resized during inference
         if (params.logits_all) {
