@@ -5609,7 +5609,7 @@ inline void ggml_cuda_op_mul_mat_q(
     // nrows_dst == nrows of the matrix that the dequantize_mul_mat kernel writes into
     const int64_t nrows_dst = dst->backend == GGML_BACKEND_GPU && id == g_main_device ? ne0 : i01_diff;
 
-    const int nchannels = buffers_contiguous ? 1 : ne02;
+    const int64_t nchannels = buffers_contiguous ? 1 : ne02;
 
     const int64_t padded_row_size = ne10 % MATRIX_ROW_PADDING == 0 ?
         ne10 : ne10 - ne10 % MATRIX_ROW_PADDING + MATRIX_ROW_PADDING;
@@ -5620,9 +5620,11 @@ inline void ggml_cuda_op_mul_mat_q(
     quantize_row_q8_1_cuda(src1_ddf_i, src1_q8_1, ne10, ne11, padded_row_size, nchannels,
                            src1_row_stride, src1_channel_stride, cudaStream_main);
 
-    const int row_stride       = buffers_contiguous ? ne10      / ggml_blck_size(src0->type) : nb01 / ggml_type_size(src0->type);
-    const int channel_stride_x = buffers_contiguous ? ne10*ne11 / ggml_blck_size(src0->type) : nb02 / ggml_type_size(src0->type);
-    const int channel_stride_y = padded_row_size*ne11 / QK8_1;
+    const int64_t src0_blck_size = ggml_blck_size(src0->type);
+    const int64_t ne10_whole_blck = ne10 % src0_blck_size == 0 ? ne10 : ne10 - ne10 % src0_blck_size + src0_blck_size;
+    const int64_t row_stride       = buffers_contiguous ? ne10_whole_blck      / ggml_blck_size(src0->type) : nb01 / ggml_type_size(src0->type);
+    const int64_t channel_stride_x = buffers_contiguous ? ne10_whole_blck*ne11 / ggml_blck_size(src0->type) : nb02 / ggml_type_size(src0->type);
+    const int64_t channel_stride_y = padded_row_size*ne11 / QK8_1;
 
     switch (src0->type) {
         case GGML_TYPE_Q4_0:
@@ -6221,6 +6223,7 @@ static void ggml_cuda_op(const ggml_tensor * src0, const ggml_tensor * src1, ggm
             if (src0_is_f32) {
                 src0_ddf[id] = (float *) ggml_cuda_pool_malloc(row_diff*ne00 * sizeof(float), &src0_asf[id]);
             } else {
+                GGML_ASSERT(ne00 % ggml_blck_size(src0->type) == 0);
                 const int64_t nelements = row_diff*ne00;
                 const int64_t nelements_padded = ne00 % MATRIX_ROW_PADDING == 0 ?
                     nelements : nelements - ne00 % MATRIX_ROW_PADDING + MATRIX_ROW_PADDING;
