@@ -6312,8 +6312,15 @@ static struct ggml_tensor * ggml_cpy_impl(
         struct ggml_context * ctx,
         struct ggml_tensor  * a,
         struct ggml_tensor  * b,
-        bool inplace) {
-    GGML_ASSERT(ggml_nelements(a) == ggml_nelements(b));
+        const bool inplace,
+        const bool pad) {
+    if (pad) {
+        const int64_t blck_size = ggml_blck_size(b->type);
+        const int64_t ne00_padded = ((a->ne[0] + blck_size - 1) / blck_size) * blck_size;
+        GGML_ASSERT(ne00_padded*ggml_nrows(a) == ggml_nelements(b));
+    } else {
+        GGML_ASSERT(ggml_nelements(a) == ggml_nelements(b));
+    }
 
     bool is_node = false;
 
@@ -6329,6 +6336,8 @@ static struct ggml_tensor * ggml_cpy_impl(
         ggml_format_name(result, "%s (copy)", a->name);
     }
 
+    ggml_set_op_params_i32(result, 0, pad ? 1 : 0);
+
     result->op   = GGML_OP_CPY;
     result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
     result->src[0] = a;
@@ -6341,14 +6350,21 @@ struct ggml_tensor * ggml_cpy(
         struct ggml_context * ctx,
         struct ggml_tensor * a,
         struct ggml_tensor * b) {
-    return ggml_cpy_impl(ctx, a, b, false);
+    return ggml_cpy_impl(ctx, a, b, false, false);
 }
 
 struct ggml_tensor * ggml_cpy_inplace(
         struct ggml_context * ctx,
         struct ggml_tensor * a,
         struct ggml_tensor * b) {
-    return ggml_cpy_impl(ctx, a, b, true);
+    return ggml_cpy_impl(ctx, a, b, true, false);
+}
+
+struct ggml_tensor * ggml_cpy_pad(
+        struct ggml_context * ctx,
+        struct ggml_tensor * a,
+        struct ggml_tensor * b) {
+    return ggml_cpy_impl(ctx, a, b, false, true);
 }
 
 // ggml_cont
@@ -8233,6 +8249,8 @@ static void ggml_compute_forward_dup_f16(
 
     GGML_TENSOR_UNARY_OP_LOCALS;
 
+    GGML_ASSERT(dst->op_params[0] == 0);
+
     const int ith = params->ith; // thread index
     const int nth = params->nth; // number of threads
 
@@ -8496,13 +8514,20 @@ static void ggml_compute_forward_dup_f32(
         const struct ggml_compute_params * params,
         const struct ggml_tensor * src0,
         struct ggml_tensor * dst) {
-    GGML_ASSERT(ggml_nelements(dst) == ggml_nelements(src0));
-
     if (params->type == GGML_TASK_INIT || params->type == GGML_TASK_FINALIZE) {
         return;
     }
 
     GGML_TENSOR_UNARY_OP_LOCALS;
+
+    const bool pad = dst->op_params[0] & 1;
+    const int blck_size = ggml_blck_size(dst->type);
+    const int ne00_padded = ((ne00 + blck_size - 1) / blck_size) * blck_size;
+    if (pad) {
+        GGML_ASSERT(ggml_nelements(dst) == ne00_padded*ggml_nrows(src0));
+    } else {
+        GGML_ASSERT(ggml_nelements(dst) == ggml_nelements(src0));
+    }
 
     const int ith = params->ith; // thread index
     const int nth = params->nth; // number of threads
@@ -8561,15 +8586,20 @@ static void ggml_compute_forward_dup_f32(
                 ggml_from_float_t const quantize_row_q = type_traits[dst->type].from_float;
 
                 size_t id = 0;
-                size_t rs = nb0 * (ne00 / ggml_blck_size(dst->type));
+                const size_t rs = nb0 * ne00_padded / blck_size;
                 char * dst_ptr = (char *) dst->data;
+                float src0_padded[ne00_padded];
 
                 for (int i03 = 0; i03 < ne03; i03++) {
                     for (int i02 = 0; i02 < ne02; i02++) {
                         id += rs * ir0;
                         for (int i01 = ir0; i01 < ir1; i01++) {
                             const float * src0_ptr = (float *) ((char *) src0->data + i01*nb01 + i02*nb02 + i03*nb03);
-                            quantize_row_q(src0_ptr, dst_ptr + id, ne00);
+                            if (ne00 != ne00_padded) {
+                                memcpy(src0_padded, src0_ptr, ne00*sizeof(float));
+                                memset(src0_padded + ne00, 0, (ne00_padded - ne00) * sizeof(float));
+                            }
+                            quantize_row_q(ne00 == ne00_padded ? src0_ptr : src0_padded, dst_ptr + id, ne00_padded);
                             id += rs;
                         }
                         id += rs * (ne01 - ir1);
@@ -8737,6 +8767,7 @@ static void ggml_compute_forward_dup_f32(
             }
         }
     } else if (type_traits[dst->type].from_float) {
+        GGML_ASSERT(!pad);
         GGML_ASSERT(ne00 == ne0);
         GGML_ASSERT(ne01 == ne1);
         GGML_ASSERT(ne02 == ne2);

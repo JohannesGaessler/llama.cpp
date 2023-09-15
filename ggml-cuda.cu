@@ -4044,7 +4044,7 @@ static __global__ void cpy_f32_f16(const char * cx, char * cdst, const int ne,
     cpy_1(cx + x_offset, cdst + dst_offset);
 }
 
-template <bool first_incomplete, bool last_incomplete>
+template <bool first_incomplete, bool last_incomplete, bool save_unquantized>
 static __global__ void cpy_f32_q8_0(
     const char * cx, char * cdst, const int i_blck_0, const int ne00, const int ne01, const int ne02,
     const int nb00, const int nb01, const int nb02, const int nb11, const int nb12) {
@@ -4075,7 +4075,7 @@ static __global__ void cpy_f32_q8_0(
         val = *((float *) src);
     }
 
-    if (last_incomplete && i0 / QK8_0 == (i_blck_0 + ne00) / QK8_0) {
+    if (save_unquantized && last_incomplete && i0 / QK8_0 == (i_blck_0 + ne00) / QK8_0) {
         memcpy(&dst[1 + iqs/8].qs[sizeof(float) * (iqs % 8)], src, sizeof(float));
     }
 
@@ -5114,7 +5114,7 @@ static void ggml_cpy_f32_f16_cuda(
 
 static void ggml_cpy_f32_q8_0_cuda(
     const char * cx, char * cdst, const int i_blck_0, const int ne00, const int ne01, const int ne02,
-    const int nb00, const int nb01, const int nb02, const int nb11, const int nb12, cudaStream_t stream) {
+    const int nb00, const int nb01, const int nb02, const int nb11, const int nb12, const bool pad, cudaStream_t stream) {
 
     const int num_blocks_x = (i_blck_0 + ne00 + WARP_SIZE - 1) / WARP_SIZE;
     const dim3 block_nums(num_blocks_x, ne01, ne02);
@@ -5125,17 +5125,27 @@ static void ggml_cpy_f32_q8_0_cuda(
 
     if (first_incomplete && last_incomplete) {
         GGML_ASSERT(i_blck_0 + ne00 < QK8_0); // otherwise there would be a race condition
-        cpy_f32_q8_0<true, true><<<block_nums, block_dims, 0, stream>>>
+        GGML_ASSERT(pad == false);
+        cpy_f32_q8_0<true, true, false><<<block_nums, block_dims, 0, stream>>>
             (cx, cdst, i_blck_0, ne00, ne01, ne02, nb00, nb01, nb02, nb11, nb12);
     } else if (first_incomplete && !last_incomplete) {
-        cpy_f32_q8_0<true, false><<<block_nums, block_dims, 0, stream>>>
+        GGML_ASSERT(pad == false);
+        cpy_f32_q8_0<true, false, false><<<block_nums, block_dims, 0, stream>>>
             (cx, cdst, i_blck_0, ne00, ne01, ne02, nb00, nb01, nb02, nb11, nb12);
-    } else if (!first_incomplete && last_incomplete) {
-        cpy_f32_q8_0<false, true><<<block_nums, block_dims, 0, stream>>>
+    } else if (!first_incomplete && last_incomplete && pad) {
+        cpy_f32_q8_0<false, true, false><<<block_nums, block_dims, 0, stream>>>
             (cx, cdst, i_blck_0, ne00, ne01, ne02, nb00, nb01, nb02, nb11, nb12);
-    } else if (!first_incomplete && !last_incomplete) {
-        cpy_f32_q8_0<false, false><<<block_nums, block_dims, 0, stream>>>
+    } else if (!first_incomplete && last_incomplete && !pad) {
+        cpy_f32_q8_0<false, true, true><<<block_nums, block_dims, 0, stream>>>
             (cx, cdst, i_blck_0, ne00, ne01, ne02, nb00, nb01, nb02, nb11, nb12);
+    } else if (!first_incomplete && !last_incomplete && pad) {
+        cpy_f32_q8_0<false, false, true><<<block_nums, block_dims, 0, stream>>>
+            (cx, cdst, i_blck_0, ne00, ne01, ne02, nb00, nb01, nb02, nb11, nb12);
+    } else if (!first_incomplete && !last_incomplete && !pad) {
+        cpy_f32_q8_0<false, false, true><<<block_nums, block_dims, 0, stream>>>
+            (cx, cdst, i_blck_0, ne00, ne01, ne02, nb00, nb01, nb02, nb11, nb12);
+    } else {
+        GGML_ASSERT(false);
     }
 }
 
@@ -6626,9 +6636,6 @@ void ggml_cuda_scale(const ggml_tensor * src0, const ggml_tensor * src1, ggml_te
 }
 
 void ggml_cuda_cpy(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
-    const int64_t ne = ggml_nelements(src0);
-    GGML_ASSERT(ne == ggml_nelements(src1));
-
     GGML_ASSERT(src0->backend == GGML_BACKEND_GPU);
     GGML_ASSERT(src1->backend == GGML_BACKEND_GPU);
 
@@ -6652,6 +6659,16 @@ void ggml_cuda_cpy(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tens
     const int64_t nb11 = src1->nb[1];
     const int64_t nb12 = src1->nb[2];
 
+    const int64_t blck_size = ggml_blck_size(src1->type);
+    const int64_t ne00_padded = ((ne00 + blck_size - 1) / blck_size) * blck_size;
+    const int64_t ne = ggml_nelements(src0);
+    const bool pad = dst->op_params[0] & 1;
+    if (pad) {
+        GGML_ASSERT(ne00_padded * ggml_nrows(src0) == ggml_nelements(src1));
+    } else {
+        GGML_ASSERT(ne == ggml_nelements(src1));
+    }
+
     CUDA_CHECK(cudaSetDevice(g_main_device));
     cudaStream_t cudaStream_main = g_cudaStreams_main[g_main_device];
 
@@ -6670,16 +6687,19 @@ void ggml_cuda_cpy(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tens
     } else if (src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_Q8_0) {
         GGML_ASSERT(nb10 == sizeof(block_q8_0));
 
-        const size_t * op_params = (const size_t *) src1->op_params;
-        const size_t i_blck_0 = op_params[1];
+        size_t i_blck_0 = 0;
+        if (src1->op == GGML_OP_VIEW) {
+            const size_t * op_params = (const size_t *) src1->op_params;
+            i_blck_0 = op_params[1];
+        }
 
         if (ggml_is_contiguous(src1)) {
             ggml_cpy_f32_q8_0_cuda(
                 src0_ddc, src1_ddc, i_blck_0, ne00, ne01, ne02, nb00, nb01, nb02,
-                ne00*sizeof(block_q8_0)/QK8_0, ne00*ne01*sizeof(block_q8_0)/QK8_0, cudaStream_main);
+                ne00_padded*sizeof(block_q8_0)/QK8_0, ne00_padded*ne01*sizeof(block_q8_0)/QK8_0, pad, cudaStream_main);
         } else {
             ggml_cpy_f32_q8_0_cuda(src0_ddc, src1_ddc, i_blck_0, ne00, ne01, ne02,
-                                nb00, nb01, nb02, nb11, nb12, cudaStream_main);
+                                nb00, nb01, nb02, nb11, nb12, pad, cudaStream_main);
         }
 
     } else {

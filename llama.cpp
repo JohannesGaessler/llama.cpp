@@ -925,12 +925,16 @@ struct llama_hparams {
     }
 
     size_t kv_size_k(ggml_type type) const {
+        const int64_t blck_size = ggml_blck_size(type);
+        const int64_t n_embd_head_padded = ((n_embd_head() + blck_size - 1) / blck_size) * blck_size;
+
         size_t result = 1ull;
-        result *= (size_t) n_embd_gqa();
+        result *= (size_t) n_embd_head_padded;
+        result *= (size_t) n_head_kv;
         result *= (size_t) n_ctx;
         result *= (size_t) n_layer;
         result *= ggml_type_size(type);
-        result /= ggml_blck_size(type);
+        result /= blck_size;
         return result;
     }
 
@@ -1167,8 +1171,11 @@ static bool llama_kv_cache_init(
                          ggml_type   wtype,
                                int   n_ctx,
                                int   n_gpu_layers) {
-    const int n_embd  = hparams.n_embd_gqa();
-    const int n_layer = hparams.n_layer;
+    const int blck_size          = ggml_blck_size(wtype);
+    const int n_embd_head        = hparams.n_embd_head();
+    const int n_embd_head_padded = ((n_embd_head + blck_size - 1) / blck_size) * blck_size;
+    const int n_head_kv          = hparams.n_head_kv;
+    const int n_layer            = hparams.n_layer;
 
     if (n_ctx % ggml_blck_size(wtype) != 0) {
         LLAMA_LOG_ERROR("error: for KV type %s n_ctx must be a multiple of %d but received n_ctx=%d\n",
@@ -1176,20 +1183,13 @@ static bool llama_kv_cache_init(
         return false;
     }
 
-    if (n_embd % ggml_blck_size(wtype) != 0) {
-        LLAMA_LOG_ERROR("error: for KV type %s n_ctx must be a multiple of %d but received n_embd=%d\n",
-                        ggml_type_name(wtype), ggml_blck_size(wtype), n_embd);
-        return false;
-    }
-
-    const int64_t n_mem      = n_layer*n_ctx;
-    const int64_t n_elements = n_embd*n_mem;
-
     // if the KV cache is quantized we need a little extra space for each row to store the
     // unquantized values between evals (this avoids precision loss when rebuilding the block)
-    const int64_t v_quant_buffer = wtype == GGML_TYPE_Q8_0 ? 128*n_layer*n_embd : 0;
+    const int64_t n_mem        = n_layer*n_ctx;
+    const int64_t n_elements_k = n_embd_head_padded * n_head_kv *  n_mem;
+    const int64_t n_elements_v = n_embd_head        * n_head_kv * (n_mem + (wtype == GGML_TYPE_Q8_0 ? 128*n_layer : 0));
 
-    cache.buf.resize((2u*n_elements + v_quant_buffer)*ggml_type_size(wtype)/ggml_blck_size(wtype) + 2u*MB);
+    cache.buf.resize((n_elements_k + n_elements_v)*ggml_type_size(wtype)/ggml_blck_size(wtype) + 2u*MB);
     cache.n = 0;
 
     struct ggml_init_params params;
@@ -1204,8 +1204,8 @@ static bool llama_kv_cache_init(
         return false;
     }
 
-    cache.k = ggml_new_tensor_1d(cache.ctx, wtype, n_elements);
-    cache.v = ggml_new_tensor_1d(cache.ctx, wtype, n_elements + v_quant_buffer);
+    cache.k = ggml_new_tensor_1d(cache.ctx, wtype, n_elements_k);
+    cache.v = ggml_new_tensor_1d(cache.ctx, wtype, n_elements_v);
     ggml_set_name(cache.k, "cache_k");
     ggml_set_name(cache.v, "cache_v");
 
@@ -2258,13 +2258,17 @@ static struct ggml_cgraph * llm_build_llama(
 
     GGML_ASSERT(!!kv_self.ctx);
 
-    const int64_t n_embd      = hparams.n_embd;
-    const int64_t n_layer     = hparams.n_layer;
-    const int64_t n_ctx       = hparams.n_ctx;
-    const int64_t n_head      = hparams.n_head;
-    const int64_t n_head_kv   = hparams.n_head_kv;
-    const int64_t n_embd_head = hparams.n_embd_head();
-    const int64_t n_embd_gqa  = hparams.n_embd_gqa();
+    const int64_t blck_size_k = ggml_blck_size(kv_self.k->type);
+    const int64_t blck_size_v = ggml_blck_size(kv_self.v->type);
+
+    const int64_t n_embd             = hparams.n_embd;
+    const int64_t n_layer            = hparams.n_layer;
+    const int64_t n_ctx              = hparams.n_ctx;
+    const int64_t n_head             = hparams.n_head;
+    const int64_t n_head_kv          = hparams.n_head_kv;
+    const int64_t n_embd_head        = hparams.n_embd_head();
+    const int64_t n_embd_head_padded = ((n_embd_head + blck_size_k - 1) / blck_size_k) * blck_size_k;
+    const int64_t n_embd_gqa         = hparams.n_embd_gqa();
 
     GGML_ASSERT(n_embd_head == hparams.n_rot);
 
@@ -2402,22 +2406,22 @@ static struct ggml_cgraph * llm_build_llama(
                 ggml_set_name(Vcur, "Vcur");
 
                 struct ggml_tensor * k = ggml_view_1d(
-                    ctx0, kv_self.k, N*n_embd_gqa,
-                    (ggml_element_size(kv_self.k)*n_embd_gqa)*(il*n_ctx + n_past)/ggml_blck_size(kv_self.k->type));
+                    ctx0, kv_self.k, N*n_embd_head_padded*n_head_kv,
+                    (ggml_element_size(kv_self.k)*n_embd_head_padded*n_head_kv)*(il*n_ctx + n_past)/blck_size_k);
                 offload_func_kq(k);
                 ggml_set_name(k, "k");
 
                 const int64_t v_row_size = kv_self.v->type == GGML_TYPE_Q8_0 ? n_ctx + 128 : n_ctx;
                 struct ggml_tensor * v = ggml_view_blck_2d(ctx0, kv_self.v, N, n_embd_gqa,
-                        (   v_row_size)*ggml_element_size(kv_self.v)/ggml_blck_size(kv_self.v->type),
-                        (il*v_row_size)*ggml_element_size(kv_self.v)*n_embd_gqa/ggml_blck_size(kv_self.v->type) + ggml_element_size(kv_self.v)*(n_past/ggml_blck_size(kv_self.v->type)),
-                        n_past % ggml_blck_size(kv_self.v->type));
+                        (   v_row_size)*ggml_element_size(kv_self.v)/blck_size_v,
+                        (il*v_row_size)*ggml_element_size(kv_self.v)*n_embd_gqa/blck_size_v + ggml_element_size(kv_self.v)*(n_past/blck_size_v),
+                        n_past % blck_size_v);
                 offload_func_v(v);
                 ggml_set_name(v, "v");
 
                 // important: storing RoPE-ed version of K in the KV cache!
-                ggml_build_forward_expand(gf, ggml_cpy(ctx0, Kcur, k));
-                ggml_build_forward_expand(gf, ggml_cpy(ctx0, Vcur, v));
+                ggml_build_forward_expand(gf, ggml_cpy_pad(ctx0, Kcur, k));
+                ggml_build_forward_expand(gf,     ggml_cpy(ctx0, Vcur, v));
             }
 
             struct ggml_tensor * Q = ggml_permute(ctx0, Qcur, 0, 2, 1, 3);
@@ -2426,10 +2430,10 @@ static struct ggml_cgraph * llm_build_llama(
 
             struct ggml_tensor * K =
                 ggml_view_3d(ctx0, kv_self.k,
-                        n_embd_head, n_past + N, n_head_kv,
-                        ggml_element_size(kv_self.k)*n_embd_gqa/ggml_blck_size(kv_self.k->type),
-                        ggml_element_size(kv_self.k)*n_embd_head/ggml_blck_size(kv_self.k->type),
-                        ggml_element_size(kv_self.k)*n_embd_gqa*n_ctx*il/ggml_blck_size(kv_self.k->type));
+                        n_embd_head_padded, n_past + N, n_head_kv,
+                        ggml_element_size(kv_self.k)*n_embd_head_padded*n_head_kv/blck_size_k,
+                        ggml_element_size(kv_self.k)*n_embd_head_padded/blck_size_k,
+                        ggml_element_size(kv_self.k)*n_embd_head_padded*n_head_kv*n_ctx*il/blck_size_k);
             offload_func_kq(K);
             ggml_set_name(K, "K");
 
@@ -2456,15 +2460,14 @@ static struct ggml_cgraph * llm_build_llama(
 
 
             // split cached V into n_head heads
-            int64_t v_nelements_padded = n_past + N + ggml_blck_size(kv_self.v->type) - 1;
-            v_nelements_padded -= v_nelements_padded % ggml_blck_size(kv_self.v->type);
-            const int64_t v_row_size = kv_self.v->type == GGML_TYPE_Q8_0 ? n_ctx + 128 : n_ctx;
+            const int64_t v_ne0_padded = ((n_past + N + blck_size_v - 1) / blck_size_v) * blck_size_v; // ne0 padded to multiple of blck_size_v
+            const int64_t v_row_size   = kv_self.v->type == GGML_TYPE_Q8_0 ? n_ctx + 128 : n_ctx; // maximum ne0 + space for temporarily storing unquantized values
             struct ggml_tensor * V =
                 ggml_view_3d(ctx0, kv_self.v,
-                        v_nelements_padded, n_embd_head, n_head_kv,
-                        ggml_element_size(kv_self.v)*v_row_size/ggml_blck_size(kv_self.v->type),
-                        ggml_element_size(kv_self.v)*v_row_size*n_embd_head/ggml_blck_size(kv_self.v->type),
-                        ggml_element_size(kv_self.v)*v_row_size*n_embd_gqa*il/ggml_blck_size(kv_self.v->type));
+                        v_ne0_padded, n_embd_head, n_head_kv,
+                        ggml_element_size(kv_self.v)*v_row_size/blck_size_v,
+                        ggml_element_size(kv_self.v)*v_row_size*n_embd_head/blck_size_v,
+                        ggml_element_size(kv_self.v)*v_row_size*n_embd_gqa*il/blck_size_v);
             offload_func_v(V);
             ggml_set_name(V, "V");
 

@@ -1053,6 +1053,12 @@ extern "C" {
             struct ggml_tensor  * a,
             struct ggml_tensor  * b);
 
+    // a -> b, pad row size of a to a multiple of block size of b, return view(b)
+    GGML_API struct ggml_tensor * ggml_cpy_pad(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b);
+
     // make contiguous
     GGML_API struct ggml_tensor * ggml_cont(
             struct ggml_context * ctx,
