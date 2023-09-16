@@ -7056,9 +7056,9 @@ void ggml_cuda_set_peer_access(const int n_tokens) {
             int canAccessPeer;
             CUDA_CHECK(cudaDeviceCanAccessPeer(&canAccessPeer, id, id_other));
             if (canAccessPeer) {
-                if (n_tokens <= 32) {
+                if (n_tokens <= 32 && last_n_tokens > 32) {
                     CUDA_CHECK(cudaDeviceEnablePeerAccess(id_other, 0));
-                } else if (last_n_tokens <= 32) {
+                } else if (n_tokens > 32 && last_n_tokens <= 32) {
                     CUDA_CHECK(cudaDeviceDisablePeerAccess(id_other));
                 }
             }
