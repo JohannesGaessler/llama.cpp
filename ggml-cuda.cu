@@ -6969,6 +6969,9 @@ void ggml_cuda_assign_scratch_offset(struct ggml_tensor * tensor, size_t offset)
     if (g_scratch_size == 0) {
         return;
     }
+
+    ggml_cuda_set_device(g_main_device);
+
     if (g_scratch_buffer == nullptr) {
         CUDA_CHECK(cudaMalloc(&g_scratch_buffer, g_scratch_size));
     }
