@@ -6491,6 +6491,41 @@ static void ggml_cuda_op_mul_mat(
                 op(src0, src1, dst, src0_dd_i, src1_ddf_i, src1_ddq_i, dst_dd_i,
                    row_low[id], row_high[id], src1_ncols, src1_padded_col_size, stream);
                 CUDA_CHECK(cudaGetLastError());
+            }
+        }
+    }
+
+    for (int64_t src1_col_0 = 0; src1_col_0 < ne11; src1_col_0 += src1_col_stride) {
+        const int64_t is = split ? (src1_col_0/src1_col_stride) % MAX_STREAMS : 0;
+        const int64_t src1_ncols = src1_col_0 + src1_col_stride > ne11 ? ne11 - src1_col_0 : src1_col_stride;
+
+        for (int64_t id = 0; id < g_device_count; ++id) {
+            if ((!split && id != g_main_device) || row_low[id] == row_high[id]) {
+                continue;
+            }
+
+            const bool  dst_on_device =  dst->backend == GGML_BACKEND_GPU && id == g_main_device;
+            const int64_t row_diff = row_high[id] - row_low[id];
+
+            ggml_cuda_set_device(id);
+            const cudaStream_t stream = g_cudaStreams[id][is];
+
+            // wait for main GPU data if necessary
+            if (split && (id != g_main_device || is != 0)) {
+                CUDA_CHECK(cudaStreamWaitEvent(stream, src0_extra->events[g_main_device][0], 0));
+            }
+
+            for (int64_t i0 = 0; i0 < ne13*ne12; ++i0) {
+                const int64_t i03 = i0 / ne12;
+                const int64_t i02 = i0 % ne12;
+
+                float * dst_dd_i = dst_dd[id] + (i0*ne1 + src1_col_0) * (dst_on_device ? ne0 : row_diff);
+
+                // the main device memory buffer can be on VRAM scratch, with space for all partial results
+                // in that case an offset on dst_ddf_i is needed
+                if (dst->backend == GGML_BACKEND_GPU && id == g_main_device) {
+                    dst_dd_i += row_low[id]; // offset is 0 if no tensor split
+                }
 
                 // copy dst to host or other device if necessary
                 if (!dst_on_device) {
