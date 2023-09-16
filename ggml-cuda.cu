@@ -424,6 +424,10 @@ static_assert(sizeof(block_q6_K) == sizeof(ggml_fp16_t) + 13*QK_K/16, "wrong q6_
 static_assert(K_QUANTS_PER_ITERATION == 1 || K_QUANTS_PER_ITERATION == 2, "K_QUANTS_PER_ITERATION must be 1 or 2");
 #endif
 
+#ifndef GGML_CUDA_PEER_MAX_BATCH_SIZE
+#define GGML_CUDA_PEER_MAX_BATCH_SIZE 128
+#endif // GGML_CUDA_PEER_MAX_BATCH_SIZE
+
 #define MUL_MAT_SRC1_COL_STRIDE 128
 
 #define MAX_STREAMS 8
@@ -7056,9 +7060,9 @@ void ggml_cuda_set_peer_access(const int n_tokens) {
             int canAccessPeer;
             CUDA_CHECK(cudaDeviceCanAccessPeer(&canAccessPeer, id, id_other));
             if (canAccessPeer) {
-                if (n_tokens <= 32 && last_n_tokens > 32) {
+                if (n_tokens <= GGML_CUDA_PEER_MAX_BATCH_SIZE && last_n_tokens > GGML_CUDA_PEER_MAX_BATCH_SIZE) {
                     CUDA_CHECK(cudaDeviceEnablePeerAccess(id_other, 0));
-                } else if (n_tokens > 32 && last_n_tokens <= 32) {
+                } else if (n_tokens > GGML_CUDA_PEER_MAX_BATCH_SIZE && last_n_tokens <= GGML_CUDA_PEER_MAX_BATCH_SIZE) {
                     CUDA_CHECK(cudaDeviceDisablePeerAccess(id_other));
                 }
             }
