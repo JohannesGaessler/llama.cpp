@@ -3718,6 +3718,10 @@ static bool llama_eval_internal(
 
     const int64_t t_start_us = ggml_time_us();
 
+#ifdef GGML_USE_CUBLAS
+    ggml_cuda_set_peer_access(n_tokens);
+#endif // GGML_USE_CUBLAS
+
 #ifdef GGML_USE_MPI
     ggml_mpi_eval_init(lctx.ctx_mpi, &n_tokens, &n_past, &n_threads);
 #endif

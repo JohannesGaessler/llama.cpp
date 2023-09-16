@@ -35,6 +35,7 @@ GGML_API void   ggml_cuda_assign_scratch_offset(struct ggml_tensor * tensor, siz
 GGML_API void   ggml_cuda_set_main_device(int main_device);
 GGML_API void   ggml_cuda_set_mul_mat_q(bool mul_mat_q);
 GGML_API void   ggml_cuda_set_scratch_size(size_t scratch_size);
+GGML_API void   ggml_cuda_set_peer_access(int n_tokens);
 GGML_API void   ggml_cuda_free_scratch(void);
 GGML_API bool   ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor);
 

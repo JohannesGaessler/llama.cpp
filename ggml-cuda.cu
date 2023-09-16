@@ -5546,27 +5546,6 @@ void ggml_init_cublas() {
             CUBLAS_CHECK(cublasSetMathMode(g_cublas_handles[id], CUBLAS_TF32_TENSOR_OP_MATH));
         }
 
-#ifdef NDEBUG
-        for (int id = 0; id < g_device_count; ++id) {
-            CUDA_CHECK(cudaSetDevice(id));
-
-            for (int id_other = 0; id_other < g_device_count; ++id_other) {
-                if (id == id_other) {
-                    continue;
-                }
-                if (id != g_main_device && id_other != g_main_device) {
-                    continue;
-                }
-
-                int canAccessPeer;
-                CUDA_CHECK(cudaDeviceCanAccessPeer(&canAccessPeer, id, id_other));
-                if (canAccessPeer) {
-                    // FIXME for some reason enabling peer access makes prompt processing slightly slower
-                    CUDA_CHECK(cudaDeviceEnablePeerAccess(id_other, 0));
-                }
-            }
-        }
-#endif // NDEBUG
 
         // configure logging to stdout
         // CUBLAS_CHECK(cublasLoggerConfigure(1, 1, 0, nullptr));
@@ -7034,7 +7013,7 @@ void ggml_cuda_assign_buffers_force_inplace(struct ggml_tensor * tensor) {
     ggml_cuda_assign_buffers_impl(tensor, false, true, false);
 }
 
-void ggml_cuda_set_main_device(int main_device) {
+void ggml_cuda_set_main_device(const int main_device) {
     if (main_device >= g_device_count) {
         fprintf(stderr, "warning: cannot set main_device=%d because there are only %d devices. Using device %d instead.\n",
                 main_device, g_device_count, g_main_device);
@@ -7048,12 +7027,47 @@ void ggml_cuda_set_main_device(int main_device) {
     }
 }
 
-void ggml_cuda_set_mul_mat_q(bool mul_mat_q) {
+void ggml_cuda_set_mul_mat_q(const bool mul_mat_q) {
     g_mul_mat_q = mul_mat_q;
 }
 
-void ggml_cuda_set_scratch_size(size_t scratch_size) {
+void ggml_cuda_set_scratch_size(const size_t scratch_size) {
     g_scratch_size = scratch_size;
+}
+
+void ggml_cuda_set_peer_access(const int n_tokens) {
+    static int last_n_tokens = -1;
+
+    if (n_tokens == last_n_tokens) {
+        return;
+    }
+
+#ifdef NDEBUG
+    for (int id = 0; id < g_device_count; ++id) {
+        CUDA_CHECK(cudaSetDevice(id));
+
+        for (int id_other = 0; id_other < g_device_count; ++id_other) {
+            if (id == id_other) {
+                continue;
+            }
+            if (id != g_main_device && id_other != g_main_device) {
+                continue;
+            }
+
+            int canAccessPeer;
+            CUDA_CHECK(cudaDeviceCanAccessPeer(&canAccessPeer, id, id_other));
+            if (canAccessPeer) {
+                if (n_tokens == 1) {
+                    CUDA_CHECK(cudaDeviceEnablePeerAccess(id_other, 0));
+                } else {
+                    CUDA_CHECK(cudaDeviceDisablePeerAccess(id_other));
+                }
+            }
+        }
+    }
+#endif // NDEBUG
+
+    last_n_tokens = n_tokens;
 }
 
 void ggml_cuda_free_scratch() {
