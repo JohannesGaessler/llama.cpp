@@ -7035,7 +7035,7 @@ void ggml_cuda_set_scratch_size(const size_t scratch_size) {
 }
 
 void ggml_cuda_set_peer_access(const int n_tokens) {
-    static int last_n_tokens = -1;
+    static int last_n_tokens = INT_MAX;
 
     if (n_tokens == last_n_tokens) {
         return;
@@ -7056,9 +7056,9 @@ void ggml_cuda_set_peer_access(const int n_tokens) {
             int canAccessPeer;
             CUDA_CHECK(cudaDeviceCanAccessPeer(&canAccessPeer, id, id_other));
             if (canAccessPeer) {
-                if (n_tokens == 1) {
+                if (n_tokens <= 32) {
                     CUDA_CHECK(cudaDeviceEnablePeerAccess(id_other, 0));
-                } else if (last_n_tokens == 1) {
+                } else if (last_n_tokens <= 32) {
                     CUDA_CHECK(cudaDeviceDisablePeerAccess(id_other));
                 }
             }
