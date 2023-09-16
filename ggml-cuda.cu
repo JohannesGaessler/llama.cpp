@@ -430,8 +430,9 @@ static_assert(K_QUANTS_PER_ITERATION == 1 || K_QUANTS_PER_ITERATION == 2, "K_QUA
 static cudaStream_t g_cudaStreams[GGML_CUDA_MAX_DEVICES][MAX_STREAMS] = { nullptr };
 
 struct ggml_tensor_extra_gpu {
-    void * data_device[GGML_CUDA_MAX_DEVICES]; // 1 pointer for each device for split tensors
-    cudaEvent_t events[GGML_CUDA_MAX_DEVICES][MAX_STREAMS]; // events for synchronizing multiple GPUs
+    void *       data_device[GGML_CUDA_MAX_DEVICES]; // 1 pointer for each device for split tensors
+    cudaEvent_t       events[GGML_CUDA_MAX_DEVICES][MAX_STREAMS]; // events for signaling that computation (+ writeback) is done
+    cudaEvent_t events_fetch[GGML_CUDA_MAX_DEVICES]; // events for signaling that data fetch is done
 };
 
 // this is faster on Windows
@@ -6487,6 +6488,10 @@ static void ggml_cuda_op_mul_mat(
                     CUDA_CHECK(ggml_cuda_cpy_tensor_2d(src0_dd_i, src0, i03, i02/i02_divisor, row_low[id], row_high[id], stream));
                 }
 
+                if (id != g_main_device) {
+                    CUDA_CHECK(cudaEventRecord(src0_extra->events_fetch[id], stream));
+                }
+
                 // do the computation
                 op(src0, src1, dst, src0_dd_i, src1_ddf_i, src1_ddq_i, dst_dd_i,
                    row_low[id], row_high[id], src1_ncols, src1_padded_col_size, stream);
@@ -6510,9 +6515,13 @@ static void ggml_cuda_op_mul_mat(
             ggml_cuda_set_device(id);
             const cudaStream_t stream = g_cudaStreams[id][is];
 
-            // wait for main GPU data if necessary
-            if (split && (id != g_main_device || is != 0)) {
-                CUDA_CHECK(cudaStreamWaitEvent(stream, src0_extra->events[g_main_device][0], 0));
+            // wait for all data fetched before writing back
+            if (split && id != g_main_device) {
+                for (int64_t id_other = 0; id_other < g_device_count; ++id_other) {
+                    if (id_other != g_main_device) {
+                        CUDA_CHECK(cudaStreamWaitEvent(stream, src0_extra->events_fetch[id_other], 0));
+                    }
+                }
             }
 
             for (int64_t i0 = 0; i0 < ne13*ne12; ++i0) {
@@ -6903,6 +6912,7 @@ void ggml_cuda_transform_tensor(void * data, struct ggml_tensor * tensor) {
             for (int64_t is = 0; is < MAX_STREAMS; ++is) {
                 CUDA_CHECK(cudaEventCreateWithFlags(&extra->events[id][is], cudaEventDisableTiming));
             }
+            CUDA_CHECK(cudaEventCreateWithFlags(&extra->events_fetch[id], cudaEventDisableTiming));
         }
     }
 
@@ -6927,6 +6937,11 @@ void ggml_cuda_free_data(struct ggml_tensor * tensor) {
                 CUDA_CHECK(ggml_cuda_set_device(id));
                 CUDA_CHECK(cudaEventDestroy(extra->events[id][is]));
             }
+        }
+
+        if (extra->events_fetch[id] != nullptr) {
+            CUDA_CHECK(ggml_cuda_set_device(id));
+            CUDA_CHECK(cudaEventDestroy(extra->events_fetch[id]));
         }
     }
 
