@@ -7058,7 +7058,7 @@ void ggml_cuda_set_peer_access(const int n_tokens) {
             if (canAccessPeer) {
                 if (n_tokens == 1) {
                     CUDA_CHECK(cudaDeviceEnablePeerAccess(id_other, 0));
-                } else if (last_n_tokens != -1) {
+                } else if (last_n_tokens == 1) {
                     CUDA_CHECK(cudaDeviceDisablePeerAccess(id_other));
                 }
             }
