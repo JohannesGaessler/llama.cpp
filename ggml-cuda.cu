@@ -5546,7 +5546,6 @@ void ggml_init_cublas() {
             CUBLAS_CHECK(cublasSetMathMode(g_cublas_handles[id], CUBLAS_TF32_TENSOR_OP_MATH));
         }
 
-
         // configure logging to stdout
         // CUBLAS_CHECK(cublasLoggerConfigure(1, 1, 0, nullptr));
 
@@ -7059,7 +7058,7 @@ void ggml_cuda_set_peer_access(const int n_tokens) {
             if (canAccessPeer) {
                 if (n_tokens == 1) {
                     CUDA_CHECK(cudaDeviceEnablePeerAccess(id_other, 0));
-                } else {
+                } else if (last_n_tokens != -1) {
                     CUDA_CHECK(cudaDeviceDisablePeerAccess(id_other));
                 }
             }
