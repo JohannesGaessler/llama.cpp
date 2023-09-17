@@ -5126,11 +5126,11 @@ static void ggml_cpy_f32_q8_0_cuda(
     if (first_incomplete && last_incomplete) {
         GGML_ASSERT(i_blck_0 + ne00 < QK8_0); // otherwise there would be a race condition
         GGML_ASSERT(pad == false);
-        cpy_f32_q8_0<true, true, false><<<block_nums, block_dims, 0, stream>>>
+        cpy_f32_q8_0<true, true, true><<<block_nums, block_dims, 0, stream>>>
             (cx, cdst, i_blck_0, ne00, ne01, ne02, nb00, nb01, nb02, nb11, nb12);
     } else if (first_incomplete && !last_incomplete) {
         GGML_ASSERT(pad == false);
-        cpy_f32_q8_0<true, false, false><<<block_nums, block_dims, 0, stream>>>
+        cpy_f32_q8_0<true, false, true><<<block_nums, block_dims, 0, stream>>>
             (cx, cdst, i_blck_0, ne00, ne01, ne02, nb00, nb01, nb02, nb11, nb12);
     } else if (!first_incomplete && last_incomplete && pad) {
         cpy_f32_q8_0<false, true, false><<<block_nums, block_dims, 0, stream>>>
@@ -5139,7 +5139,7 @@ static void ggml_cpy_f32_q8_0_cuda(
         cpy_f32_q8_0<false, true, true><<<block_nums, block_dims, 0, stream>>>
             (cx, cdst, i_blck_0, ne00, ne01, ne02, nb00, nb01, nb02, nb11, nb12);
     } else if (!first_incomplete && !last_incomplete && pad) {
-        cpy_f32_q8_0<false, false, true><<<block_nums, block_dims, 0, stream>>>
+        cpy_f32_q8_0<false, false, false><<<block_nums, block_dims, 0, stream>>>
             (cx, cdst, i_blck_0, ne00, ne01, ne02, nb00, nb01, nb02, nb11, nb12);
     } else if (!first_incomplete && !last_incomplete && !pad) {
         cpy_f32_q8_0<false, false, true><<<block_nums, block_dims, 0, stream>>>
