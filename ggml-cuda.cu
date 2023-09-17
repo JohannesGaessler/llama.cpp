@@ -6266,9 +6266,11 @@ static void ggml_cuda_op_flatten(const ggml_tensor * src0, const ggml_tensor * s
 }
 
 void ggml_cuda_set_peer_access(const int n_tokens) {
-    static int last_n_tokens = INT_MAX;
+    static bool peer_access_enabled = false;
 
-    if (n_tokens == last_n_tokens) {
+    const bool enable_peer_access = n_tokens <= GGML_CUDA_PEER_MAX_BATCH_SIZE;
+
+    if (peer_access_enabled == enable_peer_access) {
         return;
     }
 
@@ -6276,41 +6278,26 @@ void ggml_cuda_set_peer_access(const int n_tokens) {
     for (int id = 0; id < g_device_count; ++id) {
         CUDA_CHECK(ggml_cuda_set_device(id));
 
-        if (n_tokens <= GGML_CUDA_PEER_MAX_BATCH_SIZE && last_n_tokens > GGML_CUDA_PEER_MAX_BATCH_SIZE) {
-            for (int id_other = 0; id_other < g_device_count; ++id_other) {
-                if (id == id_other) {
-                    continue;
-                }
-                if (id != g_main_device && id_other != g_main_device) {
-                    continue;
-                }
-
-                int canAccessPeer;
-                CUDA_CHECK(cudaDeviceCanAccessPeer(&canAccessPeer, id, id_other));
-                if (canAccessPeer) {
-                    CUDA_CHECK(cudaDeviceEnablePeerAccess(id_other, 0));
-                }
+        for (int id_other = 0; id_other < g_device_count; ++id_other) {
+            if (id == id_other) {
+                continue;
             }
-        } else if (n_tokens > GGML_CUDA_PEER_MAX_BATCH_SIZE && last_n_tokens <= GGML_CUDA_PEER_MAX_BATCH_SIZE) {
-            for (int id_other = 0; id_other < g_device_count; ++id_other) {
-                if (id == id_other) {
-                    continue;
-                }
-                if (id != g_main_device && id_other != g_main_device) {
-                    continue;
-                }
+            if (id != g_main_device && id_other != g_main_device) {
+                continue;
+            }
 
-                int canAccessPeer;
-                CUDA_CHECK(cudaDeviceCanAccessPeer(&canAccessPeer, id, id_other));
-                if (canAccessPeer) {
-                    CUDA_CHECK(cudaDeviceDisablePeerAccess(id_other));
-                }
+            int canAccessPeer;
+            CUDA_CHECK(cudaDeviceCanAccessPeer(&canAccessPeer, id, id_other));
+            if (enable_peer_access) {
+                CUDA_CHECK(cudaDeviceEnablePeerAccess(id_other, 0));
+            } else {
+                CUDA_CHECK(cudaDeviceDisablePeerAccess(id_other));
             }
         }
     }
 #endif // NDEBUG
 
-    last_n_tokens = n_tokens;
+    peer_access_enabled = enable_peer_access;
 }
 
 static void ggml_cuda_op_mul_mat(
