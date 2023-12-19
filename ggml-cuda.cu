@@ -8781,16 +8781,20 @@ static void ggml_cuda_mul_mat_id(const ggml_tensor * src0, const ggml_tensor * s
 
     GGML_ASSERT(dst->backend == GGML_BACKEND_GPU);
 
+    const int64_t nb11 = src1->nb[1];
+    const int64_t nb1  =  dst->nb[1];
+
     const struct ggml_tensor * ids = src0;
     const int32_t id = ((int32_t *) dst->op_params)[0];
     const int32_t n_as = ((int32_t *) dst->op_params)[1];
 
     std::vector<char> ids_host(ggml_nbytes(ids));
 
+    const cudaStream_t stream = g_cudaStreams[g_main_device][0];
+
     if (ids->backend == GGML_BACKEND_GPU) {
         const char * ids_dev = (const char *)((const ggml_tensor_extra_gpu *)ids->extra)->data_device[g_main_device];
-        CUDA_CHECK(cudaMemcpyAsync(ids_host.data(), ids_dev, ggml_nbytes(ids), cudaMemcpyDeviceToHost, g_cudaStreams[g_main_device][0]));
-        CUDA_CHECK(cudaStreamSynchronize(g_cudaStreams[g_main_device][0]));
+        CUDA_CHECK(cudaMemcpyAsync(ids_host.data(), ids_dev, ggml_nbytes(ids), cudaMemcpyDeviceToHost, stream));
     } else {
         memcpy(ids_host.data(), ids->data, ggml_nbytes(ids));
     }
@@ -8804,37 +8808,93 @@ static void ggml_cuda_mul_mat_id(const ggml_tensor * src0, const ggml_tensor * s
     ggml_tensor src1_row = *src1;
     ggml_tensor dst_row = *dst;
 
-    src1_row.ne[1] = 1;
-    dst_row.ne[1] = 1;
-
-    src1_row.nb[2] = src1_row.nb[1];
-    dst_row.nb[2] = dst_row.nb[1];
-
-    src1_row.nb[3] = src1_row.nb[1];
-    dst_row.nb[3] = dst_row.nb[1];
-
     src1_row.extra = &src1_row_extra;
     dst_row.extra = &dst_row_extra;
 
+    char * src1_original = (char *) src1_extra->data_device[g_main_device];
+    char * dst_original  = (char *)  dst_extra->data_device[g_main_device];
 
-    for (int64_t i01 = 0; i01 < ids->ne[1]; i01++) {
-        //int32_t row_id;
-        //CUDA_CHECK(cudaMemcpyAsync(&row_id, ids_dev + i01*ids->nb[1] + id*ids->nb[0], sizeof(int32_t), cudaMemcpyDeviceToHost, g_cudaStreams[g_main_device][0]));
-        //CUDA_CHECK(cudaStreamSynchronize(g_cudaStreams[g_main_device][0]));
+    if (src1->ne[1] == 1) {
+        for (int64_t i01 = 0; i01 < ids->ne[1]; i01++) {
+            //int32_t row_id;
+            //CUDA_CHECK(cudaMemcpyAsync(&row_id, ids_dev + i01*ids->nb[1] + id*ids->nb[0], sizeof(int32_t), cudaMemcpyDeviceToHost, g_cudaStreams[g_main_device][0]));
+            //CUDA_CHECK(cudaStreamSynchronize(g_cudaStreams[g_main_device][0]));
 
-        const int32_t row_id = *(const int32_t *) (ids_host.data() + i01*ids->nb[1] + id*ids->nb[0]);
+            const int32_t row_id = *(const int32_t *) (ids_host.data() + i01*ids->nb[1] + id*ids->nb[0]);
 
-        GGML_ASSERT(row_id >= 0 && row_id < n_as);
+            GGML_ASSERT(row_id >= 0 && row_id < n_as);
 
-        const struct ggml_tensor * src0_row = dst->src[row_id + 2];
+            const struct ggml_tensor * src0_row = dst->src[row_id + 2];
 
-        src1_row_extra.data_device[g_main_device] = (char *) src1_extra->data_device[g_main_device] + i01*src1->nb[1];
-        src1_row.data = (char *) src1->data + i01*src1->nb[1];
+            src1_row_extra.data_device[g_main_device] = src1_original + i01*src1->nb[1];
+            src1_row.data = (char *) src1->data + i01*src1->nb[1]; // TODO why is this set?
 
-        dst_row_extra.data_device[g_main_device] = (char *) dst_extra->data_device[g_main_device] + i01*dst->nb[1];
-        dst_row.data = (char *) dst->data + i01*dst->nb[1];
+            dst_row_extra.data_device[g_main_device] = dst_original + i01*dst->nb[1];
+            dst_row.data = (char *) dst->data + i01*dst->nb[1]; // TODO why is this set?
 
-        ggml_cuda_mul_mat(src0_row, &src1_row, &dst_row);
+            ggml_cuda_mul_mat(src0_row, &src1_row, &dst_row);
+        }
+    } else {
+        size_t as_src1, as_dst;
+        char * src1_contiguous = (char *) ggml_cuda_pool_malloc(sizeof(float)*ggml_nelements(src1), &as_src1);
+        char *  dst_contiguous = (char *) ggml_cuda_pool_malloc(sizeof(float)*ggml_nelements(dst),  &as_dst);
+
+        src1_row_extra.data_device[g_main_device] = src1_contiguous;
+        dst_row_extra.data_device[g_main_device]  =  dst_contiguous;
+
+        for (int32_t row_id = 0; row_id < 8; ++row_id) {
+            const struct ggml_tensor * src0_row = dst->src[row_id + 2];
+
+            int64_t num_src1_rows = 0;
+            for (int64_t i01 = 0; i01 < ids->ne[1]; i01++) {
+                const int32_t row_id_i = *(const int32_t *) (ids_host.data() + i01*ids->nb[1] + id*ids->nb[0]);
+
+                if (row_id_i != row_id) {
+                    continue;
+                }
+
+                GGML_ASSERT(row_id >= 0 && row_id < n_as);
+
+                CUDA_CHECK(cudaMemcpyAsync(src1_contiguous + num_src1_rows*nb11, src1_original + i01*nb11,
+                                        nb11, cudaMemcpyDeviceToDevice, stream));
+                num_src1_rows++;
+            }
+
+            if (num_src1_rows == 0) {
+                continue;
+            }
+
+            src1_row.ne[1] = num_src1_rows;
+            dst_row.ne[1] = num_src1_rows;
+
+            src1_row.nb[1] = nb11;
+            src1_row.nb[2] = num_src1_rows*nb11;
+            src1_row.nb[3] = num_src1_rows*nb11;
+
+            dst_row.nb[1] = nb1;
+            dst_row.nb[2] = num_src1_rows*nb1;
+            dst_row.nb[3] = num_src1_rows*nb1;
+
+            ggml_cuda_mul_mat(src0_row, &src1_row, &dst_row);
+
+            num_src1_rows = 0;
+            for (int64_t i01 = 0; i01 < ids->ne[1]; i01++) {
+                const int32_t row_id_i = *(const int32_t *) (ids_host.data() + i01*ids->nb[1] + id*ids->nb[0]);
+
+                if (row_id_i != row_id) {
+                    continue;
+                }
+
+                GGML_ASSERT(row_id >= 0 && row_id < n_as);
+
+                CUDA_CHECK(cudaMemcpyAsync(dst_original + i01*nb1, dst_contiguous + num_src1_rows*nb1,
+                                        nb1, cudaMemcpyDeviceToDevice, stream));
+                num_src1_rows++;
+            }
+        }
+
+        ggml_cuda_pool_free(src1_contiguous, as_src1);
+        ggml_cuda_pool_free(dst_contiguous,  as_dst);
     }
 }
 
