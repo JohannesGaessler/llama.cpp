@@ -7832,6 +7832,11 @@ static void ggml_cuda_set_peer_access(const int n_tokens) {
 #ifdef NDEBUG
     for (int id = 0; id < g_device_count; ++id) {
         CUDA_CHECK(ggml_cuda_set_device(id));
+        CUDA_CHECK(cudaDeviceSynchronize());
+    }
+
+    for (int id = 0; id < g_device_count; ++id) {
+        CUDA_CHECK(ggml_cuda_set_device(id));
 
         for (int id_other = 0; id_other < g_device_count; ++id_other) {
             if (id == id_other) {
