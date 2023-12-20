@@ -6326,6 +6326,8 @@ static int llama_decode_internal(
         embeddings->backend = GGML_BACKEND_CPU;
     }
     res->backend = GGML_BACKEND_CPU;
+
+    ggml_cuda_set_peer_access(n_tokens);
 #endif
 
     // LLAMA_LOG_INFO("graph build time: %.3f ms (%d nodes, %d leafs)\n", (ggml_time_us() - t_start_us)/1000.0, gf->n_nodes, gf->n_leafs);

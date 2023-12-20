@@ -7881,8 +7881,6 @@ static void ggml_cuda_op_mul_mat(
     const int nb2 = dst->nb[2];
     const int nb3 = dst->nb[3];
 
-    ggml_cuda_set_peer_access(ne11);
-
     GGML_ASSERT(dst->backend != GGML_BACKEND_GPU_SPLIT);
     GGML_ASSERT(src1->backend != GGML_BACKEND_GPU_SPLIT);
 
