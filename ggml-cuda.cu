@@ -7820,7 +7820,7 @@ static void ggml_cuda_op_flatten(const ggml_tensor * src0, const ggml_tensor * s
     }
 }
 
-static void ggml_cuda_set_peer_access(const int n_tokens) {
+void ggml_cuda_set_peer_access(const int n_tokens) {
     static bool peer_access_enabled = false;
 
     const bool enable_peer_access = n_tokens <= GGML_CUDA_PEER_MAX_BATCH_SIZE;
