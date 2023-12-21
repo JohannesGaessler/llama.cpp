@@ -3816,8 +3816,8 @@ static __device__ __forceinline__ void mul_mat_q(
                    threadIdx.y, nrows_x-row_x_0-1, threadIdx.x, blocks_per_row_x);
 
 #pragma unroll
-        for (int ir = 0; ir < qr; ++ir) {
-            const int kqs = ir*WARP_SIZE + threadIdx.x;
+        for (int ir = 0; ir < qr*WARP_SIZE; ir += WARP_SIZE) {
+            const int kqs = ir + threadIdx.x;
             const int kbxd = kqs / QI8_1;
 
 #pragma unroll
@@ -3837,7 +3837,7 @@ static __device__ __forceinline__ void mul_mat_q(
                 const int col_y_eff = min(col_y_0 + ids, ncols_y-1);
 
                 // if the sum is not needed it's faster to transform the scale to f32 ahead of time
-                const half2 * dsi_src = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + ir*(WARP_SIZE/QI8_1) + kby].ds;
+                const half2 * dsi_src = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + ir/QI8_1 + kby].ds;
                 half2       * dsi_dst = &tile_y_ds[ids * (WARP_SIZE/QI8_1) + kby];
                 if (need_sum) {
                     *dsi_dst = *dsi_src;
@@ -3850,7 +3850,7 @@ static __device__ __forceinline__ void mul_mat_q(
             __syncthreads();
 
 // #pragma unroll // unrolling this loop causes too much register pressure
-            for (int k = ir*WARP_SIZE/qr; k < (ir+1)*WARP_SIZE/qr; k += vdr) {
+            for (int k = ir/qr; k < (ir+WARP_SIZE)/qr; k += vdr) {
 #pragma unroll
                 for (int j = 0; j < mmq_x; j += nwarps) {
 #pragma unroll
