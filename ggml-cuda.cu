@@ -7818,6 +7818,7 @@ static void ggml_cuda_set_peer_access(const int n_tokens) {
     }
 
 #ifdef NDEBUG
+
     for (int id = 0; id < g_device_count; ++id) {
         CUDA_CHECK(ggml_cuda_set_device(id));
         CUDA_CHECK(cudaDeviceSynchronize());
@@ -7826,6 +7827,7 @@ static void ggml_cuda_set_peer_access(const int n_tokens) {
     for (int id = 0; id < g_device_count; ++id) {
         CUDA_CHECK(ggml_cuda_set_device(id));
 
+#if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
         for (int id_other = 0; id_other < g_device_count; ++id_other) {
             if (id == id_other) {
                 continue;
@@ -7836,15 +7838,39 @@ static void ggml_cuda_set_peer_access(const int n_tokens) {
 
             int can_access_peer;
             CUDA_CHECK(cudaDeviceCanAccessPeer(&can_access_peer, id, id_other));
-            if (can_access_peer) {
-                if (enable_peer_access) {
-                    CUDA_CHECK(cudaDeviceEnablePeerAccess(id_other, 0));
-                } else {
-                    CUDA_CHECK(cudaDeviceDisablePeerAccess(id_other));
-                }
+
+            if (!can_access_peer) {
+                continue;
+            }
+            if (enable_peer_access) {
+                CUDA_CHECK(cudaDeviceEnablePeerAccess(id_other, 0));
+            } else {
+                CUDA_CHECK(cudaDeviceDisablePeerAccess(id_other));
             }
         }
+#else
+        if (id == g_main_device) {
+            continue;
+        }
+
+        int can_access_peer;
+        CUDA_CHECK(cudaDeviceCanAccessPeer(&can_access_peer, id, g_main_device));
+
+        if (!can_access_peer) {
+            continue;
+        }
+
+        CUmemLocation location;
+        location.id = g_main_device;
+        location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+        CUmemAccessDesc desc;
+        desc.flags = enable_peer_access ? CU_MEM_ACCESS_FLAGS_PROT_READWRITE : CU_MEM_ACCESS_FLAGS_PROT_NONE;
+        desc.location = location;
+        cuMemSetAccess(reinterpret_cast<CUdeviceptr>(g_scratch_buffer), g_scratch_size, &desc, 1);
+#endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
     }
+
+
 #endif // NDEBUG
 
     peer_access_enabled = enable_peer_access;
