@@ -2997,7 +2997,7 @@ static __device__ __forceinline__ float vec_dot_q8_0_q8_1_mul_mat(
 
     return vec_dot_q8_0_q8_1_impl<VDR_Q8_0_Q8_1_MMQ>
         (&x_ql[i * (WARP_SIZE + 1) + k], &y_qs[j * mmq_z + k % mmq_z], x_dmf[i * (WARP_SIZE/QI8_0) + i/QI8_0 + k/QI8_0],
-         y_df[j * (WARP_SIZE/QI8_1) + (k % mmq_z)/QI8_1]);
+         y_df[j * (mmq_z/QI8_1) + (k % mmq_z)/QI8_1]);
 }
 
 static __device__ __forceinline__ float vec_dot_q2_K_q8_1(
@@ -3808,7 +3808,7 @@ static __device__ __forceinline__ void mul_mat_q(
     allocate_tiles(&tile_x_ql, &tile_x_dm, &tile_x_qh, &tile_x_sc);
 
     __shared__ int    tile_y_qs[mmq_x * mmq_z];
-    __shared__ half2  tile_y_ds[mmq_x * WARP_SIZE/QI8_1];
+    __shared__ half2  tile_y_ds[mmq_x * mmq_z/QI8_1];
 
     float sum[mmq_y/WARP_SIZE][mmq_x/nwarps] = {{0.0f}};
 
@@ -3848,7 +3848,7 @@ static __device__ __forceinline__ void mul_mat_q(
 
                 // if the sum is not needed it's faster to transform the scale to f32 ahead of time
                 const half2 * dsi_src = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + ir/QI8_1 + kby].ds;
-                half2       * dsi_dst = &tile_y_ds[ids * (WARP_SIZE/QI8_1) + kby];
+                half2       * dsi_dst = &tile_y_ds[ids * (mmq_z/QI8_1) + kby];
                 if (need_sum) {
                     *dsi_dst = *dsi_src;
                 } else {
