@@ -2990,13 +2990,14 @@ static __device__ __forceinline__ float vec_dot_q8_0_q8_1_mul_mat(
     const int * __restrict__ x_ql, const half2 * __restrict__ x_dm, const int * __restrict__ x_qh, const int * __restrict__ x_sc,
     const int * __restrict__ y_qs, const half2 * __restrict__ y_ds, const int & i, const int & j, const int & k) {
     (void)x_qh; (void)x_sc;
+    const int mmq_z = 16;
 
     const float * x_dmf = (const float *) x_dm;
     const float * y_df  = (const float *) y_ds;
 
     return vec_dot_q8_0_q8_1_impl<VDR_Q8_0_Q8_1_MMQ>
-        (&x_ql[i * (WARP_SIZE + 1) + k], &y_qs[j * WARP_SIZE + k], x_dmf[i * (WARP_SIZE/QI8_0) + i/QI8_0 + k/QI8_0],
-         y_df[j * (WARP_SIZE/QI8_1) + (k % 16)/QI8_1]);
+        (&x_ql[i * (WARP_SIZE + 1) + k], &y_qs[j * mmq_z + k % mmq_z], x_dmf[i * (WARP_SIZE/QI8_0) + i/QI8_0 + k/QI8_0],
+         y_df[j * (WARP_SIZE/QI8_1) + (k % mmq_z)/QI8_1]);
 }
 
 static __device__ __forceinline__ float vec_dot_q2_K_q8_1(
@@ -3806,7 +3807,7 @@ static __device__ __forceinline__ void mul_mat_q(
 
     allocate_tiles(&tile_x_ql, &tile_x_dm, &tile_x_qh, &tile_x_sc);
 
-    __shared__ int    tile_y_qs[mmq_x * WARP_SIZE];
+    __shared__ int    tile_y_qs[mmq_x * mmq_z];
     __shared__ half2  tile_y_ds[mmq_x * WARP_SIZE/QI8_1];
 
     float sum[mmq_y/WARP_SIZE][mmq_x/nwarps] = {{0.0f}};
@@ -3831,7 +3832,7 @@ static __device__ __forceinline__ void mul_mat_q(
 
                 const block_q8_1 * by0 = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + kbxd];
 
-                const int index_y = (threadIdx.y + i) * WARP_SIZE + kqs % WARP_SIZE;
+                const int index_y = (threadIdx.y + i) * mmq_z + kqs % mmq_z;
                 tile_y_qs[index_y] = get_int_from_int8_aligned(by0->qs, threadIdx.x % QI8_1);
             }
 
