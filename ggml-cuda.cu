@@ -2996,7 +2996,7 @@ static __device__ __forceinline__ float vec_dot_q8_0_q8_1_mul_mat(
 
     return vec_dot_q8_0_q8_1_impl<VDR_Q8_0_Q8_1_MMQ>
         (&x_ql[i * (WARP_SIZE + 1) + k], &y_qs[j * WARP_SIZE + k], x_dmf[i * (WARP_SIZE/QI8_0) + i/QI8_0 + k/QI8_0],
-         y_df[j * (WARP_SIZE/QI8_1) + k/QI8_1]);
+         y_df[j * (WARP_SIZE/QI8_1) + (k % 16)/QI8_1]);
 }
 
 static __device__ __forceinline__ float vec_dot_q2_K_q8_1(
@@ -3782,6 +3782,7 @@ template <int qk, int qr, int qi, bool need_sum, typename block_q_t, int mmq_x, 
 static __device__ __forceinline__ void mul_mat_q(
     const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
     const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
+    const int mmq_z = 16;
 
     const block_q_t  * x = (const block_q_t  *) vx;
     const block_q8_1 * y = (const block_q8_1 *) vy;
@@ -3816,12 +3817,16 @@ static __device__ __forceinline__ void mul_mat_q(
                    threadIdx.y, nrows_x-row_x_0-1, threadIdx.x, blocks_per_row_x);
 
 #pragma unroll
-        for (int ir = 0; ir < qr*WARP_SIZE; ir += WARP_SIZE) {
+        for (int ir = 0; ir < qr*WARP_SIZE; ir += mmq_z) {
             const int kqs = ir + threadIdx.x;
             const int kbxd = kqs / QI8_1;
 
 #pragma unroll
             for (int i = 0; i < mmq_x; i += nwarps) {
+                // if (threadIdx.x >= mmq_z) {
+                //     break;
+                // }
+
                 const int col_y_eff = min(col_y_0 + threadIdx.y + i, ncols_y-1); // to prevent out-of-bounds memory accesses
 
                 const block_q8_1 * by0 = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + kbxd];
@@ -3835,6 +3840,10 @@ static __device__ __forceinline__ void mul_mat_q(
                 const int ids = (ids0 + threadIdx.y * QI8_1 + threadIdx.x / (WARP_SIZE/QI8_1)) % mmq_x;
                 const int kby = threadIdx.x % (WARP_SIZE/QI8_1);
                 const int col_y_eff = min(col_y_0 + ids, ncols_y-1);
+
+                // if (kby >= mmq_z/QI8_1) {
+                //     break;
+                // }
 
                 // if the sum is not needed it's faster to transform the scale to f32 ahead of time
                 const half2 * dsi_src = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + ir/QI8_1 + kby].ds;
@@ -3850,7 +3859,7 @@ static __device__ __forceinline__ void mul_mat_q(
             __syncthreads();
 
 // #pragma unroll // unrolling this loop causes too much register pressure
-            for (int k = ir/qr; k < (ir+WARP_SIZE)/qr; k += vdr) {
+            for (int k = ir/qr; k < (ir+mmq_z)/qr; k += vdr) {
 #pragma unroll
                 for (int j = 0; j < mmq_x; j += nwarps) {
 #pragma unroll
