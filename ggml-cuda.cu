@@ -2943,6 +2943,7 @@ template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q8_0(
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q8_0(
     const void * __restrict__ vx, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
     int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & blocks_per_row) {
+    const int mmq_z = 16;
     (void)x_qh; (void)x_sc;
 
     GGML_CUDA_ASSUME(i_offset >= 0);
@@ -2958,6 +2959,10 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 #pragma unroll
     for (int i0 = 0; i0 < mmq_y; i0 += nwarps) {
+        if (k >= mmq_z) {
+            break;
+        }
+
         int i = i0 + i_offset;
 
         if (need_check) {
@@ -2974,6 +2979,10 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 #pragma unroll
     for (int i0 = 0; i0 < mmq_y; i0 += nwarps * QI8_0) {
+        if (kbxd >= mmq_z) {
+            break;
+        }
+
         int i = i0 + i_offset * QI8_0 + k / blocks_per_tile_x_row;
 
         if (need_check) {
@@ -2996,7 +3005,8 @@ static __device__ __forceinline__ float vec_dot_q8_0_q8_1_mul_mat(
     const float * y_df  = (const float *) y_ds;
 
     return vec_dot_q8_0_q8_1_impl<VDR_Q8_0_Q8_1_MMQ>
-        (&x_ql[i * (WARP_SIZE + 1) + k], &y_qs[j * mmq_z + k % mmq_z], x_dmf[i * (WARP_SIZE/QI8_0) + i/QI8_0 + k/QI8_0],
+        (&x_ql[i * (WARP_SIZE + 1) + (k % mmq_z)], &y_qs[j * mmq_z + k % mmq_z],
+         x_dmf[i * (WARP_SIZE/QI8_0) + i/QI8_0 + (k%mmq_z)/QI8_0],
          y_df[j * (mmq_z/QI8_1) + (k % mmq_z)/QI8_1]);
 }
 
@@ -3814,11 +3824,11 @@ static __device__ __forceinline__ void mul_mat_q(
 
     for (int ib0 = 0; ib0 < blocks_per_row_x; ib0 += blocks_per_warp) {
 
-        load_tiles(x + row_x_0*blocks_per_row_x + ib0, tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc,
-                   threadIdx.y, nrows_x-row_x_0-1, threadIdx.x, blocks_per_row_x);
-
 #pragma unroll
         for (int ir = 0; ir < qr*WARP_SIZE; ir += mmq_z) {
+            load_tiles(x + row_x_0*blocks_per_row_x + ib0 + ir/qi, tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc,
+                    threadIdx.y, nrows_x-row_x_0-1, threadIdx.x, blocks_per_row_x);
+
             const int kqs = ir + threadIdx.x % mmq_z;
             const int i_offset = threadIdx.x/mmq_z + threadIdx.y * (WARP_SIZE/mmq_z);
             const int kbxd = kqs / QI8_1;
