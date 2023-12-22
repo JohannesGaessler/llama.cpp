@@ -3823,9 +3823,9 @@ static __device__ __forceinline__ void mul_mat_q(
 
 #pragma unroll
             for (int i = 0; i < mmq_x; i += nwarps) {
-                // if (threadIdx.x >= mmq_z) {
-                //     break;
-                // }
+                if (threadIdx.x >= mmq_z) {
+                    break;
+                }
 
                 const int col_y_eff = min(col_y_0 + threadIdx.y + i, ncols_y-1); // to prevent out-of-bounds memory accesses
 
@@ -3841,9 +3841,9 @@ static __device__ __forceinline__ void mul_mat_q(
                 const int kby = threadIdx.x % (WARP_SIZE/QI8_1);
                 const int col_y_eff = min(col_y_0 + ids, ncols_y-1);
 
-                // if (kby >= mmq_z/QI8_1) {
-                //     break;
-                // }
+                if (kby >= mmq_z/QI8_1) {
+                    break;
+                }
 
                 // if the sum is not needed it's faster to transform the scale to f32 ahead of time
                 const half2 * dsi_src = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + ir/QI8_1 + kby].ds;
