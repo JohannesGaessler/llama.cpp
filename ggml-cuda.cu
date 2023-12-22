@@ -3819,20 +3819,17 @@ static __device__ __forceinline__ void mul_mat_q(
 
 #pragma unroll
         for (int ir = 0; ir < qr*WARP_SIZE; ir += mmq_z) {
-            const int kqs = ir + threadIdx.x;
+            const int kqs = ir + threadIdx.x % mmq_z;
+            const int i_offset = threadIdx.x/mmq_z + threadIdx.y * (WARP_SIZE/mmq_z);
             const int kbxd = kqs / QI8_1;
 
 #pragma unroll
-            for (int i = 0; i < mmq_x; i += nwarps) {
-                if (threadIdx.x >= mmq_z) {
-                    break;
-                }
-
-                const int col_y_eff = min(col_y_0 + threadIdx.y + i, ncols_y-1); // to prevent out-of-bounds memory accesses
+            for (int i = 0; i < mmq_x; i += nwarps * (WARP_SIZE/mmq_z)) {
+                const int col_y_eff = min(col_y_0 + i + i_offset, ncols_y-1); // to prevent out-of-bounds memory accesses
 
                 const block_q8_1 * by0 = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + kbxd];
 
-                const int index_y = (threadIdx.y + i) * mmq_z + kqs % mmq_z;
+                const int index_y = (i + i_offset) * mmq_z + kqs % mmq_z;
                 tile_y_qs[index_y] = get_int_from_int8_aligned(by0->qs, threadIdx.x % QI8_1);
             }
 
