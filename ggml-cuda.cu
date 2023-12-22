@@ -3852,7 +3852,7 @@ static __device__ __forceinline__ void mul_mat_q(
 
             __syncthreads();
 
-// #pragma unroll // unrolling this loop causes too much register pressure
+#pragma unroll // unrolling this loop causes too much register pressure
             for (int k = ir/qr; k < (ir+mmq_z)/qr; k += vdr) {
 #pragma unroll
                 for (int j = 0; j < mmq_x; j += nwarps) {
@@ -4172,8 +4172,8 @@ mul_mat_q5_1(
 #define NWARPS_Q8_0_AMPERE 4
 #else
 #define  MMQ_X_Q8_0_AMPERE 128
-#define  MMQ_Y_Q8_0_AMPERE 64
-#define NWARPS_Q8_0_AMPERE 4
+#define  MMQ_Y_Q8_0_AMPERE 128
+#define NWARPS_Q8_0_AMPERE 8
 #endif
 #define  MMQ_X_Q8_0_PASCAL 64
 #define  MMQ_Y_Q8_0_PASCAL 64
