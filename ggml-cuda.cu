@@ -3850,13 +3850,18 @@ static __device__ __forceinline__ void mul_mat_q(
             const int kqs = ir*WARP_SIZE + threadIdx.x;
 
             pipeline.producer_acquire();
-#pragma unroll
-            for (int i = 0; i < mmq_x; i += nwarps) {
-                const int col_y_eff = min(col_y_0 + threadIdx.y + i, ncols_y-1); // to prevent out-of-bounds memory accesses
-                const int index_y = (threadIdx.y + i) * WARP_SIZE + kqs % WARP_SIZE;
-                // tile_y_qs[index_y] = y_qs[col_y_eff*nrows_y/sizeof(int) + ib0*QI8_1*(qk/QK8_1) + kqs];
-                cuda::memcpy_async(&tile_y_qs[index_y], &y_qs[col_y_eff*nrows_y/sizeof(int) + ib0*QI8_1*(qk/QK8_1) + kqs],
-                                   sizeof(int), pipeline);
+// #pragma unroll
+            // for (int i = 0; i < mmq_x; i += nwarps) {
+            //     const int col_y_eff = min(col_y_0 + threadIdx.y + i, ncols_y-1); // to prevent out-of-bounds memory accesses
+            //     const int index_y = (threadIdx.y + i) * WARP_SIZE + kqs % WARP_SIZE;
+            //     tile_y_qs[index_y] = y_qs[col_y_eff*nrows_y/sizeof(int) + ib0*QI8_1*(qk/QK8_1) + kqs];
+            //     // cuda::memcpy_async(&tile_y_qs[index_y], &y_qs[col_y_eff*nrows_y/sizeof(int) + ib0*QI8_1*(qk/QK8_1) + kqs],
+            //     //                    sizeof(int), pipeline);
+            // }
+            const int id = threadIdx.y*WARP_SIZE + threadIdx.x;
+            if (id < mmq_x && col_y_0 + id < ncols_y) {
+                cuda::memcpy_async(tile_y_qs + id*WARP_SIZE, y_qs + (col_y_0 + id)*(nrows_y/sizeof(int)) + ib0*(QI8_1*qk/QK8_1),
+                                   cuda::aligned_size_t<WARP_SIZE*sizeof(int)>(WARP_SIZE*sizeof(int)), pipeline);
             }
             pipeline.producer_commit();
 
