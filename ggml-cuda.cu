@@ -3837,8 +3837,10 @@ static __device__ __forceinline__ void mul_mat_q(
 
     float sum[mmq_y/WARP_SIZE][mmq_x/nwarps] = {{0.0f}};
 
+#if !defined(GGML_USE_HIPBLAS) && __CUDA_ARCH__ >= CC_VOLTA
     __shared__ cuda::pipeline_shared_state<cuda::thread_scope::thread_scope_block, 1> state;
     auto pipeline = cuda::make_pipeline(cooperative_groups::this_thread_block(), &state);
+#endif // !defined(GGML_USE_HIPBLAS) && __CUDA_ARCH__ >= CC_VOLTA
 
     for (int ib0 = 0; ib0 < blocks_per_row_x; ib0 += blocks_per_warp) {
 
@@ -3849,21 +3851,22 @@ static __device__ __forceinline__ void mul_mat_q(
         for (int ir = 0; ir < qr; ++ir) {
             const int kqs = ir*WARP_SIZE + threadIdx.x;
 
+#if !defined(GGML_USE_HIPBLAS) && __CUDA_ARCH__ >= CC_VOLTA
             pipeline.producer_acquire();
-// #pragma unroll
-            // for (int i = 0; i < mmq_x; i += nwarps) {
-            //     const int col_y_eff = min(col_y_0 + threadIdx.y + i, ncols_y-1); // to prevent out-of-bounds memory accesses
-            //     const int index_y = (threadIdx.y + i) * WARP_SIZE + kqs % WARP_SIZE;
-            //     tile_y_qs[index_y] = y_qs[col_y_eff*nrows_y/sizeof(int) + ib0*QI8_1*(qk/QK8_1) + kqs];
-            //     // cuda::memcpy_async(&tile_y_qs[index_y], &y_qs[col_y_eff*nrows_y/sizeof(int) + ib0*QI8_1*(qk/QK8_1) + kqs],
-            //     //                    sizeof(int), pipeline);
-            // }
             const int id = threadIdx.y*WARP_SIZE + threadIdx.x;
             if (id < mmq_x && col_y_0 + id < ncols_y) {
                 cuda::memcpy_async(tile_y_qs + id*WARP_SIZE, y_qs + (col_y_0 + id)*(nrows_y/sizeof(int)) + ib0*(QI8_1*qk/QK8_1),
                                    cuda::aligned_size_t<WARP_SIZE*sizeof(int)>(WARP_SIZE*sizeof(int)), pipeline);
             }
             pipeline.producer_commit();
+#else
+#pragma unroll
+            for (int i = 0; i < mmq_x; i += nwarps) {
+                const int col_y_eff = min(col_y_0 + threadIdx.y + i, ncols_y-1); // to prevent out-of-bounds memory accesses
+                const int index_y = (threadIdx.y + i) * WARP_SIZE + kqs % WARP_SIZE;
+                tile_y_qs[index_y] = y_qs[col_y_eff*nrows_y/sizeof(int) + ib0*QI8_1*(qk/QK8_1) + kqs];
+            }
+#endif // !defined(GGML_USE_HIPBLAS) && __CUDA_ARCH__ >= CC_VOLTA
 
 #pragma unroll
             for (int ids0 = 0; ids0 < mmq_x; ids0 += nwarps * QI8_1) {
@@ -3883,7 +3886,9 @@ static __device__ __forceinline__ void mul_mat_q(
             }
 
             __syncthreads();
+#if !defined(GGML_USE_HIPBLAS) && __CUDA_ARCH__ >= CC_VOLTA
             pipeline.consumer_wait();
+#endif // !defined(GGML_USE_HIPBLAS) && __CUDA_ARCH__ >= CC_VOLTA
 
 // #pragma unroll // unrolling this loop causes too much register pressure
             for (int k = ir*WARP_SIZE/qr; k < (ir+1)*WARP_SIZE/qr; k += vdr) {
@@ -3899,7 +3904,9 @@ static __device__ __forceinline__ void mul_mat_q(
             }
 
             __syncthreads();
+#if !defined(GGML_USE_HIPBLAS) && __CUDA_ARCH__ >= CC_VOLTA
             pipeline.consumer_release();
+#endif // !defined(GGML_USE_HIPBLAS) && __CUDA_ARCH__ >= CC_VOLTA
         }
     }
 
