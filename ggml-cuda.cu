@@ -3793,7 +3793,7 @@ static __device__ __forceinline__ void mul_mat_q(
 
     const int blocks_per_row_x = ncols_x / qk;
     const int blocks_per_col_y = nrows_y / QK8_1;
-    const int blocks_per_warp = WARP_SIZE / qi;
+    const int blocks_per_warp = mmq_z / qi;
 
     const int & ncols_dst = ncols_y;
 
@@ -3818,7 +3818,7 @@ static __device__ __forceinline__ void mul_mat_q(
     for (int ib0 = 0; ib0 < blocks_per_row_x; ib0 += blocks_per_warp) {
 
 #pragma unroll
-        for (int ir = 0; ir < qr*WARP_SIZE; ir += mmq_z) {
+        for (int ir = 0; ir < qr*mmq_z; ir += mmq_z) {
             load_tiles(x + row_x_0*blocks_per_row_x + ib0 + ir/qi, tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc,
                     threadIdx.y * (WARP_SIZE/mmq_z) + threadIdx.x/mmq_z, nrows_x-row_x_0-1, threadIdx.x%mmq_z, blocks_per_row_x);
 
