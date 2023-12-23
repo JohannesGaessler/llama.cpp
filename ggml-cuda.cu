@@ -2931,10 +2931,11 @@ static __device__ __forceinline__ float vec_dot_q8_0_q8_1(
 }
 
 template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q8_0(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc) {
+    const int mmq_z = 16;
     (void)x_qh; (void)x_sc;
 
-    __shared__ int  tile_x_qs[mmq_y * (WARP_SIZE)       + mmq_y];
-    __shared__ float tile_x_d[mmq_y * (WARP_SIZE/QI8_0) + mmq_y/QI8_0];
+    __shared__ int  tile_x_qs[mmq_y * (mmq_z)       + mmq_y * mmq_z/WARP_SIZE];
+    __shared__ float tile_x_d[mmq_y * (mmq_z/QI8_0) + mmq_y * mmq_z/(WARP_SIZE*QI8_0)];
 
     *x_ql = tile_x_qs;
     *x_dm = (half2 *) tile_x_d;
@@ -2967,7 +2968,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
         const block_q8_0 * bxi = bx0 + i*blocks_per_row + kbx;
 
-        x_ql[i * (WARP_SIZE + 1) + k] = get_int_from_int8(bxi->qs, kqsx);
+        x_ql[i*mmq_z + i/(WARP_SIZE/mmq_z) + k] = get_int_from_int8(bxi->qs, kqsx);
     }
 
     const int blocks_per_tile_x_row = mmq_z / QI8_0;
@@ -2983,7 +2984,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
         const block_q8_0 * bxi = bx0 + i*blocks_per_row + kbxd;
 
-        x_dmf[i * (WARP_SIZE/QI8_0) + i / QI8_0 + kbxd] = bxi->d;
+        x_dmf[i * (mmq_z/QI8_0) + i / (QI8_0*WARP_SIZE/mmq_z) + kbxd] = bxi->d;
     }
 }
 
@@ -2997,8 +2998,8 @@ static __device__ __forceinline__ float vec_dot_q8_0_q8_1_mul_mat(
     const float * y_df  = (const float *) y_ds;
 
     return vec_dot_q8_0_q8_1_impl<VDR_Q8_0_Q8_1_MMQ>
-        (&x_ql[i * (WARP_SIZE + 1) + (k % mmq_z)], &y_qs[j * mmq_z + k % mmq_z],
-         x_dmf[i * (WARP_SIZE/QI8_0) + i/QI8_0 + (k%mmq_z)/QI8_0],
+        (&x_ql[i*mmq_z + i/(WARP_SIZE/mmq_z) + (k % mmq_z)], &y_qs[j * mmq_z + k % mmq_z],
+         x_dmf[i * (mmq_z/QI8_0) + i/(QI8_0*WARP_SIZE/mmq_z) + (k%mmq_z)/QI8_0],
          y_df[j * (mmq_z/QI8_1) + (k % mmq_z)/QI8_1]);
 }
 
