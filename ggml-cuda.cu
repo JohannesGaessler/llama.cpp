@@ -90,8 +90,10 @@
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
 #include <cuda_fp16.h>
+#ifdef GGML_CUDA_VOLTA_PLUS
 #include <cuda/pipeline>
 #include <cooperative_groups/memcpy_async.h>
+#endif // GGML_CUDA_VOLTA_PLUS
 // CUDA 10.2 does not have these macro definitions.
 #ifndef CUBLAS_TF32_TENSOR_OP_MATH
 #define CUBLAS_TF32_TENSOR_OP_MATH CUBLAS_TENSOR_OP_MATH
@@ -3837,10 +3839,10 @@ static __device__ __forceinline__ void mul_mat_q(
 
     float sum[mmq_y/WARP_SIZE][mmq_x/nwarps] = {{0.0f}};
 
-#if !defined(GGML_USE_HIPBLAS) && __CUDA_ARCH__ >= CC_VOLTA
+#ifdef GGML_CUDA_VOLTA_PLUS
     __shared__ cuda::pipeline_shared_state<cuda::thread_scope::thread_scope_block, 1> state;
     auto pipeline = cuda::make_pipeline(cooperative_groups::this_thread_block(), &state);
-#endif // !defined(GGML_USE_HIPBLAS) && __CUDA_ARCH__ >= CC_VOLTA
+#endif // GGML_CUDA_VOLTA_PLUS
 
     for (int ib0 = 0; ib0 < blocks_per_row_x; ib0 += blocks_per_warp) {
 
@@ -3851,7 +3853,7 @@ static __device__ __forceinline__ void mul_mat_q(
         for (int ir = 0; ir < qr; ++ir) {
             const int kqs = ir*WARP_SIZE + threadIdx.x;
 
-#if !defined(GGML_USE_HIPBLAS) && __CUDA_ARCH__ >= CC_VOLTA
+#ifdef GGML_CUDA_VOLTA_PLUS
             pipeline.producer_acquire();
             const int id = threadIdx.y*WARP_SIZE + threadIdx.x;
             if (id < mmq_x && col_y_0 + id < ncols_y) {
@@ -3866,7 +3868,7 @@ static __device__ __forceinline__ void mul_mat_q(
                 const int index_y = (threadIdx.y + i) * WARP_SIZE + kqs % WARP_SIZE;
                 tile_y_qs[index_y] = y_qs[col_y_eff*nrows_y/sizeof(int) + ib0*QI8_1*(qk/QK8_1) + kqs];
             }
-#endif // !defined(GGML_USE_HIPBLAS) && __CUDA_ARCH__ >= CC_VOLTA
+#endif // GGML_CUDA_VOLTA_PLUS
 
 #pragma unroll
             for (int ids0 = 0; ids0 < mmq_x; ids0 += nwarps * QI8_1) {
@@ -3886,9 +3888,9 @@ static __device__ __forceinline__ void mul_mat_q(
             }
 
             __syncthreads();
-#if !defined(GGML_USE_HIPBLAS) && __CUDA_ARCH__ >= CC_VOLTA
+#ifdef GGML_CUDA_VOLTA_PLUS
             pipeline.consumer_wait();
-#endif // !defined(GGML_USE_HIPBLAS) && __CUDA_ARCH__ >= CC_VOLTA
+#endif // GGML_CUDA_VOLTA_PLUS
 
 // #pragma unroll // unrolling this loop causes too much register pressure
             for (int k = ir*WARP_SIZE/qr; k < (ir+1)*WARP_SIZE/qr; k += vdr) {
@@ -3904,9 +3906,9 @@ static __device__ __forceinline__ void mul_mat_q(
             }
 
             __syncthreads();
-#if !defined(GGML_USE_HIPBLAS) && __CUDA_ARCH__ >= CC_VOLTA
+#ifdef GGML_CUDA_VOLTA_PLUS
             pipeline.consumer_release();
-#endif // !defined(GGML_USE_HIPBLAS) && __CUDA_ARCH__ >= CC_VOLTA
+#endif // GGML_CUDA_VOLTA_PLUS
         }
     }
 
