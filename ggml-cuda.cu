@@ -90,6 +90,8 @@
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
 #include <cuda_fp16.h>
+#include <cuda/pipeline>
+#include <cooperative_groups/memcpy_async.h>
 // CUDA 10.2 does not have these macro definitions.
 #ifndef CUBLAS_TF32_TENSOR_OP_MATH
 #define CUBLAS_TF32_TENSOR_OP_MATH CUBLAS_TENSOR_OP_MATH
@@ -3835,6 +3837,9 @@ static __device__ __forceinline__ void mul_mat_q(
 
     float sum[mmq_y/WARP_SIZE][mmq_x/nwarps] = {{0.0f}};
 
+    __shared__ cuda::pipeline_shared_state<cuda::thread_scope::thread_scope_block, 1> state;
+    auto pipeline = cuda::make_pipeline(cooperative_groups::this_thread_block(), &state);
+
     for (int ib0 = 0; ib0 < blocks_per_row_x; ib0 += blocks_per_warp) {
 
         load_tiles(x + row_x_0*blocks_per_row_x + ib0, tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc,
@@ -3844,12 +3849,16 @@ static __device__ __forceinline__ void mul_mat_q(
         for (int ir = 0; ir < qr; ++ir) {
             const int kqs = ir*WARP_SIZE + threadIdx.x;
 
+            pipeline.producer_acquire();
 #pragma unroll
             for (int i = 0; i < mmq_x; i += nwarps) {
                 const int col_y_eff = min(col_y_0 + threadIdx.y + i, ncols_y-1); // to prevent out-of-bounds memory accesses
                 const int index_y = (threadIdx.y + i) * WARP_SIZE + kqs % WARP_SIZE;
-                tile_y_qs[index_y] = y_qs[col_y_eff*nrows_y/sizeof(int) + ib0*QI8_1*(qk/QK8_1) + kqs];
+                // tile_y_qs[index_y] = y_qs[col_y_eff*nrows_y/sizeof(int) + ib0*QI8_1*(qk/QK8_1) + kqs];
+                cuda::memcpy_async(&tile_y_qs[index_y], &y_qs[col_y_eff*nrows_y/sizeof(int) + ib0*QI8_1*(qk/QK8_1) + kqs],
+                                   sizeof(int), pipeline);
             }
+            pipeline.producer_commit();
 
 #pragma unroll
             for (int ids0 = 0; ids0 < mmq_x; ids0 += nwarps * QI8_1) {
@@ -3869,6 +3878,7 @@ static __device__ __forceinline__ void mul_mat_q(
             }
 
             __syncthreads();
+            pipeline.consumer_wait();
 
 // #pragma unroll // unrolling this loop causes too much register pressure
             for (int k = ir*WARP_SIZE/qr; k < (ir+1)*WARP_SIZE/qr; k += vdr) {
@@ -3884,6 +3894,7 @@ static __device__ __forceinline__ void mul_mat_q(
             }
 
             __syncthreads();
+            pipeline.consumer_release();
         }
     }
 
@@ -4190,7 +4201,7 @@ mul_mat_q5_1(
 #define NWARPS_Q8_0_AMPERE 4
 #else
 #define  MMQ_X_Q8_0_AMPERE 128
-#define  MMQ_Y_Q8_0_AMPERE 64
+#define  MMQ_Y_Q8_0_AMPERE 128
 #define NWARPS_Q8_0_AMPERE 4
 #endif
 #define  MMQ_X_Q8_0_PASCAL 64
