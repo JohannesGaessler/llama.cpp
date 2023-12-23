@@ -2958,11 +2958,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
     const block_q8_0 * bx0 = (const block_q8_0 *) vx;
 
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nwarps) {
-        if (k >= mmq_z) {
-            break;
-        }
-
+    for (int i0 = 0; i0 < mmq_y; i0 += nwarps * (WARP_SIZE/mmq_z)) {
         int i = i0 + i_offset;
 
         if (need_check) {
@@ -2974,15 +2970,11 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
         x_ql[i * (WARP_SIZE + 1) + k] = get_int_from_int8(bxi->qs, kqsx);
     }
 
-    const int blocks_per_tile_x_row = WARP_SIZE / QI8_0;
+    const int blocks_per_tile_x_row = mmq_z / QI8_0;
     const int kbxd = k % blocks_per_tile_x_row;
 
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nwarps * QI8_0) {
-        if (kbxd >= mmq_z) {
-            break;
-        }
-
+    for (int i0 = 0; i0 < mmq_y; i0 += nwarps * QI8_0 * (WARP_SIZE/mmq_z)) {
         int i = i0 + i_offset * QI8_0 + k / blocks_per_tile_x_row;
 
         if (need_check) {
@@ -3827,7 +3819,7 @@ static __device__ __forceinline__ void mul_mat_q(
 #pragma unroll
         for (int ir = 0; ir < qr*WARP_SIZE; ir += mmq_z) {
             load_tiles(x + row_x_0*blocks_per_row_x + ib0 + ir/qi, tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc,
-                    threadIdx.y, nrows_x-row_x_0-1, threadIdx.x, blocks_per_row_x);
+                    threadIdx.y * (WARP_SIZE/mmq_z) + threadIdx.x/mmq_z, nrows_x-row_x_0-1, threadIdx.x%mmq_z, blocks_per_row_x);
 
             const int kqs = ir + threadIdx.x % mmq_z;
             const int i_offset = threadIdx.x/mmq_z + threadIdx.y * (WARP_SIZE/mmq_z);
