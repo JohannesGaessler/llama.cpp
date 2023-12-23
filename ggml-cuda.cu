@@ -1844,6 +1844,7 @@ static __device__ void convert_f32(const void * vx, const int ib, const int iqs,
     v.y = x[ib + iqs + 1];
 }
 
+template <bool transpose>
 static __global__ void quantize_q8_1(const float * __restrict__ x, void * __restrict__ vy, const int kx, const int kx_padded) {
     const int ix = blockDim.x*blockIdx.x + threadIdx.x;
 
@@ -1856,9 +1857,6 @@ static __global__ void quantize_q8_1(const float * __restrict__ x, void * __rest
     const int i_padded = iy*kx_padded + ix;
 
     block_q8_1 * y = (block_q8_1 *) vy;
-
-    const int ib = i_padded / QK8_1; // block index
-    const int iqs = i_padded % QK8_1; // quant index
 
     const float xi = ix < kx ? x[iy*kx + ix] : 0.0f;
     float amax = fabsf(xi);
@@ -1873,14 +1871,33 @@ static __global__ void quantize_q8_1(const float * __restrict__ x, void * __rest
     const float d = amax / 127;
     const int8_t q = amax == 0.0f ? 0 : roundf(xi / d);
 
-    y[ib].qs[iqs] = q;
+    const int ib  = i_padded / QK8_1; // block index
+    const int iqs = i_padded % QK8_1; // quant index
 
-    if (iqs > 0) {
-        return;
+    if (transpose) {
+        const int ky = blockDim.y*gridDim.y;
+
+        int8_t * qs = (int8_t *)  vy;
+        half2  * ds = (half2  *) (qs + kx_padded*ky);
+
+        qs[i_padded] = q;
+
+        if (iqs > 0) {
+            return;
+        }
+
+        reinterpret_cast<half&>(ds[ib].x) = d;
+        reinterpret_cast<half&>(ds[ib].y) = sum;
+    } else {
+        y[ib].qs[iqs] = q;
+
+        if (iqs > 0) {
+            return;
+        }
+
+        reinterpret_cast<half&>(y[ib].ds.x) = d;
+        reinterpret_cast<half&>(y[ib].ds.y) = sum;
     }
-
-    reinterpret_cast<half&>(y[ib].ds.x) = d;
-    reinterpret_cast<half&>(y[ib].ds.y) = sum;
 }
 
 template<int qk, int qr, dequantize_kernel_t dequantize_kernel, typename dst_t>
@@ -3790,8 +3807,9 @@ static __device__ __forceinline__ void mul_mat_q(
     const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
     const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
 
-    const block_q_t  * x = (const block_q_t  *) vx;
-    const block_q8_1 * y = (const block_q8_1 *) vy;
+    const block_q_t  * x    = (const block_q_t  *)  vx;
+    const int        * y_qs = (const int        *)  vy;
+    const half2      * y_ds = (const half2      *) (y_qs + ncols_y*nrows_y/sizeof(int));
 
     const int blocks_per_row_x = ncols_x / qk;
     const int blocks_per_col_y = nrows_y / QK8_1;
@@ -3830,11 +3848,8 @@ static __device__ __forceinline__ void mul_mat_q(
 #pragma unroll
             for (int i = 0; i < mmq_x; i += nwarps) {
                 const int col_y_eff = min(col_y_0 + threadIdx.y + i, ncols_y-1); // to prevent out-of-bounds memory accesses
-
-                const block_q8_1 * by0 = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + kbxd];
-
                 const int index_y = (threadIdx.y + i) * WARP_SIZE + kqs % WARP_SIZE;
-                tile_y_qs[index_y] = get_int_from_int8_aligned(by0->qs, threadIdx.x % QI8_1);
+                tile_y_qs[index_y] = y_qs[QI8_1 * (col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + kbxd) + threadIdx.x % QI8_1];
             }
 
 #pragma unroll
@@ -3844,7 +3859,7 @@ static __device__ __forceinline__ void mul_mat_q(
                 const int col_y_eff = min(col_y_0 + ids, ncols_y-1);
 
                 // if the sum is not needed it's faster to transform the scale to f32 ahead of time
-                const half2 * dsi_src = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + ir*(WARP_SIZE/QI8_1) + kby].ds;
+                const half2 * dsi_src = &y_ds[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + ir*(WARP_SIZE/QI8_1) + kby];
                 half2       * dsi_dst = &tile_y_ds[ids * (WARP_SIZE/QI8_1) + kby];
                 if (need_sum) {
                     *dsi_dst = *dsi_src;
@@ -5569,7 +5584,7 @@ static void quantize_row_q8_1_cuda(const float * x, void * vy, const int kx, con
     const int block_num_x = (kx_padded + CUDA_QUANTIZE_BLOCK_SIZE - 1) / CUDA_QUANTIZE_BLOCK_SIZE;
     const dim3 num_blocks(block_num_x, ky, 1);
     const dim3 block_size(CUDA_DEQUANTIZE_BLOCK_SIZE, 1, 1);
-    quantize_q8_1<<<num_blocks, block_size, 0, stream>>>(x, vy, kx, kx_padded);
+    quantize_q8_1<true><<<num_blocks, block_size, 0, stream>>>(x, vy, kx, kx_padded);
 }
 
 template <int qk, int qr, dequantize_kernel_t dequantize_kernel, typename dst_t>
