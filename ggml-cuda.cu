@@ -3843,13 +3843,12 @@ static __device__ __forceinline__ void mul_mat_q(
 #pragma unroll
         for (int ir = 0; ir < qr; ++ir) {
             const int kqs = ir*WARP_SIZE + threadIdx.x;
-            const int kbxd = kqs / QI8_1;
 
 #pragma unroll
             for (int i = 0; i < mmq_x; i += nwarps) {
                 const int col_y_eff = min(col_y_0 + threadIdx.y + i, ncols_y-1); // to prevent out-of-bounds memory accesses
                 const int index_y = (threadIdx.y + i) * WARP_SIZE + kqs % WARP_SIZE;
-                tile_y_qs[index_y] = y_qs[QI8_1 * (col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + kbxd) + threadIdx.x % QI8_1];
+                tile_y_qs[index_y] = y_qs[col_y_eff*nrows_y/sizeof(int) + ib0*QI8_1*(qk/QK8_1) + kqs];
             }
 
 #pragma unroll
