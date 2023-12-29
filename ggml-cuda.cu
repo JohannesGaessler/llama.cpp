@@ -525,6 +525,7 @@ static cudaStream_t g_cudaStreams[GGML_CUDA_MAX_DEVICES][MAX_STREAMS] = { { null
 
 struct ggml_tensor_extra_gpu {
     void * data_device[GGML_CUDA_MAX_DEVICES]; // 1 pointer for each device for split tensors
+    cudaEvent_t src_done;
     cudaEvent_t events[GGML_CUDA_MAX_DEVICES][MAX_STREAMS]; // events for synchronizing multiple GPUs
 };
 
@@ -9255,12 +9256,17 @@ static size_t g_temp_tensor_extra_index = 0;
 static ggml_tensor_extra_gpu * ggml_cuda_alloc_temp_tensor_extra() {
     if (g_temp_tensor_extras == nullptr) {
         g_temp_tensor_extras = new ggml_tensor_extra_gpu[GGML_CUDA_MAX_NODES];
+        for (int64_t i = 0; i < GGML_CUDA_MAX_NODES; ++i) {
+            CUDA_CHECK(cudaEventCreate(&g_temp_tensor_extras[i].src_done, cudaEventDisableTiming));
+        }
     }
 
     size_t alloc_index = g_temp_tensor_extra_index;
     g_temp_tensor_extra_index = (g_temp_tensor_extra_index + 1) % GGML_CUDA_MAX_NODES;
     ggml_tensor_extra_gpu * extra = &g_temp_tensor_extras[alloc_index];
+    cudaEvent_t src_done = extra->src_done;
     memset(extra, 0, sizeof(*extra));
+    extra->src_done = src_done;
 
     return extra;
 }
