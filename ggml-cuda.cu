@@ -529,6 +529,7 @@ struct ggml_tensor_extra_gpu {
     int64_t is;
     int64_t is_branch;
     bool data_constant;
+    cudaEvent_t src0_done;
     cudaEvent_t src1_done;
     cudaEvent_t events[GGML_CUDA_MAX_DEVICES][MAX_STREAMS]; // events for synchronizing multiple GPUs
 };
@@ -6747,7 +6748,6 @@ static void ggml_cuda_pool_free_vmm(int device, int stream, void * ptr, size_t s
 }
 
 static void * ggml_cuda_pool_malloc(int device, int stream, size_t size, size_t * actual_size) {
-    GGML_ASSERT(stream == 0);
     if (g_device_caps[device].vmm) {
         return ggml_cuda_pool_malloc_vmm(device, stream, size, actual_size);
     } else {
@@ -9327,6 +9327,7 @@ static ggml_tensor_extra_gpu * ggml_cuda_alloc_temp_tensor_extra() {
     if (g_temp_tensor_extras == nullptr) {
         g_temp_tensor_extras = new ggml_tensor_extra_gpu[GGML_CUDA_MAX_NODES];
         for (int64_t i = 0; i < GGML_CUDA_MAX_NODES; ++i) {
+            CUDA_CHECK(cudaEventCreate(&g_temp_tensor_extras[i].src0_done, cudaEventDisableTiming));
             CUDA_CHECK(cudaEventCreate(&g_temp_tensor_extras[i].src1_done, cudaEventDisableTiming));
         }
     }
@@ -9334,9 +9335,11 @@ static ggml_tensor_extra_gpu * ggml_cuda_alloc_temp_tensor_extra() {
     size_t alloc_index = g_temp_tensor_extra_index;
     g_temp_tensor_extra_index = (g_temp_tensor_extra_index + 1) % GGML_CUDA_MAX_NODES;
     ggml_tensor_extra_gpu * extra = &g_temp_tensor_extras[alloc_index];
-    cudaEvent_t src_done = extra->src1_done;
+    cudaEvent_t src0_done = extra->src0_done;
+    cudaEvent_t src1_done = extra->src1_done;
     memset(extra, 0, sizeof(ggml_tensor_extra_gpu));
-    extra->src1_done = src_done;
+    extra->src0_done = src0_done;
+    extra->src1_done = src1_done;
 
     return extra;
 }
@@ -9714,6 +9717,8 @@ bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_
                 if (strcmp(tensor->name, "Qcur-0") == 0) {
                     extra_dst->is        = 1;
                     extra_dst->is_branch = 1;
+                    CUDA_CHECK(cudaEventRecord(extra_dst->src1_done, g_cudaStreams[g_main_device][extra_src1->is]));
+                    CUDA_CHECK(cudaStreamWaitEvent(g_cudaStreams[g_main_device][extra_dst->is], extra_dst->src1_done));
                 } else {
                     extra_dst->is        = 0;
                     extra_dst->is_branch = 0;
