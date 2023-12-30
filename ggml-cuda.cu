@@ -7921,6 +7921,7 @@ static void ggml_cuda_op_clamp(
 }
 
 static void ggml_cuda_op_flatten(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, const ggml_cuda_op_flatten_t op) {
+    CUDA_CHECK(cudaDeviceSynchronize());
     const int64_t nrows0 = ggml_nrows(src0);
 
     const bool use_src1 = src1 != nullptr;
@@ -7991,6 +7992,7 @@ static void ggml_cuda_op_flatten(const ggml_tensor * src0, const ggml_tensor * s
     if (dst->backend == GGML_BACKEND_CPU) {
         CUDA_CHECK(cudaDeviceSynchronize());
     }
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 static void ggml_cuda_set_peer_access(const int n_tokens) {
@@ -9084,6 +9086,7 @@ static void ggml_cuda_clamp(const ggml_tensor * src0, const ggml_tensor * src1, 
 }
 
 static void ggml_cuda_cpy(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
+    CUDA_CHECK(cudaDeviceSynchronize());
     const int64_t ne = ggml_nelements(src0);
     GGML_ASSERT(ne == ggml_nelements(src1));
 
@@ -9147,6 +9150,7 @@ static void ggml_cuda_cpy(const ggml_tensor * src0, const ggml_tensor * src1, gg
     }
 
     (void) dst;
+    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 static void ggml_cuda_dup(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
