@@ -7921,7 +7921,6 @@ static void ggml_cuda_op_clamp(
 }
 
 static void ggml_cuda_op_flatten(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, const ggml_cuda_op_flatten_t op) {
-    CUDA_CHECK(cudaDeviceSynchronize());
     const int64_t nrows0 = ggml_nrows(src0);
 
     const bool use_src1 = src1 != nullptr;
@@ -7992,7 +7991,6 @@ static void ggml_cuda_op_flatten(const ggml_tensor * src0, const ggml_tensor * s
     if (dst->backend == GGML_BACKEND_CPU) {
         CUDA_CHECK(cudaDeviceSynchronize());
     }
-    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 static void ggml_cuda_set_peer_access(const int n_tokens) {
@@ -9086,7 +9084,6 @@ static void ggml_cuda_clamp(const ggml_tensor * src0, const ggml_tensor * src1, 
 }
 
 static void ggml_cuda_cpy(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
-    CUDA_CHECK(cudaDeviceSynchronize());
     const int64_t ne = ggml_nelements(src0);
     GGML_ASSERT(ne == ggml_nelements(src1));
 
@@ -9150,7 +9147,6 @@ static void ggml_cuda_cpy(const ggml_tensor * src0, const ggml_tensor * src1, gg
     }
 
     (void) dst;
-    CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 static void ggml_cuda_dup(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
@@ -9643,7 +9639,8 @@ bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_
 
         if (extra_src0 != nullptr) {
             if (!is_set && extra_dst != nullptr) {
-                extra_dst->is = extra_src0->is_branch;
+                extra_dst->is        = extra_src0->is_branch;
+                extra_dst->is_branch = extra_src0->is_branch;
                 is_set = true;
             }
             extra_src0->is_branch = (extra_src0->is_branch + 1) % MAX_STREAMS;
@@ -9653,14 +9650,19 @@ bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_
             ggml_tensor_extra_gpu * extra_src1 = (ggml_tensor_extra_gpu *) tensor->src[1]->extra;
 
             if (!is_set && extra_dst != nullptr) {
-                extra_dst->is = extra_src0->is_branch;
+                extra_dst->is        = extra_src1->is_branch;
+                extra_dst->is_branch = extra_src1->is_branch;
                 is_set = true;
             }
             extra_src1->is_branch = (extra_src1->is_branch + 1) % MAX_STREAMS;
 
             if (extra_src1->is != extra_src0->is) {
-                CUDA_CHECK(cudaEventRecord(extra_dst->src1_done, g_cudaStreams[g_main_device][extra_src1->is]));
-                CUDA_CHECK(cudaStreamWaitEvent(g_cudaStreams[g_main_device][extra_dst->is], extra_dst->src1_done));
+                if (tensor->backend == GGML_BACKEND_CPU) {
+                    CUDA_CHECK(cudaStreamSynchronize(g_cudaStreams[g_main_device][extra_src1->is]));
+                } else {
+                    CUDA_CHECK(cudaEventRecord(extra_dst->src1_done, g_cudaStreams[g_main_device][extra_src1->is]));
+                    CUDA_CHECK(cudaStreamWaitEvent(g_cudaStreams[g_main_device][extra_dst->is], extra_dst->src1_done));
+                }
             }
         }
     }
