@@ -9708,6 +9708,9 @@ bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_
             CUDA_CHECK(cudaEventRecord(extra_dst->src1_done, g_cudaStreams[g_main_device][extra_src1->is]));
             CUDA_CHECK(cudaStreamWaitEvent(g_cudaStreams[g_main_device][extra_dst->is], extra_dst->src1_done));
         }
+        // if (is != 0) {
+        //     fprintf(stderr, "%s + %s -> %s is=%ld\n", tensor->src[0]->name, tensor->src[1] == nullptr ? "null" : tensor->src[1]->name, tensor->name, is);
+        // }
 
         // fprintf(stderr, "%s: is=%ld\n", tensor->name, extra_dst->is);
     }
