@@ -6810,10 +6810,6 @@ bool ggml_cublas_loaded(void) {
     return g_cublas_loaded;
 }
 
-static void * test_buffer;
-static void * test_buffer_2;
-static void * test_buffer_3;
-
 void ggml_init_cublas() {
     static bool initialized = false;
 
@@ -6897,10 +6893,6 @@ void ggml_init_cublas() {
 
         initialized = true;
         g_cublas_loaded = true;
-
-        CUDA_CHECK(cudaMalloc(&test_buffer, 1024*1024*1024));
-        CUDA_CHECK(cudaMalloc(&test_buffer_2, 1024*1024*1024));
-        CUDA_CHECK(cudaMalloc(&test_buffer_3, 1024*1024*1024));
     }
 }
 
