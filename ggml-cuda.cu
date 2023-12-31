@@ -8182,11 +8182,7 @@ static void ggml_cuda_op_mul_mat(
         // }
 
         if (convert_src1_to_q8_1) {
-            if (strcmp(dst->name, "Qcur-0") == 0) {
-                dev[id].src1_ddq = (char *) test_buffer;
-            } else {
-                dev[id].src1_ddq = dev[id].src1_ddq_alloc.alloc(is0, nrows1*src1_padded_col_size*q8_1_ts/q8_1_bs);
-            }
+            dev[id].src1_ddq = dev[id].src1_ddq_alloc.alloc(is0, nrows1*src1_padded_col_size*q8_1_ts/q8_1_bs);
 
             if (src1_on_device && src1_is_contiguous) {
                 quantize_row_q8_1_cuda(dev[id].src1_ddf, dev[id].src1_ddq, ne10, nrows1, src1_padded_col_size, stream);
