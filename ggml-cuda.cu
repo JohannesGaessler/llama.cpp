@@ -9411,7 +9411,7 @@ void ggml_cuda_assign_scratch_offset(struct ggml_tensor * tensor, size_t offset)
     }
     if (g_scratch_buffer == nullptr) {
         ggml_cuda_set_device(g_main_device);
-        CUDA_CHECK(cudaMalloc(&g_scratch_buffer, 3*g_scratch_size));
+        CUDA_CHECK(cudaMalloc(&g_scratch_buffer, g_scratch_size));
     }
 
     ggml_tensor_extra_gpu * extra = ggml_cuda_alloc_temp_tensor_extra();
