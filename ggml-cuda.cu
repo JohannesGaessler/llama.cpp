@@ -8978,6 +8978,9 @@ static void ggml_cuda_mul_mat_id(const ggml_tensor * src0, const ggml_tensor * s
     ggml_tensor_extra_gpu src1_row_extra;
     ggml_tensor_extra_gpu dst_row_extra;
 
+    src1_row_extra.is = src1_extra->is;
+    dst_row_extra.is  =  dst_extra->is;
+
     ggml_tensor src1_row = *src1;
     ggml_tensor dst_row = *dst;
 
