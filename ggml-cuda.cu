@@ -9435,12 +9435,7 @@ void ggml_cuda_assign_scratch_offset(struct ggml_tensor * tensor, size_t offset)
         }
         extra->data_device[g_main_device] = src0_ddc + view_offset;
     } else {
-        if (strcmp(tensor->name, "Qcur-0") == 0) {
-            extra->data_device[g_main_device] = (char *) test_buffer_3 + offset;
-            fprintf(stderr, "%s moved to test_buffer_3\n", tensor->name);
-        } else {
-            extra->data_device[g_main_device] = (char *) g_scratch_buffer + offset;
-        }
+        extra->data_device[g_main_device] = (char *) g_scratch_buffer + offset;
     }
 
     tensor->extra = extra;
