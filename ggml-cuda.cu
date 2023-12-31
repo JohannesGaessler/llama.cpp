@@ -9670,22 +9670,13 @@ bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_
         bool is_set = false;
 
         if (extra_src0 != nullptr && !extra_src0->data_constant) {
-            if (tensor->src[0]->op == GGML_OP_NONE) {
-                if (!is_set && extra_dst != nullptr) {
-                    // fprintf(stderr, "is set from src0: %ld -> %ld \n", extra_dst->is_branch, extra_src0->is_branch);
-                    extra_dst->is        = 0;
-                    extra_dst->is_branch = 0;
-                    is_set = true;
-                }
-            } else {
-                if (!is_set && extra_dst != nullptr) {
-                    // fprintf(stderr, "is set from src0: %ld -> %ld \n", extra_dst->is_branch, extra_src0->is_branch);
-                    extra_dst->is        = extra_src0->is_branch;
-                    extra_dst->is_branch = extra_src0->is_branch;
-                    is_set = true;
-                }
-                extra_src0->is_branch = (extra_src0->is_branch + 1) % MAX_STREAMS;
+            if (!is_set && extra_dst != nullptr) {
+                // fprintf(stderr, "is set from src0: %ld -> %ld \n", extra_dst->is_branch, extra_src0->is_branch);
+                extra_dst->is        = extra_src0->is_branch;
+                extra_dst->is_branch = extra_src0->is_branch;
+                is_set = true;
             }
+            extra_src0->is_branch = (extra_src0->is_branch + 1) % MAX_STREAMS;
         }
 
         if (tensor->src[1] != nullptr && tensor->src[1]->extra != nullptr && !((ggml_tensor_extra_gpu *) tensor->src[1]->extra)->data_constant) {
@@ -9706,10 +9697,10 @@ bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_
                 // extra_dst->is_branch = extra_src1->is_branch;
                 is_set = true;
             }
-            // extra_src1->is_branch = (extra_src1->is_branch + 1) % MAX_STREAMS;
+            extra_src1->is_branch = (extra_src1->is_branch + 1) % MAX_STREAMS;
 
             if (extra_src0 != nullptr && !extra_src0->data_constant && extra_src1->is != extra_src0->is) {
-                fprintf(stderr, "event synchronize for %s: src0=%ld <-> src1=%ld \n", tensor->name, extra_src0->is, extra_src1->is);
+                // fprintf(stderr, "event synchronize for %s: src0=%ld <-> src1=%ld \n", tensor->name, extra_src0->is, extra_src1->is);
                 if (tensor->backend == GGML_BACKEND_CPU) {
                     CUDA_CHECK(cudaStreamSynchronize(g_cudaStreams[g_main_device][extra_src1->is]));
                 } else {
@@ -9729,15 +9720,16 @@ bool ggml_cuda_compute_forward(struct ggml_compute_params * params, struct ggml_
     // }
     // char * p0 = (char *) ((ggml_tensor_extra_gpu *) tensor->extra)->data_device;
     // fprintf(stderr, "%s\n %p - %p\n", tensor->name, p0, p0 + ggml_nbytes(tensor));
-    if (tensor->src[0] != nullptr && tensor->src[0]->extra != nullptr && ((ggml_tensor_extra_gpu *) tensor->src[0]->extra)->is != 0) {
-        fprintf(stderr, "tensor=%s: src0=%s\n", tensor->name, tensor->src[0]->name);
-    }
-    if (tensor->src[1] != nullptr && tensor->src[1]->extra != nullptr && ((ggml_tensor_extra_gpu *) tensor->src[1]->extra)->is != 0) {
-        fprintf(stderr, "tensor=%s: src1=%s\n", tensor->name, tensor->src[1]->name);
-    }
-    if (tensor->extra != nullptr && ((ggml_tensor_extra_gpu *) tensor->extra)->is != 0) {
-        fprintf(stderr, "tensor=%s: dst=%s\n", tensor->name, tensor->name);
-    }
+
+    // if (tensor->src[0] != nullptr && tensor->src[0]->extra != nullptr && ((ggml_tensor_extra_gpu *) tensor->src[0]->extra)->is != 0) {
+    //     fprintf(stderr, "tensor=%s: src0=%s\n", tensor->name, tensor->src[0]->name);
+    // }
+    // if (tensor->src[1] != nullptr && tensor->src[1]->extra != nullptr && ((ggml_tensor_extra_gpu *) tensor->src[1]->extra)->is != 0) {
+    //     fprintf(stderr, "tensor=%s: src1=%s\n", tensor->name, tensor->src[1]->name);
+    // }
+    // if (tensor->extra != nullptr && ((ggml_tensor_extra_gpu *) tensor->extra)->is != 0) {
+    //     fprintf(stderr, "tensor=%s: dst=%s\n", tensor->name, tensor->name);
+    // }
     func(tensor->src[0], tensor->src[1], tensor);
     return true;
 }
