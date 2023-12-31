@@ -1,3 +1,4 @@
+#include <cstdlib>
 #define LLAMA_API_INTERNAL
 //#define LLAMA_GGML_BACKEND_CUDA_TEST // for testing only - enables ggml-cuda through ggml-backend, disables partial offloading
 #include "llama.h"
@@ -8887,6 +8888,8 @@ static ggml_type get_k_quant_type(quantize_state_internal & qs, ggml_type new_ty
 }
 
 static void llama_model_quantize_internal(const std::string & fname_inp, const std::string & fname_out, const llama_model_quantize_params * params) {
+    float * data_reordered = (float *) std::malloc(1024*1024*1024);
+
     ggml_type quantized_type;
     llama_ftype ftype = params->ftype;
 
@@ -9071,12 +9074,15 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
             static const int chunk_size = 32 * 512;
             const int nchunk = (nelements + chunk_size - 1)/chunk_size;
             const int nthread_use = nthread > 1 ? std::max(1, std::min(nthread, nchunk)) : 1;
+
+            memcpy(data_reordered, f32_data, nelements*sizeof(float));
+
             if (nthread_use < 2) {
-                new_size = ggml_quantize_chunk(new_type, f32_data, new_data, 0, nelements, hist_cur.data());
+                new_size = ggml_quantize_chunk(new_type, data_reordered, new_data, 0, nelements, hist_cur.data());
             } else {
                 size_t counter = 0;
                 new_size = 0;
-                auto compute = [&mutex, &counter, &hist_cur, &new_size, new_type, f32_data, new_data, nelements]() {
+                auto compute = [&mutex, &counter, &hist_cur, &new_size, new_type, data_reordered, new_data, nelements]() {
                     std::array<int64_t, 1 << 4> local_hist = {};
                     size_t local_size = 0;
                     while (true) {
@@ -9093,7 +9099,7 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
                         }
                         lock.unlock();
                         size_t last = std::min(nelements, first + chunk_size);
-                        local_size += ggml_quantize_chunk(new_type, f32_data, new_data, first, last - first, local_hist.data());
+                        local_size += ggml_quantize_chunk(new_type, data_reordered, new_data, first, last - first, local_hist.data());
                     }
                 };
                 for (int it = 0; it < nthread_use - 1; ++it) {
