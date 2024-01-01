@@ -9108,11 +9108,11 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
                     // }
 
                     // abs col max
-                    for (int row = 0; row < ne1; ++row) {
-                        if (fabsf(f32_data[row*ne0 + col]) > col_values[col]) {
-                            col_values[col] = fabsf(f32_data[row*ne0 + col]);
-                        }
-                    }
+                    // for (int row = 0; row < ne1; ++row) {
+                    //     if (fabsf(f32_data[row*ne0 + col]) > col_values[col]) {
+                    //         col_values[col] = fabsf(f32_data[row*ne0 + col]);
+                    //     }
+                    // }
 
                     // abs col percentiles
                     // std::vector<float> col_sorted;
@@ -9134,27 +9134,27 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
                     // 99.9th percentile
                     // col_values[col] = col_sorted.at(0.999*ne1 + 1);
 
-                    // float sum = 0.0f;
-                    // std::vector<float> col_sorted;
-                    // col_sorted.reserve(ne1);
-                    // for (int row = 0; row < ne1; ++row) {
-                    //     const float val = fabsf(f32_data[row*ne0 + col]);
-                    //     sum += val;
-                    //     col_sorted.push_back(val);
-                    // }
-                    // std::sort(col_sorted.begin(), col_sorted.end());
+                    float sum = 0.0f;
+                    std::vector<float> col_sorted;
+                    col_sorted.reserve(ne1);
+                    for (int row = 0; row < ne1; ++row) {
+                        const float val = fabsf(f32_data[row*ne0 + col]);
+                        sum += val;
+                        col_sorted.push_back(val);
+                    }
+                    std::sort(col_sorted.begin(), col_sorted.end());
 
-                    // float cumsum = 0.0f;
-                    // float gini   = 0.0f;
-                    // for (int row = 0; row < ne1; ++row) {
-                    //     const float val_equal = (sum*(row+1))/ne1;
-                    //     cumsum += col_sorted.at(row);
+                    float cumsum = 0.0f;
+                    float gini   = 0.0f;
+                    for (int row = 0; row < ne1; ++row) {
+                        const float val_equal = (sum*(row+1))/ne1;
+                        cumsum += col_sorted.at(row);
 
-                    //     gini += val_equal - cumsum;
-                    // }
-                    // gini /= sum*ne1;
+                        gini += val_equal - cumsum;
+                    }
+                    gini /= sum*ne1;
 
-                    // col_values[col] = gini;
+                    col_values[col] = gini;
                 }
                 for (int col = 0; col < ne0; ++col) {
                     float   value_min = 1e9;
