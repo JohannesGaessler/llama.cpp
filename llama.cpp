@@ -9082,19 +9082,19 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
             const long il = name.size() >= 4 ? strtol(name.data() + 4, NULL, 0) : -1;
             const int64_t ne0 = tensor->ne[0];
             const int64_t ne1 = tensor->ne[1];
-            if (false && name.size() >= 13 && strcmp(name.data() + name.size() - 13, "ffn_up.weight") == 0) {
+            if (name.size() >= 13 && strcmp(name.data() + name.size() - 13, "ffn_up.weight") == 0) {
                 GGML_ASSERT(sorting[il*1024*1024] != -1);
                 for (int row = 0; row < ne1; ++row) {
                     // memcpy(data_reordered, f32_data + ne0*sorting[il*1024*1024 + row], ne0*sizeof(float));
-                    memcpy(data_reordered, f32_data + ne0*row, ne0*sizeof(float));
+                    memcpy(data_reordered + ne0*row, f32_data + ne0*row, ne0*sizeof(float));
                 }
-            } else if (false && name.size() >= 15 && strcmp(name.data() + name.size() - 15, "ffn_gate.weight") == 0) {
+            } else if (name.size() >= 15 && strcmp(name.data() + name.size() - 15, "ffn_gate.weight") == 0) {
                 GGML_ASSERT(sorting[il*1024*1024] != -1);
                 for (int row = 0; row < ne1; ++row) {
                     // memcpy(data_reordered, f32_data + ne0*sorting[il*1024*1024 + row], ne0*sizeof(float));
-                    memcpy(data_reordered, f32_data + ne0*row, ne0*sizeof(float));
+                    memcpy(data_reordered + ne0*row, f32_data + ne0*row, ne0*sizeof(float));
                 }
-            } else if (false && name.size() >= 15 && strcmp(name.data() + name.size() - 15, "ffn_down.weight") == 0) {
+            } else if (name.size() >= 15 && strcmp(name.data() + name.size() - 15, "ffn_down.weight") == 0) {
                 for (int col = 0; col < ne0; ++col) {
                     sorting[il*1024*1024 + col] = col;
                 }
