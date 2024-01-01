@@ -9096,14 +9096,28 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
             } else if (name.size() >= 15 && strcmp(name.data() + name.size() - 15, "ffn_down.weight") == 0) {
                 for (int col = 0; col < ne0; ++col) {
                     col_values[col] = 0.0f;
-                    for (int row = 0; row < ne1; ++row) {
-                        // col_values[col] += fabsf(f32_data[row*ne0 + col]); // abs col sum
 
-                        // abs col max
-                        if (fabsf(f32_data[row*ne0 + col]) > col_values[col]) {
-                            col_values[col] = fabsf(f32_data[row*ne0 + col]);
-                        }
+                    // abs col sum
+                    // for (int row = 0; row < ne1; ++row) {
+                    //     col_values[col] += fabsf(f32_data[row*ne0 + col]);
+                    // }
+
+                    // abs col max
+                    // for (int row = 0; row < ne1; ++row) {
+                    //     if (fabsf(f32_data[row*ne0 + col]) > col_values[col]) {
+                    //         col_values[col] = fabsf(f32_data[row*ne0 + col]);
+                    //     }
+                    // }
+
+                    // abs col median
+                    std::vector<float> col_sorted;
+                    col_sorted.reserve(ne1);
+                    for (int row = 0; row < ne1; ++row) {
+                        col_sorted.push_back(fabsf(f32_data[row*ne0 + col]));
                     }
+                    std::sort(col_sorted.begin(), col_sorted.end());
+                    col_values[col] = 0.5 * (col_sorted.at(ne1/2 - 1) + col_sorted.at(ne1/2));
+
                 }
                 for (int col = 0; col < ne0; ++col) {
                     float   value_min = 1e9;
