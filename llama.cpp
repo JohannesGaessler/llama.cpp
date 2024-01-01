@@ -9085,14 +9085,12 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
             if (name.size() >= 13 && strcmp(name.data() + name.size() - 13, "ffn_up.weight") == 0) {
                 GGML_ASSERT(sorting[il*1024*1024] != -1);
                 for (int row = 0; row < ne1; ++row) {
-                    // memcpy(data_reordered, f32_data + ne0*sorting[il*1024*1024 + row], ne0*sizeof(float));
-                    memcpy(data_reordered + ne0*row, f32_data + ne0*row, ne0*sizeof(float));
+                    memcpy(data_reordered + ne0*row, f32_data + ne0*sorting[il*1024*1024 + row], ne0*sizeof(float));
                 }
             } else if (name.size() >= 15 && strcmp(name.data() + name.size() - 15, "ffn_gate.weight") == 0) {
                 GGML_ASSERT(sorting[il*1024*1024] != -1);
                 for (int row = 0; row < ne1; ++row) {
-                    // memcpy(data_reordered, f32_data + ne0*sorting[il*1024*1024 + row], ne0*sizeof(float));
-                    memcpy(data_reordered + ne0*row, f32_data + ne0*row, ne0*sizeof(float));
+                    memcpy(data_reordered + ne0*row, f32_data + ne0*sorting[il*1024*1024 + row], ne0*sizeof(float));
                 }
             } else if (name.size() >= 15 && strcmp(name.data() + name.size() - 15, "ffn_down.weight") == 0) {
                 for (int col = 0; col < ne0; ++col) {
@@ -9100,8 +9098,7 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
                 }
                 for (int row = 0; row < ne1; ++row) {
                     for (int col = 0; col < ne0; ++col) {
-                        // data_reordered[row*ne0 + col] = f32_data[row*ne0 + sorting[il*1024*1024 + col]];
-                        data_reordered[row*ne0 + col] = f32_data[row*ne0 + col];
+                        data_reordered[row*ne0 + col] = f32_data[row*ne0 + sorting[il*1024*1024 + col]];
                     }
                 }
             } else {
