@@ -9109,14 +9109,19 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
                     //     }
                     // }
 
-                    // abs col median
+                    // abs col percentiles
                     std::vector<float> col_sorted;
                     col_sorted.reserve(ne1);
                     for (int row = 0; row < ne1; ++row) {
                         col_sorted.push_back(fabsf(f32_data[row*ne0 + col]));
                     }
                     std::sort(col_sorted.begin(), col_sorted.end());
-                    col_values[col] = 0.5 * (col_sorted.at(ne1/2 - 1) + col_sorted.at(ne1/2));
+
+                    // median
+                    // col_values[col] = 0.5 * (col_sorted.at(ne1/2 - 1) + col_sorted.at(ne1/2));
+
+                    // 90th percentile
+                    col_values[col] = col_sorted.at(0.9*ne1 + 1);
 
                 }
                 for (int col = 0; col < ne0; ++col) {
