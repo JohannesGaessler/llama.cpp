@@ -9102,6 +9102,11 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
                     //     col_values[col] += fabsf(f32_data[row*ne0 + col]);
                     // }
 
+                    // sqr col sum
+                    for (int row = 0; row < ne1; ++row) {
+                        col_values[col] += f32_data[row*ne0 + col] * f32_data[row*ne0 + col];
+                    }
+
                     // abs col max
                     // for (int row = 0; row < ne1; ++row) {
                     //     if (fabsf(f32_data[row*ne0 + col]) > col_values[col]) {
@@ -9110,12 +9115,12 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
                     // }
 
                     // abs col percentiles
-                    std::vector<float> col_sorted;
-                    col_sorted.reserve(ne1);
-                    for (int row = 0; row < ne1; ++row) {
-                        col_sorted.push_back(fabsf(f32_data[row*ne0 + col]));
-                    }
-                    std::sort(col_sorted.begin(), col_sorted.end());
+                    // std::vector<float> col_sorted;
+                    // col_sorted.reserve(ne1);
+                    // for (int row = 0; row < ne1; ++row) {
+                    //     col_sorted.push_back(fabsf(f32_data[row*ne0 + col]));
+                    // }
+                    // std::sort(col_sorted.begin(), col_sorted.end());
 
                     // median
                     // col_values[col] = 0.5 * (col_sorted.at(ne1/2 - 1) + col_sorted.at(ne1/2));
@@ -9127,7 +9132,7 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
                     // col_values[col] = col_sorted.at(0.990*ne1 + 1);
 
                     // 99.9th percentile
-                    col_values[col] = col_sorted.at(0.999*ne1 + 1);
+                    // col_values[col] = col_sorted.at(0.999*ne1 + 1);
 
                 }
                 for (int col = 0; col < ne0; ++col) {
