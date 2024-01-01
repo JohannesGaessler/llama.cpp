@@ -8888,7 +8888,11 @@ static ggml_type get_k_quant_type(quantize_state_internal & qs, ggml_type new_ty
 }
 
 static void llama_model_quantize_internal(const std::string & fname_inp, const std::string & fname_out, const llama_model_quantize_params * params) {
-    float * data_reordered = (float *) std::malloc(1024*1024*1024);
+    float   * data_reordered = (float   *) std::malloc(1024*1024*1024);
+    int64_t * sorting        = (int64_t *) std::malloc(1024*1024*1024);
+    for (int i = 0; i < 128; ++i) {
+        sorting[i*1024*1024] = -1;
+    }
 
     ggml_type quantized_type;
     llama_ftype ftype = params->ftype;
@@ -9076,6 +9080,16 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
             const int nthread_use = nthread > 1 ? std::max(1, std::min(nthread, nchunk)) : 1;
 
             memcpy(data_reordered, f32_data, nelements*sizeof(float));
+            const long il = name.size() >= 4 ? strtol(name.data() + 4, NULL, 0) : -1;
+            if (name.size() >= 13 && strcmp(name.data() + name.size() - 13, "ffn_up.weight") == 0) {
+                GGML_ASSERT(sorting[il*1024*1024] != -1);
+            }
+            if (name.size() >= 15 && strcmp(name.data() + name.size() - 15, "ffn_gate.weight") == 0) {
+                GGML_ASSERT(sorting[il*1024*1024] != -1);
+            }
+            if (name.size() >= 15 && strcmp(name.data() + name.size() - 15, "ffn_down.weight") == 0) {
+                sorting[il*1024*1024] = 0;
+            }
 
             if (nthread_use < 2) {
                 new_size = ggml_quantize_chunk(new_type, data_reordered, new_data, 0, nelements, hist_cur.data());
