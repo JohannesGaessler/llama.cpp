@@ -8889,6 +8889,7 @@ static ggml_type get_k_quant_type(quantize_state_internal & qs, ggml_type new_ty
 
 static void llama_model_quantize_internal(const std::string & fname_inp, const std::string & fname_out, const llama_model_quantize_params * params) {
     float   * data_reordered = (float   *) std::malloc(1024*1024*1024);
+    float   * col_sums       = (float *)   std::malloc(1024*1024);
     int64_t * sorting        = (int64_t *) std::malloc(1024*1024*1024);
     for (int i = 0; i < 128; ++i) {
         sorting[i*1024*1024] = -1;
@@ -9094,7 +9095,22 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
                 }
             } else if (name.size() >= 15 && strcmp(name.data() + name.size() - 15, "ffn_down.weight") == 0) {
                 for (int col = 0; col < ne0; ++col) {
-                    sorting[il*1024*1024 + col] = col;
+                    col_sums[col] = 0.0f;
+                    for (int row = 0; row < ne1; ++row) {
+                        col_sums[col] += fabsf(f32_data[row*ne0 + col]);
+                    }
+                }
+                for (int col = 0; col < ne0; ++col) {
+                    float   value_min = 1e9;
+                    int64_t index_min = 0;
+                    for (int col2 = 0; col2 < ne0; ++ col2) {
+                        if (col_sums[col2] < value_min) {
+                            value_min = col_sums[col2];
+                            index_min = col2;
+                        }
+                    }
+                    sorting[il*1024*1024 + col] = index_min;
+                    col_sums[index_min] = 1e9;
                 }
                 for (int row = 0; row < ne1; ++row) {
                     for (int col = 0; col < ne0; ++col) {
