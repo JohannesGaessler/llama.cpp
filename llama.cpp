@@ -9121,10 +9121,13 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
                     // col_values[col] = 0.5 * (col_sorted.at(ne1/2 - 1) + col_sorted.at(ne1/2));
 
                     // 90th percentile
-                    // col_values[col] = col_sorted.at(0.90*ne1 + 1);
+                    // col_values[col] = col_sorted.at(0.900*ne1 + 1);
 
                     // 99th percentile
-                    col_values[col] = col_sorted.at(0.99*ne1 + 1);
+                    // col_values[col] = col_sorted.at(0.990*ne1 + 1);
+
+                    // 99.9th percentile
+                    col_values[col] = col_sorted.at(0.999*ne1 + 1);
 
                 }
                 for (int col = 0; col < ne0; ++col) {
