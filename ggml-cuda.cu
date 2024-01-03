@@ -101,6 +101,11 @@
 #include <cuda.h>
 #include <cublas_v2.h>
 #include <cuda_fp16.h>
+#include <mma.h>
+
+typedef nvcuda::wmma::fragment<nvcuda::wmma::matrix_a,    32, 8, 16, int8_t, nvcuda::wmma::row_major> frag_thin_a;
+typedef nvcuda::wmma::fragment<nvcuda::wmma::matrix_b,    32, 8, 16, int8_t, nvcuda::wmma::col_major> frag_thin_b;
+typedef nvcuda::wmma::fragment<nvcuda::wmma::accumulator, 32, 8, 16, int>                             frag_thin_c;
 
 #if CUDART_VERSION < 11020
 #define CU_DEVICE_ATTRIBUTE_VIRTUAL_MEMORY_MANAGEMENT_SUPPORTED CU_DEVICE_ATTRIBUTE_VIRTUAL_ADDRESS_MANAGEMENT_SUPPORTED
@@ -118,6 +123,7 @@
 
 #define MIN_CC_DP4A   610 // minimum compute capability for __dp4a, an intrinsic for byte-wise dot products
 #define CC_VOLTA      700
+#define CC_AMPERE     800
 #define CC_OFFSET_AMD 1000000
 #define CC_RDNA1      (CC_OFFSET_AMD + 1010)
 #define CC_RDNA2      (CC_OFFSET_AMD + 1030)
@@ -1917,6 +1923,129 @@ static __global__ void quantize_q8_1(const float * __restrict__ x, void * __rest
 
     reinterpret_cast<half&>(y[ib].ds.x) = d;
     reinterpret_cast<half&>(y[ib].ds.y) = sum;
+}
+
+static __global__ void convert_q8_0_to_i8(const void * __restrict__ vx, void * __restrict__ vy, const int kx) {
+    extern __shared__ int data_q8_0_i8[];
+    int   * vals   = data_q8_0_i8;
+    float * scales = (float *) (vals + kx/sizeof(int));
+    float * buf_iw = scales + kx/QK8_0;
+
+    const int iy = blockDim.y*blockIdx.y + threadIdx.y;
+    const int ky = blockDim.y*gridDim.y;
+
+    const block_q8_0 * x = (const block_q8_0 *) vx;
+    char4  * qs_low      = (char4 *)            vy;
+    float  * ds          = (float *)           (qs_low + kx*ky/sizeof(int));
+
+    float amax = 0.0f;
+    for (int ix0 = 0; ix0 < kx; ix0 += blockDim.x*sizeof(int)) {
+        const int ix = ix0 + threadIdx.x*sizeof(int);
+
+        if (ix >= kx) {
+            break;
+        }
+
+        const block_q8_0 * bxi = x + (iy*kx + ix)/QK8_0;
+        const float d = __half2float(bxi->d);
+        amax = max(amax, fabsf(d));
+        vals[ix/sizeof(int)] = get_int_from_int8(bxi->qs, (ix % QK8_0) / sizeof(int));
+        scales[ix/QK8_0] = d;
+    }
+
+    amax = warp_reduce_max(amax);
+    if (threadIdx.x % WARP_SIZE == 0) {
+        buf_iw[threadIdx.x / WARP_SIZE] = amax;
+    }
+    __syncthreads();
+    amax = buf_iw[threadIdx.x % WARP_SIZE];
+    amax = warp_reduce_max(amax);
+
+    for (int ix0 = 0; ix0 < kx; ix0 += blockDim.x*sizeof(int)) {
+        const int ix = ix0 + threadIdx.x*sizeof(int);
+
+        if (ix >= kx) {
+            break;
+        }
+
+        const int xi = vals[ix/sizeof(int)];
+        const int8_t * xi8 = (int8_t *) &xi;
+        const int scale = 0x10000 * scales[ix/QK8_0] / amax;
+
+        int result32[4];
+#pragma unroll
+        for (int l = 0; l < 4; ++l) {
+            result32[l] = xi8[l] * scale / 0x10000;
+        }
+
+        qs_low[(iy*kx + ix)/sizeof(int)] = make_char4(result32[0], result32[1], result32[2], result32[3]);
+    }
+
+    if (threadIdx.x > 0) {
+        return;
+    }
+
+    ds[iy] = amax;
+}
+
+static __global__ void convert_float_to_i8(const float * __restrict__ x, void * __restrict__ vy, const int kx, const int kx_padded) {
+    extern __shared__ float data_quantize_q8_F[];
+    float * vals   = data_quantize_q8_F + 0;
+    float * buf_iw = data_quantize_q8_F + kx;
+
+    const int iy = blockDim.y*blockIdx.y + threadIdx.y;
+    const int ky = blockDim.y*gridDim.y;
+
+    int8_t * qs_low  = (int8_t *)  vy;
+    int8_t * qs_high =             qs_low  + kx_padded*ky;
+    float  * ds      = (float  *) (qs_high + kx_padded*ky);
+
+    float amax = 0.0f;
+    for (int ix0 = 0; ix0 < kx; ix0 += blockDim.x) {
+        const int ix = ix0 + threadIdx.x;
+
+        if (ix >= kx) {
+            break;
+        }
+
+        const float xi = x[iy*kx + ix];
+        amax = max(amax, fabsf(xi));
+        vals[ix] = xi;
+    }
+
+    amax = warp_reduce_max(amax);
+    if (threadIdx.x % WARP_SIZE == 0) {
+        buf_iw[threadIdx.x / WARP_SIZE] = amax;
+    }
+    __syncthreads();
+    amax = buf_iw[threadIdx.x % WARP_SIZE];
+    amax = warp_reduce_max(amax);
+
+    const float d = amax / ((1 << 14) - 1);
+
+    for (int ix0 = 0; ix0 < kx_padded; ix0 += blockDim.x) {
+        const int ix = ix0 + threadIdx.x;
+        const int i_padded = iy*kx_padded + ix;
+
+        if (ix >= kx_padded) {
+            return;
+        }
+
+        const float xi = ix < kx ? vals[ix] : 0.0f;
+        const int    q      = amax == 0.0f ? 0 : roundf(xi /  d);
+        const int8_t q_low  = q % 128;
+        const int8_t q_high = q / 128;
+
+        qs_low[i_padded]  = q_low;
+        qs_high[i_padded] = q_high;
+
+    }
+
+    if (threadIdx.x > 0) {
+        return;
+    }
+
+    ds[iy] = d;
 }
 
 template<int qk, int qr, dequantize_kernel_t dequantize_kernel, typename dst_t>
@@ -4608,6 +4737,142 @@ template <bool need_check> static __global__ void
 #endif // __CUDA_ARCH__ >= CC_VOLTA
 }
 
+#define MMI8_PADDING_X 4
+#define MMI8_PADDING_Y 4
+
+#define      MMI8_X_AMPERE 64
+#define      MMI8_Y_AMPERE 64
+#define MMI8_NWARPS_AMPERE 4
+
+template <int mmi_x, int mmi_y, int nwarps>
+#if __CUDA_ARCH__ >= CC_AMPERE
+__launch_bounds__(WARP_SIZE*MMI8_NWARPS_AMPERE, 3)
+#else
+#endif // __CUDA_ARCH__ >= CC_AMPERE
+static __global__ void mul_mat_i8(
+    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
+    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
+
+    const int        * x_qs      = (const int *)         vx;
+    const float      * x_d       = (const float *)      (x_qs + nrows_x*ncols_x/sizeof(int));
+    const int        * y_qs_low  = (const int        *)  vy;
+    const int        * y_qs_high =                       y_qs_low  + ncols_y*nrows_y/sizeof(int);
+    const float      * y_ds      = (const float      *) (y_qs_high + ncols_y*nrows_y/sizeof(int));
+
+    const int & ncols_dst = ncols_y;
+
+    const int row_dst_0 = blockIdx.x*mmi_y;
+    const int & row_x_0 = row_dst_0;
+
+    const int col_dst_0 = blockIdx.y*mmi_x;
+    const int & col_y_0 = col_dst_0;
+
+    __shared__ int      tile_x_qs[mmi_y * (WARP_SIZE + MMI8_PADDING_X)];
+    __shared__ int  tile_y_qs_low[mmi_x * (WARP_SIZE + MMI8_PADDING_Y)];
+    __shared__ int tile_y_qs_high[mmi_x * (WARP_SIZE + MMI8_PADDING_Y)];
+
+    frag_thin_a      fa[mmi_y/32];
+    frag_thin_b  fb_low;
+    frag_thin_b fb_high;
+    frag_thin_c  fc_low[mmi_y/32][mmi_x/(8*nwarps)];
+    frag_thin_c fc_high[mmi_y/32][mmi_x/(8*nwarps)];
+
+#pragma unroll
+    for (int i = 0; i < mmi_y; i += WARP_SIZE) {
+#pragma unroll
+        for (int j = 0; j < mmi_x; j += 8*nwarps) {
+            nvcuda::wmma::fill_fragment(fc_low[i/32][j/(8*nwarps)],  0);
+            nvcuda::wmma::fill_fragment(fc_high[i/32][j/(8*nwarps)], 0);
+        }
+    }
+
+    for (int k0 = 0; k0 < ncols_x/sizeof(int); k0 += WARP_SIZE) {
+#pragma unroll
+        for (int i = 0; i < mmi_y; i += nwarps) {
+            const int index_x = (threadIdx.y + i) * (WARP_SIZE + MMI8_PADDING_X) + threadIdx.x;
+            const int index_qs = (row_x_0 + threadIdx.y + i)*ncols_x/sizeof(int) + k0 + threadIdx.x;
+            tile_x_qs[index_x] = x_qs[index_qs];
+        }
+
+#pragma unroll
+        for (int i = 0; i < mmi_x; i += nwarps) {
+            const int col_y_eff = min(col_y_0 + threadIdx.y + i, ncols_y-1); // to prevent out-of-bounds memory accesses
+
+            const int index_y = (threadIdx.y + i) * (WARP_SIZE + MMI8_PADDING_Y) + threadIdx.x;
+            const int index_qs = col_y_eff*nrows_y/sizeof(int) + k0 + threadIdx.x;
+            tile_y_qs_low[index_y]  =  y_qs_low[index_qs];
+            tile_y_qs_high[index_y] = y_qs_high[index_qs];
+        }
+
+        __syncthreads();
+
+#pragma unroll // unrolling this loop causes too much register pressure
+        for (int k = 0; k < 32; k += 16/sizeof(int)) {
+#pragma unroll
+            for (int i = 0; i < mmi_y; i += 32) {
+                nvcuda::wmma::load_matrix_sync(
+                    fa[i/32], (int8_t *) &tile_x_qs[i*(WARP_SIZE + MMI8_PADDING_X) + k],
+                    (WARP_SIZE + MMI8_PADDING_X)*sizeof(int));
+            }
+#pragma unroll
+            for (int j0 = 0; j0 < mmi_x; j0 += 8*nwarps) {
+                const int j = j0 + 8*threadIdx.y;
+                nvcuda::wmma::load_matrix_sync(
+                    fb_low,  (int8_t *)  &tile_y_qs_low[j*(WARP_SIZE + MMI8_PADDING_Y) + k],
+                    (WARP_SIZE + MMI8_PADDING_Y)*sizeof(int));
+                nvcuda::wmma::load_matrix_sync(
+                    fb_high, (int8_t *) &tile_y_qs_high[j*(WARP_SIZE + MMI8_PADDING_Y) + k],
+                    (WARP_SIZE + MMI8_PADDING_Y)*sizeof(int));
+#pragma unroll
+                for (int i = 0; i < mmi_y; i += 32) {
+                    frag_thin_c & fcl_ij =  fc_low[i/32][j0/(8*nwarps)];
+                    frag_thin_c & fch_ij = fc_high[i/32][j0/(8*nwarps)];
+
+                    nvcuda::wmma::mma_sync(fcl_ij, fa[i/32], fb_low,  fcl_ij);
+                    nvcuda::wmma::mma_sync(fch_ij, fa[i/32], fb_high, fch_ij);
+                }
+            }
+        }
+        __syncthreads();
+    }
+
+    int * tmp = tile_y_qs_low + threadIdx.y*(32*8);
+
+#pragma unroll
+    for (int j = 0; j < mmi_x; j += 8*nwarps) {
+#pragma unroll
+        for (int i = 0; i < mmi_y; i += WARP_SIZE) {
+            int result[8] = {0};
+            const int row_dst = row_dst_0 + threadIdx.x + i;
+
+            nvcuda::wmma::store_matrix_sync(tmp,  fc_low[i/WARP_SIZE][j/(8*nwarps)], 32, nvcuda::wmma::mem_col_major);
+#pragma unroll
+            for (int l = 0; l < 8; ++l) {
+                result[l] +=     tmp[l*32 + threadIdx.x];
+            }
+            nvcuda::wmma::store_matrix_sync(tmp, fc_high[i/WARP_SIZE][j/(8*nwarps)], 32, nvcuda::wmma::mem_col_major);
+#pragma unroll
+            for (int l = 0; l < 8; ++l) {
+                result[l] += 128*tmp[l*32 + threadIdx.x];
+            }
+
+#pragma unroll
+            for (int l = 0; l < 8; ++l) {
+                const int col_dst = col_dst_0 + j + 8*threadIdx.y + l;
+
+                if (col_dst >= ncols_dst || row_dst >= nrows_dst) {
+                    continue;
+                }
+
+                const float d_j = y_ds[col_dst];
+                const float d_i = x_d[row_dst];
+                dst[col_dst*nrows_dst + row_dst] = result[l] * d_i*d_j;
+            }
+        }
+    }
+}
+
+
 template <int qk, int qi, typename block_q_t, int vdr, vec_dot_q_cuda_t vec_dot_q_cuda>
 static __global__ void mul_mat_vec_q(const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst, const int ncols, const int nrows) {
     const int row = blockIdx.x*blockDim.y + threadIdx.y;
@@ -5607,6 +5872,18 @@ static void quantize_row_q8_1_cuda(const float * x, void * vy, const int kx, con
     quantize_q8_1<<<num_blocks, block_size, 0, stream>>>(x, vy, kx, kx_padded);
 }
 
+static void quantize_row_q8_i_cuda(const float * x, void * vy, const int kx, const int ky, const int kx_padded, cudaStream_t stream) {
+    const dim3 num_blocks(1, ky, 1);
+    const dim3 block_size(1024, 1, 1);
+    convert_float_to_i8<<<num_blocks, block_size, (kx + WARP_SIZE)*sizeof(float), stream>>>(x, vy, kx, kx_padded);
+}
+
+static void convert_q8_0_to_i8_cuda(const void * x, void * vy, const int kx, const int ky, cudaStream_t stream) {
+    const dim3 num_blocks(1, ky, 1);
+    const dim3 block_size(1024, 1, 1);
+    convert_q8_0_to_i8<<<num_blocks, block_size, (kx + WARP_SIZE)*sizeof(float), stream>>>(x, vy, kx);
+}
+
 template <int qk, int qr, dequantize_kernel_t dequantize_kernel, typename dst_t>
 static void dequantize_block_cuda(const void * __restrict__ vx, dst_t * __restrict__ y, const int k, cudaStream_t stream) {
     const int num_blocks = (k + CUDA_DEQUANTIZE_BLOCK_SIZE - 1) / CUDA_DEQUANTIZE_BLOCK_SIZE;
@@ -6310,6 +6587,23 @@ static void ggml_mul_mat_q5_K_q8_1_cuda(
         mul_mat_q5_K<need_check><<<block_nums, block_dims, 0, stream>>>
             (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
     }
+}
+
+static void ggml_mul_mat_i8_15_cuda(
+    const void * vx, const void * vy, float * dst, const int ncols_x, const int nrows_x,
+    const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
+
+    const int mmi_x  =      MMI8_X_AMPERE;
+    const int mmi_y  =      MMI8_Y_AMPERE;
+    const int nwarps = MMI8_NWARPS_AMPERE;
+
+    const int block_num_x = (nrows_x + mmi_y - 1) / mmi_y;
+    const int block_num_y = (ncols_y + mmi_x - 1) / mmi_x;
+    const dim3 block_nums(block_num_x, block_num_y, 1);
+    const dim3 block_dims(WARP_SIZE, nwarps, 1);
+
+    mul_mat_i8<MMI8_X_AMPERE, MMI8_Y_AMPERE, MMI8_NWARPS_AMPERE><<<block_nums, block_dims, 0, stream>>>
+        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
 }
 
 static void ggml_mul_mat_q6_K_q8_1_cuda(
@@ -7364,6 +7658,45 @@ static void ggml_cuda_op_mul_mat_q(
     (void) src1_ddf_i;
 }
 
+static void ggml_cuda_op_mul_mat_i(
+    const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, const char * src0_dd_i, const float * src1_ddf_i,
+    const char * src1_ddq_i, float * dst_dd_i, const int64_t row_low, const int64_t row_high, const int64_t src1_ncols,
+    const int64_t src1_padded_row_size, cudaStream_t stream) {
+
+    const int64_t ne00 = src0->ne[0];
+    const int64_t ne01 = src0->ne[1];
+
+    const int64_t ne10 = src1->ne[0];
+    GGML_ASSERT(ne10 % QK8_1 == 0);
+
+    const int64_t ne0 = dst->ne[0];
+
+    const int64_t row_diff = row_high - row_low;
+
+    int id;
+    CUDA_CHECK(cudaGetDevice(&id));
+
+    // the main device has a larger memory buffer to hold the results from all GPUs
+    // nrows_dst == nrows of the matrix that the dequantize_mul_mat kernel writes into
+    const int64_t nrows_dst = dst->backend == GGML_BACKEND_GPU && id == g_main_device ? ne0 : row_diff;
+
+    cuda_pool_alloc<char> src0_ddi8(ne00*ne01 + ne01*sizeof(float));
+    convert_q8_0_to_i8_cuda(src0_dd_i, src0_ddi8.get(), ne00, ne01, stream);
+
+    switch (src0->type) {
+        case GGML_TYPE_Q8_0:
+            ggml_mul_mat_i8_15_cuda(src0_ddi8.get(), src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, stream);
+            break;
+        default:
+            GGML_ASSERT(false);
+            break;
+    }
+
+    (void) src1;
+    (void) dst;
+    (void) src1_ddf_i;
+}
+
 static int64_t get_row_rounding(ggml_type type) {
     int64_t min_compute_capability = INT_MAX;
     int64_t max_compute_capability = INT_MIN;
@@ -8144,10 +8477,18 @@ static void ggml_cuda_op_mul_mat(
         }
 
         if (convert_src1_to_q8_1) {
-            dev[id].src1_ddq = dev[id].src1_ddq_alloc.alloc(nrows1*src1_padded_col_size*q8_1_ts/q8_1_bs);
+            if (op == ggml_cuda_op_mul_mat_i) {
+                dev[id].src1_ddq = dev[id].src1_ddq_alloc.alloc(2*nrows1*src1_padded_col_size*q8_1_ts/q8_1_bs);
+            } else {
+                dev[id].src1_ddq = dev[id].src1_ddq_alloc.alloc(nrows1*src1_padded_col_size*q8_1_ts/q8_1_bs);
+            }
 
             if (src1_on_device && src1_is_contiguous) {
-                quantize_row_q8_1_cuda(dev[id].src1_ddf, dev[id].src1_ddq, ne10, nrows1, src1_padded_col_size, stream);
+                if (op == ggml_cuda_op_mul_mat_i) {
+                    quantize_row_q8_i_cuda(dev[id].src1_ddf, dev[id].src1_ddq, ne10, nrows1, src1_padded_col_size, stream);
+                } else {
+                    quantize_row_q8_1_cuda(dev[id].src1_ddf, dev[id].src1_ddq, ne10, nrows1, src1_padded_col_size, stream);
+                }
                 CUDA_CHECK(cudaGetLastError());
             }
         }
@@ -8719,7 +9060,8 @@ static void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1
             if (use_mul_mat_q) {
                 ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_q, true);
             } else {
-                ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, false);
+                // ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, false);
+                ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_i, true);
             }
         }
     } else {
@@ -9158,10 +9500,34 @@ static size_t ggml_nbytes_split(const struct ggml_tensor * tensor, int nrows_spl
     return nrows_split*ggml_row_size(tensor->type, tensor->ne[0]);
 }
 
+static __global__ void find_max_scale(const void * __restrict__ vx, float * __restrict__ y, const int ncols) {
+    const int row = blockIdx.x;
+    const block_q8_0 * x = (block_q8_0 *) vx;
+
+    float amax = 0.0f;
+    for (int ib0 = 0; ib0 < ncols/QK8_0; ib0 += WARP_SIZE) {
+        const int ib = ib0 + threadIdx.x;
+
+        if (ib >= ncols/QK8_0) {
+            break;
+        }
+
+        amax = max(amax, fabsf(x[row*(ncols/QK8_0) + ib].d));
+    }
+    amax = warp_reduce_max(amax);
+
+    if (threadIdx.x > 0) {
+        return;
+    }
+
+    y[row] = amax;
+}
+
 void ggml_cuda_transform_tensor(void * data, struct ggml_tensor * tensor) {
     const int64_t nrows = ggml_nrows(tensor);
 
     const int64_t ne0 = tensor->ne[0];
+    const int64_t ne1 = tensor->ne[1];
 
     const size_t nb1 = tensor->nb[1];
 
@@ -9211,7 +9577,7 @@ void ggml_cuda_transform_tensor(void * data, struct ggml_tensor * tensor) {
         }
 
         char * buf;
-        CUDA_CHECK(cudaMalloc(&buf, size));
+        CUDA_CHECK(cudaMalloc(&buf, size + ne1*sizeof(float)));
         char * buf_host = (char *)data + offset_split;
 
         // set padding to 0 to avoid possible NaN values
@@ -9220,6 +9586,10 @@ void ggml_cuda_transform_tensor(void * data, struct ggml_tensor * tensor) {
         }
 
         CUDA_CHECK(cudaMemcpy(buf, buf_host, original_size, cudaMemcpyHostToDevice));
+
+        if (tensor->type == GGML_TYPE_Q8_0) {
+            find_max_scale<<<ne1, WARP_SIZE>>>(buf, (float *) (buf + size), ne0);
+        }
 
         extra->data_device[id] = buf;
 
