@@ -103,10 +103,6 @@
 #include <cuda_fp16.h>
 #include <mma.h>
 
-typedef nvcuda::wmma::fragment<nvcuda::wmma::matrix_a,    32, 8, 16, int8_t, nvcuda::wmma::row_major> frag_thin_a;
-typedef nvcuda::wmma::fragment<nvcuda::wmma::matrix_b,    32, 8, 16, int8_t, nvcuda::wmma::col_major> frag_thin_b;
-typedef nvcuda::wmma::fragment<nvcuda::wmma::accumulator, 32, 8, 16, int>                             frag_thin_c;
-
 #if CUDART_VERSION < 11020
 #define CU_DEVICE_ATTRIBUTE_VIRTUAL_MEMORY_MANAGEMENT_SUPPORTED CU_DEVICE_ATTRIBUTE_VIRTUAL_ADDRESS_MANAGEMENT_SUPPORTED
 #define CUBLAS_TF32_TENSOR_OP_MATH CUBLAS_TENSOR_OP_MATH
@@ -4761,6 +4757,10 @@ static __global__ void mul_mat_i8(
     const int nrows_y, const int nrows_dst) {
 
 #if __CUDA_ARCH__ >= CC_VOLTA && __CUDA_ARCH__ < CC_OFFSET_AMD
+    typedef nvcuda::wmma::fragment<nvcuda::wmma::matrix_a,    32, 8, 16, int8_t, nvcuda::wmma::row_major> frag_thin_a;
+    typedef nvcuda::wmma::fragment<nvcuda::wmma::matrix_b,    32, 8, 16, int8_t, nvcuda::wmma::col_major> frag_thin_b;
+    typedef nvcuda::wmma::fragment<nvcuda::wmma::accumulator, 32, 8, 16, int>                             frag_thin_c;
+
     constexpr int precision = double_precision ? 2 : 1;
 
     (void) nrows_x; // TODO use for check
