@@ -7682,17 +7682,17 @@ static void ggml_cuda_op_mul_mat_i(
     int   * src0_qs_low = (int *)   (src0_ddi8.get() + 0);
     float * src0_d      = (float *) (src0_ddi8.get() + ne00*ne01);
 
-    cuda_pool_alloc<char> src1_ddi8((2*src1_padded_row_size + sizeof(float))*src1_ncols);
-    const int   * src1_qs_low  = (const int *)   (src1_ddi8.get() + 0*src1_padded_row_size*src1_ncols);
-    const int   * src1_qs_high = (const int *)   (src1_ddi8.get() + 1*src1_padded_row_size*src1_ncols);
-    const float * src1_d       = (const float *) (src1_ddi8.get() + 2*src1_padded_row_size*src1_ncols);
+    cuda_pool_alloc<char> src1_ddi8((2*ne10 + sizeof(float))*src1_ncols);
+    const int   * src1_qs_low  = (const int *)   (src1_ddi8.get() + 0*ne10*src1_ncols);
+    const int   * src1_qs_high = (const int *)   (src1_ddi8.get() + 1*ne10*src1_ncols);
+    const float * src1_d       = (const float *) (src1_ddi8.get() + 2*ne10*src1_ncols);
 
     switch (src0->type) {
         case GGML_TYPE_Q8_0:
             convert_q8_0_to_i8_cuda(src0_dd_i, src0_qs_low, src0_d, ne00, ne01, stream);
-            quantize_row_q8_i_cuda(src1_ddf_i, src1_ddi8.get(), ne10, ne11, src1_padded_row_size, stream);
+            quantize_row_q8_i_cuda(src1_ddf_i, src1_ddi8.get(), ne10, ne11, ne10, stream);
             ggml_mul_mat_i8_15_cuda(src0_qs_low, src0_d, src1_qs_low, src1_qs_high, src1_d, dst_dd_i,
-                                    ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, stream);
+                                    ne00, row_diff, src1_ncols, ne10, nrows_dst, stream);
             break;
         default:
             GGML_ASSERT(false);
