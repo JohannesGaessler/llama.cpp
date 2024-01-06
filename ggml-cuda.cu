@@ -4743,7 +4743,7 @@ template <bool need_check> static __global__ void
 #define      MMI8_Y_AMPERE 64
 #define MMI8_NWARPS_AMPERE 4
 
-template <int mmi_x, int mmi_y, int nwarps>
+template <bool double_precision, int mmi_x, int mmi_y, int nwarps>
 #if __CUDA_ARCH__ >= CC_AMPERE
 __launch_bounds__(WARP_SIZE*MMI8_NWARPS_AMPERE, 3)
 #else
@@ -4753,6 +4753,8 @@ static __global__ void mul_mat_i8(
     const int * __restrict__ x_qs_low, const float * x_d, const int * __restrict__ y_qs_low, const int * __restrict__ y_qs_high,
     const float * y_d, float * __restrict__ dst, const int ncols_x, const int nrows_x, const int ncols_y,
     const int nrows_y, const int nrows_dst) {
+
+    constexpr int precision = double_precision ? 2 : 1;
 
     (void) nrows_x; // TODO use for check
 
@@ -4764,22 +4766,21 @@ static __global__ void mul_mat_i8(
     const int col_dst_0 = blockIdx.y*mmi_x;
     const int & col_y_0 = col_dst_0;
 
-    __shared__ int      tile_x_qs[mmi_y * (WARP_SIZE + MMI8_PADDING_X)];
-    __shared__ int  tile_y_qs_low[mmi_x * (WARP_SIZE + MMI8_PADDING_Y)];
-    __shared__ int tile_y_qs_high[mmi_x * (WARP_SIZE + MMI8_PADDING_Y)];
+    __shared__ int            tile_x_qs[mmi_y * (WARP_SIZE + MMI8_PADDING_X)];
+    __shared__ int tile_y_qs[precision][mmi_x * (WARP_SIZE + MMI8_PADDING_Y)];
 
-    frag_thin_a      fa[mmi_y/32];
-    frag_thin_b  fb_low;
-    frag_thin_b fb_high;
-    frag_thin_c  fc_low[mmi_y/32][mmi_x/(8*nwarps)];
-    frag_thin_c fc_high[mmi_y/32][mmi_x/(8*nwarps)];
+    frag_thin_a fa[mmi_y/32];
+    frag_thin_b fb[precision];
+    frag_thin_c fc[precision][mmi_y/32][mmi_x/(8*nwarps)];
 
 #pragma unroll
     for (int i = 0; i < mmi_y; i += WARP_SIZE) {
 #pragma unroll
         for (int j = 0; j < mmi_x; j += 8*nwarps) {
-            nvcuda::wmma::fill_fragment(fc_low[i/32][j/(8*nwarps)],  0);
-            nvcuda::wmma::fill_fragment(fc_high[i/32][j/(8*nwarps)], 0);
+#pragma unroll
+            for (int p = 0; p < precision; ++p) {
+                nvcuda::wmma::fill_fragment(fc[p][i/32][j/(8*nwarps)],  0);
+            }
         }
     }
 
@@ -4797,8 +4798,10 @@ static __global__ void mul_mat_i8(
 
             const int index_tile = (j0 + threadIdx.y) * (WARP_SIZE + MMI8_PADDING_Y)      + threadIdx.x;
             const int index_qs   =  col_y_eff         * (nrows_y/sizeof(int))        + k0 + threadIdx.x;
-            tile_y_qs_low[index_tile]  =  y_qs_low[index_qs];
-            tile_y_qs_high[index_tile] = y_qs_high[index_qs];
+            tile_y_qs[0][index_tile] = y_qs_low[index_qs];
+            if (double_precision) {
+                tile_y_qs[1][index_tile] = y_qs_high[index_qs];
+            }
         }
 
         __syncthreads();
@@ -4815,26 +4818,26 @@ static __global__ void mul_mat_i8(
             for (int j0 = 0; j0 < mmi_x; j0 += 8*nwarps) {
                 const int j = j0 + 8*threadIdx.y;
 
-                nvcuda::wmma::load_matrix_sync(
-                    fb_low,  (int8_t *)  &tile_y_qs_low[j*(WARP_SIZE + MMI8_PADDING_Y) + k],
-                    (WARP_SIZE + MMI8_PADDING_Y)*sizeof(int));
-                nvcuda::wmma::load_matrix_sync(
-                    fb_high, (int8_t *) &tile_y_qs_high[j*(WARP_SIZE + MMI8_PADDING_Y) + k],
-                    (WARP_SIZE + MMI8_PADDING_Y)*sizeof(int));
+#pragma unroll
+                for (int p = 0; p < precision; ++p) {
+                    nvcuda::wmma::load_matrix_sync(
+                        fb[p], (int8_t *) &tile_y_qs[p][j*(WARP_SIZE + MMI8_PADDING_Y) + k],
+                        (WARP_SIZE + MMI8_PADDING_Y)*sizeof(int));
+                }
 #pragma unroll
                 for (int i = 0; i < mmi_y; i += 32) {
-                    frag_thin_c & fcl_ij =  fc_low[i/32][j0/(8*nwarps)];
-                    frag_thin_c & fch_ij = fc_high[i/32][j0/(8*nwarps)];
-
-                    nvcuda::wmma::mma_sync(fcl_ij, fa[i/32], fb_low,  fcl_ij);
-                    nvcuda::wmma::mma_sync(fch_ij, fa[i/32], fb_high, fch_ij);
+#pragma unroll
+                    for (int p = 0; p < precision; ++p) {
+                        frag_thin_c & fc_ij = fc[p][i/32][j0/(8*nwarps)];
+                        nvcuda::wmma::mma_sync(fc_ij, fa[i/32], fb[p], fc_ij);
+                    }
                 }
             }
         }
         __syncthreads();
     }
 
-    int * tmp = tile_y_qs_low + threadIdx.y*(32*8);
+    int * tmp = tile_y_qs[0] + threadIdx.y*(32*8);
 
 #pragma unroll
     for (int j0 = 0; j0 < mmi_x; j0 += 8*nwarps) {
@@ -4843,15 +4846,16 @@ static __global__ void mul_mat_i8(
             int result[8] = {0};
             const int row_dst = row_dst_0 + i0 + threadIdx.x;
 
-            nvcuda::wmma::store_matrix_sync(tmp,  fc_low[i0/WARP_SIZE][j0/(8*nwarps)], 32, nvcuda::wmma::mem_col_major);
+            int factor = 1;
 #pragma unroll
-            for (int l = 0; l < 8; ++l) {
-                result[l] +=     tmp[l*32 + threadIdx.x];
-            }
-            nvcuda::wmma::store_matrix_sync(tmp, fc_high[i0/WARP_SIZE][j0/(8*nwarps)], 32, nvcuda::wmma::mem_col_major);
+            for (int p = 0; p < precision; ++p) {
+                nvcuda::wmma::store_matrix_sync(tmp, fc[p][i0/WARP_SIZE][j0/(8*nwarps)], 32, nvcuda::wmma::mem_col_major);
 #pragma unroll
-            for (int l = 0; l < 8; ++l) {
-                result[l] += 128*tmp[l*32 + threadIdx.x];
+                for (int l = 0; l < 8; ++l) {
+                    result[l] += factor*tmp[l*32 + threadIdx.x];
+                }
+
+                factor <<= 7; // factor *= 128
             }
 
 #pragma unroll
@@ -6602,7 +6606,7 @@ static void ggml_mul_mat_i8_cuda(
     const dim3 block_nums(block_num_x, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
-    mul_mat_i8<MMI8_X_AMPERE, MMI8_Y_AMPERE, MMI8_NWARPS_AMPERE><<<block_nums, block_dims, 0, stream>>>
+    mul_mat_i8<true, MMI8_X_AMPERE, MMI8_Y_AMPERE, MMI8_NWARPS_AMPERE><<<block_nums, block_dims, 0, stream>>>
         (x_qs_low, x_d, y_qs_low, y_qs_high, y_d, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
 }
 
