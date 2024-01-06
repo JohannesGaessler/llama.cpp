@@ -1925,18 +1925,18 @@ static __global__ void quantize_q8_1(const float * __restrict__ x, void * __rest
     reinterpret_cast<half&>(y[ib].ds.y) = sum;
 }
 
-static __global__ void convert_q8_0_to_i8(const void * __restrict__ vx, void * __restrict__ vy, const int kx) {
+static __global__ void convert_q8_0_to_i8(
+    const void * __restrict__ vx, int * __restrict__ y_qs_low, float * __restrict__ y_d, const int kx) {
+
     extern __shared__ int data_q8_0_i8[];
     int   * vals   = data_q8_0_i8;
     float * scales = (float *) (vals + kx/sizeof(int));
     float * buf_iw = scales + kx/QK8_0;
 
     const int iy = blockDim.y*blockIdx.y + threadIdx.y;
-    const int ky = blockDim.y*gridDim.y;
 
-    const block_q8_0 * x = (const block_q8_0 *) vx;
-    char4  * qs_low      = (char4 *)            vy;
-    float  * ds          = (float *)           (qs_low + kx*ky/sizeof(int));
+    const block_q8_0 * x     = (const block_q8_0 *) vx;
+    char4 *            y_qsc = (char4 *)            y_qs_low;
 
     float amax = 0.0f;
     for (int ix0 = 0; ix0 < kx; ix0 += blockDim.x*sizeof(int)) {
@@ -1978,14 +1978,14 @@ static __global__ void convert_q8_0_to_i8(const void * __restrict__ vx, void * _
             result32[l] = xi8[l] * scale / 0x10000;
         }
 
-        qs_low[(iy*kx + ix)/sizeof(int)] = make_char4(result32[0], result32[1], result32[2], result32[3]);
+        y_qsc[(iy*kx + ix)/sizeof(int)] = make_char4(result32[0], result32[1], result32[2], result32[3]);
     }
 
     if (threadIdx.x > 0) {
         return;
     }
 
-    ds[iy] = amax;
+    y_d[iy] = amax;
 }
 
 static __global__ void convert_float_to_i8(const float * __restrict__ x, void * __restrict__ vy, const int kx, const int kx_padded) {
@@ -4748,13 +4748,14 @@ template <int mmi_x, int mmi_y, int nwarps>
 #if __CUDA_ARCH__ >= CC_AMPERE
 __launch_bounds__(WARP_SIZE*MMI8_NWARPS_AMPERE, 3)
 #else
+__launch_bounds__(WARP_SIZE*MMI8_NWARPS_AMPERE, 2)
 #endif // __CUDA_ARCH__ >= CC_AMPERE
 static __global__ void mul_mat_i8(
-    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
+    const int * __restrict__ x_qs_low, const float * x_d, const void * __restrict__ vy, float * __restrict__ dst,
     const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
 
-    const int        * x_qs      = (const int *)         vx;
-    const float      * x_d       = (const float *)      (x_qs + nrows_x*ncols_x/sizeof(int));
+    (void) nrows_x; // TODO use for check
+
     const int        * y_qs_low  = (const int        *)  vy;
     const int        * y_qs_high =                       y_qs_low  + ncols_y*nrows_y/sizeof(int);
     const float      * y_ds      = (const float      *) (y_qs_high + ncols_y*nrows_y/sizeof(int));
@@ -4791,7 +4792,7 @@ static __global__ void mul_mat_i8(
         for (int i = 0; i < mmi_y; i += nwarps) {
             const int index_x = (threadIdx.y + i) * (WARP_SIZE + MMI8_PADDING_X) + threadIdx.x;
             const int index_qs = (row_x_0 + threadIdx.y + i)*ncols_x/sizeof(int) + k0 + threadIdx.x;
-            tile_x_qs[index_x] = x_qs[index_qs];
+            tile_x_qs[index_x] = x_qs_low[index_qs];
         }
 
 #pragma unroll
@@ -5878,10 +5879,10 @@ static void quantize_row_q8_i_cuda(const float * x, void * vy, const int kx, con
     convert_float_to_i8<<<num_blocks, block_size, (kx + WARP_SIZE)*sizeof(float), stream>>>(x, vy, kx, kx_padded);
 }
 
-static void convert_q8_0_to_i8_cuda(const void * x, void * vy, const int kx, const int ky, cudaStream_t stream) {
+static void convert_q8_0_to_i8_cuda(const void * x, int * y_qs_low, float * y_d, const int kx, const int ky, cudaStream_t stream) {
     const dim3 num_blocks(1, ky, 1);
     const dim3 block_size(1024, 1, 1);
-    convert_q8_0_to_i8<<<num_blocks, block_size, (kx + WARP_SIZE)*sizeof(float), stream>>>(x, vy, kx);
+    convert_q8_0_to_i8<<<num_blocks, block_size, (kx + WARP_SIZE)*sizeof(float), stream>>>(x, y_qs_low, y_d, kx);
 }
 
 template <int qk, int qr, dequantize_kernel_t dequantize_kernel, typename dst_t>
@@ -6590,7 +6591,7 @@ static void ggml_mul_mat_q5_K_q8_1_cuda(
 }
 
 static void ggml_mul_mat_i8_15_cuda(
-    const void * vx, const void * vy, float * dst, const int ncols_x, const int nrows_x,
+    const int * x_qs_low, const float * x_d, const void * vy, float * dst, const int ncols_x, const int nrows_x,
     const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
 
     const int mmi_x  =      MMI8_X_AMPERE;
@@ -6603,7 +6604,7 @@ static void ggml_mul_mat_i8_15_cuda(
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
     mul_mat_i8<MMI8_X_AMPERE, MMI8_Y_AMPERE, MMI8_NWARPS_AMPERE><<<block_nums, block_dims, 0, stream>>>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
+        (x_qs_low, x_d, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
 }
 
 static void ggml_mul_mat_q6_K_q8_1_cuda(
@@ -7681,11 +7682,13 @@ static void ggml_cuda_op_mul_mat_i(
     const int64_t nrows_dst = dst->backend == GGML_BACKEND_GPU && id == g_main_device ? ne0 : row_diff;
 
     cuda_pool_alloc<char> src0_ddi8(ne00*ne01 + ne01*sizeof(float));
-    convert_q8_0_to_i8_cuda(src0_dd_i, src0_ddi8.get(), ne00, ne01, stream);
+    int   * src0_qs_low = (int *)   (src0_ddi8.get() + 0);
+    float * src0_d      = (float *) (src0_ddi8.get() + ne00*ne01);
 
     switch (src0->type) {
         case GGML_TYPE_Q8_0:
-            ggml_mul_mat_i8_15_cuda(src0_ddi8.get(), src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, stream);
+            convert_q8_0_to_i8_cuda(src0_dd_i, src0_qs_low, src0_d, ne00, ne01, stream);
+            ggml_mul_mat_i8_15_cuda(src0_qs_low, src0_d, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, stream);
             break;
         default:
             GGML_ASSERT(false);
