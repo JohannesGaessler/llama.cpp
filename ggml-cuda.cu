@@ -4785,25 +4785,25 @@ static __global__ void mul_mat_i8(
 
     for (int k0 = 0; k0 < ncols_x/sizeof(int); k0 += WARP_SIZE) {
 #pragma unroll
-        for (int i = 0; i < mmi_y; i += nwarps) {
-            const int index_x = (threadIdx.y + i) * (WARP_SIZE + MMI8_PADDING_X) + threadIdx.x;
-            const int index_qs = (row_x_0 + threadIdx.y + i)*ncols_x/sizeof(int) + k0 + threadIdx.x;
-            tile_x_qs[index_x] = x_qs_low[index_qs];
+        for (int i0 = 0; i0 < mmi_y; i0 += nwarps) {
+            const int index_tile =           (i0 + threadIdx.y) * (WARP_SIZE + MMI8_PADDING_X)      + threadIdx.x;
+            const int index_qs   = (row_x_0 + i0 + threadIdx.y) * (ncols_x/sizeof(int))        + k0 + threadIdx.x;
+            tile_x_qs[index_tile] = x_qs_low[index_qs];
         }
 
 #pragma unroll
-        for (int i = 0; i < mmi_x; i += nwarps) {
-            const int col_y_eff = min(col_y_0 + threadIdx.y + i, ncols_y-1); // to prevent out-of-bounds memory accesses
+        for (int j0 = 0; j0 < mmi_x; j0 += nwarps) {
+            const int col_y_eff = min(col_y_0 + j0 + threadIdx.y, ncols_y-1); // to prevent out-of-bounds memory accesses
 
-            const int index_y = (threadIdx.y + i) * (WARP_SIZE + MMI8_PADDING_Y) + threadIdx.x;
-            const int index_qs = col_y_eff*nrows_y/sizeof(int) + k0 + threadIdx.x;
-            tile_y_qs_low[index_y]  =  y_qs_low[index_qs];
-            tile_y_qs_high[index_y] = y_qs_high[index_qs];
+            const int index_tile = (j0 + threadIdx.y) * (WARP_SIZE + MMI8_PADDING_Y)      + threadIdx.x;
+            const int index_qs   =  col_y_eff         * (nrows_y/sizeof(int))        + k0 + threadIdx.x;
+            tile_y_qs_low[index_tile]  =  y_qs_low[index_qs];
+            tile_y_qs_high[index_tile] = y_qs_high[index_qs];
         }
 
         __syncthreads();
 
-#pragma unroll // unrolling this loop causes too much register pressure
+#pragma unroll
         for (int k = 0; k < 32; k += 16/sizeof(int)) {
 #pragma unroll
             for (int i = 0; i < mmi_y; i += 32) {
@@ -4814,6 +4814,7 @@ static __global__ void mul_mat_i8(
 #pragma unroll
             for (int j0 = 0; j0 < mmi_x; j0 += 8*nwarps) {
                 const int j = j0 + 8*threadIdx.y;
+
                 nvcuda::wmma::load_matrix_sync(
                     fb_low,  (int8_t *)  &tile_y_qs_low[j*(WARP_SIZE + MMI8_PADDING_Y) + k],
                     (WARP_SIZE + MMI8_PADDING_Y)*sizeof(int));
@@ -4836,18 +4837,18 @@ static __global__ void mul_mat_i8(
     int * tmp = tile_y_qs_low + threadIdx.y*(32*8);
 
 #pragma unroll
-    for (int j = 0; j < mmi_x; j += 8*nwarps) {
+    for (int j0 = 0; j0 < mmi_x; j0 += 8*nwarps) {
 #pragma unroll
-        for (int i = 0; i < mmi_y; i += WARP_SIZE) {
+        for (int i0 = 0; i0 < mmi_y; i0 += WARP_SIZE) {
             int result[8] = {0};
-            const int row_dst = row_dst_0 + threadIdx.x + i;
+            const int row_dst = row_dst_0 + i0 + threadIdx.x;
 
-            nvcuda::wmma::store_matrix_sync(tmp,  fc_low[i/WARP_SIZE][j/(8*nwarps)], 32, nvcuda::wmma::mem_col_major);
+            nvcuda::wmma::store_matrix_sync(tmp,  fc_low[i0/WARP_SIZE][j0/(8*nwarps)], 32, nvcuda::wmma::mem_col_major);
 #pragma unroll
             for (int l = 0; l < 8; ++l) {
                 result[l] +=     tmp[l*32 + threadIdx.x];
             }
-            nvcuda::wmma::store_matrix_sync(tmp, fc_high[i/WARP_SIZE][j/(8*nwarps)], 32, nvcuda::wmma::mem_col_major);
+            nvcuda::wmma::store_matrix_sync(tmp, fc_high[i0/WARP_SIZE][j0/(8*nwarps)], 32, nvcuda::wmma::mem_col_major);
 #pragma unroll
             for (int l = 0; l < 8; ++l) {
                 result[l] += 128*tmp[l*32 + threadIdx.x];
@@ -4855,7 +4856,7 @@ static __global__ void mul_mat_i8(
 
 #pragma unroll
             for (int l = 0; l < 8; ++l) {
-                const int col_dst = col_dst_0 + j + 8*threadIdx.y + l;
+                const int col_dst = col_dst_0 + j0 + 8*threadIdx.y + l;
 
                 if (col_dst >= ncols_dst || row_dst >= nrows_dst) {
                     continue;
@@ -6588,7 +6589,7 @@ static void ggml_mul_mat_q5_K_q8_1_cuda(
     }
 }
 
-static void ggml_mul_mat_i8_15_cuda(
+static void ggml_mul_mat_i8_cuda(
     const int * x_qs_low, const float * x_d, const int * y_qs_low, const int * y_qs_high, const float * y_d, float * dst,
     const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
 
@@ -7657,7 +7658,7 @@ static void ggml_cuda_op_mul_mat_q(
     (void) src1_ddf_i;
 }
 
-static void ggml_cuda_op_mul_mat_i(
+static void ggml_cuda_op_mul_mat_i8(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, const char * src0_dd_i, const float * src1_ddf_i,
     const char * src1_ddq_i, float * dst_dd_i, const int64_t row_low, const int64_t row_high, const int64_t src1_ncols,
     const int64_t src1_padded_row_size, cudaStream_t stream) {
@@ -7698,8 +7699,8 @@ static void ggml_cuda_op_mul_mat_i(
     }
 
     convert_float_to_i8_cuda(src1_ddf_i, src1_qs_low, src1_qs_high, src1_d, ne10, ne11, stream);
-    ggml_mul_mat_i8_15_cuda(src0_qs_low, src0_d, src1_qs_low, src1_qs_high, src1_d, dst_dd_i,
-                            ne00, row_diff, src1_ncols, ne10, nrows_dst, stream);
+    ggml_mul_mat_i8_cuda(src0_qs_low, src0_d, src1_qs_low, src1_qs_high, src1_d, dst_dd_i,
+                         ne00, row_diff, src1_ncols, ne10, nrows_dst, stream);
 
     (void) src1;
     (void) dst;
@@ -9063,7 +9064,7 @@ static void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1
                 ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_q, true);
             } else {
                 // ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, false);
-                ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_i, false);
+                ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_i8, false);
             }
         }
     } else {
