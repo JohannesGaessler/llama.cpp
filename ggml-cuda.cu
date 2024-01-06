@@ -4752,7 +4752,7 @@ template <bool need_check> static __global__ void
 #define      MMI8_Y_AMPERE 64
 #define MMI8_NWARPS_AMPERE 4
 
-template <bool double_precision, int mmi_x, int mmi_y, int nwarps>
+template <bool double_precision, int mmi8_x, int mmi8_y, int nwarps>
 #if __CUDA_ARCH__ >= CC_AMPERE
 __launch_bounds__(WARP_SIZE*MMI8_NWARPS_AMPERE, 3)
 #else
@@ -4769,23 +4769,23 @@ static __global__ void mul_mat_i8(
 
     const int & ncols_dst = ncols_y;
 
-    const int row_dst_0 = blockIdx.x*mmi_y;
+    const int row_dst_0 = blockIdx.x*mmi8_y;
     const int & row_x_0 = row_dst_0;
 
-    const int col_dst_0 = blockIdx.y*mmi_x;
+    const int col_dst_0 = blockIdx.y*mmi8_x;
     const int & col_y_0 = col_dst_0;
 
-    __shared__ int            tile_x_qs[mmi_y * (WARP_SIZE + MMI8_PADDING_X)];
-    __shared__ int tile_y_qs[precision][mmi_x * (WARP_SIZE + MMI8_PADDING_Y)];
+    __shared__ int            tile_x_qs[mmi8_y * (WARP_SIZE + MMI8_PADDING_X)];
+    __shared__ int tile_y_qs[precision][mmi8_x * (WARP_SIZE + MMI8_PADDING_Y)];
 
-    frag_thin_a fa[mmi_y/32];
+    frag_thin_a fa[mmi8_y/32];
     frag_thin_b fb[precision];
-    frag_thin_c fc[precision][mmi_y/32][mmi_x/(8*nwarps)];
+    frag_thin_c fc[precision][mmi8_y/32][mmi8_x/(8*nwarps)];
 
 #pragma unroll
-    for (int i = 0; i < mmi_y; i += WARP_SIZE) {
+    for (int i = 0; i < mmi8_y; i += WARP_SIZE) {
 #pragma unroll
-        for (int j = 0; j < mmi_x; j += 8*nwarps) {
+        for (int j = 0; j < mmi8_x; j += 8*nwarps) {
 #pragma unroll
             for (int p = 0; p < precision; ++p) {
                 nvcuda::wmma::fill_fragment(fc[p][i/32][j/(8*nwarps)],  0);
@@ -4795,14 +4795,14 @@ static __global__ void mul_mat_i8(
 
     for (int k0 = 0; k0 < ncols_x/sizeof(int); k0 += WARP_SIZE) {
 #pragma unroll
-        for (int i0 = 0; i0 < mmi_y; i0 += nwarps) {
+        for (int i0 = 0; i0 < mmi8_y; i0 += nwarps) {
             const int index_tile =           (i0 + threadIdx.y) * (WARP_SIZE + MMI8_PADDING_X)      + threadIdx.x;
             const int index_qs   = (row_x_0 + i0 + threadIdx.y) * (ncols_x/sizeof(int))        + k0 + threadIdx.x;
             tile_x_qs[index_tile] = x_qs_low[index_qs];
         }
 
 #pragma unroll
-        for (int j0 = 0; j0 < mmi_x; j0 += nwarps) {
+        for (int j0 = 0; j0 < mmi8_x; j0 += nwarps) {
             const int col_y_eff = min(col_y_0 + j0 + threadIdx.y, ncols_y-1); // to prevent out-of-bounds memory accesses
 
             const int index_tile = (j0 + threadIdx.y) * (WARP_SIZE + MMI8_PADDING_Y)      + threadIdx.x;
@@ -4818,13 +4818,13 @@ static __global__ void mul_mat_i8(
 #pragma unroll
         for (int k = 0; k < 32; k += 16/sizeof(int)) {
 #pragma unroll
-            for (int i = 0; i < mmi_y; i += 32) {
+            for (int i = 0; i < mmi8_y; i += 32) {
                 nvcuda::wmma::load_matrix_sync(
                     fa[i/32], (int8_t *) &tile_x_qs[i*(WARP_SIZE + MMI8_PADDING_X) + k],
                     (WARP_SIZE + MMI8_PADDING_X)*sizeof(int));
             }
 #pragma unroll
-            for (int j0 = 0; j0 < mmi_x; j0 += 8*nwarps) {
+            for (int j0 = 0; j0 < mmi8_x; j0 += 8*nwarps) {
                 const int j = j0 + 8*threadIdx.y;
 
 #pragma unroll
@@ -4834,7 +4834,7 @@ static __global__ void mul_mat_i8(
                         (WARP_SIZE + MMI8_PADDING_Y)*sizeof(int));
                 }
 #pragma unroll
-                for (int i = 0; i < mmi_y; i += 32) {
+                for (int i = 0; i < mmi8_y; i += 32) {
 #pragma unroll
                     for (int p = 0; p < precision; ++p) {
                         frag_thin_c & fc_ij = fc[p][i/32][j0/(8*nwarps)];
@@ -4849,9 +4849,9 @@ static __global__ void mul_mat_i8(
     int * tmp = tile_y_qs[0] + threadIdx.y*(32*8);
 
 #pragma unroll
-    for (int j0 = 0; j0 < mmi_x; j0 += 8*nwarps) {
+    for (int j0 = 0; j0 < mmi8_x; j0 += 8*nwarps) {
 #pragma unroll
-        for (int i0 = 0; i0 < mmi_y; i0 += WARP_SIZE) {
+        for (int i0 = 0; i0 < mmi8_y; i0 += WARP_SIZE) {
             int result[8] = {0};
             const int row_dst = row_dst_0 + i0 + threadIdx.x;
 
