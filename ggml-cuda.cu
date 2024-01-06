@@ -148,6 +148,9 @@ typedef nvcuda::wmma::fragment<nvcuda::wmma::accumulator, 32, 8, 16, int>       
 // max batch size to use MMQ kernels when tensor cores are available
 #define MMQ_MAX_BATCH_SIZE 32
 
+// single precision is 8 bit, double precision is 15 bit (need 2 sign bits)
+#define MMI_DOUBLE_PRECISION false
+
 #if defined(GGML_USE_HIPBLAS)
 #define __CUDA_ARCH__ 1300
 
@@ -5885,7 +5888,8 @@ static void convert_float_to_i8_cuda(
 
     const dim3 num_blocks(1, ky, 1);
     const dim3 block_size(1024, 1, 1);
-    convert_float_to_i8<true><<<num_blocks, block_size, (kx + WARP_SIZE)*sizeof(float), stream>>>(x, y_qs_low, y_qs_high, y_d, kx);
+    convert_float_to_i8<MMI_DOUBLE_PRECISION><<<num_blocks, block_size, (kx + WARP_SIZE)*sizeof(float), stream>>>
+        (x, y_qs_low, y_qs_high, y_d, kx);
 }
 
 static void convert_q8_0_to_i8_cuda(const void * x, int * y_qs_low, float * y_d, const int kx, const int ky, cudaStream_t stream) {
@@ -6612,7 +6616,7 @@ static void ggml_mul_mat_i8_cuda(
     const dim3 block_nums(block_num_x, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
-    mul_mat_i8<true, MMI8_X_AMPERE, MMI8_Y_AMPERE, MMI8_NWARPS_AMPERE><<<block_nums, block_dims, 0, stream>>>
+    mul_mat_i8<MMI_DOUBLE_PRECISION, mmi_x, mmi_y, nwarps><<<block_nums, block_dims, 0, stream>>>
         (x_qs_low, x_d, y_qs_low, y_qs_high, y_d, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
 }
 
