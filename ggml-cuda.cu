@@ -1988,6 +1988,7 @@ static __global__ void convert_q8_0_to_i8(
     y_d[iy] = amax;
 }
 
+template <bool double_precision>
 static __global__ void convert_float_to_i8(
     const float * __restrict__ x, int * __restrict__ y_qs_low, int * __restrict__ y_qs_high, float * y_d, const int kx) {
 
@@ -2021,7 +2022,7 @@ static __global__ void convert_float_to_i8(
     amax = buf_iw[threadIdx.x % WARP_SIZE];
     amax = warp_reduce_max(amax);
 
-    const float d = amax / ((1 << 14) - 1);
+    const float d = amax / ((1 << (double_precision ? 14 : 7)) - 1);
 
     for (int ix0 = 0; ix0 < kx; ix0 += blockDim.x) {
         const int ix = ix0 + threadIdx.x;
@@ -2031,12 +2032,17 @@ static __global__ void convert_float_to_i8(
         }
 
         const float xi = vals[ix];
-        const int    q      = amax == 0.0f ? 0 : roundf(xi /  d);
-        const int8_t q_low  = q % 128;
-        const int8_t q_high = q / 128;
+        const int    q = amax == 0.0f ? 0 : roundf(xi /  d);
 
-        qs_low[iy*kx + ix]  = q_low;
-        qs_high[iy*kx + ix] = q_high;
+        if (double_precision) {
+            const int8_t q_low  = q % 128;
+            const int8_t q_high = q / 128;
+
+            qs_low[iy*kx + ix]  = q_low;
+            qs_high[iy*kx + ix] = q_high;
+        } else {
+            qs_low[iy*kx + ix]  = q;
+        }
 
     }
 
@@ -5879,7 +5885,7 @@ static void convert_float_to_i8_cuda(
 
     const dim3 num_blocks(1, ky, 1);
     const dim3 block_size(1024, 1, 1);
-    convert_float_to_i8<<<num_blocks, block_size, (kx + WARP_SIZE)*sizeof(float), stream>>>(x, y_qs_low, y_qs_high, y_d, kx);
+    convert_float_to_i8<true><<<num_blocks, block_size, (kx + WARP_SIZE)*sizeof(float), stream>>>(x, y_qs_low, y_qs_high, y_d, kx);
 }
 
 static void convert_q8_0_to_i8_cuda(const void * x, int * y_qs_low, float * y_d, const int kx, const int ky, cudaStream_t stream) {
