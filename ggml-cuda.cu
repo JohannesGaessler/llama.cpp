@@ -7704,12 +7704,18 @@ static void ggml_cuda_op_mul_mat_i8(
     int   * src1_qs_high = (int *)   (src1_ddi8.get() + 1*ne10*src1_ncols); // not used for single precision
     float * src1_d       = (float *) (src1_ddi8.get() + p*ne10*src1_ncols);
 
+    // efficient conversion to i8 only implemented for q8_0, convert to intermediary float as workaround
+    cuda_pool_alloc<float> src0_workaround;
+    to_fp32_cuda_t to_fp32 = ggml_get_to_fp32_cuda(src0->type);
+
     switch (src0->type) {
         case GGML_TYPE_Q8_0:
             convert_q8_0_to_i8_cuda(src0_dd_i, src0_qs_low, src0_d, ne00, ne01, stream);
             break;
         default:
-            GGML_ASSERT(false);
+            src0_workaround.alloc(ne00*ne01);
+            to_fp32(src0_dd_i, src0_workaround.get(), ne00*ne01, stream);
+            convert_float_to_i8_cuda<false>(src0_workaround.get(), src0_qs_low, nullptr, src0_d, ne00, ne01, stream);
             break;
     }
 
