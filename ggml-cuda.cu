@@ -2025,19 +2025,18 @@ static __global__ void convert_float_to_i8(
 
     for (int ix0 = 0; ix0 < kx; ix0 += blockDim.x) {
         const int ix = ix0 + threadIdx.x;
-        const int i_padded = iy*kx + ix;
 
         if (ix >= kx) {
             return;
         }
 
-        const float xi = ix < kx ? vals[ix] : 0.0f;
+        const float xi = vals[ix];
         const int    q      = amax == 0.0f ? 0 : roundf(xi /  d);
         const int8_t q_low  = q % 128;
         const int8_t q_high = q / 128;
 
-        qs_low[i_padded]  = q_low;
-        qs_high[i_padded] = q_high;
+        qs_low[iy*kx + ix]  = q_low;
+        qs_high[iy*kx + ix] = q_high;
 
     }
 
