@@ -1999,7 +1999,6 @@ static __global__ void convert_float_to_i8(
 
     int8_t * qs_low  = (int8_t *) y_qs_lowf;
     int8_t * qs_high = (int8_t *) y_qs_highf;
-    float  * ds      = (float  *) y_d;
 
     float amax = 0.0f;
     for (int ix0 = 0; ix0 < kx; ix0 += blockDim.x) {
@@ -2046,7 +2045,7 @@ static __global__ void convert_float_to_i8(
         return;
     }
 
-    ds[iy] = d;
+    y_d[iy] = d;
 }
 
 template<int qk, int qr, dequantize_kernel_t dequantize_kernel, typename dst_t>
@@ -5871,7 +5870,7 @@ static void quantize_row_q8_1_cuda(const float * x, void * vy, const int kx, con
     quantize_q8_1<<<num_blocks, block_size, 0, stream>>>(x, vy, kx, kx_padded);
 }
 
-static void quantize_row_q8_i_cuda(
+static void convert_float_to_i8_cuda(
     const float * x, int * y_qs_low, int * y_qs_high, float * y_d, const int kx, const int ky, cudaStream_t stream) {
 
     const dim3 num_blocks(1, ky, 1);
@@ -7699,7 +7698,7 @@ static void ggml_cuda_op_mul_mat_i(
             break;
     }
 
-    quantize_row_q8_i_cuda(src1_ddf_i, src1_qs_low, src1_qs_high, src1_d, ne10, ne11, stream);
+    convert_float_to_i8_cuda(src1_ddf_i, src1_qs_low, src1_qs_high, src1_d, ne10, ne11, stream);
     ggml_mul_mat_i8_15_cuda(src0_qs_low, src0_d, src1_qs_low, src1_qs_high, src1_d, dst_dd_i,
                             ne00, row_diff, src1_ncols, ne10, nrows_dst, stream);
 
