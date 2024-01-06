@@ -148,9 +148,6 @@ typedef nvcuda::wmma::fragment<nvcuda::wmma::accumulator, 32, 8, 16, int>       
 // max batch size to use MMQ kernels when tensor cores are available
 #define MMQ_MAX_BATCH_SIZE 32
 
-// single precision is 8 bit, double precision is 15 bit (need 2 sign bits)
-#define MMI8_DOUBLE_PRECISION false
-
 #if defined(GGML_USE_HIPBLAS)
 #define __CUDA_ARCH__ 1300
 
@@ -5883,12 +5880,13 @@ static void quantize_row_q8_1_cuda(const float * x, void * vy, const int kx, con
     quantize_q8_1<<<num_blocks, block_size, 0, stream>>>(x, vy, kx, kx_padded);
 }
 
+template <bool double_precision>
 static void convert_float_to_i8_cuda(
     const float * x, int * y_qs_low, int * y_qs_high, float * y_d, const int kx, const int ky, cudaStream_t stream) {
 
     const dim3 num_blocks(1, ky, 1);
     const dim3 block_size(1024, 1, 1);
-    convert_float_to_i8<MMI8_DOUBLE_PRECISION><<<num_blocks, block_size, (kx + WARP_SIZE)*sizeof(float), stream>>>
+    convert_float_to_i8<double_precision><<<num_blocks, block_size, (kx + WARP_SIZE)*sizeof(float), stream>>>
         (x, y_qs_low, y_qs_high, y_d, kx);
 }
 
@@ -6603,6 +6601,7 @@ static void ggml_mul_mat_q5_K_q8_1_cuda(
     }
 }
 
+template <bool double_precision>
 static void ggml_mul_mat_i8_cuda(
     const int * x_qs_low, const float * x_d, const int * y_qs_low, const int * y_qs_high, const float * y_d, float * dst,
     const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
@@ -6616,7 +6615,7 @@ static void ggml_mul_mat_i8_cuda(
     const dim3 block_nums(block_num_x, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
-    mul_mat_i8<MMI8_DOUBLE_PRECISION, mmi8_x, mmi8_y, nwarps><<<block_nums, block_dims, 0, stream>>>
+    mul_mat_i8<double_precision, mmi8_x, mmi8_y, nwarps><<<block_nums, block_dims, 0, stream>>>
         (x_qs_low, x_d, y_qs_low, y_qs_high, y_d, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
 }
 
@@ -7672,6 +7671,7 @@ static void ggml_cuda_op_mul_mat_q(
     (void) src1_ddf_i;
 }
 
+template <bool double_precision>
 static void ggml_cuda_op_mul_mat_i8(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, const char * src0_dd_i, const float * src1_ddf_i,
     const char * src1_ddq_i, float * dst_dd_i, const int64_t row_low, const int64_t row_high, const int64_t src1_ncols,
@@ -7698,10 +7698,11 @@ static void ggml_cuda_op_mul_mat_i8(
     int   * src0_qs_low = (int *)   (src0_ddi8.get() + 0);
     float * src0_d      = (float *) (src0_ddi8.get() + ne00*ne01);
 
-    cuda_pool_alloc<char> src1_ddi8((2*ne10 + sizeof(float))*src1_ncols);
+    const int p = double_precision ? 2 : 1;
+    cuda_pool_alloc<char> src1_ddi8((p*ne10 + sizeof(float))*src1_ncols);
     int   * src1_qs_low  = (int *)   (src1_ddi8.get() + 0*ne10*src1_ncols);
-    int   * src1_qs_high = (int *)   (src1_ddi8.get() + 1*ne10*src1_ncols);
-    float * src1_d       = (float *) (src1_ddi8.get() + 2*ne10*src1_ncols);
+    int   * src1_qs_high = (int *)   (src1_ddi8.get() + 1*ne10*src1_ncols); // not used for single precision
+    float * src1_d       = (float *) (src1_ddi8.get() + p*ne10*src1_ncols);
 
     switch (src0->type) {
         case GGML_TYPE_Q8_0:
@@ -7712,9 +7713,9 @@ static void ggml_cuda_op_mul_mat_i8(
             break;
     }
 
-    convert_float_to_i8_cuda(src1_ddf_i, src1_qs_low, src1_qs_high, src1_d, ne10, ne11, stream);
-    ggml_mul_mat_i8_cuda(src0_qs_low, src0_d, src1_qs_low, src1_qs_high, src1_d, dst_dd_i,
-                         ne00, row_diff, src1_ncols, ne10, nrows_dst, stream);
+    convert_float_to_i8_cuda<double_precision>(src1_ddf_i, src1_qs_low, src1_qs_high, src1_d, ne10, ne11, stream);
+    ggml_mul_mat_i8_cuda<double_precision>(src0_qs_low, src0_d, src1_qs_low, src1_qs_high, src1_d, dst_dd_i,
+                                           ne00, row_diff, src1_ncols, ne10, nrows_dst, stream);
 
     (void) src1;
     (void) dst;
@@ -9078,7 +9079,9 @@ static void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1
                 ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_q, true);
             } else {
                 // ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, false);
-                ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_i8, false);
+
+                const bool double_precision = false; // single precision is 8 bit, double precision is 15 bit (need 2 sign bits)
+                ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_i8<double_precision>, false);
             }
         }
     } else {
