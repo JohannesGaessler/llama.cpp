@@ -7664,6 +7664,9 @@ static void ggml_cuda_op_mul_mat_i(
     const int64_t ne00 = src0->ne[0];
     const int64_t ne01 = src0->ne[1];
 
+    const int64_t ne10 = src1->ne[0];
+    const int64_t ne11 = src1->ne[1];
+
     const int64_t ne0 = dst->ne[0];
 
     const int64_t row_diff = row_high - row_low;
@@ -7679,14 +7682,15 @@ static void ggml_cuda_op_mul_mat_i(
     int   * src0_qs_low = (int *)   (src0_ddi8.get() + 0);
     float * src0_d      = (float *) (src0_ddi8.get() + ne00*ne01);
 
-
-    const int   * src1_qs_low  = (const int *)   (src1_ddq_i + 0);
-    const int   * src1_qs_high = (const int *)   (src1_ddq_i + src1_ncols*src1_padded_row_size);
-    const float * src1_d       = (const float *) (src1_ddq_i + src1_ncols*src1_padded_row_size*2);
+    cuda_pool_alloc<char> src1_ddi8((2*src1_padded_row_size + sizeof(float))*src1_ncols);
+    const int   * src1_qs_low  = (const int *)   (src1_ddi8.get() + 0*src1_padded_row_size*src1_ncols);
+    const int   * src1_qs_high = (const int *)   (src1_ddi8.get() + 1*src1_padded_row_size*src1_ncols);
+    const float * src1_d       = (const float *) (src1_ddi8.get() + 2*src1_padded_row_size*src1_ncols);
 
     switch (src0->type) {
         case GGML_TYPE_Q8_0:
             convert_q8_0_to_i8_cuda(src0_dd_i, src0_qs_low, src0_d, ne00, ne01, stream);
+            quantize_row_q8_i_cuda(src1_ddf_i, src1_ddi8.get(), ne10, ne11, src1_padded_row_size, stream);
             ggml_mul_mat_i8_15_cuda(src0_qs_low, src0_d, src1_qs_low, src1_qs_high, src1_d, dst_dd_i,
                                     ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, stream);
             break;
@@ -8480,18 +8484,10 @@ static void ggml_cuda_op_mul_mat(
         }
 
         if (convert_src1_to_q8_1) {
-            if (op == ggml_cuda_op_mul_mat_i) {
-                dev[id].src1_ddq = dev[id].src1_ddq_alloc.alloc(2*nrows1*src1_padded_col_size*q8_1_ts/q8_1_bs);
-            } else {
-                dev[id].src1_ddq = dev[id].src1_ddq_alloc.alloc(nrows1*src1_padded_col_size*q8_1_ts/q8_1_bs);
-            }
+            dev[id].src1_ddq = dev[id].src1_ddq_alloc.alloc(nrows1*src1_padded_col_size*q8_1_ts/q8_1_bs);
 
             if (src1_on_device && src1_is_contiguous) {
-                if (op == ggml_cuda_op_mul_mat_i) {
-                    quantize_row_q8_i_cuda(dev[id].src1_ddf, dev[id].src1_ddq, ne10, nrows1, src1_padded_col_size, stream);
-                } else {
-                    quantize_row_q8_1_cuda(dev[id].src1_ddf, dev[id].src1_ddq, ne10, nrows1, src1_padded_col_size, stream);
-                }
+                quantize_row_q8_1_cuda(dev[id].src1_ddf, dev[id].src1_ddq, ne10, nrows1, src1_padded_col_size, stream);
                 CUDA_CHECK(cudaGetLastError());
             }
         }
@@ -9064,7 +9060,7 @@ static void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1
                 ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_q, true);
             } else {
                 // ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, false);
-                ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_i, true);
+                ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_i, false);
             }
         }
     } else {
