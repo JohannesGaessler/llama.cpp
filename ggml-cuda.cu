@@ -149,7 +149,7 @@ typedef nvcuda::wmma::fragment<nvcuda::wmma::accumulator, 32, 8, 16, int>       
 #define MMQ_MAX_BATCH_SIZE 32
 
 // single precision is 8 bit, double precision is 15 bit (need 2 sign bits)
-#define MMI_DOUBLE_PRECISION false
+#define MMI8_DOUBLE_PRECISION false
 
 #if defined(GGML_USE_HIPBLAS)
 #define __CUDA_ARCH__ 1300
@@ -5888,7 +5888,7 @@ static void convert_float_to_i8_cuda(
 
     const dim3 num_blocks(1, ky, 1);
     const dim3 block_size(1024, 1, 1);
-    convert_float_to_i8<MMI_DOUBLE_PRECISION><<<num_blocks, block_size, (kx + WARP_SIZE)*sizeof(float), stream>>>
+    convert_float_to_i8<MMI8_DOUBLE_PRECISION><<<num_blocks, block_size, (kx + WARP_SIZE)*sizeof(float), stream>>>
         (x, y_qs_low, y_qs_high, y_d, kx);
 }
 
@@ -6607,16 +6607,16 @@ static void ggml_mul_mat_i8_cuda(
     const int * x_qs_low, const float * x_d, const int * y_qs_low, const int * y_qs_high, const float * y_d, float * dst,
     const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
 
-    const int mmi_x  =      MMI8_X_AMPERE;
-    const int mmi_y  =      MMI8_Y_AMPERE;
+    const int mmi8_x =      MMI8_X_AMPERE;
+    const int mmi8_y =      MMI8_Y_AMPERE;
     const int nwarps = MMI8_NWARPS_AMPERE;
 
-    const int block_num_x = (nrows_x + mmi_y - 1) / mmi_y;
-    const int block_num_y = (ncols_y + mmi_x - 1) / mmi_x;
+    const int block_num_x = (nrows_x + mmi8_y - 1) / mmi8_y;
+    const int block_num_y = (ncols_y + mmi8_x - 1) / mmi8_x;
     const dim3 block_nums(block_num_x, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
-    mul_mat_i8<MMI_DOUBLE_PRECISION, mmi_x, mmi_y, nwarps><<<block_nums, block_dims, 0, stream>>>
+    mul_mat_i8<MMI8_DOUBLE_PRECISION, mmi8_x, mmi8_y, nwarps><<<block_nums, block_dims, 0, stream>>>
         (x_qs_low, x_d, y_qs_low, y_qs_high, y_d, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
 }
 
