@@ -1996,7 +1996,6 @@ static __global__ void convert_float_to_i8(
     float * buf_iw = data_quantize_q8_F + kx;
 
     const int iy = blockDim.y*blockIdx.y + threadIdx.y;
-    const int ky = blockDim.y*gridDim.y;
 
     int8_t * qs_low  = (int8_t *) y_qs_lowf;
     int8_t * qs_high = (int8_t *) y_qs_highf;
@@ -7694,18 +7693,20 @@ static void ggml_cuda_op_mul_mat_i(
     switch (src0->type) {
         case GGML_TYPE_Q8_0:
             convert_q8_0_to_i8_cuda(src0_dd_i, src0_qs_low, src0_d, ne00, ne01, stream);
-            quantize_row_q8_i_cuda(src1_ddf_i, src1_qs_low, src1_qs_high, src1_d, ne10, ne11, stream);
-            ggml_mul_mat_i8_15_cuda(src0_qs_low, src0_d, src1_qs_low, src1_qs_high, src1_d, dst_dd_i,
-                                    ne00, row_diff, src1_ncols, ne10, nrows_dst, stream);
             break;
         default:
             GGML_ASSERT(false);
             break;
     }
 
+    quantize_row_q8_i_cuda(src1_ddf_i, src1_qs_low, src1_qs_high, src1_d, ne10, ne11, stream);
+    ggml_mul_mat_i8_15_cuda(src0_qs_low, src0_d, src1_qs_low, src1_qs_high, src1_d, dst_dd_i,
+                            ne00, row_diff, src1_ncols, ne10, nrows_dst, stream);
+
     (void) src1;
     (void) dst;
-    (void) src1_ddf_i;
+    (void) src1_ddq_i;
+    (void) src1_padded_row_size;
 }
 
 static int64_t get_row_rounding(ggml_type type) {
