@@ -9520,34 +9520,10 @@ static size_t ggml_nbytes_split(const struct ggml_tensor * tensor, int nrows_spl
     return nrows_split*ggml_row_size(tensor->type, tensor->ne[0]);
 }
 
-static __global__ void find_max_scale(const void * __restrict__ vx, float * __restrict__ y, const int ncols) {
-    const int row = blockIdx.x;
-    const block_q8_0 * x = (block_q8_0 *) vx;
-
-    float amax = 0.0f;
-    for (int ib0 = 0; ib0 < ncols/QK8_0; ib0 += WARP_SIZE) {
-        const int ib = ib0 + threadIdx.x;
-
-        if (ib >= ncols/QK8_0) {
-            break;
-        }
-
-        amax = max(amax, fabsf(x[row*(ncols/QK8_0) + ib].d));
-    }
-    amax = warp_reduce_max(amax);
-
-    if (threadIdx.x > 0) {
-        return;
-    }
-
-    y[row] = amax;
-}
-
 void ggml_cuda_transform_tensor(void * data, struct ggml_tensor * tensor) {
     const int64_t nrows = ggml_nrows(tensor);
 
     const int64_t ne0 = tensor->ne[0];
-    const int64_t ne1 = tensor->ne[1];
 
     const size_t nb1 = tensor->nb[1];
 
@@ -9597,7 +9573,7 @@ void ggml_cuda_transform_tensor(void * data, struct ggml_tensor * tensor) {
         }
 
         char * buf;
-        CUDA_CHECK(cudaMalloc(&buf, size + ne1*sizeof(float)));
+        CUDA_CHECK(cudaMalloc(&buf, size));
         char * buf_host = (char *)data + offset_split;
 
         // set padding to 0 to avoid possible NaN values
@@ -9606,10 +9582,6 @@ void ggml_cuda_transform_tensor(void * data, struct ggml_tensor * tensor) {
         }
 
         CUDA_CHECK(cudaMemcpy(buf, buf_host, original_size, cudaMemcpyHostToDevice));
-
-        if (tensor->type == GGML_TYPE_Q8_0) {
-            find_max_scale<<<ne1, WARP_SIZE>>>(buf, (float *) (buf + size), ne0);
-        }
 
         extra->data_device[id] = buf;
 
