@@ -1989,7 +1989,7 @@ static __global__ void convert_q8_0_to_i8(
 }
 
 static __global__ void convert_float_to_i8(
-    const float * __restrict__ x, int * __restrict__ y_qs_lowf, int * __restrict__ y_qs_highf, float * y_d, const int kx) {
+    const float * __restrict__ x, int * __restrict__ y_qs_low, int * __restrict__ y_qs_high, float * y_d, const int kx) {
 
     extern __shared__ float data_quantize_q8_F[];
     float * vals   = data_quantize_q8_F + 0;
@@ -1997,8 +1997,8 @@ static __global__ void convert_float_to_i8(
 
     const int iy = blockDim.y*blockIdx.y + threadIdx.y;
 
-    int8_t * qs_low  = (int8_t *) y_qs_lowf;
-    int8_t * qs_high = (int8_t *) y_qs_highf;
+    int8_t * qs_low  = (int8_t *) y_qs_low;
+    int8_t * qs_high = (int8_t *) y_qs_high;
 
     float amax = 0.0f;
     for (int ix0 = 0; ix0 < kx; ix0 += blockDim.x) {
