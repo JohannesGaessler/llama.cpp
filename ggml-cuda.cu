@@ -4760,6 +4760,7 @@ static __global__ void mul_mat_i8(
     const float * y_d, float * __restrict__ dst, const int ncols_x, const int nrows_x, const int ncols_y,
     const int nrows_y, const int nrows_dst) {
 
+#if __CUDA_ARCH__ >= CC_VOLTA && __CUDA_ARCH__ < CC_OFFSET_AMD
     constexpr int precision = double_precision ? 2 : 1;
 
     (void) nrows_x; // TODO use for check
@@ -4878,6 +4879,11 @@ static __global__ void mul_mat_i8(
             }
         }
     }
+#else
+    (void)x_qs_low;(void)x_d;(void)y_qs_low;(void)y_qs_high;(void)y_d;(void)dst;
+    (void)ncols_x;(void)nrows_x;(void)ncols_y;(void)nrows_y;(void)nrows_dst;
+    bad_arch();
+#endif // __CUDA_ARCH__ >= CC_VOLTA && __CUDA_ARCH__ < CC_OFFSET_AMD
 }
 
 
