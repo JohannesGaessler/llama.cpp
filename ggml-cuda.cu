@@ -4751,14 +4751,11 @@ __launch_bounds__(WARP_SIZE*MMI8_NWARPS_AMPERE, 3)
 __launch_bounds__(WARP_SIZE*MMI8_NWARPS_AMPERE, 2)
 #endif // __CUDA_ARCH__ >= CC_AMPERE
 static __global__ void mul_mat_i8(
-    const int * __restrict__ x_qs_low, const float * x_d, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
+    const int * __restrict__ x_qs_low, const float * x_d, const int * __restrict__ y_qs_low, const int * __restrict__ y_qs_high,
+    const float * y_d, float * __restrict__ dst, const int ncols_x, const int nrows_x, const int ncols_y,
+    const int nrows_y, const int nrows_dst) {
 
     (void) nrows_x; // TODO use for check
-
-    const int        * y_qs_low  = (const int        *)  vy;
-    const int        * y_qs_high =                       y_qs_low  + ncols_y*nrows_y/sizeof(int);
-    const float      * y_ds      = (const float      *) (y_qs_high + ncols_y*nrows_y/sizeof(int));
 
     const int & ncols_dst = ncols_y;
 
@@ -4865,7 +4862,7 @@ static __global__ void mul_mat_i8(
                     continue;
                 }
 
-                const float d_j = y_ds[col_dst];
+                const float d_j = y_d[col_dst];
                 const float d_i = x_d[row_dst];
                 dst[col_dst*nrows_dst + row_dst] = result[l] * d_i*d_j;
             }
@@ -6591,8 +6588,8 @@ static void ggml_mul_mat_q5_K_q8_1_cuda(
 }
 
 static void ggml_mul_mat_i8_15_cuda(
-    const int * x_qs_low, const float * x_d, const void * vy, float * dst, const int ncols_x, const int nrows_x,
-    const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
+    const int * x_qs_low, const float * x_d, const int * y_qs_low, const int * y_qs_high, const float * y_d, float * dst,
+    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst, cudaStream_t stream) {
 
     const int mmi_x  =      MMI8_X_AMPERE;
     const int mmi_y  =      MMI8_Y_AMPERE;
@@ -6604,7 +6601,7 @@ static void ggml_mul_mat_i8_15_cuda(
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
     mul_mat_i8<MMI8_X_AMPERE, MMI8_Y_AMPERE, MMI8_NWARPS_AMPERE><<<block_nums, block_dims, 0, stream>>>
-        (x_qs_low, x_d, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
+        (x_qs_low, x_d, y_qs_low, y_qs_high, y_d, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
 }
 
 static void ggml_mul_mat_q6_K_q8_1_cuda(
@@ -7667,9 +7664,6 @@ static void ggml_cuda_op_mul_mat_i(
     const int64_t ne00 = src0->ne[0];
     const int64_t ne01 = src0->ne[1];
 
-    const int64_t ne10 = src1->ne[0];
-    GGML_ASSERT(ne10 % QK8_1 == 0);
-
     const int64_t ne0 = dst->ne[0];
 
     const int64_t row_diff = row_high - row_low;
@@ -7685,10 +7679,16 @@ static void ggml_cuda_op_mul_mat_i(
     int   * src0_qs_low = (int *)   (src0_ddi8.get() + 0);
     float * src0_d      = (float *) (src0_ddi8.get() + ne00*ne01);
 
+
+    const int   * src1_qs_low  = (const int *)   (src1_ddq_i + 0);
+    const int   * src1_qs_high = (const int *)   (src1_ddq_i + src1_ncols*src1_padded_row_size);
+    const float * src1_d       = (const float *) (src1_ddq_i + src1_ncols*src1_padded_row_size*2);
+
     switch (src0->type) {
         case GGML_TYPE_Q8_0:
             convert_q8_0_to_i8_cuda(src0_dd_i, src0_qs_low, src0_d, ne00, ne01, stream);
-            ggml_mul_mat_i8_15_cuda(src0_qs_low, src0_d, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, stream);
+            ggml_mul_mat_i8_15_cuda(src0_qs_low, src0_d, src1_qs_low, src1_qs_high, src1_d, dst_dd_i,
+                                    ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst, stream);
             break;
         default:
             GGML_ASSERT(false);
