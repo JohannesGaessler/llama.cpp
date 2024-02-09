@@ -150,8 +150,8 @@
 #define CUDA_USE_TENSOR_CORES
 #endif
 
-// max batch size to use MMQ kernels when tensor cores are available
-#define MMQ_MAX_BATCH_SIZE 32
+#define MMVQ_MAX_BATCH_SIZE  4 // max batch size to use MMVQ kernels
+#define  MMQ_MAX_BATCH_SIZE 32 // max batch size to use MMQ kernels when tensor cores are available
 
 #if defined(GGML_USE_HIPBLAS)
 #define __CUDA_ARCH__ 1300
@@ -9755,7 +9755,7 @@ static __global__ void k_compute_batched_ptrs(
     ptrs_dst[0*ne23 + i12 + i13*ne12] = (      char *)         dst + i12*nbd2 + i13*nbd3;
 }
 
-static void ggml_cuda_mul_mat_mat_batched_cublas(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
+static void ggml_cuda_mul_mat_batched_cublas(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
     GGML_ASSERT(!ggml_is_transposed(src0));
     GGML_ASSERT(!ggml_is_transposed(src1));
 
@@ -9928,15 +9928,43 @@ static void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1
 #if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
 
     const bool fp16_performance_good = min_compute_capability >= CC_RDNA1;
-    bool               use_mul_mat_q = ggml_is_quantized(src0->type);
+    bool use_dequantize_mul_mat_vec  = (ggml_is_quantized(src0->type) || src0->type == GGML_TYPE_F16) && dst->type == GGML_TYPE_F32
+        && src0->ne[0] % GGML_CUDA_DMMV_X == 0 && src1->ne[1] == 1;
+#ifndef GGML_CUDA_FORCE_DMMV
+    use_dequantize_mul_mat_vec       = use_dequantize_mul_mat_vec && !ggml_is_quantized(src0->type);
+#endif // GGML_CUDA_FORCE_DMMV
+    const bool     use_mul_mat_vec_q = ggml_is_quantized(src0->type) && dst->type == GGML_TYPE_F32
+        && src1->ne[1] <= MMVQ_MAX_BATCH_SIZE;
+    bool               use_mul_mat_q = ggml_is_quantized(src0->type) && dst->type == GGML_TYPE_F32;
 #ifdef CUDA_USE_TENSOR_CORES
     use_mul_mat_q = use_mul_mat_q && min_compute_capability < CC_RDNA3;
 #endif // CUDA_USE_TENSOR_CORES
 
 #else
 
-    const bool fp16_performance_good = min_compute_capability >= CC_VOLTA;
-    bool               use_mul_mat_q = min_compute_capability >= MIN_CC_DP4A && ggml_is_quantized(src0->type);
+    // fp16 performance is good on Volta or newer and on P100 (compute capability 6.0)
+    bool fp16_performance_good = true;
+    for (int id = 0; id < g_device_count; ++id) {
+        if (g_device_caps[id].cc < CC_VOLTA && g_device_caps[id].cc != CC_PASCAL) {
+            fp16_performance_good = false;
+            break;
+        }
+    }
+
+    bool use_dequantize_mul_mat_vec  = (ggml_is_quantized(src0->type) || src0->type == GGML_TYPE_F16) && dst->type == GGML_TYPE_F32
+        && src0->ne[0] % GGML_CUDA_DMMV_X == 0 && src1->ne[1] == 1;
+#ifndef GGML_CUDA_FORCE_DMMV
+    use_dequantize_mul_mat_vec       = use_dequantize_mul_mat_vec
+        && !(ggml_is_quantized(src0->type) && min_compute_capability >= MIN_CC_DP4A);
+#endif // GGML_CUDA_FORCE_DMMV
+
+    const bool     use_mul_mat_vec_q = min_compute_capability >= MIN_CC_DP4A
+        && ggml_is_quantized(src0->type) && dst->type == GGML_TYPE_F32
+        && src1->ne[1] <= MMVQ_MAX_BATCH_SIZE;
+
+    bool               use_mul_mat_q = min_compute_capability >= MIN_CC_DP4A
+        && ggml_is_quantized(src0->type) && dst->type == GGML_TYPE_F32
+        && ggml_cuda_supports_mmq(src0->type);
 #ifdef CUDA_USE_TENSOR_CORES
     // when tensor cores are available, use them for large batch size
     // ref: https://github.com/ggerganov/llama.cpp/pull/3776
@@ -9944,8 +9972,6 @@ static void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1
 #endif // CUDA_USE_TENSOR_CORES
 
 #endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-
-    use_mul_mat_q = use_mul_mat_q && ggml_cuda_supports_mmq(src0->type);
 
     // debug helpers
     //printf("src0: %8d %8d %8d %8d\n", src0->ne[0], src0->ne[1], src0->ne[2], src0->ne[3]);
@@ -9963,33 +9989,15 @@ static void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1
         ggml_cuda_mul_mat_vec_nc(src0, src1, dst);
     } else if (!split && all_on_device && fp16_performance_good && src0->type == GGML_TYPE_F16 && !ggml_is_transposed(src0) && !ggml_is_transposed(src1) && src1->ne[2]*src1->ne[3] > 1) {
         // KQ + KQV multi-batch
-        ggml_cuda_mul_mat_mat_batched_cublas(src0, src1, dst);
-    } else if (src0->type == GGML_TYPE_F32) {
-        ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, false);
-    } else if (ggml_is_quantized(src0->type) || src0->type == GGML_TYPE_F16) {
-        if (src1->ne[1] == 1 && src0->ne[0] % GGML_CUDA_DMMV_X == 0 && src1->type == GGML_TYPE_F32) {
-#ifdef GGML_CUDA_FORCE_DMMV
-            const bool use_mul_mat_vec_q = false;
-#else
-            const bool use_mul_mat_vec_q = min_compute_capability >= MIN_CC_DP4A && ggml_is_quantized(src0->type);
-#endif // GGML_CUDA_FORCE_DMMV
-
-            if (use_mul_mat_vec_q) {
-                ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_vec_q, true);
-            } else {
-                ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_dequantize_mul_mat_vec, false);
-            }
-        } else {
-            if (src1->ne[1] <= 4 && min_compute_capability >= MIN_CC_DP4A && ggml_is_quantized(src0->type) && src1->type == GGML_TYPE_F32) {
-                ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_vec_q, true);
-            } else if (use_mul_mat_q) {
-                ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_q, true);
-            } else {
-                ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, false);
-            }
-        }
+        ggml_cuda_mul_mat_batched_cublas(src0, src1, dst);
+    } else if (use_dequantize_mul_mat_vec) {
+        ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_dequantize_mul_mat_vec, false);
+    } else if (use_mul_mat_vec_q) {
+        ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_vec_q, true);
+    } else if (use_mul_mat_q) {
+        ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_q, true);
     } else {
-        GGML_ASSERT(false);
+        ggml_cuda_op_mul_mat(src0, src1, dst, ggml_cuda_op_mul_mat_cublas, false);
     }
 }
 
