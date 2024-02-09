@@ -9960,7 +9960,8 @@ static void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1
 #if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
 
     const bool fp16_performance_good = min_compute_capability >= CC_RDNA1;
-    bool use_dequantize_mul_mat_vec  = (ggml_is_quantized(src0->type) || src0->type == GGML_TYPE_F16) && dst->type == GGML_TYPE_F32
+    bool use_dequantize_mul_mat_vec  = (ggml_is_quantized(src0->type) || src0->type == GGML_TYPE_F16)
+        && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32
         && src0->ne[0] % GGML_CUDA_DMMV_X == 0 && src1->ne[1] == 1;
 #ifndef GGML_CUDA_FORCE_DMMV
     use_dequantize_mul_mat_vec       = use_dequantize_mul_mat_vec && !ggml_is_quantized(src0->type);
