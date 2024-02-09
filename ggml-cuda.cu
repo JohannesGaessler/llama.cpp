@@ -6914,9 +6914,9 @@ static void mul_mat_vec_q_cuda(
                     <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, nrows_y, ncols_y, nrows_dst);
                 break;
             case 2:
-                rows_per_cuda_block = 1;
+                rows_per_cuda_block = 2;
                 block_nums.x = (nrows_x + rows_per_cuda_block - 1) / rows_per_cuda_block;
-                mul_mat_vec_q<4, 1, 2, qk, qi, block_q_t, vdr, vec_dot>
+                mul_mat_vec_q<4, 2, 2, qk, qi, block_q_t, vdr, vec_dot>
                     <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, nrows_y, ncols_y, nrows_dst);
                 break;
             case 3:
