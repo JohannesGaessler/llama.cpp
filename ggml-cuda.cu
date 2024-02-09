@@ -5310,10 +5310,6 @@ template <bool need_check> static __global__ void
 #endif // __CUDA_ARCH__ >= CC_VOLTA
 }
 
-#define MMVQ_NWARPS_NVIDIA    4
-#define MMVQ_NWARPS_AMD_RDNA2 1
-#define MMVQ_NWARPS_AMD_OLD   4
-
 template <int nwarps, int rows_per_cuda_block,  int ncols_y_template,
               int qk, int qi, typename block_q_t, int vdr, vec_dot_q_cuda_t vec_dot_q_cuda>
 #if !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__))
@@ -6861,20 +6857,78 @@ static void mul_mat_vec_q_cuda(
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
 
-    int nwarps;
-    if (g_device_caps[id].cc >= CC_OFFSET_AMD) {
-        nwarps = g_device_caps[id].cc >= CC_RDNA2 ? MMVQ_NWARPS_AMD_RDNA2 : MMVQ_NWARPS_AMD_OLD;
+    const bool multiple_warps = g_device_caps[id].cc < CC_RDNA2; // NVIDIA and AMD older than RDNA2
+
+    if (multiple_warps) {
+        int rows_per_cuda_block;
+        dim3 block_nums(0, 1, 1); // block_nums.x == number of CUDA blocks, depends on rows_per_cuda_block
+        dim3 block_dims(WARP_SIZE, 0, 1); // block_dims.y == nwarps, need low value for high ncols_y due to register pressure
+
+        switch(ncols_y) {
+            case 1:
+                rows_per_cuda_block = 1;
+                block_nums.x = (nrows_x + rows_per_cuda_block - 1) / rows_per_cuda_block;
+                block_dims.y = 4;
+                mul_mat_vec_q<4, 1, 1, qk, qi, block_q_t, vdr, vec_dot>
+                    <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, nrows_y, ncols_y, nrows_dst);
+                break;
+            case 2:
+                rows_per_cuda_block = 2;
+                block_nums.x = (nrows_x + rows_per_cuda_block - 1) / rows_per_cuda_block;
+                block_dims.y = 4;
+                mul_mat_vec_q<4, 2, 2, qk, qi, block_q_t, vdr, vec_dot>
+                    <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, nrows_y, ncols_y, nrows_dst);
+                break;
+            case 3:
+                rows_per_cuda_block = 2;
+                block_nums.x = (nrows_x + rows_per_cuda_block - 1) / rows_per_cuda_block;
+                block_dims.y = 4;
+                mul_mat_vec_q<4, 2, 3, qk, qi, block_q_t, vdr, vec_dot>
+                    <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, nrows_y, ncols_y, nrows_dst);
+                break;
+            case 4:
+                rows_per_cuda_block = 2;
+                block_nums.x = (nrows_x + rows_per_cuda_block - 1) / rows_per_cuda_block;
+                block_dims.y = 4;
+                mul_mat_vec_q<4, 2, 4, qk, qi, block_q_t, vdr, vec_dot>
+                    <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, nrows_y, ncols_y, nrows_dst);
+                break;
+            case 5:
+                rows_per_cuda_block = 2;
+                block_nums.x = (nrows_x + rows_per_cuda_block - 1) / rows_per_cuda_block;
+                block_dims.y = 2;
+                mul_mat_vec_q<2, 2, 5, qk, qi, block_q_t, vdr, vec_dot>
+                    <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, nrows_y, ncols_y, nrows_dst);
+                break;
+            case 6:
+                rows_per_cuda_block = 2;
+                block_nums.x = (nrows_x + rows_per_cuda_block - 1) / rows_per_cuda_block;
+                block_dims.y = 2;
+                mul_mat_vec_q<2, 2, 6, qk, qi, block_q_t, vdr, vec_dot>
+                    <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, nrows_y, ncols_y, nrows_dst);
+                break;
+            case 7:
+                rows_per_cuda_block = 2;
+                block_nums.x = (nrows_x + rows_per_cuda_block - 1) / rows_per_cuda_block;
+                block_dims.y = 2;
+                mul_mat_vec_q<2, 2, 7, qk, qi, block_q_t, vdr, vec_dot>
+                    <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, nrows_y, ncols_y, nrows_dst);
+                break;
+            case 8:
+                rows_per_cuda_block = 2;
+                block_nums.x = (nrows_x + rows_per_cuda_block - 1) / rows_per_cuda_block;
+                block_dims.y = 2;
+                mul_mat_vec_q<2, 2, 8, qk, qi, block_q_t, vdr, vec_dot>
+                    <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, nrows_y, ncols_y, nrows_dst);
+                break;
+            default:
+                GGML_ASSERT(false);
+                break;
+        }
     } else {
-        nwarps = MMVQ_NWARPS_NVIDIA;
-    }
-
-    int rows_per_cuda_block;
-    dim3 block_nums(0, 1, 1);
-    const dim3 block_dims(WARP_SIZE, nwarps, 1);
-
-    switch (nwarps) {
-        block_nums.x = nrows_x; // on new AMD GPUs scaling the rows per CUDA block with the batch size seems to be beneficial
-        case 1: switch(ncols_y) {
+        const dim3 block_nums(nrows_x, 1, 1);
+        const dim3 block_dims(WARP_SIZE, 1, 1);
+        switch(ncols_y) {
             case 1:
                 mul_mat_vec_q<1, 1, 1, qk, qi, block_q_t, vdr, vec_dot>
                     <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, nrows_y, ncols_y, nrows_dst);
@@ -6891,68 +6945,26 @@ static void mul_mat_vec_q_cuda(
                 mul_mat_vec_q<1, 1, 4, qk, qi, block_q_t, vdr, vec_dot>
                     <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, nrows_y, ncols_y, nrows_dst);
                 break;
-            default:
-                GGML_ASSERT(false);
-                break;
-        } break;
-        case 4: switch(ncols_y) {
-            // on NVIDIA/old AMD GPUs scaling the rows per CUDA block with the batch size seems to be beneficial
-            case 1:
-                rows_per_cuda_block = 1;
-                block_nums.x = (nrows_x + rows_per_cuda_block - 1) / rows_per_cuda_block;
-                mul_mat_vec_q<4, 1, 1, qk, qi, block_q_t, vdr, vec_dot>
-                    <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, nrows_y, ncols_y, nrows_dst);
-                break;
-            case 2:
-                rows_per_cuda_block = 2;
-                block_nums.x = (nrows_x + rows_per_cuda_block - 1) / rows_per_cuda_block;
-                mul_mat_vec_q<4, 2, 2, qk, qi, block_q_t, vdr, vec_dot>
-                    <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, nrows_y, ncols_y, nrows_dst);
-                break;
-            case 3:
-                rows_per_cuda_block = 2;
-                block_nums.x = (nrows_x + rows_per_cuda_block - 1) / rows_per_cuda_block;
-                mul_mat_vec_q<4, 2, 3, qk, qi, block_q_t, vdr, vec_dot>
-                    <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, nrows_y, ncols_y, nrows_dst);
-                break;
-            case 4:
-                rows_per_cuda_block = 2;
-                block_nums.x = (nrows_x + rows_per_cuda_block - 1) / rows_per_cuda_block;
-                mul_mat_vec_q<4, 2, 4, qk, qi, block_q_t, vdr, vec_dot>
-                    <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, nrows_y, ncols_y, nrows_dst);
-                break;
             case 5:
-                rows_per_cuda_block = 2;
-                block_nums.x = (nrows_x + rows_per_cuda_block - 1) / rows_per_cuda_block;
-                mul_mat_vec_q<4, 2, 5, qk, qi, block_q_t, vdr, vec_dot>
+                mul_mat_vec_q<1, 1, 5, qk, qi, block_q_t, vdr, vec_dot>
                     <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, nrows_y, ncols_y, nrows_dst);
                 break;
             case 6:
-                rows_per_cuda_block = 2;
-                block_nums.x = (nrows_x + rows_per_cuda_block - 1) / rows_per_cuda_block;
-                mul_mat_vec_q<4, 2, 6, qk, qi, block_q_t, vdr, vec_dot>
+                mul_mat_vec_q<1, 1, 6, qk, qi, block_q_t, vdr, vec_dot>
                     <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, nrows_y, ncols_y, nrows_dst);
                 break;
             case 7:
-                rows_per_cuda_block = 2;
-                block_nums.x = (nrows_x + rows_per_cuda_block - 1) / rows_per_cuda_block;
-                mul_mat_vec_q<4, 2, 7, qk, qi, block_q_t, vdr, vec_dot>
+                mul_mat_vec_q<1, 1, 7, qk, qi, block_q_t, vdr, vec_dot>
                     <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, nrows_y, ncols_y, nrows_dst);
                 break;
             case 8:
-                rows_per_cuda_block = 2;
-                block_nums.x = (nrows_x + rows_per_cuda_block - 1) / rows_per_cuda_block;
-                mul_mat_vec_q<4, 2, 8, qk, qi, block_q_t, vdr, vec_dot>
+                mul_mat_vec_q<1, 1, 8, qk, qi, block_q_t, vdr, vec_dot>
                     <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, nrows_y, ncols_y, nrows_dst);
                 break;
             default:
                 GGML_ASSERT(false);
                 break;
-        } break;
-
-        default:
-            GGML_ASSERT(false);
-            break;
+        }
     }
 }
 
