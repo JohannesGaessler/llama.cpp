@@ -9968,7 +9968,8 @@ static void ggml_cuda_mul_mat(const ggml_tensor * src0, const ggml_tensor * src1
 #endif // GGML_CUDA_FORCE_DMMV
     const bool     use_mul_mat_vec_q = ggml_is_quantized(src0->type) && dst->type == GGML_TYPE_F32
         && src1->ne[1] <= MMVQ_MAX_BATCH_SIZE;
-    bool               use_mul_mat_q = ggml_is_quantized(src0->type) && dst->type == GGML_TYPE_F32;
+    bool               use_mul_mat_q = ggml_is_quantized(src0->type) && dst->type == GGML_TYPE_F32
+        && ggml_cuda_supports_mmq(src0->type);
 #ifdef CUDA_USE_TENSOR_CORES
     use_mul_mat_q = use_mul_mat_q && min_compute_capability < CC_RDNA3;
 #endif // CUDA_USE_TENSOR_CORES
