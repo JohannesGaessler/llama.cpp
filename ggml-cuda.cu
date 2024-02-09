@@ -6877,29 +6877,22 @@ static void mul_mat_vec_q_cuda(
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
     switch (nwarps) {
+        block_nums.x = nrows_x; // on new AMD GPUs scaling the rows per CUDA block with the batch size seems to be beneficial
         case 1: switch(ncols_y) {
             case 1:
-                rows_per_cuda_block = 2;
-                block_nums.x = (nrows_x + rows_per_cuda_block - 1) / rows_per_cuda_block;
-                mul_mat_vec_q<1, 2, 1, qk, qi, block_q_t, vdr, vec_dot>
+                mul_mat_vec_q<1, 1, 1, qk, qi, block_q_t, vdr, vec_dot>
                     <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, nrows_y, ncols_y, nrows_dst);
                 break;
             case 2:
-                rows_per_cuda_block = 2;
-                block_nums.x = (nrows_x + rows_per_cuda_block - 1) / rows_per_cuda_block;
-                mul_mat_vec_q<1, 2, 2, qk, qi, block_q_t, vdr, vec_dot>
+                mul_mat_vec_q<1, 1, 2, qk, qi, block_q_t, vdr, vec_dot>
                     <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, nrows_y, ncols_y, nrows_dst);
                 break;
             case 3:
-                rows_per_cuda_block = 2;
-                block_nums.x = (nrows_x + rows_per_cuda_block - 1) / rows_per_cuda_block;
-                mul_mat_vec_q<1, 2, 3, qk, qi, block_q_t, vdr, vec_dot>
+                mul_mat_vec_q<1, 1, 3, qk, qi, block_q_t, vdr, vec_dot>
                     <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, nrows_y, ncols_y, nrows_dst);
                 break;
             case 4:
-                rows_per_cuda_block = 2;
-                block_nums.x = (nrows_x + rows_per_cuda_block - 1) / rows_per_cuda_block;
-                mul_mat_vec_q<1, 2, 4, qk, qi, block_q_t, vdr, vec_dot>
+                mul_mat_vec_q<1, 1, 4, qk, qi, block_q_t, vdr, vec_dot>
                     <<<block_nums, block_dims, 0, stream>>>(vx, vy, dst, ncols_x, nrows_x, nrows_y, ncols_y, nrows_dst);
                 break;
             default:
@@ -6907,6 +6900,7 @@ static void mul_mat_vec_q_cuda(
                 break;
         } break;
         case 4: switch(ncols_y) {
+            // on NVIDIA/old AMD GPUs scaling the rows per CUDA block with the batch size seems to be beneficial
             case 1:
                 rows_per_cuda_block = 1;
                 block_nums.x = (nrows_x + rows_per_cuda_block - 1) / rows_per_cuda_block;
