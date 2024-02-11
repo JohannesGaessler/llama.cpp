@@ -55,11 +55,10 @@ int main(int argc, char ** argv){
 
     std::vector<llama_token> inp;
     inp = ::llama_tokenize(ctx, params.prompt, add_bos, true);
-    all_token_hashmap all_token_counts[ngram_max-ngram_min+1];
 
     auto update_hashmaps = [](all_token_hashmap * atcs, const llama_token * inp_data, const int inp_size, const int nnew) -> void {
         for (int ngram_size = ngram_min; ngram_size <= ngram_max; ++ngram_size) {
-            all_token_hashmap & atc = atcs[ngram_size - ngram_min];
+            all_token_hashmap * atc = atcs + ngram_size - ngram_min;
 
             for (int i = inp_size - nnew + ngram_size; i < inp_size; ++i) {
                 const int ngram_start = i - ngram_size;
@@ -71,11 +70,11 @@ int main(int argc, char ** argv){
                 }
                 const llama_token token = inp_data[i];
 
-                all_token_hashmap::iterator token_counts_it = atc.find(ngram);
-                if (token_counts_it == atc.end()) {
+                all_token_hashmap::iterator token_counts_it = atc->find(ngram);
+                if (token_counts_it == atc->end()) {
                     token_hashmap token_counts;
                     token_counts.emplace(token, 1);
-                    atc.emplace(ngram, token_counts);
+                    atc->emplace(ngram, token_counts);
                 } else {
                     token_hashmap::iterator tc_it = token_counts_it->second.find(token);
                     if (tc_it == token_counts_it->second.end()) {
@@ -87,6 +86,8 @@ int main(int argc, char ** argv){
             }
         }
     };
+
+    all_token_hashmap all_token_counts[ngram_max-ngram_min+1];
 
     const int max_context_size     = llama_n_ctx(ctx);
     const int max_tokens_list_size = max_context_size - 4;
