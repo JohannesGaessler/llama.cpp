@@ -16,9 +16,9 @@ typedef std::unordered_map<uint64_t, token_hashmap> all_token_hashmap;
 constexpr int   ngram_min =  1;
 constexpr int   ngram_max =  4;
 
-// continuation to draft must be at least this frequent
+// if sample size or percentage in context are below these thresholds the draft is aborted early
 constexpr float draft_min_sample_size[ngram_max] = { 2,  2,  1,  1};
-constexpr float draft_min_percent[ngram_max]     = {66, 50, 50, 50};
+constexpr float     draft_min_percent[ngram_max] = {66, 50, 50, 50};
 
 int main(int argc, char ** argv){
     gpt_params params;
