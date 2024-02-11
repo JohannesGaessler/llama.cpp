@@ -42,6 +42,7 @@ int main(int argc, char ** argv){
 
     // load the model
     std::tie(model, ctx) = llama_init_from_gpt_params(params);
+    GGML_ASSERT(llama_n_vocab(model) < (1 << 16));
 
     // tokenize the prompt
     const bool add_bos = llama_should_add_bos_token(model);
@@ -188,11 +189,11 @@ int main(int argc, char ** argv){
                         token_counts.emplace(token, 1);
                         atc.emplace(ngram, token_counts);
                     } else {
-                        token_hashmap::iterator token_count_it = token_counts_it->second.find(token);
-                        if (token_count_it == token_counts_it->second.end()) {
+                        token_hashmap::iterator tc_it = token_counts_it->second.find(token);
+                        if (tc_it == token_counts_it->second.end()) {
                             token_counts_it->second.emplace(token, 1);
                         } else {
-                            token_count_it->second++;
+                            tc_it->second++;
                         }
                     }
                 }
