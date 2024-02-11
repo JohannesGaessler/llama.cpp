@@ -57,11 +57,11 @@ int main(int argc, char ** argv){
     inp = ::llama_tokenize(ctx, params.prompt, add_bos, true);
     all_token_hashmap all_token_counts[ngram_max-ngram_min+1];
 
-    auto update_hashmaps = [](all_token_hashmap * atcs, const llama_token * inp_data, const int inp_size) -> void {
+    auto update_hashmaps = [](all_token_hashmap * atcs, const llama_token * inp_data, const int inp_size, const int nnew) -> void {
         for (int ngram_size = ngram_min; ngram_size <= ngram_max; ++ngram_size) {
             all_token_hashmap & atc = atcs[ngram_size - ngram_min];
 
-            for (int i = ngram_size; i < inp_size; ++i) {
+            for (int i = inp_size - nnew + ngram_size; i < inp_size; ++i) {
                 const int ngram_start = i - ngram_size;
                 uint64_t ngram = inp_data[ngram_start];
                 for (int j = ngram_start; j < ngram_start + ngram_size; ++j) {
@@ -214,7 +214,7 @@ int main(int argc, char ** argv){
             for (int ngram_size = ngram_min; ngram_size <= ngram_max; ++ngram_size) {
                 all_token_counts[ngram_size-ngram_min].clear();
             }
-            update_hashmaps(all_token_counts, inp.data(), inp.size());
+            update_hashmaps(all_token_counts, inp.data(), inp_size, inp_size);
 
             while ((int) draft.size()-1 < n_draft) {
                 bool draft_success = false;
