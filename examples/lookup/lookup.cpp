@@ -181,9 +181,9 @@ int main(int argc, char ** argv){
                 for (int i = ngram_size; i < inp_size; ++i) {
                     uint64_t ngram = inp[i-1];
                     for (int j = i-2; j > i-1-ngram_size; --j) {
-                        const uint64_t key_part = inp[j];
+                        const uint64_t ngram_part = inp[j];
                         ngram <<= 16;
-                        ngram |= key_part;
+                        ngram |= ngram_part;
                     }
                     const llama_token token = inp[i];
 
@@ -214,9 +214,9 @@ int main(int argc, char ** argv){
 
                     uint64_t ngram = get_token(inp, draft, inp_size-1 + draft.size()-1);
                     for (int j = inp_size-2; j > inp_size-1-ngram_size; --j) {
-                        const uint64_t key_part = get_token(inp, draft, j + draft.size()-1);
+                        const uint64_t ngram_part = get_token(inp, draft, j + draft.size()-1);
                         ngram <<= 16;
-                        ngram |= key_part;
+                        ngram |= ngram_part;
                     }
 
                     all_token_hashmap::iterator token_counts_it = atc.find(ngram);
@@ -242,14 +242,16 @@ int main(int argc, char ** argv){
                     draft_success = true;
                     break;
                 }
+
                 if (!draft_success) {
                     break;
                 }
             }
         };
 
-        GGML_ASSERT(draft.size() == 1); // the sampled token
-        GGML_ASSERT(draft[0] == inp.back()); // the sampled token
+        // draft already contains a single drafted token:
+        GGML_ASSERT(draft.size() == 1);
+        GGML_ASSERT(draft[0] == inp.back());
         const int64_t t_start_draft_us = ggml_time_us();
 
         prompt_lookup();
