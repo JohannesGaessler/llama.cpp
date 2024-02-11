@@ -21,7 +21,7 @@ int main(int argc, char ** argv){
 
     // max/min n-grams size to search for in prompt
     const int ngram_max = 4;
-    const int ngram_min = 1;
+    const int ngram_min = 2;
 
     // length of the candidate / draft sequence, if match is found
     const int n_draft = params.n_draft;
