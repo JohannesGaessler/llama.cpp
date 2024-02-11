@@ -184,8 +184,9 @@ int main(int argc, char ** argv){
                 all_token_hashmap & atc = all_token_counts[ngram_size - ngram_min];
 
                 for (int i = ngram_size; i < inp_size; ++i) {
-                    uint64_t ngram = inp[i-1];
-                    for (int j = i-2; j > i-1-ngram_size; --j) {
+                    const int ngram_start = i - ngram_size;
+                    uint64_t ngram = inp[ngram_start];
+                    for (int j = ngram_start; j < ngram_start + ngram_size; ++j) {
                         const uint64_t ngram_part = inp[j];
                         ngram <<= 16;
                         ngram |= ngram_part;
@@ -217,9 +218,10 @@ int main(int argc, char ** argv){
 
                     all_token_hashmap & atc = all_token_counts[ngram_size - ngram_min];
 
-                    uint64_t ngram = get_token(inp, draft, inp_size-1 + draft.size()-1);
-                    for (int j = inp_size-2; j > inp_size-1-ngram_size; --j) {
-                        const uint64_t ngram_part = get_token(inp, draft, j + draft.size()-1);
+                    const int ngram_start = inp_size-ngram_size + draft.size()-1;
+                    uint64_t ngram = get_token(inp, draft, ngram_start);
+                    for (int j = ngram_start; j < ngram_start + ngram_size; ++j) {
+                        const uint64_t ngram_part = get_token(inp, draft, j);
                         ngram <<= 16;
                         ngram |= ngram_part;
                     }
