@@ -12,6 +12,14 @@
 typedef std::unordered_map<llama_token, int>            token_hashmap;
 typedef std::unordered_map<uint64_t, token_hashmap> all_token_hashmap;
 
+// min/max n-gram size to search for in prompt
+constexpr int   ngram_min =  1;
+constexpr int   ngram_max =  4;
+
+// continuation to draft must be at least this frequent
+constexpr float draft_min_sample_size[ngram_max] = { 2,  2,  1,  1};
+constexpr float draft_min_percent[ngram_max]     = {66, 50, 50, 50};
+
 int main(int argc, char ** argv){
     gpt_params params;
 
@@ -20,9 +28,6 @@ int main(int argc, char ** argv){
     }
 
     // max/min n-grams size to search for in prompt
-    const int ngram_max = 4;
-    const int ngram_min = 2;
-
     // length of the candidate / draft sequence, if match is found
     const int n_draft = params.n_draft;
 
@@ -226,16 +231,26 @@ int main(int argc, char ** argv){
                     const token_hashmap token_counts = token_counts_it->second;
 
                     int max_count = 0;
+                    int sum_count = 0;
                     llama_token max_token = -1;
 
                     for (std::pair<llama_token, int> tc : token_counts) {
                         const llama_token token = tc.first;
                         const llama_token count = tc.second;
+
                         if (count > max_count) {
                             max_token = token;
                             max_count = count;
                         }
+                        sum_count += count;
                     }
+                    if (sum_count < draft_min_sample_size[ngram_size-1]) {
+                        continue;
+                    }
+                    if (100*max_count < draft_min_percent[ngram_size-1]*sum_count) {
+                        continue;
+                    }
+
                     LOG(" - draft candidate: token=%d count=%d\n", max_token, max_count);
                     llama_batch_add(batch_tgt, max_token, n_past + draft.size(), { 0 }, true);
                     draft.push_back(max_token);
