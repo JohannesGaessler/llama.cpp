@@ -203,6 +203,8 @@ int main(int argc, char ** argv){
                 }
             }
 
+            while ((int) draft.size()-1 < n_draft) {
+            bool draft_success = false;
             for (int ngram_size = ngram_max; ngram_size >= ngram_min; --ngram_size) {
                 if (ngram_size > inp_size) {
                     continue;
@@ -210,9 +212,9 @@ int main(int argc, char ** argv){
 
                 all_token_hashmap & atc = all_token_counts[ngram_size - ngram_min];
 
-                uint64_t ngram = get_token(inp, draft, inp_size-1);
+                uint64_t ngram = get_token(inp, draft, inp_size-1 + draft.size()-1);
                 for (int j = inp_size-2; j > inp_size-1-ngram_size; --j) {
-                    const uint64_t key_part = get_token(inp, draft, j);
+                    const uint64_t key_part = get_token(inp, draft, j + draft.size()-1);
                     ngram <<= 16;
                     ngram |= key_part;
                 }
@@ -237,7 +239,12 @@ int main(int argc, char ** argv){
                 LOG(" - draft candidate: token=%d count=%d\n", max_token, max_count);
                 llama_batch_add(batch_tgt, max_token, n_past + draft.size(), { 0 }, true);
                 draft.push_back(max_token);
+                draft_success = true;
                 break;
+            }
+            if (!draft_success) {
+                break;
+            }
             }
         };
 
