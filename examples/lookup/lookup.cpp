@@ -233,16 +233,17 @@ int main(int argc, char ** argv){
                 LOG(" - draft candidate: token=%d count=%d\n", max_token, max_count);
                 draft.push_back(max_token);
                 llama_batch_add(batch_tgt, max_token, n_past + 1, { 0 }, true);
-                ++n_drafted;
                 break;
             }
         };
 
+        GGML_ASSERT(draft.size() == 1); // the sampled token
         const int64_t t_start_draft_us = ggml_time_us();
 
         prompt_lookup();
 
         t_draft_us += ggml_time_us() - t_start_draft_us;
+        n_drafted += draft.size() - 1;
 
         llama_decode(ctx, batch_tgt);
         ++n_past;
