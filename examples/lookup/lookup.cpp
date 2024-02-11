@@ -249,6 +249,7 @@ int main(int argc, char ** argv){
         };
 
         GGML_ASSERT(draft.size() == 1); // the sampled token
+        GGML_ASSERT(draft[0] == inp.back()); // the sampled token
         const int64_t t_start_draft_us = ggml_time_us();
 
         prompt_lookup();
