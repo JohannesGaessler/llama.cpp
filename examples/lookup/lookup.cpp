@@ -188,10 +188,9 @@ int main(int argc, char ** argv){
                         token_counts.emplace(token, 1);
                         atc.emplace(ngram, token_counts);
                     } else {
-                        token_hashmap token_counts = token_counts_it->second;
-                        token_hashmap::iterator token_count_it = token_counts.find(token);
-                        if (token_count_it == token_counts.end()) {
-                            token_counts.emplace(token, 1);
+                        token_hashmap::iterator token_count_it = token_counts_it->second.find(token);
+                        if (token_count_it == token_counts_it->second.end()) {
+                            token_counts_it->second.emplace(token, 1);
                         } else {
                             token_count_it->second++;
                         }
