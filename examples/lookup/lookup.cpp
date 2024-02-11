@@ -89,7 +89,13 @@ int main(int argc, char ** argv){
     };
 
     all_token_hashmap all_token_counts[ngram_max-ngram_min+1];
-    update_hashmaps(all_token_counts, inp.data(), inp.size(), inp.size());
+    int64_t t_draft_us = 0;
+
+    {
+        const int64_t t_start_draft_us = ggml_time_us();
+        update_hashmaps(all_token_counts, inp.data(), inp.size(), inp.size());
+        t_draft_us += ggml_time_us() - t_start_draft_us;
+    }
 
     const int max_context_size     = llama_n_ctx(ctx);
     const int max_tokens_list_size = max_context_size - 4;
@@ -119,8 +125,6 @@ int main(int argc, char ** argv){
     int n_predict = 0;
     int n_drafted = 0;
     int n_accept  = 0;
-
-    int64_t t_draft_us = 0;
 
     int n_past = inp.size();
 
@@ -173,7 +177,11 @@ int main(int argc, char ** argv){
                 ++n_past;
                 ++i_dft;
                 inp.push_back(id);
-                update_hashmaps(all_token_counts, inp.data(), inp.size(), 1);
+                {
+                    const int64_t t_start_draft_us = ggml_time_us();
+                    update_hashmaps(all_token_counts, inp.data(), inp.size(), 1);
+                    t_draft_us += ggml_time_us() - t_start_draft_us;
+                }
 
                 if (params.use_color) {
                     // color accepted draft token
@@ -194,7 +202,11 @@ int main(int argc, char ** argv){
             draft.clear();
             draft.push_back(id);
             inp.push_back(id);
-            update_hashmaps(all_token_counts, inp.data(), inp.size(), 1);
+            {
+                const int64_t t_start_draft_us = ggml_time_us();
+                update_hashmaps(all_token_counts, inp.data(), inp.size(), 1);
+                t_draft_us += ggml_time_us() - t_start_draft_us;
+            }
             break;
         }
 
