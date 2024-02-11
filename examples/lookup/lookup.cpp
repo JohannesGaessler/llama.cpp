@@ -204,47 +204,47 @@ int main(int argc, char ** argv){
             }
 
             while ((int) draft.size()-1 < n_draft) {
-            bool draft_success = false;
-            for (int ngram_size = ngram_max; ngram_size >= ngram_min; --ngram_size) {
-                if (ngram_size > inp_size) {
-                    continue;
-                }
-
-                all_token_hashmap & atc = all_token_counts[ngram_size - ngram_min];
-
-                uint64_t ngram = get_token(inp, draft, inp_size-1 + draft.size()-1);
-                for (int j = inp_size-2; j > inp_size-1-ngram_size; --j) {
-                    const uint64_t key_part = get_token(inp, draft, j + draft.size()-1);
-                    ngram <<= 16;
-                    ngram |= key_part;
-                }
-
-                all_token_hashmap::iterator token_counts_it = atc.find(ngram);
-                if (token_counts_it == atc.end()) {
-                    continue;
-                }
-                const token_hashmap token_counts = token_counts_it->second;
-
-                int max_count = 0;
-                llama_token max_token = -1;
-
-                for (std::pair<llama_token, int> tc : token_counts) {
-                    const llama_token token = tc.first;
-                    const llama_token count = tc.second;
-                    if (count > max_count) {
-                        max_token = token;
-                        max_count = count;
+                bool draft_success = false;
+                for (int ngram_size = ngram_max; ngram_size >= ngram_min; --ngram_size) {
+                    if (ngram_size > inp_size) {
+                        continue;
                     }
+
+                    all_token_hashmap & atc = all_token_counts[ngram_size - ngram_min];
+
+                    uint64_t ngram = get_token(inp, draft, inp_size-1 + draft.size()-1);
+                    for (int j = inp_size-2; j > inp_size-1-ngram_size; --j) {
+                        const uint64_t key_part = get_token(inp, draft, j + draft.size()-1);
+                        ngram <<= 16;
+                        ngram |= key_part;
+                    }
+
+                    all_token_hashmap::iterator token_counts_it = atc.find(ngram);
+                    if (token_counts_it == atc.end()) {
+                        continue;
+                    }
+                    const token_hashmap token_counts = token_counts_it->second;
+
+                    int max_count = 0;
+                    llama_token max_token = -1;
+
+                    for (std::pair<llama_token, int> tc : token_counts) {
+                        const llama_token token = tc.first;
+                        const llama_token count = tc.second;
+                        if (count > max_count) {
+                            max_token = token;
+                            max_count = count;
+                        }
+                    }
+                    LOG(" - draft candidate: token=%d count=%d\n", max_token, max_count);
+                    llama_batch_add(batch_tgt, max_token, n_past + draft.size(), { 0 }, true);
+                    draft.push_back(max_token);
+                    draft_success = true;
+                    break;
                 }
-                LOG(" - draft candidate: token=%d count=%d\n", max_token, max_count);
-                llama_batch_add(batch_tgt, max_token, n_past + draft.size(), { 0 }, true);
-                draft.push_back(max_token);
-                draft_success = true;
-                break;
-            }
-            if (!draft_success) {
-                break;
-            }
+                if (!draft_success) {
+                    break;
+                }
             }
         };
 
