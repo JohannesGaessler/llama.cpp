@@ -60,7 +60,8 @@ int main(int argc, char ** argv){
         for (int ngram_size = ngram_min; ngram_size <= ngram_max; ++ngram_size) {
             all_token_hashmap * atc = atcs + ngram_size - ngram_min;
 
-            for (int i = inp_size - nnew + ngram_size; i < inp_size; ++i) {
+            const int i_start = std::max(inp_size - nnew, ngram_size);
+            for (int i = i_start; i < inp_size; ++i) {
                 const int ngram_start = i - ngram_size;
                 uint64_t ngram = inp_data[ngram_start];
                 for (int j = ngram_start; j < ngram_start + ngram_size; ++j) {
@@ -88,6 +89,7 @@ int main(int argc, char ** argv){
     };
 
     all_token_hashmap all_token_counts[ngram_max-ngram_min+1];
+    update_hashmaps(all_token_counts, inp.data(), inp.size(), inp.size());
 
     const int max_context_size     = llama_n_ctx(ctx);
     const int max_tokens_list_size = max_context_size - 4;
@@ -171,6 +173,7 @@ int main(int argc, char ** argv){
                 ++n_past;
                 ++i_dft;
                 inp.push_back(id);
+                update_hashmaps(all_token_counts, inp.data(), inp.size(), 1);
 
                 if (params.use_color) {
                     // color accepted draft token
@@ -191,6 +194,7 @@ int main(int argc, char ** argv){
             draft.clear();
             draft.push_back(id);
             inp.push_back(id);
+            update_hashmaps(all_token_counts, inp.data(), inp.size(), 1);
             break;
         }
 
@@ -212,10 +216,6 @@ int main(int argc, char ** argv){
         // generate n_pred tokens through prompt lookup
         auto prompt_lookup = [&]() -> void {
             const int inp_size = inp.size();
-            for (int ngram_size = ngram_min; ngram_size <= ngram_max; ++ngram_size) {
-                all_token_counts[ngram_size-ngram_min].clear();
-            }
-            update_hashmaps(all_token_counts, inp.data(), inp_size, inp_size);
 
             while ((int) draft.size()-1 < n_draft) {
                 bool draft_success = false;
