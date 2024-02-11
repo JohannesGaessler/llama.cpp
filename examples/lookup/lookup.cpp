@@ -167,6 +167,10 @@ int main(int argc, char ** argv){
         llama_batch_clear(batch_tgt);
         llama_batch_add(batch_tgt, draft[0], n_past, { 0 }, true);
 
+        auto get_token = [](const std::vector<llama_token> inp, const std::vector<llama_token> draft, const size_t i) -> llama_token {
+            return i < inp.size() ? inp[i] : draft[1 + i - inp.size()];
+        };
+
         // generate n_pred tokens through prompt lookup
         auto prompt_lookup = [&]() -> void {
             const int inp_size = inp.size();
@@ -206,9 +210,9 @@ int main(int argc, char ** argv){
 
                 all_token_hashmap & atc = all_token_counts[ngram_size - ngram_min];
 
-                uint64_t ngram = inp[inp_size-1];
+                uint64_t ngram = get_token(inp, draft, inp_size-1);
                 for (int j = inp_size-2; j > inp_size-1-ngram_size; --j) {
-                    const uint64_t key_part = inp[j];
+                    const uint64_t key_part = get_token(inp, draft, j);
                     ngram <<= 16;
                     ngram |= key_part;
                 }
@@ -231,8 +235,8 @@ int main(int argc, char ** argv){
                     }
                 }
                 LOG(" - draft candidate: token=%d count=%d\n", max_token, max_count);
+                llama_batch_add(batch_tgt, max_token, n_past + draft.size(), { 0 }, true);
                 draft.push_back(max_token);
-                llama_batch_add(batch_tgt, max_token, n_past + 1, { 0 }, true);
                 break;
             }
         };
