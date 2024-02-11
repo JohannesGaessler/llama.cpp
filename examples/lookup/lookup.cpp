@@ -7,6 +7,10 @@
 #include <cstdio>
 #include <string>
 #include <vector>
+#include <unordered_map>
+
+typedef std::unordered_map<llama_token, int>            token_hashmap;
+typedef std::unordered_map<uint64_t, token_hashmap> all_token_hashmap;
 
 int main(int argc, char ** argv){
     gpt_params params;
@@ -165,34 +169,73 @@ int main(int argc, char ** argv){
         // generate n_pred tokens through prompt lookup
         auto prompt_lookup = [&]() -> void {
             const int inp_size = inp.size();
-            for (int ngram_size = ngram_max ; ngram_size > ngram_min; --ngram_size){
-                const llama_token * ngram = &inp[inp_size - ngram_size];
+            all_token_hashmap all_token_counts[ngram_max-ngram_min+1];
+            for (int ngram_size = ngram_min; ngram_size <= ngram_max; ++ngram_size) {
+                all_token_hashmap & atc = all_token_counts[ngram_size - ngram_min];
 
-                for (int i = 0; i <= (int) inp_size - (ngram_size * 2); ++i) {
-                    bool match = true;
-                    for (int j = 0; j < ngram_size; ++j) {
-                        if (inp[i + j] != ngram[j]) {
-                            match = false;
-                            break;
-                        }
+                for (int i = ngram_size; i < inp_size; ++i) {
+                    uint64_t ngram = inp[i-1];
+                    for (int j = i-2; j > i-1-ngram_size; --j) {
+                        const uint64_t key_part = inp[j];
+                        ngram <<= 16;
+                        ngram |= key_part;
                     }
+                    const llama_token token = inp[i];
 
-                    if (match) {
-                        const int startIdx = i + ngram_size;
-                        const int endIdx = startIdx + n_draft;
-                        if (endIdx < inp_size) {
-                            for (int j = startIdx; j < endIdx; ++j) {
-                                LOG(" - draft candidate %d: %d\n", j, inp[j]);
-                                draft.push_back(inp[j]);
-                                llama_batch_add(batch_tgt, inp[j], n_past + (j - startIdx) + 1, { 0 }, true);
-                                ++n_drafted;
-                            }
-                            return;
+                    all_token_hashmap::iterator token_counts_it = atc.find(ngram);
+                    if (token_counts_it == atc.end()) {
+                        token_hashmap token_counts;
+                        token_counts.emplace(token, 1);
+                        atc.emplace(ngram, token_counts);
+                    } else {
+                        token_hashmap token_counts = token_counts_it->second;
+                        token_hashmap::iterator token_count_it = token_counts.find(token);
+                        if (token_count_it == token_counts.end()) {
+                            token_counts.emplace(token, 1);
+                        } else {
+                            token_count_it->second++;
                         }
                     }
                 }
             }
-            return;
+
+            for (int ngram_size = ngram_max; ngram_size >= ngram_min; --ngram_size) {
+                if (ngram_size > inp_size) {
+                    continue;
+                }
+
+                all_token_hashmap & atc = all_token_counts[ngram_size - ngram_min];
+
+                uint64_t ngram = inp[inp_size-1];
+                for (int j = inp_size-2; j > inp_size-1-ngram_size; --j) {
+                    const uint64_t key_part = inp[j];
+                    ngram <<= 16;
+                    ngram |= key_part;
+                }
+
+                all_token_hashmap::iterator token_counts_it = atc.find(ngram);
+                if (token_counts_it == atc.end()) {
+                    continue;
+                }
+                const token_hashmap token_counts = token_counts_it->second;
+
+                int max_count = 0;
+                llama_token max_token = -1;
+
+                for (std::pair<llama_token, int> tc : token_counts) {
+                    const llama_token token = tc.first;
+                    const llama_token count = tc.second;
+                    if (count > max_count) {
+                        max_token = token;
+                        max_count = count;
+                    }
+                }
+                LOG(" - draft candidate: token=%d count=%d\n", max_token, max_count);
+                draft.push_back(max_token);
+                llama_batch_add(batch_tgt, max_token, n_past + 1, { 0 }, true);
+                ++n_drafted;
+                break;
+            }
         };
 
         const int64_t t_start_draft_us = ggml_time_us();
