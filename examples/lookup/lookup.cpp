@@ -325,7 +325,7 @@ int main(int argc, char ** argv){
 
                         token_hashmap::iterator stc_it = static_token_counts.find(token);
                         const int32_t count        = tc.second;
-                        const int32_t count_static = stc_it != static_token_counts.end() ? stc_it->second : 0;
+                        const int32_t count_static = stc_it != static_token_counts.end() ? 10*stc_it->second : 1;
 
                         if (count*count_static > max_count*max_count_static) {
                             max_token        = token;
