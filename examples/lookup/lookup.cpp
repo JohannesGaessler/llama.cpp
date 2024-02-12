@@ -327,7 +327,7 @@ int main(int argc, char ** argv){
                         const int32_t count        = tc.second;
                         const int32_t count_static = stc_it != static_token_counts.end() ? stc_it->second : 0;
 
-                        if (count > max_count || (count == max_count && count_static > max_count_static)) {
+                        if (count*count_static > max_count*max_count_static) {
                             max_token        = token;
                             max_count        = count;
                             max_count_static = count_static;
