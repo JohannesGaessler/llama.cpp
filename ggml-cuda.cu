@@ -151,7 +151,7 @@
 #endif
 
 #define MMVQ_MAX_BATCH_SIZE  8 // max batch size to use MMVQ kernels
-#define  MMQ_MAX_BATCH_SIZE 32 // max batch size to use MMQ kernels when tensor cores are available
+#define  MMQ_MAX_BATCH_SIZE 9999999999 // max batch size to use MMQ kernels when tensor cores are available
 
 #if defined(GGML_USE_HIPBLAS)
 #define __CUDA_ARCH__ 1300
