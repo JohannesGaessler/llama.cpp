@@ -10,7 +10,7 @@
 #include <unordered_map>
 
 // Data structures to map n-grams to empirical token probabilities:
-typedef std::unordered_map<llama_token, int>            token_hashmap; // token -> number of times token has been seen
+typedef std::unordered_map<llama_token, int32_t>        token_hashmap; // token -> number of times token has been seen
 typedef std::unordered_map<uint64_t, token_hashmap> all_token_hashmap; // n-gram -> empirical distribution of following tokens
 // n-grams are encoded as 64 bit integers with each of the 4 16 bit sections representing a token id.
 // This way no custom hashing function for the n-grams is needed.
@@ -100,6 +100,7 @@ int main(int argc, char ** argv){
     };
 
     all_token_hashmap all_token_counts[ngram_max-ngram_min+1];
+    all_token_hashmap static_token_counts;
     int64_t t_draft_us = 0;
 
     {
