@@ -351,6 +351,38 @@ int main(int argc, char ** argv){
                 }
 
                 if (!draft_success) {
+                    int max_count = 0;
+                    int sum_count = 0;
+                    llama_token max_token = -1;
+
+                    for (std::pair<llama_token, int> tc : static_token_counts) {
+                        const llama_token token = tc.first;
+                        const int32_t     count = tc.second;
+
+                        if (count > max_count) {
+                            max_token        = token;
+                            max_count        = count;
+                        }
+                        sum_count += count;
+                    }
+
+                    // Skip this candidate if the sample size is too low:
+                    if (sum_count < draft_min_sample_size[2-1]) {
+                        break;
+                    }
+                    // skip this candidate if the empirically most likely token following this token is not likely enough:
+                    if (100*max_count < draft_min_percent[2-1]*sum_count) {
+                        break;
+                    }
+
+                    LOG(" - draft candidate: token=%d count=%d\n", max_token, max_count);
+                    llama_batch_add(batch_tgt, max_token, n_past + draft.size(), { 0 }, true);
+                    draft.push_back(max_token);
+                    draft_success = true;
+                    break;
+                }
+
+                if (!draft_success) {
                     break;
                 }
             }
