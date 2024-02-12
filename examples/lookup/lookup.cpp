@@ -281,7 +281,13 @@ int main(int argc, char ** argv){
             while ((int) draft.size()-1 < n_draft) {
                 bool draft_success = false;
 
-                const uint64_t static_ngram = get_token(inp, draft, inp_size-2 + draft.size()-1);
+                const int static_ngram_start = inp_size-2 + draft.size()-1;
+                uint64_t static_ngram = get_token(inp, draft, static_ngram_start);
+                for (int j = static_ngram_start; j < static_ngram_start + 2; ++j) {
+                    const uint64_t ngram_part = get_token(inp, draft, j);
+                    static_ngram <<= 16;
+                    static_ngram |= ngram_part;
+                }
                 all_token_hashmap::iterator static_token_counts_it = static_all_token_counts.find(static_ngram);
                 token_hashmap static_token_counts;
                 if (static_token_counts_it != static_all_token_counts.end()) {
