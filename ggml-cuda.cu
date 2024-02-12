@@ -7962,7 +7962,7 @@ GGML_CALL void ggml_init_cublas() {
         for (int id = 0; id < g_device_count; ++id) {
             int device_vmm = 0;
 
-#if !defined(GGML_USE_HIPBLAS)
+#if !defined(GGML_USE_HIPBLAS) && !defined(GGML_USE_ZLUDA)
             CUdevice device;
             CU_CHECK(cuDeviceGet(&device, id));
             CU_CHECK(cuDeviceGetAttribute(&device_vmm, CU_DEVICE_ATTRIBUTE_VIRTUAL_MEMORY_MANAGEMENT_SUPPORTED, device));
