@@ -101,7 +101,7 @@ int main(int argc, char ** argv){
     };
 
     all_token_hashmap all_token_counts[ngram_max-ngram_min+1];
-    all_token_hashmap static_token_counts;
+    all_token_hashmap static_all_token_counts;
     int64_t t_draft_us = 0;
 
     {
@@ -134,7 +134,7 @@ int main(int argc, char ** argv){
                 token_counts.emplace(token, count);
             }
 
-            static_token_counts.emplace(ngram, token_counts);
+            static_all_token_counts.emplace(ngram, token_counts);
         }
         GGML_ASSERT(hashmap_file.eof());
 
@@ -280,6 +280,14 @@ int main(int argc, char ** argv){
 
             while ((int) draft.size()-1 < n_draft) {
                 bool draft_success = false;
+
+                const uint64_t static_ngram = get_token(inp, draft, inp_size-2 + draft.size()-1);
+                all_token_hashmap::iterator static_token_counts_it = static_all_token_counts.find(static_ngram);
+                token_hashmap static_token_counts;
+                if (static_token_counts_it != static_all_token_counts.end()) {
+                    static_token_counts = static_token_counts_it->second;
+                }
+
                 for (int ngram_size = ngram_max; ngram_size >= ngram_min; --ngram_size) {
                     if (ngram_size > inp_size) {
                         continue;
@@ -302,16 +310,21 @@ int main(int argc, char ** argv){
                     const token_hashmap token_counts = token_counts_it->second;
 
                     int max_count = 0;
+                    int max_count_static = 0;
                     int sum_count = 0;
                     llama_token max_token = -1;
 
                     for (std::pair<llama_token, int> tc : token_counts) {
                         const llama_token token = tc.first;
-                        const llama_token count = tc.second;
 
-                        if (count > max_count) {
-                            max_token = token;
-                            max_count = count;
+                        token_hashmap::iterator stc_it = static_token_counts.find(token);
+                        const int32_t count        = tc.second;
+                        const int32_t count_static = stc_it != static_token_counts.end() ? stc_it->second : 0;
+
+                        if (count > max_count || (count == max_count && count_static > max_count_static)) {
+                            max_token        = token;
+                            max_count        = count;
+                            max_count_static = count_static;
                         }
                         sum_count += count;
                     }
