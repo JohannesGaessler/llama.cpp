@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -107,6 +108,36 @@ int main(int argc, char ** argv){
         // Fill up hashmaps with tokens from user input:
         const int64_t t_start_draft_us = ggml_time_us();
         update_hashmaps(all_token_counts, inp.data(), inp.size(), inp.size());
+
+        const char * hashmap_file_name = "lookup.bin";
+        std::ifstream hashmap_file(hashmap_file_name, std::ios::binary);
+        if (!hashmap_file) {
+            fprintf(stderr, "error: failed to open file '%s'\n", hashmap_file_name);
+            exit(1);
+        }
+        uint64_t ngram;
+        int32_t ntokens;
+        llama_token token;
+        int32_t count;
+
+        char * ngramc   = reinterpret_cast<char*>(&ngram);
+        char * ntokensc = reinterpret_cast<char*>(&ntokens);
+        char * tokenc   = reinterpret_cast<char*>(&token);
+        char * countc   = reinterpret_cast<char*>(&count);
+        while(hashmap_file.read(ngramc, sizeof(uint64_t))) {
+            GGML_ASSERT(hashmap_file.read(ntokensc, sizeof(int32_t)));
+            token_hashmap token_counts;
+
+            for (int i = 0; i < ntokens; ++i) {
+                GGML_ASSERT(hashmap_file.read(tokenc, sizeof(llama_token)));
+                GGML_ASSERT(hashmap_file.read(countc, sizeof(int32_t)));
+                token_counts.emplace(token, count);
+            }
+
+            static_token_counts.emplace(ngram, token_counts);
+        }
+        GGML_ASSERT(hashmap_file.eof());
+
         t_draft_us += ggml_time_us() - t_start_draft_us;
     }
 
