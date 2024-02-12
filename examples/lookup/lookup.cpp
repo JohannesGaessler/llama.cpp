@@ -5,12 +5,13 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
 #include <string>
 #include <vector>
 #include <unordered_map>
 
 // Data structures to map n-grams to empirical token probabilities:
-typedef std::unordered_map<llama_token, int>            token_hashmap; // token -> number of times token has been seen
+typedef std::unordered_map<llama_token, int32_t>        token_hashmap; // token -> number of times token has been seen
 typedef std::unordered_map<uint64_t, token_hashmap> all_token_hashmap; // n-gram -> empirical distribution of following tokens
 // n-grams are encoded as 64 bit integers with each of the 4 16 bit sections representing a token id.
 // This way no custom hashing function for the n-grams is needed.
@@ -22,7 +23,7 @@ static_assert(ngram_max <= sizeof(uint64_t)/2, "A 64 bit integer can only hold i
 
 // If sample size or percentage in context are below these thresholds the draft is aborted early:
 constexpr float draft_min_sample_size[ngram_max] = { 2,  2,  1,  1};
-constexpr float     draft_min_percent[ngram_max] = {66, 50, 50, 50};
+constexpr float     draft_min_percent[ngram_max] = {50, 50, 50, 50};
 
 int main(int argc, char ** argv){
     gpt_params params;
@@ -100,12 +101,43 @@ int main(int argc, char ** argv){
     };
 
     all_token_hashmap all_token_counts[ngram_max-ngram_min+1];
+    all_token_hashmap static_all_token_counts;
     int64_t t_draft_us = 0;
 
     {
         // Fill up hashmaps with tokens from user input:
         const int64_t t_start_draft_us = ggml_time_us();
         update_hashmaps(all_token_counts, inp.data(), inp.size(), inp.size());
+
+        const char * hashmap_file_name = "lookup.bin";
+        std::ifstream hashmap_file(hashmap_file_name, std::ios::binary);
+        if (!hashmap_file) {
+            fprintf(stderr, "error: failed to open file '%s'\n", hashmap_file_name);
+            exit(1);
+        }
+        uint64_t ngram;
+        int32_t ntokens;
+        llama_token token;
+        int32_t count;
+
+        char * ngramc   = reinterpret_cast<char*>(&ngram);
+        char * ntokensc = reinterpret_cast<char*>(&ntokens);
+        char * tokenc   = reinterpret_cast<char*>(&token);
+        char * countc   = reinterpret_cast<char*>(&count);
+        while(hashmap_file.read(ngramc, sizeof(uint64_t))) {
+            GGML_ASSERT(hashmap_file.read(ntokensc, sizeof(int32_t)));
+            token_hashmap token_counts;
+
+            for (int i = 0; i < ntokens; ++i) {
+                GGML_ASSERT(hashmap_file.read(tokenc, sizeof(llama_token)));
+                GGML_ASSERT(hashmap_file.read(countc, sizeof(int32_t)));
+                token_counts.emplace(token, count);
+            }
+
+            static_all_token_counts.emplace(ngram, token_counts);
+        }
+        GGML_ASSERT(hashmap_file.eof());
+
         t_draft_us += ggml_time_us() - t_start_draft_us;
     }
 
@@ -248,6 +280,20 @@ int main(int argc, char ** argv){
 
             while ((int) draft.size()-1 < n_draft) {
                 bool draft_success = false;
+
+                const int static_ngram_start = inp_size-2 + draft.size()-1;
+                uint64_t static_ngram = get_token(inp, draft, static_ngram_start);
+                for (int j = static_ngram_start; j < static_ngram_start + 2; ++j) {
+                    const uint64_t ngram_part = get_token(inp, draft, j);
+                    static_ngram <<= 16;
+                    static_ngram |= ngram_part;
+                }
+                all_token_hashmap::iterator static_token_counts_it = static_all_token_counts.find(static_ngram);
+                token_hashmap static_token_counts;
+                if (static_token_counts_it != static_all_token_counts.end()) {
+                    static_token_counts = static_token_counts_it->second;
+                }
+
                 for (int ngram_size = ngram_max; ngram_size >= ngram_min; --ngram_size) {
                     if (ngram_size > inp_size) {
                         continue;
@@ -270,16 +316,21 @@ int main(int argc, char ** argv){
                     const token_hashmap token_counts = token_counts_it->second;
 
                     int max_count = 0;
+                    int max_count_static = 0;
                     int sum_count = 0;
                     llama_token max_token = -1;
 
                     for (std::pair<llama_token, int> tc : token_counts) {
                         const llama_token token = tc.first;
-                        const llama_token count = tc.second;
 
-                        if (count > max_count) {
-                            max_token = token;
-                            max_count = count;
+                        token_hashmap::iterator stc_it = static_token_counts.find(token);
+                        const int32_t count        = tc.second;
+                        const int32_t count_static = stc_it != static_token_counts.end() ? 100*stc_it->second : 1;
+
+                        if (count*count_static > max_count*max_count_static) {
+                            max_token        = token;
+                            max_count        = count;
+                            max_count_static = count_static;
                         }
                         sum_count += count;
                     }
@@ -290,6 +341,38 @@ int main(int argc, char ** argv){
                     // skip this candidate if the empirically most likely token following this token is not likely enough:
                     if (100*max_count < draft_min_percent[ngram_size-1]*sum_count) {
                         continue;
+                    }
+
+                    LOG(" - draft candidate: token=%d count=%d\n", max_token, max_count);
+                    llama_batch_add(batch_tgt, max_token, n_past + draft.size(), { 0 }, true);
+                    draft.push_back(max_token);
+                    draft_success = true;
+                    break;
+                }
+
+                if (!draft_success) {
+                    int max_count = 0;
+                    int sum_count = 0;
+                    llama_token max_token = -1;
+
+                    for (std::pair<llama_token, int> tc : static_token_counts) {
+                        const llama_token token = tc.first;
+                        const int32_t     count = tc.second;
+
+                        if (count > max_count) {
+                            max_token        = token;
+                            max_count        = count;
+                        }
+                        sum_count += count;
+                    }
+
+                    // Skip this candidate if the sample size is too low:
+                    if (sum_count < draft_min_sample_size[2-1]) {
+                        break;
+                    }
+                    // skip this candidate if the empirically most likely token following this token is not likely enough:
+                    if (100*max_count < draft_min_percent[2-1]*sum_count) {
+                        break;
                     }
 
                     LOG(" - draft candidate: token=%d count=%d\n", max_token, max_count);
