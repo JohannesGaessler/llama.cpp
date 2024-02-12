@@ -32,7 +32,7 @@ int main(int argc, char ** argv){
     // tokenize the prompt
     const bool add_bos = llama_should_add_bos_token(model);
 
-    const char * static_input_file = "./wikitext-2-raw/wiki.train.raw";
+    const char * static_input_file = "./wikitext-103-raw/wiki.train.raw";
     std::ifstream file(static_input_file);
     if (!file) {
         fprintf(stderr, "error: failed to open file '%s'\n", static_input_file);
