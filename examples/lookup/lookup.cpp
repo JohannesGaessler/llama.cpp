@@ -283,7 +283,7 @@ int main(int argc, char ** argv){
 
                 const int static_ngram_start = inp_size-2 + draft.size()-1;
                 uint64_t static_ngram = get_token(inp, draft, static_ngram_start);
-                for (int j = static_ngram_start; j < static_ngram_start + 2; ++j) {
+                for (int j = static_ngram_start+1; j < static_ngram_start + 2; ++j) {
                     const uint64_t ngram_part = get_token(inp, draft, j);
                     static_ngram <<= 16;
                     static_ngram |= ngram_part;
@@ -303,7 +303,7 @@ int main(int argc, char ** argv){
 
                     const int ngram_start = inp_size-ngram_size + draft.size()-1;
                     uint64_t ngram = get_token(inp, draft, ngram_start);
-                    for (int j = ngram_start; j < ngram_start + ngram_size; ++j) {
+                    for (int j = ngram_start+1; j < ngram_start + ngram_size; ++j) {
                         const uint64_t ngram_part = get_token(inp, draft, j);
                         ngram <<= 16;
                         ngram |= ngram_part;

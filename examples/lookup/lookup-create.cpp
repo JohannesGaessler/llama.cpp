@@ -62,7 +62,7 @@ int main(int argc, char ** argv){
         for (int i = i_start; i < inp_size; ++i) {
             const int ngram_start = i - ngram_size;
             uint64_t ngram = inp_data[ngram_start];
-            for (int j = ngram_start; j < ngram_start + ngram_size; ++j) {
+            for (int j = ngram_start+1; j < ngram_start + ngram_size; ++j) {
                 const uint64_t ngram_part = inp_data[j];
                 ngram <<= 16;
                 ngram |= ngram_part;
