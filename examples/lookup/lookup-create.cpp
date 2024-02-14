@@ -32,7 +32,7 @@ int main(int argc, char ** argv){
     // tokenize the prompt
     const bool add_bos = llama_should_add_bos_token(model);
 
-    const char * static_input_file = "./wikitext-2-raw/wiki.train.raw";
+    const char * static_input_file = "./wikitext-103-raw/wiki.train.raw";
     std::ifstream file(static_input_file);
     if (!file) {
         fprintf(stderr, "error: failed to open file '%s'\n", static_input_file);
@@ -58,7 +58,6 @@ int main(int argc, char ** argv){
 
         const int     i_start    = std::max(inp_size - nnew, ngram_size);
         const int64_t t_start_ms = ggml_time_ms();
-        int percentage_done = 0;
         for (int i = i_start; i < inp_size; ++i) {
             const int ngram_start = i - ngram_size;
             uint64_t ngram = inp_data[ngram_start];
@@ -83,21 +82,20 @@ int main(int argc, char ** argv){
                 }
             }
 
-            if (i >= inp_size*(percentage_done + 1)/100) {
-                ++percentage_done;
-
+            if (i % 10000000 == 0) {
                 const int64_t t_now_ms = ggml_time_ms();
-                const int64_t eta_ms   = (100 - percentage_done) * (t_now_ms - t_start_ms) / percentage_done;
+                const int64_t eta_ms   = (inp_size - i) * (t_now_ms - t_start_ms) / i;
                 const int64_t eta_min  = eta_ms / (60*1000);
                 const int64_t eta_s    = (eta_ms - eta_min) / 1000;
 
-                fprintf(stderr, "lookup-create: %02d%% done, ETA: %02ld:%02ld\n", percentage_done, eta_min, eta_s);
+                fprintf(stderr, "lookup-create: hashing %d/%d done, ETA: %02ld:%02ld\n", i, inp_size, eta_min, eta_s);
             }
         }
     };
 
     all_token_hashmap atc;
     update_hashmaps(&atc, inp_static.data(), inp_static.size(), inp_static.size());
+    fprintf(stderr, "lookup-create: hashing done, writing file\n");
 
     std::ofstream file_out("lookup.bin", std::ios::binary);
     for (std::pair<uint64_t, token_hashmap> item : atc) {
