@@ -84,17 +84,18 @@ struct gpt_params {
     // // sampling parameters
     struct llama_sampling_params sparams;
 
-    std::string model             = "models/7B/ggml-model-f16.gguf"; // model path
-    std::string model_draft       = "";                              // draft model for speculative decoding
-    std::string model_alias       = "unknown"; // model alias
-    std::string prompt            = "";
-    std::string prompt_file       = "";  // store the external prompt file name
-    std::string path_prompt_cache = "";  // path to file for saving/loading prompt eval state
-    std::string input_prefix      = "";  // string to prefix user inputs with
-    std::string input_suffix      = "";  // string to suffix user inputs with
-    std::vector<std::string> antiprompt; // string upon seeing which more user input is prompted
-    std::string logdir            = "";  // directory in which to save YAML log files
-    std::string logits_file       = "";  // file for saving *all* logits
+    std::string model               = "models/7B/ggml-model-f16.gguf"; // model path
+    std::string model_draft         = "";                              // draft model for speculative decoding
+    std::string model_alias         = "unknown"; // model alias
+    std::string prompt              = "";
+    std::string prompt_file         = ""; // store the external prompt file name
+    std::string path_prompt_cache   = ""; // path to file for saving/loading prompt eval state
+    std::string input_prefix        = ""; // string to prefix user inputs with
+    std::string input_suffix        = ""; // string to suffix user inputs with
+    std::vector<std::string> antiprompt;  // string upon seeing which more user input is prompted
+    std::string logdir              = ""; // directory in which to save YAML log files
+    std::string lookup_cache_static = ""; // path of ngram cache file for lookup decoding
+    std::string logits_file         = ""; // file for saving *all* logits
 
     std::vector<llama_model_kv_override> kv_overrides;
 
@@ -260,3 +261,30 @@ void dump_kv_cache_view(const llama_kv_cache_view & view, int row_size = 80);
 
 // Dump the KV cache view showing individual sequences in each cell (long output).
 void dump_kv_cache_view_seqs(const llama_kv_cache_view & view, int row_size = 40);
+
+#define LLAMA_NGRAM_MAX 4
+
+// Data structures to map n-grams to empirical token probabilities:
+typedef std::unordered_map<llama_token, int32_t>             llama_ngram_cache_part; // token -> number of times token has been seen
+typedef std::unordered_map<uint64_t, llama_ngram_cache_part> llama_ngram_cache;      // n-gram -> empirical distribution of following tokens
+// n-grams are encoded as 64 bit integers with each of the 4 16 bit sections representing a token id.
+// This way no custom hashing function for the n-grams is needed.
+
+// Update an ngram cache with tokens.
+// ncs = ngram caches: the hashmaps to modify.
+// ngram_min/ngram_max: the min/max size of the ngrams in ncs.
+// inp_data: the token sequence on which the hashmaps are based.
+// nnew: how many new tokens have been appended to inp_data since the last call to this function.
+// print_progress: whether to print progress to stderr
+//
+// In order to get correct results inp_data can ONLY BE APPENDED TO.
+// Changes in the middle need a complete rebuild.
+void llama_ngram_cache_update(std::vector<llama_ngram_cache> & ncs, int ngram_min,
+                              std::vector<llama_token> & inp_data, int nnew, bool print_progress);
+
+void llama_ngram_cache_draft(
+    std::vector<llama_token> & inp, std::vector<llama_token> & draft, int n_draft,
+    std::vector<llama_ngram_cache> & ncs_t1, int ngram_min, llama_ngram_cache & nc_t2);
+
+void llama_ngram_cache_save(std::vector<llama_ngram_cache> & ngram_cache, std::string & filename);
+llama_ngram_cache llama_ngram_cache_load(std::string & filename);

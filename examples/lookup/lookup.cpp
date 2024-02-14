@@ -1,4 +1,5 @@
 #include "common.h"
+#include "common/common.h"
 #include "ggml.h"
 #include "llama.h"
 
@@ -10,20 +11,10 @@
 #include <vector>
 #include <unordered_map>
 
-// Data structures to map n-grams to empirical token probabilities:
-typedef std::unordered_map<llama_token, int32_t>        token_hashmap; // token -> number of times token has been seen
-typedef std::unordered_map<uint64_t, token_hashmap> all_token_hashmap; // n-gram -> empirical distribution of following tokens
-// n-grams are encoded as 64 bit integers with each of the 4 16 bit sections representing a token id.
-// This way no custom hashing function for the n-grams is needed.
-
 // Min/max n-gram size to search for in prompt:
 constexpr int   ngram_min =  1;
 constexpr int   ngram_max =  4;
 static_assert(ngram_max <= sizeof(uint64_t)/2, "A 64 bit integer can only hold information for 4 16 bit tokens.");
-
-// If sample size or percentage in context are below these thresholds the draft is aborted early:
-constexpr float draft_min_sample_size[ngram_max] = { 2,  2,  1,  1};
-constexpr float     draft_min_percent[ngram_max] = {50, 50, 50, 50};
 
 int main(int argc, char ** argv){
     gpt_params params;
@@ -63,84 +54,21 @@ int main(int argc, char ** argv){
     std::vector<llama_token> inp;
     inp = ::llama_tokenize(ctx, params.prompt, add_bos, true);
 
-    auto update_hashmaps = [](all_token_hashmap * atcs, const llama_token * inp_data, const int inp_size, const int nnew) -> void {
-        // atcs = all_token_counts: the hashmaps to modify.
-        // inp_data: the token sequence on which the hashmaps are based.
-        // inp_size: the current size of inp_data.
-        // nnew: how many new tokens have been appended to inp_data since the last call to this function.
-        //
-        // In order to get correct results inp_data can ONLY BE APPENDED TO.
-        // Changes in the middle need a complete rebuild.
-        for (int ngram_size = ngram_min; ngram_size <= ngram_max; ++ngram_size) {
-            all_token_hashmap * atc = atcs + ngram_size - ngram_min;
-
-            const int i_start = std::max(inp_size - nnew, ngram_size);
-            for (int i = i_start; i < inp_size; ++i) {
-                const int ngram_start = i - ngram_size;
-                uint64_t ngram = inp_data[ngram_start];
-                for (int j = ngram_start; j < ngram_start + ngram_size; ++j) {
-                    const uint64_t ngram_part = inp_data[j];
-                    ngram <<= 16;
-                    ngram |= ngram_part;
-                }
-                const llama_token token = inp_data[i];
-
-                all_token_hashmap::iterator token_counts_it = atc->find(ngram);
-                if (token_counts_it == atc->end()) {
-                    token_hashmap token_counts;
-                    token_counts.emplace(token, 1);
-                    atc->emplace(ngram, token_counts);
-                } else {
-                    token_hashmap::iterator tc_it = token_counts_it->second.find(token);
-                    if (tc_it == token_counts_it->second.end()) {
-                        token_counts_it->second.emplace(token, 1);
-                    } else {
-                        tc_it->second++;
-                    }
-                }
-            }
-        }
-    };
-
-    all_token_hashmap all_token_counts[ngram_max-ngram_min+1];
-    all_token_hashmap static_all_token_counts;
+    std::vector<llama_ngram_cache> ngram_cache(ngram_max-ngram_min+1);
+    llama_ngram_cache ngram_cache_static;
+    int64_t t_draft_flat_us = 0;
     int64_t t_draft_us = 0;
 
     {
         // Fill up hashmaps with tokens from user input:
         const int64_t t_start_draft_us = ggml_time_us();
-        update_hashmaps(all_token_counts, inp.data(), inp.size(), inp.size());
+        llama_ngram_cache_update(ngram_cache, ngram_min, inp, inp.size(), false);
 
-        const char * hashmap_file_name = "lookup.bin";
-        std::ifstream hashmap_file(hashmap_file_name, std::ios::binary);
-        if (!hashmap_file) {
-            fprintf(stderr, "error: failed to open file '%s'\n", hashmap_file_name);
-            exit(1);
+        if (!params.lookup_cache_static.empty()) {
+            ngram_cache_static = llama_ngram_cache_load(params.lookup_cache_static);
         }
-        uint64_t ngram;
-        int32_t ntokens;
-        llama_token token;
-        int32_t count;
 
-        char * ngramc   = reinterpret_cast<char*>(&ngram);
-        char * ntokensc = reinterpret_cast<char*>(&ntokens);
-        char * tokenc   = reinterpret_cast<char*>(&token);
-        char * countc   = reinterpret_cast<char*>(&count);
-        while(hashmap_file.read(ngramc, sizeof(uint64_t))) {
-            GGML_ASSERT(hashmap_file.read(ntokensc, sizeof(int32_t)));
-            token_hashmap token_counts;
-
-            for (int i = 0; i < ntokens; ++i) {
-                GGML_ASSERT(hashmap_file.read(tokenc, sizeof(llama_token)));
-                GGML_ASSERT(hashmap_file.read(countc, sizeof(int32_t)));
-                token_counts.emplace(token, count);
-            }
-
-            static_all_token_counts.emplace(ngram, token_counts);
-        }
-        GGML_ASSERT(hashmap_file.eof());
-
-        t_draft_us += ggml_time_us() - t_start_draft_us;
+        t_draft_flat_us += ggml_time_us() - t_start_draft_us;
     }
 
     const int max_context_size     = llama_n_ctx(ctx);
@@ -226,7 +154,7 @@ int main(int argc, char ** argv){
                 {
                     // Update hashmaps with the newly accepted token:
                     const int64_t t_start_draft_us = ggml_time_us();
-                    update_hashmaps(all_token_counts, inp.data(), inp.size(), 1);
+                    llama_ngram_cache_update(ngram_cache, ngram_min, inp, 1, false);
                     t_draft_us += ggml_time_us() - t_start_draft_us;
                 }
 
@@ -252,7 +180,7 @@ int main(int argc, char ** argv){
             {
                 // Update hashmaps with the newly accepted token:
                 const int64_t t_start_draft_us = ggml_time_us();
-                update_hashmaps(all_token_counts, inp.data(), inp.size(), 1);
+                llama_ngram_cache_update(ngram_cache, ngram_min, inp, 1, false);
                 t_draft_us += ggml_time_us() - t_start_draft_us;
             }
             break;
@@ -269,133 +197,16 @@ int main(int argc, char ** argv){
         llama_batch_clear(batch_tgt);
         llama_batch_add(batch_tgt, draft[0], n_past, { 0 }, true);
 
-        auto get_token = [](const std::vector<llama_token> inp, const std::vector<llama_token> draft, const size_t i) -> llama_token {
-            // Helper function to get a token from the combined, speculative sequence of inp and draft.
-            return i < inp.size() ? inp[i] : draft[1 + i - inp.size()];
-        };
-
-        auto prompt_lookup = [&]() -> void {
-            // Generate up to n_draft additional tokens through prompt lookup.
-            // The draft is aborted early if there is no suitable token candidate to continue the draft.
-            // At the beginning of this function the draft already contains a single token sampled from the model.
-            const int inp_size = inp.size();
-
-            while ((int) draft.size()-1 < n_draft) {
-                bool draft_success = false;
-
-                const int static_ngram_start = inp_size-2 + draft.size()-1;
-                uint64_t static_ngram = get_token(inp, draft, static_ngram_start);
-                for (int j = static_ngram_start+1; j < static_ngram_start + 2; ++j) {
-                    const uint64_t ngram_part = get_token(inp, draft, j);
-                    static_ngram <<= 16;
-                    static_ngram |= ngram_part;
-                }
-                all_token_hashmap::iterator static_token_counts_it = static_all_token_counts.find(static_ngram);
-                token_hashmap static_token_counts;
-                if (static_token_counts_it != static_all_token_counts.end()) {
-                    static_token_counts = static_token_counts_it->second;
-                }
-
-                for (int ngram_size = ngram_max; ngram_size >= ngram_min; --ngram_size) {
-                    if (ngram_size > inp_size) {
-                        continue;
-                    }
-
-                    all_token_hashmap & atc = all_token_counts[ngram_size - ngram_min];
-
-                    const int ngram_start = inp_size-ngram_size + draft.size()-1;
-                    uint64_t ngram = get_token(inp, draft, ngram_start);
-                    for (int j = ngram_start+1; j < ngram_start + ngram_size; ++j) {
-                        const uint64_t ngram_part = get_token(inp, draft, j);
-                        ngram <<= 16;
-                        ngram |= ngram_part;
-                    }
-
-                    all_token_hashmap::iterator token_counts_it = atc.find(ngram);
-                    if (token_counts_it == atc.end()) {
-                        continue;
-                    }
-                    const token_hashmap token_counts = token_counts_it->second;
-
-                    int max_count = 0;
-                    int max_count_static = 0;
-                    int sum_count = 0;
-                    llama_token max_token = -1;
-
-                    for (std::pair<llama_token, int> tc : token_counts) {
-                        const llama_token token = tc.first;
-
-                        token_hashmap::iterator stc_it = static_token_counts.find(token);
-                        const int32_t count        = tc.second;
-                        const int32_t count_static = stc_it != static_token_counts.end() ? 100*stc_it->second : 1;
-
-                        if (count*count_static > max_count*max_count_static) {
-                            max_token        = token;
-                            max_count        = count;
-                            max_count_static = count_static;
-                        }
-                        sum_count += count;
-                    }
-                    // Skip this candidate if the sample size is too low:
-                    if (sum_count < draft_min_sample_size[ngram_size-1]) {
-                        continue;
-                    }
-                    // skip this candidate if the empirically most likely token following this token is not likely enough:
-                    if (100*max_count < draft_min_percent[ngram_size-1]*sum_count) {
-                        continue;
-                    }
-
-                    LOG(" - draft candidate: token=%d count=%d\n", max_token, max_count);
-                    llama_batch_add(batch_tgt, max_token, n_past + draft.size(), { 0 }, true);
-                    draft.push_back(max_token);
-                    draft_success = true;
-                    break;
-                }
-
-                if (!draft_success) {
-                    int max_count = 0;
-                    int sum_count = 0;
-                    llama_token max_token = -1;
-
-                    for (std::pair<llama_token, int> tc : static_token_counts) {
-                        const llama_token token = tc.first;
-                        const int32_t     count = tc.second;
-
-                        if (count > max_count) {
-                            max_token        = token;
-                            max_count        = count;
-                        }
-                        sum_count += count;
-                    }
-
-                    // Skip this candidate if the sample size is too low:
-                    if (sum_count < draft_min_sample_size[2-1]) {
-                        break;
-                    }
-                    // skip this candidate if the empirically most likely token following this token is not likely enough:
-                    if (100*max_count < draft_min_percent[2-1]*sum_count) {
-                        break;
-                    }
-
-                    LOG(" - draft candidate: token=%d count=%d\n", max_token, max_count);
-                    llama_batch_add(batch_tgt, max_token, n_past + draft.size(), { 0 }, true);
-                    draft.push_back(max_token);
-                    draft_success = true;
-                    break;
-                }
-
-                if (!draft_success) {
-                    break;
-                }
-            }
-        };
-
         // Draft already contains a single token sampled from the model:
         GGML_ASSERT(draft.size() == 1);
         GGML_ASSERT(draft[0] == inp.back());
         const int64_t t_start_draft_us = ggml_time_us();
 
-        prompt_lookup();
+        llama_ngram_cache_draft(inp, draft, n_draft, ngram_cache, ngram_min, ngram_cache_static);
+
+        for (size_t i = 1; i < draft.size(); ++i) {
+            llama_batch_add(batch_tgt, draft[i], n_past + i, { 0 }, true);
+        }
 
         t_draft_us += ggml_time_us() - t_start_draft_us;
         n_drafted += draft.size() - 1;
@@ -414,13 +225,14 @@ int main(int argc, char ** argv){
     LOG_TEE("decoded %4d tokens in %8.3f seconds, speed: %8.3f t/s\n", n_predict, (t_dec_end - t_dec_start) / 1e6f, n_predict  / ((t_dec_end - t_dec_start) / 1e6f));
 
     LOG_TEE("\n");
-    LOG_TEE("n_draft   = %d\n", n_draft);
-    LOG_TEE("n_predict = %d\n", n_predict);
-    LOG_TEE("n_drafted = %d\n", n_drafted);
-    LOG_TEE("t_draft   = %.2f ms, %.2f us per token, %.2f tokens per second\n",
+    LOG_TEE("n_draft      = %d\n", n_draft);
+    LOG_TEE("n_predict    = %d\n", n_predict);
+    LOG_TEE("n_drafted    = %d\n", n_drafted);
+    LOG_TEE("t_draft_flat = %.2f ms\n", t_draft_flat_us*1e-3);
+    LOG_TEE("t_draft      = %.2f ms, %.2f us per token, %.2f tokens per second\n",
             t_draft_us*1e-3, 1.0f*t_draft_us/n_drafted, n_drafted/(1e-6*t_draft_us));
-    LOG_TEE("n_accept  = %d\n", n_accept);
-    LOG_TEE("accept    = %.3f%%\n", 100.0f * n_accept / n_drafted);
+    LOG_TEE("n_accept     = %d\n", n_accept);
+    LOG_TEE("accept       = %.3f%%\n", 100.0f * n_accept / n_drafted);
 
     LOG_TEE("\ntarget:\n");
     llama_print_timings(ctx);
