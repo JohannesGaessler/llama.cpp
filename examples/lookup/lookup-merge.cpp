@@ -32,18 +32,20 @@ int main(int argc, char ** argv){
         }
     }
 
-    llama_ngram_cache ngram_cache_merged = llama_ngram_cache_load(args[0]);
+    std::vector<llama_ngram_cache> ngram_cache_merged;
+    ngram_cache_merged.push_back(llama_ngram_cache_load(args[0]));
 
     for (size_t i = 1; i < args.size()-1; ++i) {
+        fprintf(stderr, "lookup-merge: loading file %s\n", args[i].c_str());
         llama_ngram_cache ngram_cache = llama_ngram_cache_load(args[i]);
 
         for (std::pair<uint64_t, llama_ngram_cache_part> ngram_part : ngram_cache) {
             const uint64_t         ngram = ngram_part.first;
             llama_ngram_cache_part  part = ngram_part.second;
 
-            llama_ngram_cache::iterator part_merged_it = ngram_cache_merged.find(ngram);
-            if (part_merged_it == ngram_cache_merged.end()) {
-                ngram_cache_merged.emplace(ngram, part);
+            llama_ngram_cache::iterator part_merged_it = ngram_cache_merged[0].find(ngram);
+            if (part_merged_it == ngram_cache_merged[0].end()) {
+                ngram_cache_merged[0].emplace(ngram, part);
                 continue;
             }
 
@@ -62,9 +64,6 @@ int main(int argc, char ** argv){
         }
     }
 
-    // std::vector<llama_ngram_cache> ngram_cache(1);
-    // llama_ngram_cache_update(ngram_cache, ngram_size, inp, inp.size(), true);
-    // fprintf(stderr, "%s: hashing done, writing file\n", __func__);
-
-    // llama_ngram_cache_save(ngram_cache, params.lookup_cache_static);
+    fprintf(stderr, "lookup-merge: saving file %s\n", args.back().c_str());
+    llama_ngram_cache_save(ngram_cache_merged, args.back());
 }
