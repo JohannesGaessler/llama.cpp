@@ -84,18 +84,19 @@ struct gpt_params {
     // // sampling parameters
     struct llama_sampling_params sparams;
 
-    std::string model               = "models/7B/ggml-model-f16.gguf"; // model path
-    std::string model_draft         = "";                              // draft model for speculative decoding
-    std::string model_alias         = "unknown"; // model alias
-    std::string prompt              = "";
-    std::string prompt_file         = ""; // store the external prompt file name
-    std::string path_prompt_cache   = ""; // path to file for saving/loading prompt eval state
-    std::string input_prefix        = ""; // string to prefix user inputs with
-    std::string input_suffix        = ""; // string to suffix user inputs with
+    std::string model                = "models/7B/ggml-model-f16.gguf"; // model path
+    std::string model_draft          = "";                              // draft model for speculative decoding
+    std::string model_alias          = "unknown"; // model alias
+    std::string prompt               = "";
+    std::string prompt_file          = ""; // store the external prompt file name
+    std::string path_prompt_cache    = ""; // path to file for saving/loading prompt eval state
+    std::string input_prefix         = ""; // string to prefix user inputs with
+    std::string input_suffix         = ""; // string to suffix user inputs with
     std::vector<std::string> antiprompt;  // string upon seeing which more user input is prompted
-    std::string logdir              = ""; // directory in which to save YAML log files
-    std::string lookup_cache_static = ""; // path of ngram cache file for lookup decoding
-    std::string logits_file         = ""; // file for saving *all* logits
+    std::string logdir               = ""; // directory in which to save YAML log files
+    std::string lookup_cache_static  = ""; // path of static ngram cache file for lookup decoding
+    std::string lookup_cache_dynamic = ""; // path of dynamic ngram cache file for lookup decoding
+    std::string logits_file          = ""; // file for saving *all* logits
 
     std::vector<llama_model_kv_override> kv_overrides;
 
@@ -279,12 +280,13 @@ typedef std::unordered_map<uint64_t, llama_ngram_cache_part> llama_ngram_cache; 
 //
 // In order to get correct results inp_data can ONLY BE APPENDED TO.
 // Changes in the middle need a complete rebuild.
-void llama_ngram_cache_update(std::vector<llama_ngram_cache> & ncs, int ngram_min,
+void llama_ngram_cache_update(llama_ngram_cache & ngram_cache, int ngram_min, int ngram_max,
                               std::vector<llama_token> & inp_data, int nnew, bool print_progress);
 
 void llama_ngram_cache_draft(
-    std::vector<llama_token> & inp, std::vector<llama_token> & draft, int n_draft,
-    std::vector<llama_ngram_cache> & ncs_t1, int ngram_min, llama_ngram_cache & nc_t2);
+    std::vector<llama_token> & inp, std::vector<llama_token> & draft, int n_draft, int ngram_min, int ngram_max,
+    llama_ngram_cache & nc_t1, llama_ngram_cache & nc_t2, llama_ngram_cache & nc_t3);
 
-void llama_ngram_cache_save(std::vector<llama_ngram_cache> & ngram_cache, std::string & filename);
+void llama_ngram_cache_save(llama_ngram_cache & ngram_cache, std::string & filename);
 llama_ngram_cache llama_ngram_cache_load(std::string & filename);
+void llama_ngram_cache_merge(llama_ngram_cache & ngram_cache_target, llama_ngram_cache & ngram_cache_add);

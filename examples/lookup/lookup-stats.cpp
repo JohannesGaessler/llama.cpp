@@ -27,7 +27,8 @@ int main(int argc, char ** argv){
     const int n_draft = params.n_draft;
 
     // init llama.cpp
-    llama_backend_init(params.numa);
+    llama_backend_init();
+    llama_numa_init(params.numa);
 
     llama_model * model = NULL;
     llama_context * ctx = NULL;
@@ -44,7 +45,8 @@ int main(int argc, char ** argv){
     std::vector<llama_token> inp;
     inp = ::llama_tokenize(ctx, params.prompt, add_bos, true);
 
-    std::vector<llama_ngram_cache> ngram_cache(ngram_max-ngram_min+1);
+    llama_ngram_cache ngram_cache;
+    llama_ngram_cache ngram_cache_dynamic;
     llama_ngram_cache ngram_cache_static;
     int64_t t_draft_flat_us = 0;
     int64_t t_draft_us = 0;
@@ -53,7 +55,18 @@ int main(int argc, char ** argv){
         const int64_t t_start_draft_us = ggml_time_us();
 
         if (!params.lookup_cache_static.empty()) {
-            ngram_cache_static = llama_ngram_cache_load(params.lookup_cache_static);
+            try {
+                ngram_cache_static = llama_ngram_cache_load(params.lookup_cache_static);
+            } catch (std::system_error const &) {
+                fprintf(stderr, "error: failed to open static lookup cache: %s", params.lookup_cache_static.c_str());
+                exit(1);
+            }
+        }
+
+        if (!params.lookup_cache_dynamic.empty()) {
+            try {
+                ngram_cache_dynamic = llama_ngram_cache_load(params.lookup_cache_dynamic);
+            } catch (std::system_error const &) {} // if the file does not exist it will simply be created at the end of the program
         }
 
         t_draft_flat_us += ggml_time_us() - t_start_draft_us;
@@ -66,26 +79,24 @@ int main(int argc, char ** argv){
     int n_accept  = 0;
 
     const int64_t t_start_ms = ggml_time_ms();
-    int n_done = 0;
     for (int i_start = 0; i_start + n_ctx < n_input; i_start += n_ctx) {
         const std::vector<llama_token> inp_slice(inp.begin() + i_start, inp.begin() + i_start + n_ctx);
         std::vector<llama_token> pseudo_output;
         pseudo_output.push_back(inp_slice[0]);
-        ++n_done; // FIXME print miss
 
-        for (int i = 1; i < n_ctx; ++i) {
+        while ((int) pseudo_output.size() < n_ctx) {
             std::vector<llama_token> draft;
             draft.push_back(pseudo_output.back());
 
             {
                 const int64_t t_start_draft_us = ggml_time_us();
-                llama_ngram_cache_draft(pseudo_output, draft, n_draft, ngram_cache, ngram_min, ngram_cache_static);
+                llama_ngram_cache_draft(pseudo_output, draft, n_draft, ngram_min, ngram_max, ngram_cache, ngram_cache_dynamic, ngram_cache_static);
                 t_draft_us += ggml_time_us() - t_start_draft_us;
             }
 
             n_drafted += draft.size() - 1;
 
-            for (size_t j = 1; j < draft.size(); ++j) {
+            for (size_t j = 1; j < draft.size() && (int) pseudo_output.size() < n_ctx; ++j) {
                 const llama_token ground_truth = inp_slice[pseudo_output.size()];
                 const llama_token drafted = draft[j];
 
@@ -98,29 +109,34 @@ int main(int argc, char ** argv){
 
                 {
                     const int64_t t_start_draft_us = ggml_time_us();
-                    llama_ngram_cache_update(ngram_cache, ngram_min, pseudo_output, 1, false);
+                    // llama_sampling_probability_distribution(nullptr, ctx, nullptr, j);
+                    llama_ngram_cache_update(ngram_cache, ngram_min, ngram_max, pseudo_output, 1, false);
                     t_draft_us += ggml_time_us() - t_start_draft_us;
                 }
             }
-            pseudo_output.push_back(inp_slice[pseudo_output.size()]);
-            {
-                const int64_t t_start_draft_us = ggml_time_us();
-                llama_ngram_cache_update(ngram_cache, ngram_min, pseudo_output, 1, false);
-                t_draft_us += ggml_time_us() - t_start_draft_us;
+            if ((int) pseudo_output.size() < n_ctx) {
+                pseudo_output.push_back(inp_slice[pseudo_output.size()]);
+                {
+                    const int64_t t_start_draft_us = ggml_time_us();
+                    llama_ngram_cache_update(ngram_cache, ngram_min, ngram_max, pseudo_output, 1, false);
+                    t_draft_us += ggml_time_us() - t_start_draft_us;
+                }
             }
 
             draft.erase(draft.begin());
 
-            ++n_done;
-            if (n_done % 100000 == 0) {
-                const int64_t t_now_ms = ggml_time_ms();
-                const int64_t eta_ms   = (n_input - n_done) * (t_now_ms - t_start_ms) / n_done;
-                const int64_t eta_min  = eta_ms / (60*1000);
-                const int64_t eta_s    = (eta_ms - eta_min) / 1000;
-
-                LOG_TEE("%d/%d done, ETA: %02ld:%02ld\n", n_done, n_input, eta_min, eta_s);
-            }
         }
+        if (i_start >= n_ctx && i_start / 100000 != (i_start - n_ctx) / 100000) {
+            const int64_t t_now_ms = ggml_time_ms();
+            const int64_t eta_ms   = (n_input - i_start) * (t_now_ms - t_start_ms) / i_start;
+            const int64_t eta_min  = eta_ms / (60*1000);
+            const int64_t eta_s    = (eta_ms - 60*1000*eta_min) / 1000;
+
+            LOG_TEE("%d/%d done, ETA: %02ld:%02ld\n", i_start, n_input, eta_min, eta_s);
+        }
+
+        llama_ngram_cache_merge(ngram_cache_dynamic, ngram_cache);
+        ngram_cache.clear();
     }
 
     LOG_TEE("\n");

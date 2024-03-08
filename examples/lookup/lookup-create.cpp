@@ -18,7 +18,8 @@ int main(int argc, char ** argv){
         return 1;
     }
     // init llama.cpp
-    llama_backend_init(params.numa);
+    llama_backend_init();
+    llama_numa_init(params.numa);
 
     llama_model * model = NULL;
     llama_context * ctx = NULL;
@@ -35,8 +36,8 @@ int main(int argc, char ** argv){
     fprintf(stderr, "%s: tokenization done\n", __func__);
 
 
-    std::vector<llama_ngram_cache> ngram_cache(1);
-    llama_ngram_cache_update(ngram_cache, ngram_size, inp, inp.size(), true);
+    llama_ngram_cache ngram_cache;
+    llama_ngram_cache_update(ngram_cache, ngram_size, ngram_size, inp, inp.size(), true);
     fprintf(stderr, "%s: hashing done, writing file\n", __func__);
 
     llama_ngram_cache_save(ngram_cache, params.lookup_cache_static);
