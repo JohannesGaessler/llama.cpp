@@ -2059,7 +2059,6 @@ void llama_ngram_cache_draft(
 };
 
 void llama_ngram_cache_save(llama_ngram_cache & ngram_cache, std::string & filename) {
-    GGML_ASSERT(ngram_cache.size() == 1);
     std::ofstream file_out(filename, std::ios::binary);
     for (std::pair<uint64_t, llama_ngram_cache_part> item : ngram_cache) {
         const uint64_t         ngram        = item.first;
