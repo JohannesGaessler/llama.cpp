@@ -9,7 +9,8 @@
 #include <unordered_map>
 #include <vector>
 
-constexpr int ngram_size = 2;
+constexpr int ngram_min = 1;
+constexpr int ngram_max = 4;
 
 int main(int argc, char ** argv){
     gpt_params params;
@@ -37,7 +38,7 @@ int main(int argc, char ** argv){
 
 
     llama_ngram_cache ngram_cache;
-    llama_ngram_cache_update(ngram_cache, ngram_size, ngram_size, inp, inp.size(), true);
+    llama_ngram_cache_update(ngram_cache, ngram_min, ngram_max, inp, inp.size(), true);
     fprintf(stderr, "%s: hashing done, writing file\n", __func__);
 
     llama_ngram_cache_save(ngram_cache, params.lookup_cache_static);
