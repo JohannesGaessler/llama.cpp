@@ -2,7 +2,6 @@
 
 #include "llama.h"
 
-#include <cstring>
 #include <unordered_map>
 #include <string>
 #include <vector>
@@ -17,12 +16,14 @@ struct llama_ngram {
     llama_token tokens[LLAMA_NGRAM_MAX];
 
     llama_ngram() {
-        memset(tokens, 0, sizeof(tokens));
+        for (int i = 0; i < LLAMA_NGRAM_MAX; ++i) {
+            tokens[i] = -1;
+        }
     }
 
     llama_ngram(const llama_token * input, const int ngram_size) {
         for (int i = 0; i < LLAMA_NGRAM_MAX; ++i) {
-            tokens[i] = i < ngram_size ? input[i] : 0;
+            tokens[i] = i < ngram_size ? input[i] : -1;
         }
     }
 
