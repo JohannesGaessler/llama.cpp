@@ -54,23 +54,22 @@ static __global__ void flash_attn_vec_ext_f32(
     const int tid = WARP_SIZE*threadIdx.y + threadIdx.x;
     __builtin_assume(tid < nwarps*WARP_SIZE);
 
-    __shared__ half KQ[nwarps*WARP_SIZE];
+    __shared__ float KQ[nwarps*WARP_SIZE];
     KQ[tid] = -INFINITY;
-    half2 * KQ2 = (half2 *) KQ;
 
-    half kqmax = -HALF_MAX_HALF;
-    half kqsum = 0.0f;
+    float kqmax = -HALF_MAX_HALF;
+    float kqsum = 0.0f;
 
-    __shared__ half kqmax_shared[WARP_SIZE];
-    __shared__ half kqsum_shared[WARP_SIZE];
+    __shared__ float kqmax_shared[WARP_SIZE];
+    __shared__ float kqsum_shared[WARP_SIZE];
     if (threadIdx.y == 0) {
         kqmax_shared[threadIdx.x] = -HALF_MAX_HALF;
         kqsum_shared[threadIdx.x] = 0.0f;
     }
     __syncthreads();
 
-    // Convert Q to half2 and store in registers:
-    half2 Q_h2[(D/2 + WARP_SIZE - 1) / WARP_SIZE];
+    // Store Q in registers:
+    float2 Q_reg[(D/2 + WARP_SIZE - 1) / WARP_SIZE];
 #pragma unroll
     for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
         const int i = i0 + threadIdx.x;
@@ -78,15 +77,16 @@ static __global__ void flash_attn_vec_ext_f32(
             break;
         }
 
-        Q_h2[i0/WARP_SIZE] = make_half2(scale, scale) * make_half2(Q_f2[i].x, Q_f2[i].y);
+        Q_reg[i0/WARP_SIZE].x = scale * Q_f2[i].x;
+        Q_reg[i0/WARP_SIZE].y = scale * Q_f2[i].y;
     }
 
-    half2 VKQ = make_half2(0.0f, 0.0f); // Each thread calculates a single VKQ value.
+    float VKQ = 0.0f; // Each thread calculates a single VKQ value.
 
     const int k_start  = parallel_blocks == 1 ? 0 : ip*D;
     for (int k_VKQ_0 = k_start; k_VKQ_0 < ne11; k_VKQ_0 += parallel_blocks*D) {
         // Calculate KQ tile and keep track of new maximum KQ values:
-        half kqmax_new = kqmax;
+        float kqmax_new = kqmax;
 #pragma unroll
         for (int i_KQ_0 = 0; i_KQ_0 < D; i_KQ_0 += nwarps) {
             const int i_KQ = i_KQ_0 + threadIdx.y;
@@ -95,7 +95,7 @@ static __global__ void flash_attn_vec_ext_f32(
                 break;
             }
 
-            half2 sum2 = make_half2(0.0f, 0.0f);
+            float sum = 0.0f;
 #pragma unroll
             for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += WARP_SIZE) {
                 const int k_KQ = k_KQ_0 + threadIdx.x;
@@ -104,13 +104,13 @@ static __global__ void flash_attn_vec_ext_f32(
                 }
 
                 const half2 K_ik = K_h2[(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ];
-                sum2 += K_ik * Q_h2[k_KQ_0/WARP_SIZE];
+                sum +=  __low2float(K_ik) * Q_reg[k_KQ_0/WARP_SIZE].x;
+                sum += __high2float(K_ik) * Q_reg[k_KQ_0/WARP_SIZE].y;
             }
 
-            sum2 = warp_reduce_sum(sum2);
-            half sum = __low2half(sum2) + __high2half(sum2);
-            sum += mask ? maskh[k_VKQ_0 + i_KQ] : __float2half(0.0f);
-            kqmax_new = __hmax(kqmax_new, sum);
+            sum = warp_reduce_sum(sum);
+            sum += mask ? __half2float(maskh[k_VKQ_0 + i_KQ]) : 0.0f;
+            kqmax_new = max(kqmax_new, sum);
             if (threadIdx.x == 0) {
                 KQ[i_KQ] = sum;
             }
@@ -124,28 +124,24 @@ static __global__ void flash_attn_vec_ext_f32(
         kqmax_new = kqmax_shared[threadIdx.x];
         kqmax_new = warp_reduce_max(kqmax_new);
 
-        const half KQ_max_scale = hexp(kqmax - kqmax_new);
+        const float KQ_max_scale = expf(kqmax - kqmax_new);
         kqmax = kqmax_new;
 
-        const half val = hexp(KQ[tid] - kqmax);
+        const float val = expf(KQ[tid] - kqmax);
         kqsum = kqsum*KQ_max_scale + val;
         KQ[tid] = val;
 
-        VKQ *= __half2half2(KQ_max_scale);
+        VKQ *= KQ_max_scale;
 
         __syncthreads();
 
         if (tid < D) {
 #pragma unroll
-            for (int k0 = 0; k0 < D; k0 += 2) {
-                if (FATTN_KQ_STRIDE % D != 0 && k_VKQ_0 + k0 >= ne11) {
+            for (int k = 0; k < D; ++k) {
+                if (FATTN_KQ_STRIDE % D != 0 && k_VKQ_0 + k >= ne11) {
                     break;
                 }
-
-                half2 V_k;
-                reinterpret_cast<half&>(V_k.x) = V_h[(k_VKQ_0 + k0 + 0)*stride_KV + tid];
-                reinterpret_cast<half&>(V_k.y) = V_h[(k_VKQ_0 + k0 + 1)*stride_KV + tid];
-                VKQ += V_k*KQ2[k0/2];
+                VKQ += __half2float(V_h[(k_VKQ_0 + k)*stride_KV + tid])*KQ[k];
             }
         }
 
@@ -168,11 +164,10 @@ static __global__ void flash_attn_vec_ext_f32(
         return;
     }
 
-    half dst_val = (__low2half(VKQ) + __high2half(VKQ));
     if (parallel_blocks == 1) {
-        dst_val /= kqsum;
+        VKQ /= kqsum;
     }
-    dst[D*gridDim.y*blockIdx.x + D*blockIdx.y + tid] = dst_val;
+    dst[D*gridDim.y*blockIdx.x + D*blockIdx.y + tid] = VKQ;
 
     if (parallel_blocks == 1 || tid != 0) {
         return;
@@ -711,6 +706,57 @@ static_assert(get_VKQ_stride( 80, 1, 16) ==  16, "Test failed.");
 static_assert(get_VKQ_stride( 80, 2, 16) ==  16, "Test failed.");
 static_assert(get_VKQ_stride( 80, 4, 16) ==  16, "Test failed.");
 
+template <int D, int parallel_blocks> void launch_fattn_vec_f32(
+        const ggml_tensor * Q, const ggml_tensor * K, const ggml_tensor * V, ggml_tensor * KQV, const ggml_tensor * mask,
+        ggml_cuda_pool & pool, cudaStream_t main_stream
+) {
+    ggml_cuda_pool_alloc<float> dst_tmp(pool);
+    ggml_cuda_pool_alloc<half2> dst_tmp_meta(pool);
+
+    if (parallel_blocks > 1) {
+        dst_tmp.alloc(parallel_blocks*ggml_nelements(KQV));
+        dst_tmp_meta.alloc(parallel_blocks*ggml_nrows(KQV));
+    }
+
+    constexpr int  nwarps = (D + WARP_SIZE - 1) / WARP_SIZE;
+    constexpr dim3 block_dim(WARP_SIZE, nwarps, 1);
+    const     dim3 blocks_num(parallel_blocks*Q->ne[1], Q->ne[2], Q->ne[3]);
+    const     int  shmem = 0;
+
+    float scale;
+    memcpy(&scale, KQV->op_params, sizeof(float));
+
+    flash_attn_vec_ext_f32<D, parallel_blocks>
+        <<<blocks_num, block_dim, shmem, main_stream>>> (
+                (const char *) Q->data,
+                (const char *) K->data,
+                (const char *) V->data,
+                mask ? ((const char *) mask->data) : nullptr,
+                parallel_blocks == 1 ? (float *) KQV->data : dst_tmp.ptr, dst_tmp_meta.ptr,
+                scale,
+                Q->ne[0], Q->ne[1], Q->ne[2], Q->ne[3],
+                K->ne[0], K->ne[1], K->ne[2], K->ne[3],
+                mask ? mask->ne[1] : 0, mask ?  mask->nb[1] : 0,
+                Q->nb[1], Q->nb[2], Q->nb[3],
+                K->nb[1], K->nb[2], K->nb[3],
+                KQV->ne[0], KQV->ne[1], KQV->ne[2], KQV->ne[3]
+                );
+    CUDA_CHECK(cudaGetLastError());
+
+    if (parallel_blocks == 1) {
+        return;
+    }
+
+    constexpr dim3 block_dim_combine(D, 1, 1);
+    const     dim3 blocks_num_combine(Q->ne[1], blocks_num.y, blocks_num.z);
+    const     int  shmem_combine = 0;
+
+    flash_attn_combine_results<D, parallel_blocks>
+        <<<blocks_num_combine, block_dim_combine, shmem_combine, main_stream>>>
+        (dst_tmp.ptr, dst_tmp_meta.ptr, (float *) KQV->data);
+    CUDA_CHECK(cudaGetLastError());
+}
+
 template <int D, int parallel_blocks> void launch_fattn_vec_f16(
         const ggml_tensor * Q, const ggml_tensor * K, const ggml_tensor * V, ggml_tensor * KQV, const ggml_tensor * mask,
         ggml_cuda_pool & pool, cudaStream_t main_stream
@@ -852,20 +898,23 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
 
     ggml_cuda_set_device(ctx.device);
 
-    if (Q->ne[1] == 1 && Q->ne[0] % WARP_SIZE == 0) {
-        constexpr int parallel_blocks = 4;
+    if (Q->ne[1] == 1) {
+        constexpr int parallel_blocks = 1;
         switch (Q->ne[0]) {
             case 64:
-                launch_fattn_vec_f16< 64, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
+                launch_fattn_vec_f32< 64, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
+                break;
+            case 80:
+                launch_fattn_vec_f32< 80, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
                 break;
             case 96:
-                launch_fattn_vec_f16< 96, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
+                launch_fattn_vec_f32< 96, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
                 break;
             case 128:
-                launch_fattn_vec_f16<128, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
+                launch_fattn_vec_f32<128, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
                 break;
             case 256:
-                launch_fattn_vec_f16<256, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
+                launch_fattn_vec_f32<256, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
                 break;
             default:
                 GGML_ASSERT(false);
