@@ -459,8 +459,8 @@ static __global__ void flash_attn_ext_f16(
             }
             float dst_val = VKQ[j_VKQ*D_padded + i];
             if (parallel_blocks == 1) {
-                const uint div_by_0_mask = 0xFFFFFFFF * (KQ_rowsum_j != 0.0f);
                 dst_val /= KQ_rowsum_j;
+                const uint div_by_0_mask = 0xFFFFFFFF * (KQ_rowsum_j != 0.0f);
                 *((uint *) &dst_val) &= div_by_0_mask;
             }
             dst[j_dst*gridDim.y*D + blockIdx.y*D + i] = dst_val;
@@ -512,16 +512,16 @@ static __global__ void flash_attn_combine_results(
     for (int l = 0; l < parallel_blocks; ++l) {
         const half diff = __low2half(meta[l]) - kqmax;
         float KQ_max_scale = hexp(diff);
-        const uint mask_ftz = 0xFFFFFFFF * (diff > __float2half(SOFTMAX_FTZ_THRESHOLD));
-        *((uint *) &KQ_max_scale) &= mask_ftz;
+        const uint ftz_mask = 0xFFFFFFFF * (diff > __float2half(SOFTMAX_FTZ_THRESHOLD));
+        *((uint *) &KQ_max_scale) &= ftz_mask;
 
         VKQ_numerator   += KQ_max_scale * VKQ_parts[l*gridDim.y*D + blockIdx.y*D + tid];
         VKQ_denominator += KQ_max_scale * __high2float(meta[l]);
     }
 
     float dst_val = VKQ_numerator / VKQ_denominator;
-    const uint mask_div_by_0 = 0xFFFFFFFF * (VKQ_denominator != 0.0f);
-    *((uint *) &dst_val) &= mask_div_by_0;
+    const uint div_by_0_mask = 0xFFFFFFFF * (VKQ_denominator != 0.0f);
+    *((uint *) &dst_val) &= div_by_0_mask;
     dst[blockIdx.y*D + tid] = dst_val;
 #else
    NO_DEVICE_CODE;
