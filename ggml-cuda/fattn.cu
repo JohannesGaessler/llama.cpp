@@ -243,7 +243,7 @@ static __global__ void flash_attn_ext_f16(
     const float * Q_f   = (const float *) (Q + nb02* blockIdx.y              + nb01*ic0);
     const half  * K_h   = (const half  *) (K + nb12*(blockIdx.y / gqa_ratio));
     const half  * V_h   = (const half  *) (V + nb12*(blockIdx.y / gqa_ratio)); // K and V have same shape
-    const half2 * mask2 = (const half2 *)  mask + ne11*(ic0/2);
+    const half  * maskh = (const half  *)  mask + ne11*ic0;
 
     const int stride_Q  = nb01 / sizeof(float);
     const int stride_KV = nb11 / sizeof(half);
@@ -251,14 +251,15 @@ static __global__ void flash_attn_ext_f16(
     frag_b Q_b[D/16][ncols/frag_n];
 
     // A single buffer for temporarily holding tiles of KQ and VKQ parts:
-    constexpr int mem_KQ = ncols*kqs_padded;
+    constexpr int mem_KQ = 2*ncols*kqs_padded;
     constexpr int mem_VKQ_parts = VKQ_ratio*ncols*D_padded;
     __shared__ half KQ[mem_KQ >= mem_VKQ_parts ? mem_KQ : mem_VKQ_parts];
-    half2 * KQ2 = (half2 *) KQ;
+    float * KQ_f = (float *) KQ;
+    half2 * KQ2  = (half2 *) KQ;
 
-    half2    KQ_rowsum[ncols/nwarps] = {{ 0.0f,           0.0f}};
-    half2       KQ_max[ncols/nwarps] = {{-HALF_MAX_HALF, -HALF_MAX_HALF}};
-    half2 KQ_max_scale[ncols/nwarps] = {{ 0.0f,           0.0f}};
+    float    KQ_rowsum[ncols/nwarps] = {0.0f};
+    float       KQ_max[ncols/nwarps] = {-HALF_MAX_HALF};
+    float KQ_max_scale[ncols/nwarps] = {0.0f};
 
     __shared__ half VKQ[ncols*D_padded]; // Accumulator for final VKQ slice.
     half2 * VKQ2 = (half2 *) VKQ;
@@ -307,7 +308,7 @@ static __global__ void flash_attn_ext_f16(
         // Calculate tile of KQ:
 #pragma unroll
         for (int i_KQ_0 = 0; i_KQ_0 < FATTN_KQ_STRIDE; i_KQ_0 += KQ_stride_tc) {
-            frag_c_VKQ KQ_c[ncols/frag_n];
+            frag_c_KQ KQ_c[ncols/frag_n];
 #pragma unroll
             for (int j = 0; j < ncols/frag_n; ++j) {
                 nvcuda::wmma::fill_fragment(KQ_c[j], 0.0f);
@@ -323,7 +324,7 @@ static __global__ void flash_attn_ext_f16(
             }
 #pragma unroll
             for (int j0 = 0; j0 < ncols; j0 += frag_n) {
-                nvcuda::wmma::store_matrix_sync(KQ + j0*kqs_padded + i_KQ_0 + frag_m*threadIdx.y, KQ_c[j0/frag_n], kqs_padded, nvcuda::wmma::mem_col_major);
+                nvcuda::wmma::store_matrix_sync(KQ_f + j0*kqs_padded + i_KQ_0 + frag_m*threadIdx.y, KQ_c[j0/frag_n], kqs_padded, nvcuda::wmma::mem_col_major);
             }
         }
 
@@ -335,26 +336,25 @@ static __global__ void flash_attn_ext_f16(
         for (int j0 = 0; j0 < ncols; j0 += nwarps) {
             const int j = j0 + threadIdx.y;
 
-            half2 KQ_max_new = KQ_max[j0/nwarps];
+            float KQ_max_new = KQ_max[j0/nwarps];
 #pragma unroll
-            for (int k0 = 0; k0 < FATTN_KQ_STRIDE/2; k0 += WARP_SIZE) {
+            for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += WARP_SIZE) {
                 const int k = k0 + threadIdx.x;
-                KQ_max_new = __hmax2(KQ_max_new, KQ2[j*(kqs_padded/2) + k]);
+                KQ_max_new = fmaxf(KQ_max_new, KQ_f[j*kqs_padded + k]);
             }
-            KQ_max_new = __half2half2(warp_reduce_max(__hmax(__low2half(KQ_max_new), __high2half(KQ_max_new))));
-            KQ_max_scale[j0/nwarps] = h2exp(KQ_max[j0/nwarps] - KQ_max_new);
+            KQ_max_scale[j0/nwarps] = expf(KQ_max[j0/nwarps] - KQ_max_new);
             KQ_max[j0/nwarps] = KQ_max_new;
 
-            half2 KQ_rowsum_add = make_half2(0.0f, 0.0f);
+            float KQ_rowsum_add = 0.0f;
 #pragma unroll
-            for (int k0 = 0; k0 < FATTN_KQ_STRIDE/2; k0 += WARP_SIZE) {
+            for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += WARP_SIZE) {
                 const int k = k0 + threadIdx.x;
 
-                half2 val = KQ2[j*(kqs_padded/2) + k];
-                val += mask ? mask2[(j*ne11 + k_VKQ_0)/2 + k] : make_half2(0.0f, 0.0f);
-                val = h2exp(val - KQ_max[j0/nwarps]);
+                float val = KQ_f[j*kqs_padded + k];
+                val += mask ? __half2float(maskh[j*ne11 + k_VKQ_0 + k]) : 0.0f;
+                val = expf(val - KQ_max[j0/nwarps]);
                 KQ_rowsum_add += val;
-                KQ2[j*(kqs_padded/2) + k] = val;
+                KQ[j*(2*kqs_padded) + k] = val;
             }
             KQ_rowsum_add = warp_reduce_sum(KQ_rowsum_add);
 
@@ -372,8 +372,8 @@ static __global__ void flash_attn_ext_f16(
                 const int k = k0 + (threadIdx.y % VKQ_ratio)*16;
                 nvcuda::wmma::load_matrix_sync(
                     KQ_b[k0/(VKQ_ratio*16)][j0/frag_n],
-                    KQ + j0*kqs_padded + k,
-                    kqs_padded);
+                    KQ + j0*(2*kqs_padded) + k,
+                    2*kqs_padded);
             }
         }
 
@@ -429,7 +429,7 @@ static __global__ void flash_attn_ext_f16(
                 for (int l = 0; l < VKQ_ratio; ++l) {
                     VKQ_add += KQ2[l*(ncols*D_padded/2) + j*(D_padded/2) + i];
                 }
-                VKQ2[j*(D_padded/2) + i] = KQ_max_scale[j0/nwarps]*VKQ2[j*(D_padded/2) + i] + VKQ_add;
+                VKQ2[j*(D_padded/2) + i] = make_half2(KQ_max_scale[j0/nwarps], KQ_max_scale[j0/nwarps])*VKQ2[j*(D_padded/2) + i] + VKQ_add;
             }
         }
 
@@ -444,16 +444,15 @@ static __global__ void flash_attn_ext_f16(
         }
         const int j_dst = (ic0 + j_VKQ)*parallel_blocks + ip;
 
-        const half KQ_rowsum_j = __low2half(KQ_rowsum[j0/nwarps]) + __high2half(KQ_rowsum[j0/nwarps]);
 #pragma unroll
         for (int i0 = 0; i0 < D; i0 += WARP_SIZE) {
             const int i = i0 + threadIdx.x;
             if (i0 + WARP_SIZE > D && i >= D) {
                 break;
             }
-            half dst_val = VKQ[j_VKQ*D_padded + i];
+            float dst_val = VKQ[j_VKQ*D_padded + i];
             if (parallel_blocks == 1) {
-                dst_val /= KQ_rowsum_j;
+                dst_val /= KQ_rowsum[j0/nwarps];
             }
             dst[j_dst*gridDim.y*D + blockIdx.y*D + i] = dst_val;
         }
@@ -462,8 +461,9 @@ static __global__ void flash_attn_ext_f16(
             continue;
         }
 
-        half2 dst_meta_val = KQ_max[j0/nwarps];
-        reinterpret_cast<half&>(dst_meta_val.y) = KQ_rowsum_j;
+        half2 dst_meta_val;
+        reinterpret_cast<half&>(dst_meta_val.x) = KQ_max[j0/nwarps];
+        reinterpret_cast<half&>(dst_meta_val.y) = KQ_rowsum[j0/nwarps];
         dst_meta[(ic0 + j_VKQ)*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = dst_meta_val;
     }
 // #else
@@ -755,7 +755,7 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
         return;
     }
 
-    constexpr int cols_per_block = 32;
+    constexpr int cols_per_block = 16;
     constexpr int nwarps         =  4;
     switch (Q->ne[0]) {
         case 64:
