@@ -363,6 +363,13 @@ static __global__ void flash_attn_ext_f16(
                 (__low2half(KQ_rowsum[j0/nwarps]) + __high2half(KQ_rowsum[j0/nwarps]))
                 / (__low2half(KQ_rowsum[j0/nwarps]) + __high2half(KQ_rowsum[j0/nwarps]) + __low2half(KQ_rowsum_add) + __high2half(KQ_rowsum_add)));
             KQ_rowsum[j0/nwarps] += KQ_rowsum_add;
+
+#pragma unroll
+            for (int k0 = 0; k0 < FATTN_KQ_STRIDE/2; k0 += WARP_SIZE) {
+                const int k = k0 + threadIdx.x;
+
+                KQ2[j*(kqs_padded/2) + k] /= __half2half2(__low2half(KQ_rowsum[j0/nwarps]) + __high2half(KQ_rowsum[j0/nwarps]));
+            }
         }
 
         __syncthreads();
@@ -432,7 +439,7 @@ static __global__ void flash_attn_ext_f16(
                 for (int l = 0; l < VKQ_ratio; ++l) {
                     VKQ_add += KQ2[l*(ncols*D_padded/2) + j*(D_padded/2) + i];
                 }
-                VKQ2[j*(D_padded/2) + i] = KQ_max_scale[j0/nwarps]*VKQ2[j*(D_padded/2) + i] + VKQ_add/__half2half2(__low2half(KQ_rowsum[j0/nwarps]) + __high2half(KQ_rowsum[j0/nwarps]));
+                VKQ2[j*(D_padded/2) + i] = KQ_max_scale[j0/nwarps]*VKQ2[j*(D_padded/2) + i] + VKQ_add;
             }
         }
 
