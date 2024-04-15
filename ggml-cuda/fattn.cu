@@ -359,7 +359,6 @@ static __global__ void flash_attn_ext_f16(
                 const int k = k0 + threadIdx.x;
 
                 float diff = KQ_f[j*kqs_padded + k] - KQ_max[j0/nwarps];
-                // diff = max(diff, SOFTMAX_FTZ_THRESHOLD);
                 KQ_f[j*kqs_padded + k] = diff;
             }
 
@@ -369,7 +368,7 @@ static __global__ void flash_attn_ext_f16(
                 const int k = k0 + threadIdx.x;
 
                 float val = KQ_f[j*kqs_padded + k];
-                val = expf(val);
+                val = val > SOFTMAX_FTZ_THRESHOLD ? expf(val) : 0.0f;
                 KQ_rowsum_add += val;
                 KQ[j*(2*kqs_padded) + k] = val;
             }
