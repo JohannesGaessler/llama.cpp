@@ -349,18 +349,8 @@ static __global__ void flash_attn_ext_f16(
                 KQ_f[j*kqs_padded + k] = val;
             }
             KQ_max_new = warp_reduce_max(KQ_max_new);
-            const float diff = KQ_max[j0/nwarps] - KQ_max_new;
-            const float diff_exp = expf(diff);
-            KQ_max_scale[j0/nwarps] = diff > SOFTMAX_FTZ_THRESHOLD ? diff_exp : 0.0f;
+            KQ_max_scale[j0/nwarps] = expf(KQ_max[j0/nwarps] - KQ_max_new);
             KQ_max[j0/nwarps] = KQ_max_new;
-
-#pragma unroll
-            for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += WARP_SIZE) {
-                const int k = k0 + threadIdx.x;
-
-                float diff = KQ_f[j*kqs_padded + k] - KQ_max[j0/nwarps];
-                KQ_f[j*kqs_padded + k] = diff;
-            }
 
             float KQ_rowsum_add = 0.0f;
 #pragma unroll
@@ -368,7 +358,7 @@ static __global__ void flash_attn_ext_f16(
                 const int k = k0 + threadIdx.x;
 
                 float val = KQ_f[j*kqs_padded + k];
-                val = val > SOFTMAX_FTZ_THRESHOLD ? expf(val) : 0.0f;
+                val = expf(val - KQ_max[j0/nwarps]);
                 KQ_rowsum_add += val;
                 KQ[j*(2*kqs_padded) + k] = val;
             }
