@@ -215,7 +215,7 @@ static __global__ void flash_attn_ext_f16(
         const int ne1,
         const int ne2,
         const int ne3) {
-// #if FP16_MMA_AVAILABLE
+#if FP16_MMA_AVAILABLE
     //In this kernel Q, K, V are matrices while i, j, k are matrix indices.
 
     const int ic0 = ncols*(blockIdx.x / parallel_blocks); // Index of the first Q/QKV column to work on.
@@ -342,8 +342,9 @@ static __global__ void flash_attn_ext_f16(
                 KQ_max_new = __hmax2(KQ_max_new, KQ2[j*(kqs_padded/2) + k]);
             }
             KQ_max_new = __half2half2(warp_reduce_max(__hmax(__low2half(KQ_max_new), __high2half(KQ_max_new))));
-            KQ_max_scale[j0/nwarps] = h2exp(KQ_max[j0/nwarps] - KQ_max_new);
-            const uint ftz_mask = __hgt2_mask(KQ_max[j0/nwarps] - KQ_max_new, make_half2(SOFTMAX_FTZ_THRESHOLD, SOFTMAX_FTZ_THRESHOLD));
+            const half2 diff = KQ_max[j0/nwarps] - KQ_max_new;
+            KQ_max_scale[j0/nwarps] = h2exp(diff);
+            const uint ftz_mask = __hgt2_mask(diff, make_half2(SOFTMAX_FTZ_THRESHOLD, SOFTMAX_FTZ_THRESHOLD));
             *((uint *) &KQ_max_scale[j0/nwarps]) &= ftz_mask;
             KQ_max[j0/nwarps] = KQ_max_new;
 
@@ -354,8 +355,9 @@ static __global__ void flash_attn_ext_f16(
 
                 half2 val = KQ2[j*(kqs_padded/2) + k];
                 val += mask ? mask2[(j*ne11 + k_VKQ_0)/2 + k] : make_half2(0.0f, 0.0f);
-                const uint ftz_mask = __hgt2_mask(val - KQ_max[j0/nwarps], make_half2(SOFTMAX_FTZ_THRESHOLD, SOFTMAX_FTZ_THRESHOLD));
-                val = h2exp(val - KQ_max[j0/nwarps]);
+                const half2 diff = val - KQ_max[j0/nwarps];
+                val = h2exp(diff);
+                const uint ftz_mask = __hgt2_mask(diff, make_half2(SOFTMAX_FTZ_THRESHOLD, SOFTMAX_FTZ_THRESHOLD));
                 *((uint *) &val) &= ftz_mask;
                 KQ_rowsum_add += val;
                 KQ2[j*(kqs_padded/2) + k] = val;
@@ -363,11 +365,6 @@ static __global__ void flash_attn_ext_f16(
             KQ_rowsum_add = warp_reduce_sum(KQ_rowsum_add);
 
             // Scale previous KQ_rowsum to account for a potential increase in KQ_max:
-            const float sumf_KQRS  = __low2float(KQ_rowsum[j0/nwarps]) + __high2float(KQ_rowsum[j0/nwarps]);
-            const float sumf_KQRSA = __low2float(KQ_rowsum_add) + __high2float(KQ_rowsum_add);
-            if (isnan(sumf_KQRS) != isnan(sumf_KQRSA)) {
-                printf("1 %f %f\n", sumf_KQRS, sumf_KQRSA);
-            }
             KQ_rowsum[j0/nwarps] = KQ_max_scale[j0/nwarps]*KQ_rowsum[j0/nwarps] + KQ_rowsum_add;
         }
 
@@ -477,9 +474,9 @@ static __global__ void flash_attn_ext_f16(
         reinterpret_cast<half&>(dst_meta_val.y) = KQ_rowsum_j;
         dst_meta[(ic0 + j_VKQ)*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = dst_meta_val;
     }
-// #else
-//    NO_DEVICE_CODE;
-// #endif // FP16_MMA_AVAILABLE
+#else
+   NO_DEVICE_CODE;
+#endif // FP16_MMA_AVAILABLE
 }
 
 template<int D, int parallel_blocks> // D == head size
@@ -488,7 +485,7 @@ static __global__ void flash_attn_combine_results(
         const float * __restrict__ VKQ_parts,
         const half2 * __restrict__ VKQ_meta,
         float * __restrict__ dst) {
-// #if FP16_AVAILABLE
+#if FP16_AVAILABLE
     VKQ_parts += parallel_blocks*D * gridDim.y*blockIdx.x;
     VKQ_meta  += parallel_blocks   * gridDim.y*blockIdx.x;
     dst       +=                 D * gridDim.y*blockIdx.x;
@@ -526,9 +523,9 @@ static __global__ void flash_attn_combine_results(
     const uint mask_div_by_0 = 0xFFFFFFFF * (VKQ_denominator != 0.0f);
     *((uint *) &dst_val) &= mask_div_by_0;
     dst[blockIdx.y*D + tid] = dst_val;
-// #else
-//    NO_DEVICE_CODE;
-// #endif // FP16_AVAILABLE
+#else
+   NO_DEVICE_CODE;
+#endif // FP16_AVAILABLE
 }
 
 constexpr int get_max_power_of_2(int x) {
