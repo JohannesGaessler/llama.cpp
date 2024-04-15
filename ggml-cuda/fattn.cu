@@ -214,7 +214,7 @@ static __global__ void flash_attn_ext_f16(
         const int ne1,
         const int ne2,
         const int ne3) {
-#if FP16_MMA_AVAILABLE
+// #if FP16_MMA_AVAILABLE
     //In this kernel Q, K, V are matrices while i, j, k are matrix indices.
 
     const int ic0 = ncols*(blockIdx.x / parallel_blocks); // Index of the first Q/QKV column to work on.
@@ -228,7 +228,8 @@ static __global__ void flash_attn_ext_f16(
     typedef nvcuda::wmma::fragment<nvcuda::wmma::matrix_a,    frag_m, frag_n, 16, half, nvcuda::wmma::row_major> frag_a_K;
     typedef nvcuda::wmma::fragment<nvcuda::wmma::matrix_a,    frag_m, frag_n, 16, half, nvcuda::wmma::col_major> frag_a_V;
     typedef nvcuda::wmma::fragment<nvcuda::wmma::matrix_b,    frag_m, frag_n, 16, half, nvcuda::wmma::col_major> frag_b;
-    typedef nvcuda::wmma::fragment<nvcuda::wmma::accumulator, frag_m, frag_n, 16, half>                          frag_c;
+    typedef nvcuda::wmma::fragment<nvcuda::wmma::accumulator, frag_m, frag_n, 16, float>                         frag_c_KQ;
+    typedef nvcuda::wmma::fragment<nvcuda::wmma::accumulator, frag_m, frag_n, 16, half>                          frag_c_VKQ;
 
     constexpr int KQ_stride_tc  = nwarps*frag_m; // Number of KQ rows calculated in parallel.
     constexpr int VKQ_ratio = KQ_stride_tc/VKQ_stride; // Number of parallel VKQ accumulators needed to keep all warps busy.
@@ -306,7 +307,7 @@ static __global__ void flash_attn_ext_f16(
         // Calculate tile of KQ:
 #pragma unroll
         for (int i_KQ_0 = 0; i_KQ_0 < FATTN_KQ_STRIDE; i_KQ_0 += KQ_stride_tc) {
-            frag_c KQ_c[ncols/frag_n];
+            frag_c_VKQ KQ_c[ncols/frag_n];
 #pragma unroll
             for (int j = 0; j < ncols/frag_n; ++j) {
                 nvcuda::wmma::fill_fragment(KQ_c[j], 0.0f);
@@ -376,7 +377,7 @@ static __global__ void flash_attn_ext_f16(
             }
         }
 
-        frag_c VKQ_c[D/VKQ_stride][ncols/frag_n];
+        frag_c_VKQ VKQ_c[D/VKQ_stride][ncols/frag_n];
 #pragma unroll
         for (int i_VKQ_0 = 0; i_VKQ_0 < D; i_VKQ_0 += VKQ_stride) {
 #pragma unroll
@@ -465,9 +466,9 @@ static __global__ void flash_attn_ext_f16(
         reinterpret_cast<half&>(dst_meta_val.y) = KQ_rowsum_j;
         dst_meta[(ic0 + j_VKQ)*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = dst_meta_val;
     }
-#else
-   NO_DEVICE_CODE;
-#endif // FP16_MMA_AVAILABLE
+// #else
+//    NO_DEVICE_CODE;
+// #endif // FP16_MMA_AVAILABLE
 }
 
 template<int D, int parallel_blocks> // D == head size
