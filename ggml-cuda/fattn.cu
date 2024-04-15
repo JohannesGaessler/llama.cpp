@@ -346,14 +346,20 @@ static __global__ void flash_attn_ext_f16(
                 float val = KQ_f[j*kqs_padded + k];
                 val += mask ? __half2float(maskh[j*ne11 + k_VKQ_0 + k]) : 0.0f;
                 KQ_max_new = max(KQ_max_new, val);
-                KQ[j*(2*kqs_padded) + k] = val;
+                KQ_f[j*kqs_padded + k] = val;
             }
             KQ_max_new = warp_reduce_max(KQ_max_new);
             const float diff = KQ_max[j0/nwarps] - KQ_max_new;
-            KQ_max_scale[j0/nwarps] = h2exp(make_half2(diff, diff));
-            const uint ftz_mask = __hgt2_mask(make_half2(diff, diff), make_half2(SOFTMAX_FTZ_THRESHOLD, SOFTMAX_FTZ_THRESHOLD));
-            *((uint *) &KQ_max_scale[j0/nwarps]) &= ftz_mask;
+            const float diff_exp = expf(diff);
+            KQ_max_scale[j0/nwarps] = make_half2(diff_exp, diff_exp);
             KQ_max[j0/nwarps] = KQ_max_new;
+
+#pragma unroll
+            for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += WARP_SIZE) {
+                const int k = k0 + threadIdx.x;
+
+                KQ[j*(2*kqs_padded) + k] = KQ_f[j*kqs_padded + k] - KQ_max[j0/nwarps];
+            }
 
             half2 KQ_rowsum_add = make_half2(0.0f, 0.0f);
 #pragma unroll
@@ -361,7 +367,7 @@ static __global__ void flash_attn_ext_f16(
                 const int k = k0 + threadIdx.x;
 
                 half2 val = KQ2[j*(2*kqs_padded/2) + k];
-                const half2 diff = val - make_half2(KQ_max[j0/nwarps], KQ_max[j0/nwarps]);
+                const half2 diff = val;
                 val = h2exp(diff);
                 const uint ftz_mask = __hgt2_mask(diff, make_half2(SOFTMAX_FTZ_THRESHOLD, SOFTMAX_FTZ_THRESHOLD));
                 *((uint *) &val) &= ftz_mask;
