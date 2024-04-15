@@ -454,7 +454,7 @@ static __global__ void flash_attn_ext_f16(
             if (parallel_blocks == 1) {
                 dst_val /= KQ_rowsum_j;
             }
-            dst[j_dst*gridDim.y*D + blockIdx.y*D + i] = dst_val;
+            dst[j_dst*gridDim.y*D + blockIdx.y*D + i] = isnan(__half2float(dst_val)) ? 0.0f : __half2float(dst_val);
         }
 
         if (parallel_blocks == 1 || threadIdx.x != 0) {
@@ -645,14 +645,14 @@ template <int D, int cols_per_block, int nwarps> void launch_fattn_f16(
 ) {
     const int blocks_num_pb1 = ((Q->ne[1] + cols_per_block - 1) / cols_per_block)*Q->ne[2]*Q->ne[3];
 
-    if (4*blocks_num_pb1 < 2*nsm) {
-        launch_fattn_f16_impl<D, cols_per_block, nwarps, 4>(Q, K, V, KQV, mask, pool, main_stream);
-        return;
-    }
-    if (2*blocks_num_pb1 < 2*nsm) {
-        launch_fattn_f16_impl<D, cols_per_block, nwarps, 2>(Q, K, V, KQV, mask, pool, main_stream);
-        return;
-    }
+    // if (4*blocks_num_pb1 < 2*nsm) {
+    //     launch_fattn_f16_impl<D, cols_per_block, nwarps, 4>(Q, K, V, KQV, mask, pool, main_stream);
+    //     return;
+    // }
+    // if (2*blocks_num_pb1 < 2*nsm) {
+    //     launch_fattn_f16_impl<D, cols_per_block, nwarps, 2>(Q, K, V, KQV, mask, pool, main_stream);
+    //     return;
+    // }
     launch_fattn_f16_impl<D, cols_per_block, nwarps, 1>(Q, K, V, KQV, mask, pool, main_stream);
 }
 
