@@ -3,8 +3,9 @@
 
 #include <mma.h>
 
-#define FATTN_KQ_STRIDE 256
-#define HALF_MAX_HALF   __float2half(65504.0f/2) // Use neg. of this instead of -INFINITY to initialize KQ max vals to avoid NaN upon subtraction.
+#define FATTN_KQ_STRIDE       256
+#define HALF_MAX_HALF         __float2half(65504.0f/2) // Use neg. of this instead of -INFINITY to initialize KQ max vals to avoid NaN upon subtraction.
+#define SOFTMAX_FTZ_THRESHOLD -20.0f                   // Softmax exp. of values smaller than this are flushed to zero to avoid NaNs.
 
 template<int D, int parallel_blocks> // D == head size
 __launch_bounds__(((D + WARP_SIZE - 1) / WARP_SIZE)*WARP_SIZE, 1)
@@ -214,7 +215,7 @@ static __global__ void flash_attn_ext_f16(
         const int ne1,
         const int ne2,
         const int ne3) {
-#if FP16_MMA_AVAILABLE
+// #if FP16_MMA_AVAILABLE
     //In this kernel Q, K, V are matrices while i, j, k are matrix indices.
 
     const int ic0 = ncols*(blockIdx.x / parallel_blocks); // Index of the first Q/QKV column to work on.
@@ -342,6 +343,8 @@ static __global__ void flash_attn_ext_f16(
             }
             KQ_max_new = __half2half2(warp_reduce_max(__hmax(__low2half(KQ_max_new), __high2half(KQ_max_new))));
             KQ_max_scale[j0/nwarps] = h2exp(KQ_max[j0/nwarps] - KQ_max_new);
+            const uint ftz_mask = __hgt2_mask(KQ_max[j0/nwarps] - KQ_max_new, make_half2(SOFTMAX_FTZ_THRESHOLD, SOFTMAX_FTZ_THRESHOLD));
+            *((uint *) &KQ_max_scale[j0/nwarps]) &= ftz_mask;
             KQ_max[j0/nwarps] = KQ_max_new;
 
             half2 KQ_rowsum_add = make_half2(0.0f, 0.0f);
@@ -351,13 +354,20 @@ static __global__ void flash_attn_ext_f16(
 
                 half2 val = KQ2[j*(kqs_padded/2) + k];
                 val += mask ? mask2[(j*ne11 + k_VKQ_0)/2 + k] : make_half2(0.0f, 0.0f);
+                const uint ftz_mask = __hgt2_mask(val - KQ_max[j0/nwarps], make_half2(SOFTMAX_FTZ_THRESHOLD, SOFTMAX_FTZ_THRESHOLD));
                 val = h2exp(val - KQ_max[j0/nwarps]);
+                *((uint *) &val) &= ftz_mask;
                 KQ_rowsum_add += val;
                 KQ2[j*(kqs_padded/2) + k] = val;
             }
             KQ_rowsum_add = warp_reduce_sum(KQ_rowsum_add);
 
             // Scale previous KQ_rowsum to account for a potential increase in KQ_max:
+            const float sumf_KQRS  = __low2float(KQ_rowsum[j0/nwarps]) + __high2float(KQ_rowsum[j0/nwarps]);
+            const float sumf_KQRSA = __low2float(KQ_rowsum_add) + __high2float(KQ_rowsum_add);
+            if (isnan(sumf_KQRS) != isnan(sumf_KQRSA)) {
+                printf("1 %f %f\n", sumf_KQRS, sumf_KQRSA);
+            }
             KQ_rowsum[j0/nwarps] = KQ_max_scale[j0/nwarps]*KQ_rowsum[j0/nwarps] + KQ_rowsum_add;
         }
 
@@ -443,18 +453,20 @@ static __global__ void flash_attn_ext_f16(
         }
         const int j_dst = (ic0 + j_VKQ)*parallel_blocks + ip;
 
-        const half KQ_rowsum_j = __low2half(KQ_rowsum[j0/nwarps]) + __high2half(KQ_rowsum[j0/nwarps]);
+        const float KQ_rowsum_j = __low2half(KQ_rowsum[j0/nwarps]) + __high2half(KQ_rowsum[j0/nwarps]);
 #pragma unroll
         for (int i0 = 0; i0 < D; i0 += WARP_SIZE) {
             const int i = i0 + threadIdx.x;
             if (i0 + WARP_SIZE > D && i >= D) {
                 break;
             }
-            half dst_val = VKQ[j_VKQ*D_padded + i];
+            float dst_val = VKQ[j_VKQ*D_padded + i];
             if (parallel_blocks == 1) {
+                const uint div_by_0_mask = 0xFFFFFFFF * (KQ_rowsum_j != 0.0f);
                 dst_val /= KQ_rowsum_j;
+                *((uint *) &dst_val) &= div_by_0_mask;
             }
-            dst[j_dst*gridDim.y*D + blockIdx.y*D + i] = isnan(__half2float(dst_val)) ? 0.0f : __half2float(dst_val);
+            dst[j_dst*gridDim.y*D + blockIdx.y*D + i] = dst_val;
         }
 
         if (parallel_blocks == 1 || threadIdx.x != 0) {
@@ -465,9 +477,9 @@ static __global__ void flash_attn_ext_f16(
         reinterpret_cast<half&>(dst_meta_val.y) = KQ_rowsum_j;
         dst_meta[(ic0 + j_VKQ)*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = dst_meta_val;
     }
-#else
-   NO_DEVICE_CODE;
-#endif // FP16_MMA_AVAILABLE
+// #else
+//    NO_DEVICE_CODE;
+// #endif // FP16_MMA_AVAILABLE
 }
 
 template<int D, int parallel_blocks> // D == head size
@@ -476,7 +488,7 @@ static __global__ void flash_attn_combine_results(
         const float * __restrict__ VKQ_parts,
         const half2 * __restrict__ VKQ_meta,
         float * __restrict__ dst) {
-#if FP16_AVAILABLE
+// #if FP16_AVAILABLE
     VKQ_parts += parallel_blocks*D * gridDim.y*blockIdx.x;
     VKQ_meta  += parallel_blocks   * gridDim.y*blockIdx.x;
     dst       +=                 D * gridDim.y*blockIdx.x;
@@ -501,16 +513,22 @@ static __global__ void flash_attn_combine_results(
     float VKQ_denominator = 0.0f;
 #pragma unroll
     for (int l = 0; l < parallel_blocks; ++l) {
-        float KQ_max_scale = hexp(__low2half(meta[l]) - kqmax);
+        const half diff = __low2half(meta[l]) - kqmax;
+        float KQ_max_scale = hexp(diff);
+        const uint mask_ftz = 0xFFFFFFFF * (diff > __float2half(SOFTMAX_FTZ_THRESHOLD));
+        *((uint *) &KQ_max_scale) &= mask_ftz;
 
         VKQ_numerator   += KQ_max_scale * VKQ_parts[l*gridDim.y*D + blockIdx.y*D + tid];
         VKQ_denominator += KQ_max_scale * __high2float(meta[l]);
     }
 
-    dst[blockIdx.y*D + tid] = VKQ_numerator / VKQ_denominator;
-#else
-   NO_DEVICE_CODE;
-#endif // FP16_AVAILABLE
+    float dst_val = VKQ_numerator / VKQ_denominator;
+    const uint mask_div_by_0 = 0xFFFFFFFF * (VKQ_denominator != 0.0f);
+    *((uint *) &dst_val) &= mask_div_by_0;
+    dst[blockIdx.y*D + tid] = dst_val;
+// #else
+//    NO_DEVICE_CODE;
+// #endif // FP16_AVAILABLE
 }
 
 constexpr int get_max_power_of_2(int x) {
@@ -645,14 +663,14 @@ template <int D, int cols_per_block, int nwarps> void launch_fattn_f16(
 ) {
     const int blocks_num_pb1 = ((Q->ne[1] + cols_per_block - 1) / cols_per_block)*Q->ne[2]*Q->ne[3];
 
-    // if (4*blocks_num_pb1 < 2*nsm) {
-    //     launch_fattn_f16_impl<D, cols_per_block, nwarps, 4>(Q, K, V, KQV, mask, pool, main_stream);
-    //     return;
-    // }
-    // if (2*blocks_num_pb1 < 2*nsm) {
-    //     launch_fattn_f16_impl<D, cols_per_block, nwarps, 2>(Q, K, V, KQV, mask, pool, main_stream);
-    //     return;
-    // }
+    if (4*blocks_num_pb1 < 2*nsm) {
+        launch_fattn_f16_impl<D, cols_per_block, nwarps, 4>(Q, K, V, KQV, mask, pool, main_stream);
+        return;
+    }
+    if (2*blocks_num_pb1 < 2*nsm) {
+        launch_fattn_f16_impl<D, cols_per_block, nwarps, 2>(Q, K, V, KQV, mask, pool, main_stream);
+        return;
+    }
     launch_fattn_f16_impl<D, cols_per_block, nwarps, 1>(Q, K, V, KQV, mask, pool, main_stream);
 }
 
