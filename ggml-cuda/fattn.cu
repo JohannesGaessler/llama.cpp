@@ -259,9 +259,9 @@ static __global__ void flash_attn_ext_f16(
     float * KQ_f = (float *) KQ;
     half2 * KQ2 = (half2 *) KQ;
 
-    half2    KQ_rowsum[ncols/nwarps] = {{ 0.0f,           0.0f}};
+    float    KQ_rowsum[ncols/nwarps] = {0.0f};
     float       KQ_max[ncols/nwarps] = {-HALF_MAX_HALF};
-    half2 KQ_max_scale[ncols/nwarps] = {{ 0.0f,           0.0f}};
+    float KQ_max_scale[ncols/nwarps] = {0.0f};
 
     __shared__ half VKQ[ncols*D_padded]; // Accumulator for final VKQ slice.
     half2 * VKQ2 = (half2 *) VKQ;
@@ -351,7 +351,7 @@ static __global__ void flash_attn_ext_f16(
             KQ_max_new = warp_reduce_max(KQ_max_new);
             const float diff = KQ_max[j0/nwarps] - KQ_max_new;
             const float diff_exp = expf(diff);
-            KQ_max_scale[j0/nwarps] = diff > SOFTMAX_FTZ_THRESHOLD ? make_half2(diff_exp, diff_exp) : make_half2(0.0f, 0.0f);
+            KQ_max_scale[j0/nwarps] = diff > SOFTMAX_FTZ_THRESHOLD ? diff_exp : 0.0f;
             KQ_max[j0/nwarps] = KQ_max_new;
 
 #pragma unroll
@@ -359,20 +359,19 @@ static __global__ void flash_attn_ext_f16(
                 const int k = k0 + threadIdx.x;
 
                 float diff = KQ_f[j*kqs_padded + k] - KQ_max[j0/nwarps];
-                diff = max(diff, SOFTMAX_FTZ_THRESHOLD);
-                KQ[j*(2*kqs_padded) + k] = diff;
+                // diff = max(diff, SOFTMAX_FTZ_THRESHOLD);
+                KQ_f[j*kqs_padded + k] = diff;
             }
 
-            half2 KQ_rowsum_add = make_half2(0.0f, 0.0f);
+            float KQ_rowsum_add = 0.0f;
 #pragma unroll
-            for (int k0 = 0; k0 < FATTN_KQ_STRIDE/2; k0 += WARP_SIZE) {
+            for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += WARP_SIZE) {
                 const int k = k0 + threadIdx.x;
 
-                half2 val = KQ2[j*(2*kqs_padded/2) + k];
-                const half2 diff = val;
-                val = h2exp(diff);
+                float val = KQ_f[j*kqs_padded + k];
+                val = expf(val);
                 KQ_rowsum_add += val;
-                KQ2[j*(2*kqs_padded/2) + k] = val;
+                KQ[j*(2*kqs_padded) + k] = val;
             }
             KQ_rowsum_add = warp_reduce_sum(KQ_rowsum_add);
 
@@ -447,7 +446,7 @@ static __global__ void flash_attn_ext_f16(
                 for (int l = 0; l < VKQ_ratio; ++l) {
                     VKQ_add += KQ2[l*(ncols*D_padded/2) + j*(D_padded/2) + i];
                 }
-                VKQ2[j*(D_padded/2) + i] = KQ_max_scale[j0/nwarps]*VKQ2[j*(D_padded/2) + i] + VKQ_add;
+                VKQ2[j*(D_padded/2) + i] = make_half2(KQ_max_scale[j0/nwarps], KQ_max_scale[j0/nwarps])*VKQ2[j*(D_padded/2) + i] + VKQ_add;
             }
         }
 
@@ -462,16 +461,15 @@ static __global__ void flash_attn_ext_f16(
         }
         const int j_dst = (ic0 + j_VKQ)*parallel_blocks + ip;
 
-        const half KQ_rowsum_j = __low2half(KQ_rowsum[j0/nwarps]) + __high2half(KQ_rowsum[j0/nwarps]);
 #pragma unroll
         for (int i0 = 0; i0 < D; i0 += WARP_SIZE) {
             const int i = i0 + threadIdx.x;
             if (i0 + WARP_SIZE > D && i >= D) {
                 break;
             }
-            half dst_val = VKQ[j_VKQ*D_padded + i];
+            float dst_val = VKQ[j_VKQ*D_padded + i];
             if (parallel_blocks == 1) {
-                dst_val /= KQ_rowsum_j;
+                dst_val /= KQ_rowsum[j0/nwarps];
             }
             dst[j_dst*gridDim.y*D + blockIdx.y*D + i] = dst_val;
         }
@@ -481,7 +479,7 @@ static __global__ void flash_attn_ext_f16(
         }
 
         half2 dst_meta_val = make_half2(KQ_max[j0/nwarps], KQ_max[j0/nwarps]);
-        reinterpret_cast<half&>(dst_meta_val.y) = KQ_rowsum_j;
+        reinterpret_cast<half&>(dst_meta_val.y) = KQ_rowsum[j0/nwarps];
         dst_meta[(ic0 + j_VKQ)*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = dst_meta_val;
     }
 // #else
