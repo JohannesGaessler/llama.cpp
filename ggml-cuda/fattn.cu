@@ -262,6 +262,7 @@ static __global__ void flash_attn_ext_f16(
     float    KQ_rowsum[ncols/nwarps] = {0.0f};
     float       KQ_max[ncols/nwarps] = {-HALF_MAX_HALF};
     float KQ_max_scale[ncols/nwarps] = {0.0f};
+    float   KQRS_scale[ncols/nwarps] = {0.0f};
 
     __shared__ half VKQ[ncols*D_padded]; // Accumulator for final VKQ slice.
     half2 * VKQ2 = (half2 *) VKQ;
@@ -360,12 +361,19 @@ static __global__ void flash_attn_ext_f16(
                 float val = KQ_f[j*kqs_padded + k];
                 val = expf(val - KQ_max[j0/nwarps]);
                 KQ_rowsum_add += val;
-                KQ[j*(2*kqs_padded) + k] = val;
+                KQ_f[j*kqs_padded + k] = val;
             }
             KQ_rowsum_add = warp_reduce_sum(KQ_rowsum_add);
 
             // Scale previous KQ_rowsum to account for a potential increase in KQ_max:
             KQ_rowsum[j0/nwarps] = KQ_max_scale[j0/nwarps]*KQ_rowsum[j0/nwarps] + KQ_rowsum_add;
+
+#pragma unroll
+            for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += WARP_SIZE) {
+                const int k = k0 + threadIdx.x;
+
+                KQ[j*(2*kqs_padded) + k] = KQ_f[j*kqs_padded + k];
+            }
         }
 
         __syncthreads();
