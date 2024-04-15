@@ -339,7 +339,10 @@ static __global__ void flash_attn_ext_f16(
 #pragma unroll
             for (int k0 = 0; k0 < FATTN_KQ_STRIDE/2; k0 += WARP_SIZE) {
                 const int k = k0 + threadIdx.x;
-                KQ_max_new = __hmax2(KQ_max_new, KQ2[j*(kqs_padded/2) + k]);
+                half2 val = KQ2[j*(kqs_padded/2) + k];
+                val += mask ? mask2[(j*ne11 + k_VKQ_0)/2 + k] : make_half2(0.0f, 0.0f);
+                KQ_max_new = __hmax2(KQ_max_new, val);
+                KQ2[j*(kqs_padded/2) + k] = val;
             }
             KQ_max_new = __half2half2(warp_reduce_max(__hmax(__low2half(KQ_max_new), __high2half(KQ_max_new))));
             const half2 diff = KQ_max[j0/nwarps] - KQ_max_new;
@@ -354,7 +357,6 @@ static __global__ void flash_attn_ext_f16(
                 const int k = k0 + threadIdx.x;
 
                 half2 val = KQ2[j*(kqs_padded/2) + k];
-                val += mask ? mask2[(j*ne11 + k_VKQ_0)/2 + k] : make_half2(0.0f, 0.0f);
                 const half2 diff = val - KQ_max[j0/nwarps];
                 val = h2exp(diff);
                 const uint ftz_mask = __hgt2_mask(diff, make_half2(SOFTMAX_FTZ_THRESHOLD, SOFTMAX_FTZ_THRESHOLD));
