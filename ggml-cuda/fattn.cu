@@ -342,6 +342,7 @@ static __global__ void flash_attn_ext_f16(
                 const int k = k0 + threadIdx.x;
                 KQ_max_new = fmaxf(KQ_max_new, KQ_f[j*kqs_padded + k]);
             }
+            KQ_max_new = warp_reduce_max(KQ_max_new);
             KQ_max_scale[j0/nwarps] = expf(KQ_max[j0/nwarps] - KQ_max_new);
             KQ_max[j0/nwarps] = KQ_max_new;
 
