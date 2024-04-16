@@ -358,6 +358,9 @@ static __global__ void flash_attn_ext_f16(
 
             const float diff = KQ_max[j0/nwarps] - KQ_max_new;
             KQ_max_scale[j0/nwarps] = expf(diff);
+            if (diff <= SOFTMAX_FTZ_THRESHOLD) {
+                KQ_max_scale[j0/nwarps] = 0.0f;
+            }
             KQ_max[j0/nwarps] = KQ_max_new;
 
             float KQ_rowsum_add = 0.0f;
@@ -367,6 +370,9 @@ static __global__ void flash_attn_ext_f16(
 
                 const float diff = KQ_f_tmp[k0/WARP_SIZE] - KQ_max[j0/nwarps];
                 KQ_f_tmp[k0/WARP_SIZE] = expf(diff);
+                if (diff <= SOFTMAX_FTZ_THRESHOLD) {
+                    KQ_f_tmp[k0/WARP_SIZE] = 0.0f;
+                }
                 KQ_rowsum_add += KQ_f_tmp[k0/WARP_SIZE];
                 KQ[j*(2*kqs_padded) + k] = KQ_f_tmp[k0/WARP_SIZE];
             }
