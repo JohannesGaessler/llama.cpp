@@ -215,7 +215,7 @@ static __global__ void flash_attn_ext_f16(
         const int ne1,
         const int ne2,
         const int ne3) {
-#if FP16_MMA_AVAILABLE
+// #if FP16_MMA_AVAILABLE
     //In this kernel Q, K, V are matrices while i, j, k are matrix indices.
 
     const int ic0 = ncols*(blockIdx.x / parallel_blocks); // Index of the first Q/QKV column to work on.
@@ -480,9 +480,9 @@ static __global__ void flash_attn_ext_f16(
         reinterpret_cast<half&>(dst_meta_val.y) = KQ_rowsum_j;
         dst_meta[(ic0 + j_VKQ)*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = dst_meta_val;
     }
-#else
-   NO_DEVICE_CODE;
-#endif // FP16_MMA_AVAILABLE
+// #else
+//    NO_DEVICE_CODE;
+// #endif // FP16_MMA_AVAILABLE
 }
 
 template<int D, int parallel_blocks> // D == head size
@@ -663,14 +663,14 @@ template <int D, int cols_per_block, int nwarps> void launch_fattn_f16(
 ) {
     const int blocks_num_pb1 = ((Q->ne[1] + cols_per_block - 1) / cols_per_block)*Q->ne[2]*Q->ne[3];
 
-    if (4*blocks_num_pb1 < 2*nsm) {
-        launch_fattn_f16_impl<D, cols_per_block, nwarps, 4>(Q, K, V, KQV, mask, pool, main_stream);
-        return;
-    }
-    if (2*blocks_num_pb1 < 2*nsm) {
-        launch_fattn_f16_impl<D, cols_per_block, nwarps, 2>(Q, K, V, KQV, mask, pool, main_stream);
-        return;
-    }
+    // if (4*blocks_num_pb1 < 2*nsm) {
+    //     launch_fattn_f16_impl<D, cols_per_block, nwarps, 4>(Q, K, V, KQV, mask, pool, main_stream);
+    //     return;
+    // }
+    // if (2*blocks_num_pb1 < 2*nsm) {
+    //     launch_fattn_f16_impl<D, cols_per_block, nwarps, 2>(Q, K, V, KQV, mask, pool, main_stream);
+    //     return;
+    // }
     launch_fattn_f16_impl<D, cols_per_block, nwarps, 1>(Q, K, V, KQV, mask, pool, main_stream);
 }
 
