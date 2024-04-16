@@ -261,13 +261,13 @@ static __global__ void flash_attn_ext_f16(
     half2 * KQ2 = (half2 *) KQ;
 
     float    KQ_rowsum[ncols/nwarps] = {0.0f};
-    float KQ_rowsum_max[ncols/nwarps] = {-FLT_MAX/2.0f};
-    float       KQ_max[ncols/nwarps] = {-FLT_MAX/2.0f};
+    float       KQ_max[ncols/nwarps];
+    float KQ_max_scale[ncols/nwarps] = {0.0f};
+
 #pragma unroll
     for (int i = 0; i < ncols/nwarps; ++i) {
         KQ_max[i] = {-FLT_MAX/2.0f};
     }
-    float KQ_max_scale[ncols/nwarps] = {0.0f};
 
     __shared__ half VKQ[ncols*D_padded]; // Accumulator for final VKQ slice.
     half2 * VKQ2 = (half2 *) VKQ;
@@ -350,13 +350,9 @@ static __global__ void flash_attn_ext_f16(
                 const int k = k0 + threadIdx.x;
 
                 KQ_f_tmp[k0/WARP_SIZE] = KQ_f[j*kqs_padded + k];
-                if (isnan(KQ_f_tmp[k0/WARP_SIZE])) {
-                    printf("KQ input NaN\n");
-                }
             }
 
             float KQ_max_new = KQ_max[j0/nwarps];
-            float KQ_max_pre = KQ_max[j0/nwarps];
 #pragma unroll
             for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += WARP_SIZE) {
                 const int k = k0 + threadIdx.x;
@@ -365,21 +361,6 @@ static __global__ void flash_attn_ext_f16(
                 KQ_max_new = max(KQ_max_new, KQ_f_tmp[k0/WARP_SIZE]);
             }
             KQ_max_new = warp_reduce_max(KQ_max_new);
-            if (KQ_max_new <= -FLT_MAX/2.0f) {
-#pragma unroll
-                for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += WARP_SIZE) {
-                    const int k = k0 + threadIdx.x;
-                    KQ[j*(2*kqs_padded) + k] = 0.0f;
-                }
-                continue;
-            }
-
-            float KQ_max_i = KQ_f_tmp[0];
-            if (KQ_max_new < -FLT_MAX/4.0f) {
-                printf("KQ_max_new = %f\n", KQ_max_new);
-            }
-
-            float KQ_max_mid = KQ_max[j0/nwarps];
 
             const float diff = KQ_max[j0/nwarps] - KQ_max_new;
             KQ_max_scale[j0/nwarps] = expf(diff);
@@ -387,6 +368,7 @@ static __global__ void flash_attn_ext_f16(
                 KQ_max_scale[j0/nwarps] = 0.0f;
             }
             KQ_max[j0/nwarps] = KQ_max_new;
+
             float KQ_rowsum_add = 0.0f;
 #pragma unroll
             for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += WARP_SIZE) {
@@ -401,19 +383,9 @@ static __global__ void flash_attn_ext_f16(
                 KQ[j*(2*kqs_padded) + k] = KQ_f_tmp[k0/WARP_SIZE];
             }
             KQ_rowsum_add = warp_reduce_sum(KQ_rowsum_add);
-            if (KQ_rowsum_add == 0.0f && KQ_max_pre != KQ_max[j0/nwarps]) {
-                printf(
-                    "KQ_rowsum_add == %.3E KQ_max == %.3E KQ_max_pre == %.3E KQ_max_scale == %f\n",
-                    KQ_rowsum_add, KQ_max[j0/nwarps], KQ_max_pre, KQ_max_scale[j0/nwarps]);
-            }
 
             // Scale previous KQ_rowsum to account for a potential increase in KQ_max:
-            float val_pre = KQ_rowsum[j0/nwarps];
             KQ_rowsum[j0/nwarps] = KQ_max_scale[j0/nwarps]*KQ_rowsum[j0/nwarps] + KQ_rowsum_add;
-            if (isnan(KQ_rowsum[j0/nwarps]) && !isnan(val_pre)) {
-                printf("KQ_rowsum == %f = %f * %f + %f\n", KQ_rowsum[j0/nwarps], KQ_max_scale[j0/nwarps], val_pre, KQ_rowsum_add);
-            }
-            KQ_rowsum_max[j0/nwarps] = max(KQ_rowsum_max[j0/nwarps], KQ_rowsum[j0/nwarps]);
         }
 
         __syncthreads();
@@ -508,12 +480,7 @@ static __global__ void flash_attn_ext_f16(
             if (parallel_blocks == 1) {
                 dst_val /= KQ_rowsum[j0/nwarps];
             }
-            // if (isnan(dst_val) && !(isnan(__half2float(VKQ[j_VKQ*D_padded + i])) && isnan(KQ_rowsum[j0/nwarps]))) {
-            if (isnan(dst_val)) {
-                printf("KQ_max == %f KQ_rowsum_max == %f\n", KQ_max[j0/nwarps], KQ_rowsum_max[j0/nwarps]);
-                // printf("dst_val == %f = %f / %f\n", dst_val, __half2float(VKQ[j_VKQ*D_padded + i]), KQ_rowsum[j0/nwarps]);
-            }
-            dst[j_dst*gridDim.y*D + blockIdx.y*D + i] = isnan(dst_val) ? 0.0f : dst_val;
+            dst[j_dst*gridDim.y*D + blockIdx.y*D + i] = dst_val;
         }
 
         if (parallel_blocks == 1 || threadIdx.x != 0) {
