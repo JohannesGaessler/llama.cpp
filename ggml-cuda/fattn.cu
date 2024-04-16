@@ -186,7 +186,8 @@ static __global__ void flash_attn_vec_ext_f16(
 #endif // FP16_AVAILABLE
 }
 
-template<int D, int ncols, int nwarps, int VKQ_stride, int parallel_blocks> // D == head size, VKQ_stride == num VKQ rows calculated in parallel
+// D == head size, VKQ_stride == num VKQ rows calculated in parallel:
+template<int D, int ncols, int nwarps, int VKQ_stride, int parallel_blocks, typename KQ_acc_t>
 __launch_bounds__(nwarps*WARP_SIZE, 1)
 static __global__ void flash_attn_ext_f16(
         const char * __restrict__ Q,
@@ -230,7 +231,7 @@ static __global__ void flash_attn_ext_f16(
     typedef nvcuda::wmma::fragment<nvcuda::wmma::matrix_a,    frag_m, frag_n, 16, half, nvcuda::wmma::row_major> frag_a_K;
     typedef nvcuda::wmma::fragment<nvcuda::wmma::matrix_a,    frag_m, frag_n, 16, half, nvcuda::wmma::col_major> frag_a_V;
     typedef nvcuda::wmma::fragment<nvcuda::wmma::matrix_b,    frag_m, frag_n, 16, half, nvcuda::wmma::col_major> frag_b;
-    typedef nvcuda::wmma::fragment<nvcuda::wmma::accumulator, frag_m, frag_n, 16, float>                         frag_c_KQ;
+    typedef nvcuda::wmma::fragment<nvcuda::wmma::accumulator, frag_m, frag_n, 16, KQ_acc_t>                      frag_c_KQ;
     typedef nvcuda::wmma::fragment<nvcuda::wmma::accumulator, frag_m, frag_n, 16, half>                          frag_c;
 
     constexpr int KQ_stride_tc  = nwarps*frag_m; // Number of KQ rows calculated in parallel.
@@ -618,7 +619,7 @@ template <int D, int parallel_blocks> void launch_fattn_vec_f16(
     CUDA_CHECK(cudaGetLastError());
 }
 
-template <int D, int cols_per_block, int nwarps, int parallel_blocks> void launch_fattn_f16_impl(
+template <int D, int cols_per_block, int nwarps, int parallel_blocks, typename KQ_acc_t> void launch_fattn_f16_impl(
         const ggml_tensor * Q, const ggml_tensor * K, const ggml_tensor * V, ggml_tensor * KQV, const ggml_tensor * mask,
         ggml_cuda_pool & pool, cudaStream_t main_stream
 ) {
@@ -638,7 +639,7 @@ template <int D, int cols_per_block, int nwarps, int parallel_blocks> void launc
     float scale;
     memcpy(&scale, KQV->op_params, sizeof(float));
 
-    flash_attn_ext_f16<D, cols_per_block, nwarps, get_VKQ_stride(D, nwarps, frag_m), parallel_blocks>
+    flash_attn_ext_f16<D, cols_per_block, nwarps, get_VKQ_stride(D, nwarps, frag_m), parallel_blocks, KQ_acc_t>
         <<<blocks_num, block_dim, shmem, main_stream>>> (
                 (const char *) Q->data,
                 (const char *) K->data,
@@ -683,7 +684,7 @@ template <int D, int cols_per_block, int nwarps> void launch_fattn_f16(
     //     launch_fattn_f16_impl<D, cols_per_block, nwarps, 2>(Q, K, V, KQV, mask, pool, main_stream);
     //     return;
     // }
-    launch_fattn_f16_impl<D, cols_per_block, nwarps, 1>(Q, K, V, KQV, mask, pool, main_stream);
+    launch_fattn_f16_impl<D, cols_per_block, nwarps, 1, float>(Q, K, V, KQV, mask, pool, main_stream);
 }
 
 void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
