@@ -262,13 +262,13 @@ static __global__ void flash_attn_ext_f16(
     float * KQ_f = (float *) KQ;
     half2 * KQ2 = (half2 *) KQ;
 
-    float    KQ_rowsum[ncols/nwarps] = {0.0f};
-    float       KQ_max[ncols/nwarps];
-    float KQ_max_scale[ncols/nwarps] = {0.0f};
+    float    KQ_rowsum_f[ncols/nwarps] = {0.0f};
+    float       KQ_max_f[ncols/nwarps];
+    float KQ_max_scale_f[ncols/nwarps] = {0.0f};
 
 #pragma unroll
     for (int j = 0; j < ncols/nwarps; ++j) {
-        KQ_max[j] = -FLT_MAX/2.0f;
+        KQ_max_f[j] = -FLT_MAX/2.0f;
     }
 
     __shared__ half VKQ[ncols*D_padded]; // Accumulator for final VKQ slice.
@@ -355,7 +355,7 @@ static __global__ void flash_attn_ext_f16(
                     KQ_f_tmp[k0/WARP_SIZE] = KQ_f[j*kqs_padded + k];
                 }
 
-                float KQ_max_new = KQ_max[j0/nwarps];
+                float KQ_max_new = KQ_max_f[j0/nwarps];
 #pragma unroll
                 for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += WARP_SIZE) {
                     const int k = k0 + threadIdx.x;
@@ -365,19 +365,19 @@ static __global__ void flash_attn_ext_f16(
                 }
                 KQ_max_new = warp_reduce_max(KQ_max_new);
 
-                const float diff = KQ_max[j0/nwarps] - KQ_max_new;
-                KQ_max_scale[j0/nwarps] = expf(diff);
+                const float diff = KQ_max_f[j0/nwarps] - KQ_max_new;
+                KQ_max_scale_f[j0/nwarps] = expf(diff);
                 if (diff <= SOFTMAX_FTZ_THRESHOLD) {
-                    KQ_max_scale[j0/nwarps] = 0.0f;
+                    KQ_max_scale_f[j0/nwarps] = 0.0f;
                 }
-                KQ_max[j0/nwarps] = KQ_max_new;
+                KQ_max_f[j0/nwarps] = KQ_max_new;
 
                 float KQ_rowsum_add = 0.0f;
 #pragma unroll
                 for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += WARP_SIZE) {
                     const int k = k0 + threadIdx.x;
 
-                    const float diff = KQ_f_tmp[k0/WARP_SIZE] - KQ_max[j0/nwarps];
+                    const float diff = KQ_f_tmp[k0/WARP_SIZE] - KQ_max_f[j0/nwarps];
                     KQ_f_tmp[k0/WARP_SIZE] = expf(diff);
                     if (diff <= SOFTMAX_FTZ_THRESHOLD) {
                         KQ_f_tmp[k0/WARP_SIZE] = 0.0f;
@@ -388,7 +388,7 @@ static __global__ void flash_attn_ext_f16(
                 KQ_rowsum_add = warp_reduce_sum(KQ_rowsum_add);
 
                 // Scale previous KQ_rowsum to account for a potential increase in KQ_max:
-                KQ_rowsum[j0/nwarps] = KQ_max_scale[j0/nwarps]*KQ_rowsum[j0/nwarps] + KQ_rowsum_add;
+                KQ_rowsum_f[j0/nwarps] = KQ_max_scale_f[j0/nwarps]*KQ_rowsum_f[j0/nwarps] + KQ_rowsum_add;
             }
         }
 
@@ -459,7 +459,7 @@ static __global__ void flash_attn_ext_f16(
                 for (int l = 0; l < VKQ_ratio; ++l) {
                     VKQ_add += KQ2[l*(ncols*D_padded/2) + j*(D_padded/2) + i];
                 }
-                VKQ2[j*(D_padded/2) + i] = make_half2(KQ_max_scale[j0/nwarps], KQ_max_scale[j0/nwarps])*VKQ2[j*(D_padded/2) + i] + VKQ_add;
+                VKQ2[j*(D_padded/2) + i] = make_half2(KQ_max_scale_f[j0/nwarps], KQ_max_scale_f[j0/nwarps])*VKQ2[j*(D_padded/2) + i] + VKQ_add;
             }
         }
 
@@ -482,7 +482,7 @@ static __global__ void flash_attn_ext_f16(
             }
             float dst_val = VKQ[j_VKQ*D_padded + i];
             if (parallel_blocks == 1) {
-                dst_val /= KQ_rowsum[j0/nwarps];
+                dst_val /= KQ_rowsum_f[j0/nwarps];
             }
             dst[j_dst*gridDim.y*D + blockIdx.y*D + i] = dst_val;
         }
@@ -492,8 +492,8 @@ static __global__ void flash_attn_ext_f16(
         }
 
         half2 dst_meta_val;
-        reinterpret_cast<half&>(dst_meta_val.x) = KQ_max[j0/nwarps];
-        reinterpret_cast<half&>(dst_meta_val.y) = KQ_rowsum[j0/nwarps];
+        reinterpret_cast<half&>(dst_meta_val.x) = KQ_max_f[j0/nwarps];
+        reinterpret_cast<half&>(dst_meta_val.y) = KQ_rowsum_f[j0/nwarps];
         dst_meta[(ic0 + j_VKQ)*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = dst_meta_val;
     }
 // #else
