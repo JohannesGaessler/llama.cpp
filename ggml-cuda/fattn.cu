@@ -368,14 +368,21 @@ static __global__ void flash_attn_ext_f16(
             // Scale previous KQ_rowsum to account for a potential increase in KQ_max:
             KQ_rowsum[j0/nwarps] *= KQ_max_scale[j0/nwarps];
             const float KQ_rowsum_new = KQ_rowsum[j0/nwarps] + KQ_rowsum_add;
-            KQRS_scale[j0/nwarps] = KQ_rowsum[j0/nwarps] / KQ_rowsum_new;
+            KQRS_scale[j0/nwarps] = KQ_rowsum_new == 0.0f ? 1.0f : KQ_rowsum[j0/nwarps] / KQ_rowsum_new;
             KQ_rowsum[j0/nwarps] = KQ_rowsum_new;
 
 #pragma unroll
             for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += WARP_SIZE) {
                 const int k = k0 + threadIdx.x;
 
-                KQ[j*(2*kqs_padded) + k] = KQ_f[j*kqs_padded + k] / KQ_rowsum[j0/nwarps];
+                float val = KQ_f[j*kqs_padded + k];
+                if (KQ_rowsum[j0/nwarps] != 0.0f) {
+                    val /= KQ_rowsum[j0/nwarps];
+                }
+                KQ[j*(2*kqs_padded) + k] = val;
+                if (isnan(__half2float(KQ[j*(2*kqs_padded) + k])) && !isnan(val) && !isnan(KQ_rowsum[j0/nwarps])) {
+                    printf("%f = %f / %f\n", __half2float(KQ[j*(2*kqs_padded) + k]), val, KQ_rowsum[j0/nwarps]);
+                }
             }
         }
 
