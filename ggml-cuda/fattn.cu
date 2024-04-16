@@ -229,6 +229,7 @@ static __global__ void flash_attn_ext_f16(
     typedef nvcuda::wmma::fragment<nvcuda::wmma::matrix_a,    frag_m, frag_n, 16, half, nvcuda::wmma::row_major> frag_a_K;
     typedef nvcuda::wmma::fragment<nvcuda::wmma::matrix_a,    frag_m, frag_n, 16, half, nvcuda::wmma::col_major> frag_a_V;
     typedef nvcuda::wmma::fragment<nvcuda::wmma::matrix_b,    frag_m, frag_n, 16, half, nvcuda::wmma::col_major> frag_b;
+    typedef nvcuda::wmma::fragment<nvcuda::wmma::accumulator, frag_m, frag_n, 16, float>                         frag_c_KQ;
     typedef nvcuda::wmma::fragment<nvcuda::wmma::accumulator, frag_m, frag_n, 16, half>                          frag_c;
 
     constexpr int KQ_stride_tc  = nwarps*frag_m; // Number of KQ rows calculated in parallel.
@@ -251,9 +252,10 @@ static __global__ void flash_attn_ext_f16(
     frag_b Q_b[D/16][ncols/frag_n];
 
     // A single buffer for temporarily holding tiles of KQ and VKQ parts:
-    constexpr int mem_KQ = ncols*kqs_padded;
+    constexpr int mem_KQ = 2*ncols*kqs_padded;
     constexpr int mem_VKQ_parts = VKQ_ratio*ncols*D_padded;
     __shared__ half KQ[mem_KQ >= mem_VKQ_parts ? mem_KQ : mem_VKQ_parts];
+    float * KQ_f = (float *) KQ;
     half2 * KQ2 = (half2 *) KQ;
 
     half2    KQ_rowsum[ncols/nwarps] = {{ 0.0f,           0.0f}};
@@ -307,7 +309,7 @@ static __global__ void flash_attn_ext_f16(
         // Calculate tile of KQ:
 #pragma unroll
         for (int i_KQ_0 = 0; i_KQ_0 < FATTN_KQ_STRIDE; i_KQ_0 += KQ_stride_tc) {
-            frag_c KQ_c[ncols/frag_n];
+            frag_c_KQ KQ_c[ncols/frag_n];
 #pragma unroll
             for (int j = 0; j < ncols/frag_n; ++j) {
                 nvcuda::wmma::fill_fragment(KQ_c[j], 0.0f);
@@ -323,7 +325,7 @@ static __global__ void flash_attn_ext_f16(
             }
 #pragma unroll
             for (int j0 = 0; j0 < ncols; j0 += frag_n) {
-                nvcuda::wmma::store_matrix_sync(KQ + j0*kqs_padded + i_KQ_0 + frag_m*threadIdx.y, KQ_c[j0/frag_n], kqs_padded, nvcuda::wmma::mem_col_major);
+                nvcuda::wmma::store_matrix_sync(KQ_f + j0*kqs_padded + i_KQ_0 + frag_m*threadIdx.y, KQ_c[j0/frag_n], kqs_padded, nvcuda::wmma::mem_col_major);
             }
         }
 
@@ -335,12 +337,20 @@ static __global__ void flash_attn_ext_f16(
         for (int j0 = 0; j0 < ncols; j0 += nwarps) {
             const int j = j0 + threadIdx.y;
 
+#pragma unroll
+            for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += WARP_SIZE) {
+                const int k = k0 + threadIdx.x;
+
+                KQ[j*(2*kqs_padded) + k] = KQ_f[j*kqs_padded + k];
+            }
+
+
             half2 KQ2_tmp[FATTN_KQ_STRIDE/(2*WARP_SIZE)];
 #pragma unroll
             for (int k0 = 0; k0 < FATTN_KQ_STRIDE/2; k0 += WARP_SIZE) {
                 const int k = k0 + threadIdx.x;
 
-                KQ2_tmp[k0/WARP_SIZE] = KQ2[j*(kqs_padded/2) + k];
+                KQ2_tmp[k0/WARP_SIZE] = KQ2[j*(2*kqs_padded/2) + k];
             }
 
             half2 KQ_max_new = KQ_max[j0/nwarps];
@@ -368,7 +378,7 @@ static __global__ void flash_attn_ext_f16(
                 const uint ftz_mask = __hgt2_mask(diff, make_half2(SOFTMAX_FTZ_THRESHOLD, SOFTMAX_FTZ_THRESHOLD));
                 *((uint *) &KQ2_tmp[k0/WARP_SIZE]) &= ftz_mask;
                 KQ_rowsum_add += KQ2_tmp[k0/WARP_SIZE];
-                KQ2[j*(kqs_padded/2) + k] = KQ2_tmp[k0/WARP_SIZE];
+                KQ2[j*(2*kqs_padded/2) + k] = KQ2_tmp[k0/WARP_SIZE];
             }
             KQ_rowsum_add = warp_reduce_sum(KQ_rowsum_add);
 
@@ -386,8 +396,8 @@ static __global__ void flash_attn_ext_f16(
                 const int k = k0 + (threadIdx.y % VKQ_ratio)*16;
                 nvcuda::wmma::load_matrix_sync(
                     KQ_b[k0/(VKQ_ratio*16)][j0/frag_n],
-                    KQ + j0*kqs_padded + k,
-                    kqs_padded);
+                    KQ + j0*(2*kqs_padded) + k,
+                    2*kqs_padded);
             }
         }
 
@@ -772,7 +782,7 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
         return;
     }
 
-    constexpr int cols_per_block = 32;
+    constexpr int cols_per_block = 16;
     constexpr int nwarps         =  4;
     switch (Q->ne[0]) {
         case 64:
