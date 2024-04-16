@@ -255,11 +255,12 @@ static __global__ void flash_attn_ext_f16(
     frag_b Q_b[D/16][ncols/frag_n];
 
     // A single buffer for temporarily holding tiles of KQ and VKQ parts:
-    constexpr int mem_KQ = 2*ncols*kqs_padded;
-    constexpr int mem_VKQ_parts = VKQ_ratio*ncols*D_padded;
-    __shared__ half KQ[mem_KQ >= mem_VKQ_parts ? mem_KQ : mem_VKQ_parts];
-    float * KQ_f = (float *) KQ;
-    half2 * KQ2 = (half2 *) KQ;
+    constexpr int mem_KQ = ncols*kqs_padded*sizeof(KQ_acc_t);
+    constexpr int mem_VKQ_parts = VKQ_ratio*ncols*D_padded*sizeof(half);
+    __shared__ char KQ_c[mem_KQ >= mem_VKQ_parts ? mem_KQ : mem_VKQ_parts];
+    half  * KQ = (half *) KQ_c;
+    float * KQ_f = (float *) KQ_c;
+    half2 * KQ2 = (half2 *) KQ_c;
 
     float    KQ_rowsum[ncols/nwarps] = {0.0f};
     float       KQ_max[ncols/nwarps];
