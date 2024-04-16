@@ -366,13 +366,16 @@ static __global__ void flash_attn_ext_f16(
             KQ_rowsum_add = warp_reduce_sum(KQ_rowsum_add);
 
             // Scale previous KQ_rowsum to account for a potential increase in KQ_max:
-            KQ_rowsum[j0/nwarps] = KQ_max_scale[j0/nwarps]*KQ_rowsum[j0/nwarps] + KQ_rowsum_add;
+            KQ_rowsum[j0/nwarps] *= KQ_max_scale[j0/nwarps];
+            const float KQ_rowsum_new = KQ_rowsum[j0/nwarps] + KQ_rowsum_add;
+            KQRS_scale[j0/nwarps] = KQ_rowsum[j0/nwarps] / KQ_rowsum_new;
+            KQ_rowsum[j0/nwarps] = KQ_rowsum_new;
 
 #pragma unroll
             for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += WARP_SIZE) {
                 const int k = k0 + threadIdx.x;
 
-                KQ[j*(2*kqs_padded) + k] = KQ_f[j*kqs_padded + k];
+                KQ[j*(2*kqs_padded) + k] = KQ_f[j*kqs_padded + k] / KQ_rowsum[j0/nwarps];
             }
         }
 
@@ -443,7 +446,8 @@ static __global__ void flash_attn_ext_f16(
                 for (int l = 0; l < VKQ_ratio; ++l) {
                     VKQ_add += KQ2[l*(ncols*D_padded/2) + j*(D_padded/2) + i];
                 }
-                VKQ2[j*(D_padded/2) + i] = make_half2(KQ_max_scale[j0/nwarps], KQ_max_scale[j0/nwarps])*VKQ2[j*(D_padded/2) + i] + VKQ_add;
+                float tmp = KQRS_scale[j0/nwarps];
+                VKQ2[j*(D_padded/2) + i] = make_half2(tmp, tmp)*VKQ2[j*(D_padded/2) + i] + VKQ_add;
             }
         }
 
@@ -465,9 +469,6 @@ static __global__ void flash_attn_ext_f16(
                 break;
             }
             float dst_val = VKQ[j_VKQ*D_padded + i];
-            if (parallel_blocks == 1) {
-                dst_val /= KQ_rowsum[j0/nwarps];
-            }
             dst[j_dst*gridDim.y*D + blockIdx.y*D + i] = dst_val;
         }
 
@@ -662,14 +663,14 @@ template <int D, int cols_per_block, int nwarps> void launch_fattn_f16(
 ) {
     const int blocks_num_pb1 = ((Q->ne[1] + cols_per_block - 1) / cols_per_block)*Q->ne[2]*Q->ne[3];
 
-    if (4*blocks_num_pb1 < 2*nsm) {
-        launch_fattn_f16_impl<D, cols_per_block, nwarps, 4>(Q, K, V, KQV, mask, pool, main_stream);
-        return;
-    }
-    if (2*blocks_num_pb1 < 2*nsm) {
-        launch_fattn_f16_impl<D, cols_per_block, nwarps, 2>(Q, K, V, KQV, mask, pool, main_stream);
-        return;
-    }
+    // if (4*blocks_num_pb1 < 2*nsm) {
+    //     launch_fattn_f16_impl<D, cols_per_block, nwarps, 4>(Q, K, V, KQV, mask, pool, main_stream);
+    //     return;
+    // }
+    // if (2*blocks_num_pb1 < 2*nsm) {
+    //     launch_fattn_f16_impl<D, cols_per_block, nwarps, 2>(Q, K, V, KQV, mask, pool, main_stream);
+    //     return;
+    // }
     launch_fattn_f16_impl<D, cols_per_block, nwarps, 1>(Q, K, V, KQV, mask, pool, main_stream);
 }
 
