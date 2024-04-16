@@ -785,7 +785,7 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
 
     const int32_t precision = KQV->op_params[1];
 
-    if (true || precision != GGML_PREC_DEFAULT) {
+    if (precision != GGML_PREC_DEFAULT) {
         constexpr int cols_per_block = 16;
         constexpr int nwarps         =  4;
         switch (Q->ne[0]) {
@@ -885,7 +885,7 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
         return;
     }
 
-    constexpr int cols_per_block = 16;
+    constexpr int cols_per_block = 32;
     constexpr int nwarps         =  4;
     switch (Q->ne[0]) {
         case 64:
