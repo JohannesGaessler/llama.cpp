@@ -2,6 +2,7 @@
 #include "fattn.cuh"
 
 #include <cmath>
+#include <cstdint>
 #include <mma.h>
 
 #define FATTN_KQ_STRIDE       256
@@ -741,21 +742,21 @@ template <int D, int cols_per_block, int nwarps, int parallel_blocks, typename K
     CUDA_CHECK(cudaGetLastError());
 }
 
-template <int D, int cols_per_block, int nwarps> void launch_fattn_f16(
+template <int D, int cols_per_block, int nwarps, typename KQ_acc_t> void launch_fattn_f16(
         const ggml_tensor * Q, const ggml_tensor * K, const ggml_tensor * V, ggml_tensor * KQV, const ggml_tensor * mask,
         const int nsm, ggml_cuda_pool & pool, cudaStream_t main_stream
 ) {
     const int blocks_num_pb1 = ((Q->ne[1] + cols_per_block - 1) / cols_per_block)*Q->ne[2]*Q->ne[3];
 
-    // if (4*blocks_num_pb1 < 2*nsm) {
-    //     launch_fattn_f16_impl<D, cols_per_block, nwarps, 4>(Q, K, V, KQV, mask, pool, main_stream);
-    //     return;
-    // }
-    // if (2*blocks_num_pb1 < 2*nsm) {
-    //     launch_fattn_f16_impl<D, cols_per_block, nwarps, 2>(Q, K, V, KQV, mask, pool, main_stream);
-    //     return;
-    // }
-    launch_fattn_f16_impl<D, cols_per_block, nwarps, 1, float>(Q, K, V, KQV, mask, pool, main_stream);
+    if (4*blocks_num_pb1 < 2*nsm) {
+        launch_fattn_f16_impl<D, cols_per_block, nwarps, 4, KQ_acc_t>(Q, K, V, KQV, mask, pool, main_stream);
+        return;
+    }
+    if (2*blocks_num_pb1 < 2*nsm) {
+        launch_fattn_f16_impl<D, cols_per_block, nwarps, 2, KQ_acc_t>(Q, K, V, KQV, mask, pool, main_stream);
+        return;
+    }
+    launch_fattn_f16_impl<D, cols_per_block, nwarps, 1, KQ_acc_t>(Q, K, V, KQV, mask, pool, main_stream);
 }
 
 void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
@@ -780,14 +781,44 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
 
     ggml_cuda_set_device(ctx.device);
 
-    if (Q->ne[1] == 1 && Q->ne[0] % WARP_SIZE == 0) {
+    const int nsm = ggml_cuda_info().devices[ggml_cuda_get_device()].nsm;
+
+    const int32_t precision = KQV->op_params[1];
+
+    if (true || precision != GGML_PREC_DEFAULT) {
+        constexpr int cols_per_block = 16;
+        constexpr int nwarps         =  4;
+        switch (Q->ne[0]) {
+            case 64:
+                launch_fattn_f16< 64, cols_per_block, nwarps, float>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
+                break;
+            case 80:
+                launch_fattn_f16< 80, cols_per_block, nwarps, float>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
+                break;
+            case 96:
+                launch_fattn_f16< 96, cols_per_block, nwarps, float>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
+                break;
+            case 112:
+                launch_fattn_f16<112, cols_per_block, nwarps, float>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
+                break;
+            case 128:
+                launch_fattn_f16<128, cols_per_block, nwarps, float>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
+                break;
+            case 256:
+                launch_fattn_f16<256, cols_per_block, nwarps, float>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
+                break;
+            default:
+                GGML_ASSERT(false);
+                break;
+        }
+        return;
+    }
+
+    if (Q->ne[1] == 1 && Q->ne[0] % (2*WARP_SIZE) == 0) {
         constexpr int parallel_blocks = 4;
         switch (Q->ne[0]) {
             case 64:
                 launch_fattn_vec_f16< 64, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
-                break;
-            case 96:
-                launch_fattn_vec_f16< 96, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
                 break;
             case 128:
                 launch_fattn_vec_f16<128, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
@@ -802,23 +833,21 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
         return;
     }
 
-    const int nsm = ggml_cuda_info().devices[ggml_cuda_get_device()].nsm;
-
     if (Q->ne[1] <= 8 && Q->ne[0] % WARP_SIZE == 0) {
         constexpr int cols_per_block = 8;
         constexpr int nwarps         = 4;
         switch (Q->ne[0]) {
             case 64:
-                launch_fattn_f16< 64, cols_per_block, nwarps>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
+                launch_fattn_f16< 64, cols_per_block, nwarps, half>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
                 break;
             case 96:
-                launch_fattn_f16< 96, cols_per_block, nwarps>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
+                launch_fattn_f16< 96, cols_per_block, nwarps, half>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
                 break;
             case 128:
-                launch_fattn_f16<128, cols_per_block, nwarps>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
+                launch_fattn_f16<128, cols_per_block, nwarps, half>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
                 break;
             case 256:
-                launch_fattn_f16<256, cols_per_block, nwarps>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
+                launch_fattn_f16<256, cols_per_block, nwarps, half>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
                 break;
             default:
                 GGML_ASSERT(false);
@@ -832,22 +861,22 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
         constexpr int nwarps         =  4;
         switch (Q->ne[0]) {
             case 64:
-                launch_fattn_f16< 64, cols_per_block, nwarps>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
+                launch_fattn_f16< 64, cols_per_block, nwarps, half>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
                 break;
             case 80:
-                launch_fattn_f16< 80, cols_per_block, nwarps>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
+                launch_fattn_f16< 80, cols_per_block, nwarps, half>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
                 break;
             case 96:
-                launch_fattn_f16< 96, cols_per_block, nwarps>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
+                launch_fattn_f16< 96, cols_per_block, nwarps, half>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
                 break;
             case 112:
-                launch_fattn_f16<112, cols_per_block, nwarps>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
+                launch_fattn_f16<112, cols_per_block, nwarps, half>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
                 break;
             case 128:
-                launch_fattn_f16<128, cols_per_block, nwarps>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
+                launch_fattn_f16<128, cols_per_block, nwarps, half>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
                 break;
             case 256:
-                launch_fattn_f16<256, cols_per_block, nwarps>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
+                launch_fattn_f16<256, cols_per_block, nwarps, half>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
                 break;
             default:
                 GGML_ASSERT(false);
@@ -860,22 +889,22 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
     constexpr int nwarps         =  4;
     switch (Q->ne[0]) {
         case 64:
-            launch_fattn_f16< 64, cols_per_block, nwarps>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
+            launch_fattn_f16< 64, cols_per_block, nwarps, half>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
             break;
         case 80:
-            launch_fattn_f16< 80, cols_per_block, nwarps>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
+            launch_fattn_f16< 80, cols_per_block, nwarps, half>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
             break;
         case 96:
-            launch_fattn_f16< 96, cols_per_block, nwarps>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
+            launch_fattn_f16< 96, cols_per_block, nwarps, half>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
             break;
         case 112:
-            launch_fattn_f16<112, cols_per_block, nwarps>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
+            launch_fattn_f16<112, cols_per_block, nwarps, half>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
             break;
         case 128:
-            launch_fattn_f16<128, cols_per_block, nwarps>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
+            launch_fattn_f16<128, cols_per_block, nwarps, half>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
             break;
         case 256:
-            launch_fattn_f16<256, cols_per_block, nwarps>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
+            launch_fattn_f16<256, cols_per_block, nwarps, half>(Q, K, V, KQV, mask, nsm, ctx.pool(), ctx.stream());
             break;
         default:
             GGML_ASSERT(false);
