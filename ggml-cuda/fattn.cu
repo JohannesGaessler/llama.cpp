@@ -267,8 +267,8 @@ static __global__ void flash_attn_ext_f16(
     float KQ_max_scale[ncols/nwarps] = {0.0f};
 
 #pragma unroll
-    for (int i = 0; i < ncols/nwarps; ++i) {
-        KQ_max[i] = {-FLT_MAX/2.0f};
+    for (int j = 0; j < ncols/nwarps; ++j) {
+        KQ_max[j] = -FLT_MAX/2.0f;
     }
 
     __shared__ half VKQ[ncols*D_padded]; // Accumulator for final VKQ slice.
@@ -346,48 +346,50 @@ static __global__ void flash_attn_ext_f16(
         for (int j0 = 0; j0 < ncols; j0 += nwarps) {
             const int j = j0 + threadIdx.y;
 
-            float KQ_f_tmp[FATTN_KQ_STRIDE / WARP_SIZE];
+            if (std::is_same<KQ_acc_t, float>::value) {
+                float KQ_f_tmp[FATTN_KQ_STRIDE / WARP_SIZE];
 #pragma unroll
-            for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += WARP_SIZE) {
-                const int k = k0 + threadIdx.x;
+                for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += WARP_SIZE) {
+                    const int k = k0 + threadIdx.x;
 
-                KQ_f_tmp[k0/WARP_SIZE] = KQ_f[j*kqs_padded + k];
-            }
-
-            float KQ_max_new = KQ_max[j0/nwarps];
-#pragma unroll
-            for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += WARP_SIZE) {
-                const int k = k0 + threadIdx.x;
-
-                KQ_f_tmp[k0/WARP_SIZE] += mask ? __half2float(maskh[j*(nb31/sizeof(half)) + k_VKQ_0 + k]) : 0.0f;
-                KQ_max_new = max(KQ_max_new, KQ_f_tmp[k0/WARP_SIZE]);
-            }
-            KQ_max_new = warp_reduce_max(KQ_max_new);
-
-            const float diff = KQ_max[j0/nwarps] - KQ_max_new;
-            KQ_max_scale[j0/nwarps] = expf(diff);
-            if (diff <= SOFTMAX_FTZ_THRESHOLD) {
-                KQ_max_scale[j0/nwarps] = 0.0f;
-            }
-            KQ_max[j0/nwarps] = KQ_max_new;
-
-            float KQ_rowsum_add = 0.0f;
-#pragma unroll
-            for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += WARP_SIZE) {
-                const int k = k0 + threadIdx.x;
-
-                const float diff = KQ_f_tmp[k0/WARP_SIZE] - KQ_max[j0/nwarps];
-                KQ_f_tmp[k0/WARP_SIZE] = expf(diff);
-                if (diff <= SOFTMAX_FTZ_THRESHOLD) {
-                    KQ_f_tmp[k0/WARP_SIZE] = 0.0f;
+                    KQ_f_tmp[k0/WARP_SIZE] = KQ_f[j*kqs_padded + k];
                 }
-                KQ_rowsum_add += KQ_f_tmp[k0/WARP_SIZE];
-                KQ[j*(kqar*kqs_padded) + k] = KQ_f_tmp[k0/WARP_SIZE];
-            }
-            KQ_rowsum_add = warp_reduce_sum(KQ_rowsum_add);
 
-            // Scale previous KQ_rowsum to account for a potential increase in KQ_max:
-            KQ_rowsum[j0/nwarps] = KQ_max_scale[j0/nwarps]*KQ_rowsum[j0/nwarps] + KQ_rowsum_add;
+                float KQ_max_new = KQ_max[j0/nwarps];
+#pragma unroll
+                for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += WARP_SIZE) {
+                    const int k = k0 + threadIdx.x;
+
+                    KQ_f_tmp[k0/WARP_SIZE] += mask ? __half2float(maskh[j*(nb31/sizeof(half)) + k_VKQ_0 + k]) : 0.0f;
+                    KQ_max_new = max(KQ_max_new, KQ_f_tmp[k0/WARP_SIZE]);
+                }
+                KQ_max_new = warp_reduce_max(KQ_max_new);
+
+                const float diff = KQ_max[j0/nwarps] - KQ_max_new;
+                KQ_max_scale[j0/nwarps] = expf(diff);
+                if (diff <= SOFTMAX_FTZ_THRESHOLD) {
+                    KQ_max_scale[j0/nwarps] = 0.0f;
+                }
+                KQ_max[j0/nwarps] = KQ_max_new;
+
+                float KQ_rowsum_add = 0.0f;
+#pragma unroll
+                for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += WARP_SIZE) {
+                    const int k = k0 + threadIdx.x;
+
+                    const float diff = KQ_f_tmp[k0/WARP_SIZE] - KQ_max[j0/nwarps];
+                    KQ_f_tmp[k0/WARP_SIZE] = expf(diff);
+                    if (diff <= SOFTMAX_FTZ_THRESHOLD) {
+                        KQ_f_tmp[k0/WARP_SIZE] = 0.0f;
+                    }
+                    KQ_rowsum_add += KQ_f_tmp[k0/WARP_SIZE];
+                    KQ[j*(kqar*kqs_padded) + k] = KQ_f_tmp[k0/WARP_SIZE];
+                }
+                KQ_rowsum_add = warp_reduce_sum(KQ_rowsum_add);
+
+                // Scale previous KQ_rowsum to account for a potential increase in KQ_max:
+                KQ_rowsum[j0/nwarps] = KQ_max_scale[j0/nwarps]*KQ_rowsum[j0/nwarps] + KQ_rowsum_add;
+            }
         }
 
         __syncthreads();
