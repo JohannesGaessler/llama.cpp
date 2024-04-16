@@ -241,6 +241,7 @@ static __global__ void flash_attn_ext_f16(
     // Pad internal representation of KQ, KQV to reduce shared memory bank conflicts:
     constexpr int D_padded = D + 8;
     constexpr int kqs_padded = FATTN_KQ_STRIDE + 8;
+    constexpr int kqar = sizeof(KQ_acc_t)/sizeof(half);
 
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
     const float * Q_f   = (const float *) (Q + nb02* blockIdx.y              + nb01*ic0);
@@ -255,12 +256,11 @@ static __global__ void flash_attn_ext_f16(
     frag_b Q_b[D/16][ncols/frag_n];
 
     // A single buffer for temporarily holding tiles of KQ and VKQ parts:
-    constexpr int mem_KQ = ncols*kqs_padded*sizeof(KQ_acc_t);
-    constexpr int mem_VKQ_parts = VKQ_ratio*ncols*D_padded*sizeof(half);
-    __shared__ char KQ_c[mem_KQ >= mem_VKQ_parts ? mem_KQ : mem_VKQ_parts];
-    half  * KQ = (half *) KQ_c;
-    float * KQ_f = (float *) KQ_c;
-    half2 * KQ2 = (half2 *) KQ_c;
+    constexpr int mem_KQ = ncols*kqs_padded*kqar;
+    constexpr int mem_VKQ_parts = VKQ_ratio*ncols*D_padded;
+    __shared__ half KQ[mem_KQ >= mem_VKQ_parts ? mem_KQ : mem_VKQ_parts];
+    float * KQ_f = (float *) KQ;
+    half2 * KQ2 = (half2 *) KQ;
 
     float    KQ_rowsum[ncols/nwarps] = {0.0f};
     float       KQ_max[ncols/nwarps];
@@ -334,7 +334,7 @@ static __global__ void flash_attn_ext_f16(
             }
 #pragma unroll
             for (int j0 = 0; j0 < ncols; j0 += frag_n) {
-                nvcuda::wmma::store_matrix_sync(KQ_f + j0*kqs_padded + i_KQ_0 + frag_m*threadIdx.y, KQ_c[j0/frag_n], kqs_padded, nvcuda::wmma::mem_col_major);
+                nvcuda::wmma::store_matrix_sync((KQ_acc_t *) KQ + j0*kqs_padded + i_KQ_0 + frag_m*threadIdx.y, KQ_c[j0/frag_n], kqs_padded, nvcuda::wmma::mem_col_major);
             }
         }
 
@@ -382,7 +382,7 @@ static __global__ void flash_attn_ext_f16(
                     KQ_f_tmp[k0/WARP_SIZE] = 0.0f;
                 }
                 KQ_rowsum_add += KQ_f_tmp[k0/WARP_SIZE];
-                KQ[j*(2*kqs_padded) + k] = KQ_f_tmp[k0/WARP_SIZE];
+                KQ[j*(kqar*kqs_padded) + k] = KQ_f_tmp[k0/WARP_SIZE];
             }
             KQ_rowsum_add = warp_reduce_sum(KQ_rowsum_add);
 
@@ -400,8 +400,8 @@ static __global__ void flash_attn_ext_f16(
                 const int k = k0 + (threadIdx.y % VKQ_ratio)*16;
                 nvcuda::wmma::load_matrix_sync(
                     KQ_b[k0/(VKQ_ratio*16)][j0/frag_n],
-                    KQ + j0*(2*kqs_padded) + k,
-                    2*kqs_padded);
+                    KQ + j0*(kqar*kqs_padded) + k,
+                    kqar*kqs_padded);
             }
         }
 
