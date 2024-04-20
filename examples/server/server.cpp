@@ -1,9 +1,12 @@
+#include "common/common.h"
+#include "common/ngram-cache.h"
 #include "utils.hpp"
 
 #include "common.h"
 #include "json-schema-to-grammar.h"
-#include "llama.h"
 #include "grammar-parser.h"
+#include "llama.h"
+#include "ngram-cache.h"
 
 #ifndef NDEBUG
 // crash the server in debug mode, otherwise send an http 500 error
@@ -655,6 +658,11 @@ struct server_context {
     // slots / clients
     std::vector<server_slot> slots;
     json default_generation_settings_for_props;
+
+    std::vector<llama_token> token_history;
+    llama_ngram_cache nc_context;
+    llama_ngram_cache nc_dynamic;
+    llama_ngram_cache nc_static;
 
     server_queue    queue_tasks;
     server_response queue_results;
@@ -1885,7 +1893,7 @@ struct server_context {
             for (auto & slot : slots) {
                 // this slot still has a prompt to be processed
                 if (slot.state == SLOT_STATE_IDLE && slot.command == SLOT_COMMAND_LOAD_PROMPT) {
-                    auto & prompt_tokens = slot.prompt_tokens;
+                    std::vector<llama_token> & prompt_tokens = slot.prompt_tokens;
 
                     // we haven't tokenized the prompt yet - do it now:
                     if (prompt_tokens.empty()) {
@@ -2032,6 +2040,11 @@ struct server_context {
 
                         slot.n_prompt_tokens_processed = 0;
                     }
+
+                    // fprintf(stderr, "prompt fill pre: prompt_tokens.size()=%d token_history.size()=%d\n", (int)prompt_tokens.size(), (int)token_history.size());
+                    token_history.insert(token_history.end(), prompt_tokens.begin(), prompt_tokens.end());
+                    llama_ngram_cache_update(nc_context, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, token_history, prompt_tokens.size(), false);
+                    // fprintf(stderr, "prompt fill post: token_history.size()=%d\n", (int)token_history.size());
 
                     if (slot.embedding) {
                         // cannot fit the prompt in the current batch - will try next iter
@@ -2185,6 +2198,29 @@ struct server_context {
                 0, 0, 0, // unused
             };
 
+            std::vector<llama_token> draft;
+            if (n_tokens == 1 && !token_history.empty()) {
+                draft.push_back(token_history.back());
+                // fprintf(stderr, "nc_context.size()=%d nc_dynamic.size()=%d nc_static.size()=%d\n",
+                //         (int)nc_context.size(), (int)nc_dynamic.size(), (int)nc_static.size());
+                // fprintf(stderr, "tail.size()=%d draft.size()=%d\n", (int)tail.size(), (int)draft.size());
+                llama_ngram_cache_draft(token_history, draft, 3, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, nc_context, nc_dynamic, nc_static);
+                // fprintf(stderr, "draft.size()=%d\n", (int)draft.size());
+
+                if (draft.size() > 1) {
+                    fprintf(stderr, "draft");
+                    for (llama_token t : draft) {
+                        std::string s = llama_token_to_piece(ctx, t);
+                        fprintf(stderr, "'%s' ", s.c_str());
+                    }
+                    fprintf(stderr, "\n");
+                }
+
+                // for (size_t j = 1; j < draft.size(); ++j) {
+                //     llama_batch_add(batch_view, draft[j], j, {batch.seq_id[j][0]}, true);
+                // }
+            }
+
             const int ret = llama_decode(ctx, batch_view);
 
             if (ret != 0) {
@@ -2232,8 +2268,16 @@ struct server_context {
 
                 completion_token_output result;
                 const llama_token id = llama_sampling_sample(slot.ctx_sampling, ctx, NULL, slot.i_batch - i);
+                if (draft.size() > 1 && draft[1] == id) {
+                    std::string s0 = llama_token_to_piece(ctx, draft[0]);
+                    std::string s1 = llama_token_to_piece(ctx, draft[1]);
+                    fprintf(stderr, "Predicted: %s -> %s\n", s0.c_str(), s1.c_str());
+                }
 
                 llama_sampling_accept(slot.ctx_sampling, ctx, id, true);
+
+                token_history.push_back(id);
+                llama_ngram_cache_update(nc_context, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, token_history, 1, false);
 
                 slot.n_decoded += 1;
                 if (slot.n_decoded == 1) {
@@ -2718,6 +2762,18 @@ static void server_params_parse(int argc, char ** argv, server_params & sparams,
                 else if (value == "numactl")                    { params.numa = GGML_NUMA_STRATEGY_NUMACTL; }
                 else { invalid_param = true; break; }
             }
+        } else if (arg == "-lcs" || arg == "--lookup-cache-static") {
+            if (++i >= argc) {
+                invalid_param = true;
+                break;
+            }
+            params.lookup_cache_static = argv[i];
+        } else if (arg == "-lcd" || arg == "--lookup-cache-dynamic") {
+            if (++i >= argc) {
+                invalid_param = true;
+                break;
+            }
+            params.lookup_cache_dynamic = argv[i];
         } else if (arg == "--embedding" || arg == "--embeddings") {
             params.embedding = true;
         } else if (arg == "-cb" || arg == "--cont-batching") {
@@ -3016,6 +3072,17 @@ int main(int argc, char ** argv) {
     } else {
         ctx_server.init();
         state.store(SERVER_STATE_READY);
+    }
+
+    fprintf(stderr, "lcd=%s lcs=%s\n", params.lookup_cache_dynamic.c_str(), params.lookup_cache_static.c_str());
+    if (!params.lookup_cache_dynamic.empty()) {
+        ctx_server.nc_dynamic = llama_ngram_cache_load(params.lookup_cache_dynamic);
+        fprintf(stderr, "loaded nc_dynamic, size=%d\n", (int)ctx_server.nc_dynamic.size());
+    }
+
+    if (!params.lookup_cache_static.empty()) {
+        ctx_server.nc_static = llama_ngram_cache_load(params.lookup_cache_static);
+        fprintf(stderr, "loaded nc_static, size=%d\n", (int)ctx_server.nc_static.size());
     }
 
     LOG_INFO("model loaded", {});
