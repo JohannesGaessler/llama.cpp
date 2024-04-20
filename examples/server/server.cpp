@@ -2216,9 +2216,9 @@ struct server_context {
                     fprintf(stderr, "\n");
                 }
 
-                // for (size_t j = 1; j < draft.size(); ++j) {
-                //     llama_batch_add(batch_view, draft[j], j, {batch.seq_id[j][0]}, true);
-                // }
+                for (size_t j = 1; j < draft.size(); ++j) {
+                    llama_batch_add(batch_view, draft[j], j, {batch.seq_id[j][0]}, true);
+                }
             }
 
             const int ret = llama_decode(ctx, batch_view);
@@ -2269,11 +2269,6 @@ struct server_context {
                 for (size_t j = 0; j < 1; ++j) {
                     completion_token_output result;
                     const llama_token id = llama_sampling_sample(slot.ctx_sampling, ctx, NULL, slot.i_batch - i + j);
-                    if (draft.size() > j && draft[j+1] == id) {
-                        std::string s0 = llama_token_to_piece(ctx, draft[0]);
-                        std::string s1 = llama_token_to_piece(ctx, draft[1]);
-                        fprintf(stderr, "Predicted: %s -> %s\n", s0.c_str(), s1.c_str());
-                    }
 
                     llama_sampling_accept(slot.ctx_sampling, ctx, id, true);
 
@@ -2311,6 +2306,20 @@ struct server_context {
                     }
 
                     slot.i_batch = -1;
+
+                    if (j+1 < draft.size()) {
+                        if(draft[j+1] == id) {
+                            std::string s0 = llama_token_to_piece(ctx, draft[j+0]);
+                            std::string s1 = llama_token_to_piece(ctx, draft[j+1]);
+                            fprintf(stderr, "Predicted: %s -> %s\n", s0.c_str(), s1.c_str());
+                        } else {
+                            std::string s0 = llama_token_to_piece(ctx, draft[j+0]);
+                            std::string s1 = llama_token_to_piece(ctx, draft[j+1]);
+                            fprintf(stderr, "Prediction fail: %s -> %s\n", s0.c_str(), s1.c_str());
+                            llama_kv_cache_seq_rm(ctx, 0, slot.i_batch - i + j, -1);
+                            break;
+                        }
+                    }
                 }
             }
         }
