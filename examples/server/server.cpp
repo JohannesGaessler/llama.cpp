@@ -166,6 +166,9 @@ struct server_slot {
     // when a task is submitted, we first tokenize the prompt and store it here
     std::vector<llama_token> prompt_tokens;
 
+    llama_ngram_cache nc_context;
+    std::vector<llama_token> accepted_tokens;
+
     std::string generated_text;
     std::vector<llama_token> cache_tokens;
     std::vector<completion_token_output> generated_token_probs;
@@ -221,6 +224,9 @@ struct server_slot {
         n_past_se          = 0;
 
         generated_token_probs.clear();
+
+        nc_context.clear();
+        accepted_tokens.clear();
     }
 
     bool has_budget(gpt_params &global_params) {
@@ -659,8 +665,6 @@ struct server_context {
     std::vector<server_slot> slots;
     json default_generation_settings_for_props;
 
-    std::vector<llama_token> token_history;
-    llama_ngram_cache nc_context;
     llama_ngram_cache nc_dynamic;
     llama_ngram_cache nc_static;
 
@@ -1527,9 +1531,8 @@ struct server_context {
                         }
                     }
 
+                    llama_ngram_cache_merge(nc_dynamic, slot->nc_context);
                     slot->reset();
-                    llama_ngram_cache_merge(nc_dynamic, nc_context);
-                    nc_context.clear();
 
                     slot->id_task   = task.id;
                     slot->id_multi  = task.id_multi;
