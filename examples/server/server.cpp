@@ -2207,14 +2207,14 @@ struct server_context {
                 llama_ngram_cache_draft(token_history, draft, 3, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, nc_context, nc_dynamic, nc_static);
                 // fprintf(stderr, "draft.size()=%d\n", (int)draft.size());
 
-                if (draft.size() > 1) {
-                    fprintf(stderr, "draft");
-                    for (llama_token t : draft) {
-                        std::string s = llama_token_to_piece(ctx, t);
-                        fprintf(stderr, "'%s' ", s.c_str());
-                    }
-                    fprintf(stderr, "\n");
-                }
+                // if (draft.size() > 1) {
+                //     fprintf(stderr, "draft");
+                //     for (llama_token t : draft) {
+                //         std::string s = llama_token_to_piece(ctx, t);
+                //         fprintf(stderr, "'%s' ", s.c_str());
+                //     }
+                //     fprintf(stderr, "\n");
+                // }
 
                 for (size_t j = 1; j < draft.size(); ++j) {
                     llama_batch_add(batch_view, draft[j], j, {batch.seq_id[j][0]}, true);
@@ -2309,13 +2309,13 @@ struct server_context {
 
                     if (j+1 < draft.size()) {
                         if(draft[j+1] == id) {
-                            std::string s0 = llama_token_to_piece(ctx, draft[j+0]);
-                            std::string s1 = llama_token_to_piece(ctx, draft[j+1]);
-                            fprintf(stderr, "Predicted: %s -> %s\n", s0.c_str(), s1.c_str());
+                            // std::string s0 = llama_token_to_piece(ctx, draft[j+0]);
+                            // std::string s1 = llama_token_to_piece(ctx, draft[j+1]);
+                            // fprintf(stderr, "Predicted: %s -> %s\n", s0.c_str(), s1.c_str());
                         } else {
-                            std::string s0 = llama_token_to_piece(ctx, draft[j+0]);
-                            std::string s1 = llama_token_to_piece(ctx, draft[j+1]);
-                            fprintf(stderr, "Prediction fail: %s -> %s\n", s0.c_str(), s1.c_str());
+                            // std::string s0 = llama_token_to_piece(ctx, draft[j+0]);
+                            // std::string s1 = llama_token_to_piece(ctx, draft[j+1]);
+                            // fprintf(stderr, "Prediction fail: %s -> %s\n", s0.c_str(), s1.c_str());
                             llama_kv_cache_seq_rm(ctx, 0, slot.i_batch - i + j, -1);
                             break;
                         }
