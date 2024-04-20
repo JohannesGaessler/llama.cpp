@@ -845,6 +845,8 @@ async def request_completion(prompt,
                                 headers=headers,
                                 timeout=3600) as response:
             if expect_api_error is None or not expect_api_error:
+                if 'DEBUG' in os.environ and os.environ['DEBUG'] == 'ON' and response.status != 200:
+                    print(f"Unexpected bad HTTP response: {response.status}")
                 assert response.status == 200
                 assert response.headers['Access-Control-Allow-Origin'] == origin
                 return await response.json()
@@ -1232,8 +1234,7 @@ def start_server_background(context):
         server_args.extend(['--ubatch-size', context.n_ubatch])
     if context.n_gpu_layer:
         server_args.extend(['--n-gpu-layers', context.n_gpu_layer])
-    if context.draft is not None:
-        server_args.extend(['--draft', context.draft])
+    server_args.extend(['--draft', context.draft if context.draft is not None else 0])
     if context.server_continuous_batching:
         server_args.append('--cont-batching')
     if context.server_embeddings:
