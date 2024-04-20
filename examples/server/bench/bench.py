@@ -45,6 +45,7 @@ def main(args_in: list[str] | None = None) -> None:
     parser.add_argument("--ubatch-size", type=int, help="physical maximum batch size", required=True)
     parser.add_argument("--scenario", type=str, help="Scenario to run", required=True)
     parser.add_argument("--duration", type=str, help="Bench scenario", required=True)
+    parser.add_argument("-lcs", "--lookup-cache-static", type=str, help="Path to optional static lookup cache to use.", required=False, default=None)
 
     args = parser.parse_args(args_in)
 
@@ -269,6 +270,8 @@ def start_server_background(args):
     server_args.append('--cont-batching')
     server_args.append('--metrics')
     server_args.extend(['--log-format', "text"])
+    if args.lookup_cache_static is not None:
+        server_args.extend(['--lookup-cache-static', args.lookup_cache_static])
     args = [str(arg) for arg in [server_path, *server_args]]
     print(f"bench: starting server with: {' '.join(args)}")
     pkwargs = {
