@@ -1,9 +1,12 @@
+#include "common/common.h"
+#include "common/ngram-cache.h"
 #include "utils.hpp"
 
 #include "common.h"
 #include "json-schema-to-grammar.h"
-#include "llama.h"
 #include "grammar-parser.h"
+#include "llama.h"
+#include "ngram-cache.h"
 
 #ifndef NDEBUG
 // crash the server in debug mode, otherwise send an http 500 error
@@ -163,6 +166,10 @@ struct server_slot {
     // when a task is submitted, we first tokenize the prompt and store it here
     std::vector<llama_token> prompt_tokens;
 
+    llama_ngram_cache nc_context;
+    std::vector<llama_token> draft;
+    std::vector<llama_token> accepted_tokens;
+
     std::string generated_text;
     std::vector<llama_token> cache_tokens;
     std::vector<completion_token_output> generated_token_probs;
@@ -218,6 +225,9 @@ struct server_slot {
         n_past_se          = 0;
 
         generated_token_probs.clear();
+
+        nc_context.clear();
+        accepted_tokens.clear();
     }
 
     bool has_budget(gpt_params &global_params) {
@@ -258,7 +268,7 @@ struct server_slot {
         }
     }
 
-    json get_formated_timings() const {
+    json get_formatted_timings() const {
         return json {
             {"prompt_n",               n_prompt_tokens_processed},
             {"prompt_ms",              t_prompt_processing},
@@ -423,7 +433,7 @@ struct server_queue {
         queue_tasks_deferred.push_back(std::move(task));
     }
 
-    // Get the next id for creating anew task
+    // Get the next id for creating a new task
     int get_new_id() {
         std::unique_lock<std::mutex> lock(mutex_tasks);
         int new_id = id++;
@@ -539,7 +549,7 @@ struct server_queue {
         queue_multitasks.push_back(multi);
     }
 
-    // updatethe remaining subtasks, while appending results to multitask
+    // update the remaining subtasks, while appending results to multitask
     void update_multitask(int id_multi, int id_sub, server_task_result & result) {
         std::lock_guard<std::mutex> lock(mutex_tasks);
         for (auto & multitask : queue_multitasks) {
@@ -572,7 +582,7 @@ struct server_response {
         waiting_task_ids.insert(id_task);
     }
 
-    // when the request is finished, we can remove task associated with it
+    // when the request is finished, we can remove the task associated with it
     void remove_waiting_task_id(int id_task) {
         LOG_VERBOSE("remove waiting for task id", {{"id_task", id_task}});
 
@@ -655,6 +665,9 @@ struct server_context {
     // slots / clients
     std::vector<server_slot> slots;
     json default_generation_settings_for_props;
+
+    llama_ngram_cache nc_dynamic;
+    llama_ngram_cache nc_static;
 
     server_queue    queue_tasks;
     server_response queue_results;
@@ -744,7 +757,7 @@ struct server_context {
             slots.push_back(slot);
         }
 
-        default_generation_settings_for_props = get_formated_generation(slots.front());
+        default_generation_settings_for_props = get_formatted_generation(slots.front());
         default_generation_settings_for_props["seed"] = -1;
 
         // the update_slots() logic will always submit a maximum of n_batch tokens
@@ -1225,7 +1238,7 @@ struct server_context {
         return slot.has_next_token; // continue
     }
 
-    json get_formated_generation(const server_slot & slot) const {
+    json get_formatted_generation(const server_slot & slot) const {
         const auto eos_bias = slot.sparams.logit_bias.find(llama_token_eos(model));
         const bool ignore_eos = eos_bias != slot.sparams.logit_bias.end() && eos_bias->second < 0.0f && std::isinf(eos_bias->second);
 
@@ -1347,7 +1360,7 @@ struct server_context {
             {"model",               params.model_alias},
             {"tokens_predicted",    slot.n_decoded},
             {"tokens_evaluated",    slot.n_prompt_tokens},
-            {"generation_settings", get_formated_generation(slot)},
+            {"generation_settings", get_formatted_generation(slot)},
             {"prompt",              slot.prompt},
             {"truncated",           slot.truncated},
             {"stopped_eos",         slot.stopped_eos},
@@ -1355,7 +1368,7 @@ struct server_context {
             {"stopped_limit",       slot.stopped_limit},
             {"stopping_word",       slot.stopping_word},
             {"tokens_cached",       slot.n_past},
-            {"timings",             slot.get_formated_timings()}
+            {"timings",             slot.get_formatted_timings()}
         };
 
         if (slot.sparams.n_probs > 0) {
@@ -1553,7 +1566,7 @@ struct server_context {
                     int n_processing_slots = 0;
 
                     for (server_slot & slot : slots) {
-                        json slot_data = get_formated_generation(slot);
+                        json slot_data = get_formatted_generation(slot);
                         slot_data["id"]         = slot.id;
                         slot_data["id_task"]    = slot.id_task;
                         slot_data["state"]      = slot.state;
@@ -1755,6 +1768,7 @@ struct server_context {
             if (slot.command == SLOT_COMMAND_RELEASE) {
                 slot.state       = SLOT_STATE_IDLE;
                 slot.command     = SLOT_COMMAND_NONE;
+                llama_ngram_cache_merge(nc_dynamic, slot.nc_context);
                 slot.t_last_used = ggml_time_us();
 
                 LOG_INFO("slot released", {
@@ -1845,7 +1859,7 @@ struct server_context {
         // start populating the batch for this iteration
         llama_batch_clear(batch);
 
-        // frist, add sampled tokens from any ongoing sequences
+        // first, add sampled tokens from any ongoing sequences
         for (auto & slot : slots) {
             if (slot.state == SLOT_STATE_IDLE) {
                 continue;
@@ -1885,7 +1899,7 @@ struct server_context {
             for (auto & slot : slots) {
                 // this slot still has a prompt to be processed
                 if (slot.state == SLOT_STATE_IDLE && slot.command == SLOT_COMMAND_LOAD_PROMPT) {
-                    auto & prompt_tokens = slot.prompt_tokens;
+                    std::vector<llama_token> & prompt_tokens = slot.prompt_tokens;
 
                     // we haven't tokenized the prompt yet - do it now:
                     if (prompt_tokens.empty()) {
@@ -1921,6 +1935,9 @@ struct server_context {
                         } else {
                             prompt_tokens = tokenize(slot.prompt, system_prompt.empty()); // add BOS if there isn't system prompt
                         }
+
+                        slot.accepted_tokens.insert(slot.accepted_tokens.end(), prompt_tokens.begin(), prompt_tokens.end());
+                        llama_ngram_cache_update(slot.nc_context, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, slot.accepted_tokens, prompt_tokens.size(), false);
 
                         slot.n_past = 0;
                         slot.n_prompt_tokens = prompt_tokens.size();
@@ -2185,6 +2202,18 @@ struct server_context {
                 0, 0, 0, // unused
             };
 
+            for (auto & slot : slots) {
+                slot.draft.clear();
+                slot.draft.push_back(slot.accepted_tokens.back());
+
+                llama_ngram_cache_draft(
+                    slot.accepted_tokens, slot.draft, 3, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, slot.nc_context, nc_dynamic, nc_static);
+
+                for (size_t j = 1; j < slot.draft.size(); ++j) {
+                    llama_batch_add(batch_view, slot.draft[j], slot.accepted_tokens.size() + j, {slot.id + 1}, true);
+                }
+            }
+
             const int ret = llama_decode(ctx, batch_view);
 
             if (ret != 0) {
@@ -2230,39 +2259,50 @@ struct server_context {
                     continue; // continue loop of slots
                 }
 
-                completion_token_output result;
-                const llama_token id = llama_sampling_sample(slot.ctx_sampling, ctx, NULL, slot.i_batch - i);
+                for (size_t j = 0; j < slot.draft.size(); ++j) {
+                    if (slot.draft[j] != slot.accepted_tokens.back()) {
+                        llama_kv_cache_seq_rm(ctx, slot.id+1, slot.accepted_tokens.size(), -1);
+                        break;
+                    }
 
-                llama_sampling_accept(slot.ctx_sampling, ctx, id, true);
+                    completion_token_output result;
+                    const llama_token id = llama_sampling_sample(slot.ctx_sampling, ctx, NULL, slot.i_batch - i + j);
 
-                slot.n_decoded += 1;
-                if (slot.n_decoded == 1) {
-                    slot.t_start_generation = ggml_time_us();
-                    slot.t_prompt_processing = (slot.t_start_generation - slot.t_start_process_prompt) / 1e3;
-                    metrics.on_prompt_eval(slot);
-                }
+                    llama_sampling_accept(slot.ctx_sampling, ctx, id, true);
+                    slot.accepted_tokens.push_back(id);
+                    if (j > 0) {
+                        slot.n_past++;
+                    }
 
-                llama_token_data_array cur_p = { slot.ctx_sampling->cur.data(), slot.ctx_sampling->cur.size(), false };
-                result.tok = id;
+                    slot.n_decoded += 1;
+                    if (slot.n_decoded == 1) {
+                        slot.t_start_generation = ggml_time_us();
+                        slot.t_prompt_processing = (slot.t_start_generation - slot.t_start_process_prompt) / 1e3;
+                        metrics.on_prompt_eval(slot);
+                    }
 
-                const int32_t n_probs = slot.sparams.n_probs;
-                if (slot.sparams.temp <= 0 && n_probs > 0) {
-                    // for llama_sample_token_greedy we need to sort candidates
-                    llama_sample_softmax(ctx, &cur_p);
-                }
+                    llama_token_data_array cur_p = { slot.ctx_sampling->cur.data(), slot.ctx_sampling->cur.size(), false };
+                    result.tok = id;
 
-                for (size_t i = 0; i < std::min(cur_p.size, (size_t) n_probs); ++i) {
-                    result.probs.push_back({
-                        cur_p.data[i].id,
-                        cur_p.data[i].p
-                    });
-                }
+                    const int32_t n_probs = slot.sparams.n_probs;
+                    if (slot.sparams.temp <= 0 && n_probs > 0) {
+                        // for llama_sample_token_greedy we need to sort candidates
+                        llama_sample_softmax(ctx, &cur_p);
+                    }
 
-                if (!process_token(result, slot)) {
-                    slot.release();
-                    slot.print_timings();
-                    send_final_response(slot);
-                    metrics.on_prediction(slot);
+                    for (size_t i = 0; i < std::min(cur_p.size, (size_t) n_probs); ++i) {
+                        result.probs.push_back({
+                            cur_p.data[i].id,
+                            cur_p.data[i].p
+                        });
+                    }
+
+                    if (!process_token(result, slot)) {
+                        slot.release();
+                        slot.print_timings();
+                        send_final_response(slot);
+                        metrics.on_prediction(slot);
+                    }
                 }
 
                 slot.i_batch = -1;
@@ -2718,6 +2758,18 @@ static void server_params_parse(int argc, char ** argv, server_params & sparams,
                 else if (value == "numactl")                    { params.numa = GGML_NUMA_STRATEGY_NUMACTL; }
                 else { invalid_param = true; break; }
             }
+        } else if (arg == "-lcs" || arg == "--lookup-cache-static") {
+            if (++i >= argc) {
+                invalid_param = true;
+                break;
+            }
+            params.lookup_cache_static = argv[i];
+        } else if (arg == "-lcd" || arg == "--lookup-cache-dynamic") {
+            if (++i >= argc) {
+                invalid_param = true;
+                break;
+            }
+            params.lookup_cache_dynamic = argv[i];
         } else if (arg == "--embedding" || arg == "--embeddings") {
             params.embedding = true;
         } else if (arg == "-cb" || arg == "--cont-batching") {
@@ -3019,6 +3071,21 @@ int main(int argc, char ** argv) {
     }
 
     LOG_INFO("model loaded", {});
+
+    if (!params.lookup_cache_static.empty()) {
+        LOG_INFO("Loading static lookup cache from %s", {params.lookup_cache_static.c_str()});
+        if(!llama_ngram_cache_load(ctx_server.nc_static, params.lookup_cache_static)){
+            LOG_ERROR("Did not find a lookup cache under %s", {params.lookup_cache_static.c_str()});
+            return 1;
+        }
+    }
+
+    if (!params.lookup_cache_dynamic.empty()) {
+        LOG_INFO("Loading dynamic lookup cache from %s", {params.lookup_cache_dynamic.c_str()});
+        if(!llama_ngram_cache_load(ctx_server.nc_dynamic, params.lookup_cache_dynamic)){
+            LOG_INFO("Did not find a lookup cache under %s . It will be created on server shutdown.", {params.lookup_cache_dynamic.c_str()});
+        }
+    }
 
     const auto model_meta = ctx_server.model_meta();
 
@@ -3819,6 +3886,11 @@ int main(int argc, char ** argv) {
 
     svr->stop();
     t.join();
+
+    if (!params.lookup_cache_dynamic.empty()) {
+        LOG_INFO("Saving dynamic lookup cache to %s", {params.lookup_cache_dynamic.c_str()});
+        llama_ngram_cache_save(ctx_server.nc_dynamic, params.lookup_cache_dynamic);
+    }
 
     llama_backend_free();
 

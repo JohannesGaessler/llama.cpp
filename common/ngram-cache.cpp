@@ -216,12 +216,11 @@ void llama_ngram_cache_save(llama_ngram_cache & ngram_cache, std::string & filen
 
 }
 
-llama_ngram_cache llama_ngram_cache_load(std::string & filename) {
+bool llama_ngram_cache_load(llama_ngram_cache & ngram_cache, std::string & filename) {
     std::ifstream hashmap_file(filename, std::ios::binary);
     if (!hashmap_file) {
-        throw std::ifstream::failure("Unable to open file " + filename);
+        return false;
     }
-    llama_ngram_cache ngram_cache;
 
     llama_ngram ngram;
     int32_t     ntokens;
@@ -251,7 +250,7 @@ llama_ngram_cache llama_ngram_cache_load(std::string & filename) {
     }
     GGML_ASSERT(hashmap_file.eof());
 
-    return ngram_cache;
+    return true;
 }
 
 void llama_ngram_cache_merge(llama_ngram_cache & ngram_cache_target, llama_ngram_cache & ngram_cache_add) {

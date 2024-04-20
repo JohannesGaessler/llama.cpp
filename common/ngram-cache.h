@@ -84,9 +84,10 @@ void llama_ngram_cache_draft(
 void llama_ngram_cache_save(llama_ngram_cache & ngram_cache, std::string & filename);
 
 // Load an ngram cache saved with llama_ngram_cache_save.
+// ngram_cache: the ngram cache to load the data into.
 // filename: the path from which to load the ngram cache.
 // returns:  an ngram cache containing the information saved to filename.
-llama_ngram_cache llama_ngram_cache_load(std::string & filename);
+bool llama_ngram_cache_load(llama_ngram_cache & ngram_cache, std::string & filename);
 
 // Merge two ngram caches.
 // ngram_cache_target: the ngram cache to which to add the information from ngram_cache_add.
