@@ -2261,7 +2261,7 @@ struct server_context {
 
                 for (size_t j = 0; j < slot.draft.size(); ++j) {
                     if (slot.draft[j] != slot.accepted_tokens.back()) {
-                        fprintf(stderr, "j=%d erase\n", (int)j);
+                        // fprintf(stderr, "j=%d erase\n", (int)j);
                         llama_kv_cache_seq_rm(ctx, slot.id+1, slot.accepted_tokens.size(), -1);
                         break;
                     }
@@ -2275,7 +2275,7 @@ struct server_context {
                         slot.n_past++;
                     }
                     const std::string s = llama_token_to_piece(ctx, id);
-                    fprintf(stderr, "j=%d accepted_tokens.back()=%s\n", (int)j, s.c_str());
+                    // fprintf(stderr, "j=%d accepted_tokens.back()=%s\n", (int)j, s.c_str());
 
                     slot.n_decoded += 1;
                     if (slot.n_decoded == 1) {
