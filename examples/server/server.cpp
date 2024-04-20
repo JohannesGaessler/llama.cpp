@@ -2271,6 +2271,9 @@ struct server_context {
 
                     llama_sampling_accept(slot.ctx_sampling, ctx, id, true);
                     slot.accepted_tokens.push_back(id);
+                    if (j > 0) {
+                        slot.n_past++;
+                    }
                     const std::string s = llama_token_to_piece(ctx, id);
                     fprintf(stderr, "j=%d accepted_tokens.back()=%s\n", (int)j, s.c_str());
 
