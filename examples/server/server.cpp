@@ -1528,6 +1528,8 @@ struct server_context {
                     }
 
                     slot->reset();
+                    llama_ngram_cache_merge(nc_dynamic, nc_context);
+                    nc_context.clear();
 
                     slot->id_task   = task.id;
                     slot->id_multi  = task.id_multi;
