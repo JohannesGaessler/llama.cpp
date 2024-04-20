@@ -258,7 +258,7 @@ struct server_slot {
         }
     }
 
-    json get_formated_timings() const {
+    json get_formatted_timings() const {
         return json {
             {"prompt_n",               n_prompt_tokens_processed},
             {"prompt_ms",              t_prompt_processing},
@@ -423,7 +423,7 @@ struct server_queue {
         queue_tasks_deferred.push_back(std::move(task));
     }
 
-    // Get the next id for creating anew task
+    // Get the next id for creating a new task
     int get_new_id() {
         std::unique_lock<std::mutex> lock(mutex_tasks);
         int new_id = id++;
@@ -539,7 +539,7 @@ struct server_queue {
         queue_multitasks.push_back(multi);
     }
 
-    // updatethe remaining subtasks, while appending results to multitask
+    // update the remaining subtasks, while appending results to multitask
     void update_multitask(int id_multi, int id_sub, server_task_result & result) {
         std::lock_guard<std::mutex> lock(mutex_tasks);
         for (auto & multitask : queue_multitasks) {
@@ -572,7 +572,7 @@ struct server_response {
         waiting_task_ids.insert(id_task);
     }
 
-    // when the request is finished, we can remove task associated with it
+    // when the request is finished, we can remove the task associated with it
     void remove_waiting_task_id(int id_task) {
         LOG_VERBOSE("remove waiting for task id", {{"id_task", id_task}});
 
@@ -744,7 +744,7 @@ struct server_context {
             slots.push_back(slot);
         }
 
-        default_generation_settings_for_props = get_formated_generation(slots.front());
+        default_generation_settings_for_props = get_formatted_generation(slots.front());
         default_generation_settings_for_props["seed"] = -1;
 
         // the update_slots() logic will always submit a maximum of n_batch tokens
@@ -1225,7 +1225,7 @@ struct server_context {
         return slot.has_next_token; // continue
     }
 
-    json get_formated_generation(const server_slot & slot) const {
+    json get_formatted_generation(const server_slot & slot) const {
         const auto eos_bias = slot.sparams.logit_bias.find(llama_token_eos(model));
         const bool ignore_eos = eos_bias != slot.sparams.logit_bias.end() && eos_bias->second < 0.0f && std::isinf(eos_bias->second);
 
@@ -1347,7 +1347,7 @@ struct server_context {
             {"model",               params.model_alias},
             {"tokens_predicted",    slot.n_decoded},
             {"tokens_evaluated",    slot.n_prompt_tokens},
-            {"generation_settings", get_formated_generation(slot)},
+            {"generation_settings", get_formatted_generation(slot)},
             {"prompt",              slot.prompt},
             {"truncated",           slot.truncated},
             {"stopped_eos",         slot.stopped_eos},
@@ -1355,7 +1355,7 @@ struct server_context {
             {"stopped_limit",       slot.stopped_limit},
             {"stopping_word",       slot.stopping_word},
             {"tokens_cached",       slot.n_past},
-            {"timings",             slot.get_formated_timings()}
+            {"timings",             slot.get_formatted_timings()}
         };
 
         if (slot.sparams.n_probs > 0) {
@@ -1553,7 +1553,7 @@ struct server_context {
                     int n_processing_slots = 0;
 
                     for (server_slot & slot : slots) {
-                        json slot_data = get_formated_generation(slot);
+                        json slot_data = get_formatted_generation(slot);
                         slot_data["id"]         = slot.id;
                         slot_data["id_task"]    = slot.id_task;
                         slot_data["state"]      = slot.state;
@@ -1845,7 +1845,7 @@ struct server_context {
         // start populating the batch for this iteration
         llama_batch_clear(batch);
 
-        // frist, add sampled tokens from any ongoing sequences
+        // first, add sampled tokens from any ongoing sequences
         for (auto & slot : slots) {
             if (slot.state == SLOT_STATE_IDLE) {
                 continue;
