@@ -1992,6 +1992,7 @@ struct server_context {
 
                             // if input prompt is too big, truncate it (if group attention self-extend is disabled)
                             if (slot.ga_n == 1 && slot.n_prompt_tokens >= slot.n_ctx) {
+                                fprintf(stderr, "truncate\n");
                                 const int n_left = slot.n_ctx - slot.params.n_keep;
 
                                 const int n_block_size = n_left / 2;
