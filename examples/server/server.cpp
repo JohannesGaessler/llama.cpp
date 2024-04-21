@@ -666,6 +666,7 @@ struct server_context {
     std::vector<server_slot> slots;
     json default_generation_settings_for_props;
 
+    int32_t n_draft = 3;
     llama_ngram_cache nc_dynamic;
     llama_ngram_cache nc_static;
 
@@ -2207,7 +2208,7 @@ struct server_context {
                 slot.draft.push_back(slot.accepted_tokens.back());
 
                 llama_ngram_cache_draft(
-                    slot.accepted_tokens, slot.draft, 3, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, slot.nc_context, nc_dynamic, nc_static);
+                    slot.accepted_tokens, slot.draft, n_draft, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, slot.nc_context, nc_dynamic, nc_static);
 
                 for (size_t j = 1; j < slot.draft.size(); ++j) {
                     llama_batch_add(batch_view, slot.draft[j], slot.accepted_tokens.size() + j, {slot.id + 1}, true);
@@ -2770,6 +2771,12 @@ static void server_params_parse(int argc, char ** argv, server_params & sparams,
                 break;
             }
             params.lookup_cache_dynamic = argv[i];
+        } else if (arg == "--draft") {
+            if (++i >= argc) {
+                invalid_param = true;
+                break;
+            }
+            params.n_draft = std::stoi(argv[i]);
         } else if (arg == "--embedding" || arg == "--embeddings") {
             params.embedding = true;
         } else if (arg == "-cb" || arg == "--cont-batching") {
@@ -3071,6 +3078,8 @@ int main(int argc, char ** argv) {
     }
 
     LOG_INFO("model loaded", {});
+
+    ctx_server.n_draft = params.n_draft;
 
     if (!params.lookup_cache_static.empty()) {
         LOG_INFO("Loading static lookup cache from %s", {params.lookup_cache_static.c_str()});
