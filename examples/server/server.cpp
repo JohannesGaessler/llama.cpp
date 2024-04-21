@@ -2212,7 +2212,7 @@ struct server_context {
             };
 
             for (auto & slot : slots) {
-                if (slot.n_past != (int)accepted_tokens.size()) {
+                if (slot.n_past != (int)slot.accepted_tokens.size()) {
                     continue;
                 }
                 slot.draft.clear();
