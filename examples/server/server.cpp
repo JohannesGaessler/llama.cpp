@@ -2213,8 +2213,10 @@ struct server_context {
                 slot.draft.clear();
                 slot.draft.push_back(slot.accepted_tokens.back());
 
+                fprintf(stderr, "draft pre\n");
                 llama_ngram_cache_draft(
                     slot.accepted_tokens, slot.draft, n_draft, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, slot.nc_context, nc_dynamic, nc_static);
+                fprintf(stderr, "draft post\n");
 
                 for (size_t j = 1; j < slot.draft.size(); ++j) {
                     llama_batch_add(batch_view, slot.draft[j], slot.accepted_tokens.size() + j, {slot.id + 1}, true);
