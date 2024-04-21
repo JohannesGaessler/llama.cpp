@@ -2281,6 +2281,7 @@ struct server_context {
 
                 for (size_t j = 0; j < slot.draft.size(); ++j) {
                     if (slot.draft[j] != slot.accepted_tokens.back()) {
+                        fprintf(stderr, "erase j=%d\n", (int)j);
                         llama_kv_cache_seq_rm(ctx, slot.id+1, slot.accepted_tokens.size(), -1);
                         break;
                     }
