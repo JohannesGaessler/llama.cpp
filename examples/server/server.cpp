@@ -2223,7 +2223,9 @@ struct server_context {
                 }
             }
 
+            fprintf(stderr, "decode pre\n");
             const int ret = llama_decode(ctx, batch_view);
+            fprintf(stderr, "decode post\n");
 
             if (ret != 0) {
                 if (n_batch == 1 || ret < 0) {
