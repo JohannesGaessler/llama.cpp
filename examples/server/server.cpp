@@ -2273,6 +2273,7 @@ struct server_context {
                     }
 
                     completion_token_output result;
+                    fprintf(stderr, "slot.i_batch=%d i=%d j=%d\n", slot.i_batch, i, (int)j);
                     const llama_token id = llama_sampling_sample(slot.ctx_sampling, ctx, NULL, slot.i_batch - i + j);
 
                     llama_sampling_accept(slot.ctx_sampling, ctx, id, true);
