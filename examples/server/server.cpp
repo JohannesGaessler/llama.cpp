@@ -2211,7 +2211,7 @@ struct server_context {
                 0, 0, 0, // unused
             };
 
-            if (i + n_tokens == batch.n_tokens) {
+            if (slot.n_past == (int)accepted_tokens.size()) {
                 for (auto & slot : slots) {
                     slot.draft.clear();
                     slot.draft.push_back(slot.accepted_tokens.back());
