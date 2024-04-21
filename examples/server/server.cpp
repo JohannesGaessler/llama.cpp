@@ -1852,6 +1852,7 @@ struct server_context {
                     }
 
                     slot.n_past -= n_discard;
+                    slot.accepted_tokens.erase(slot.accepted_tokens.begin() + n_keep, slot.accepted_tokens.begin() + n_keep + n_discard);
 
                     slot.truncated = true;
                 }
