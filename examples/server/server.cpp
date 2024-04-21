@@ -1937,6 +1937,12 @@ struct server_context {
                             prompt_tokens = tokenize(slot.prompt, system_prompt.empty()); // add BOS if there isn't system prompt
                         }
 
+                        fprintf(stderr, "====== PROMPT BEGIN ======\n");
+                        for (auto t : prompt_tokens) {
+                            const std::string s = llama_token_to_piece(ctx, t);
+                            fprintf(stderr, "%s", s.c_str());
+                        }
+                        fprintf(stderr, "====== PROMPT END ======\n");
                         slot.accepted_tokens.insert(slot.accepted_tokens.end(), prompt_tokens.begin(), prompt_tokens.end());
                         llama_ngram_cache_update(slot.nc_context, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, slot.accepted_tokens, prompt_tokens.size(), false);
 
