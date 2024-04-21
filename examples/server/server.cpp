@@ -2222,7 +2222,8 @@ struct server_context {
                     fprintf(stderr, "draft post\n");
 
                     for (size_t j = 1; j < slot.draft.size(); ++j) {
-                        fprintf(stderr, "llama_batch_add n_tokens=%d slot.accepted_tokens.size()=%d i=%d j=%d\n", n_tokens, (int)slot.accepted_tokens.size(), i, (int) j);
+                        fprintf(stderr, "llama_batch_add n_tokens=%d slot.accepted_tokens.size()=%d i=%d j=%d batch.n_tokens=%d\n",
+                                n_tokens, (int)slot.accepted_tokens.size(), i, (int) j, batch.n_tokens);
                         llama_batch_add(batch_view, slot.draft[j], slot.accepted_tokens.size() + j, {slot.id + 1}, true);
                     }
                     fprintf(stderr, "llama_batch_add post\n");
