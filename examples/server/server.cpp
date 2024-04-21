@@ -2358,6 +2358,11 @@ static void server_print_usage(const char * argv0, const gpt_params & params, co
     printf("                              - distribute: spread execution evenly over all nodes\n");
     printf("                              - isolate: only spawn threads on CPUs on the node that execution started on\n");
     printf("                              - numactl: use the CPU map provided my numactl\n");
+    printf("  --draft N                 max. number of additional tokens to draft for lookup decoding (default: %d)\n", params.n_draft);
+    printf("  -lcs FNAME, --lookup-cache-static FNAME\n");
+    printf("                            path to static lookup cache to use for lookup decoding (not updated by generation)\n");
+    printf("  -lcd FNAME, --lookup-cache-dynamic FNAME\n");
+    printf("                            path to dynamic lookup cache to use for lookup decoding (updated by generation)\n");
     if (llama_supports_gpu_offload()) {
         printf("  -ngl N, --n-gpu-layers N\n");
         printf("                            number of layers to store in VRAM\n");
