@@ -2216,6 +2216,9 @@ struct server_context {
             };
 
             for (auto & slot : slots) {
+                if (slot.infill || slot.embedding) {
+                    continue;
+                }
                 if (slot.state != SLOT_STATE_PROCESSING || slot.i_batch < (int) i || slot.i_batch >= (int) (i + n_tokens)) {
                     continue; // continue loop of slots
                 }
