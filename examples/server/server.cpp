@@ -168,7 +168,7 @@ struct server_slot {
 
     llama_ngram_cache nc_context;
     std::vector<llama_token> draft;
-    std::vector<llama_token> accepted_tokens;
+    std::vector<llama_token> context_tokens;
 
     std::string generated_text;
     std::vector<llama_token> cache_tokens;
@@ -227,7 +227,6 @@ struct server_slot {
         generated_token_probs.clear();
 
         nc_context.clear();
-        accepted_tokens.clear();
     }
 
     bool has_budget(gpt_params &global_params) {
@@ -1937,9 +1936,6 @@ struct server_context {
                             prompt_tokens = tokenize(slot.prompt, system_prompt.empty()); // add BOS if there isn't system prompt
                         }
 
-                        slot.accepted_tokens.insert(slot.accepted_tokens.end(), prompt_tokens.begin(), prompt_tokens.end());
-                        llama_ngram_cache_update(slot.nc_context, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, slot.accepted_tokens, prompt_tokens.size(), false);
-
                         slot.n_past = 0;
                         slot.n_prompt_tokens = prompt_tokens.size();
 
@@ -2203,18 +2199,6 @@ struct server_context {
                 0, 0, 0, // unused
             };
 
-            for (auto & slot : slots) {
-                slot.draft.clear();
-                slot.draft.push_back(slot.accepted_tokens.back());
-
-                llama_ngram_cache_draft(
-                    slot.accepted_tokens, slot.draft, n_draft, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, slot.nc_context, nc_dynamic, nc_static);
-
-                for (size_t j = 1; j < slot.draft.size(); ++j) {
-                    llama_batch_add(batch_view, slot.draft[j], slot.accepted_tokens.size() + j, {slot.id + 1}, true);
-                }
-            }
-
             const int ret = llama_decode(ctx, batch_view);
 
             if (ret != 0) {
@@ -2260,50 +2244,39 @@ struct server_context {
                     continue; // continue loop of slots
                 }
 
-                for (size_t j = 0; j < slot.draft.size(); ++j) {
-                    if (slot.draft[j] != slot.accepted_tokens.back()) {
-                        llama_kv_cache_seq_rm(ctx, slot.id+1, slot.accepted_tokens.size(), -1);
-                        break;
-                    }
+                completion_token_output result;
+                const llama_token id = llama_sampling_sample(slot.ctx_sampling, ctx, NULL, slot.i_batch - i);
 
-                    completion_token_output result;
-                    const llama_token id = llama_sampling_sample(slot.ctx_sampling, ctx, NULL, slot.i_batch - i + j);
+                llama_sampling_accept(slot.ctx_sampling, ctx, id, true);
 
-                    llama_sampling_accept(slot.ctx_sampling, ctx, id, true);
-                    slot.accepted_tokens.push_back(id);
-                    if (j > 0) {
-                        slot.n_past++;
-                    }
+                slot.n_decoded += 1;
+                if (slot.n_decoded == 1) {
+                    slot.t_start_generation = ggml_time_us();
+                    slot.t_prompt_processing = (slot.t_start_generation - slot.t_start_process_prompt) / 1e3;
+                    metrics.on_prompt_eval(slot);
+                }
 
-                    slot.n_decoded += 1;
-                    if (slot.n_decoded == 1) {
-                        slot.t_start_generation = ggml_time_us();
-                        slot.t_prompt_processing = (slot.t_start_generation - slot.t_start_process_prompt) / 1e3;
-                        metrics.on_prompt_eval(slot);
-                    }
+                llama_token_data_array cur_p = { slot.ctx_sampling->cur.data(), slot.ctx_sampling->cur.size(), false };
+                result.tok = id;
 
-                    llama_token_data_array cur_p = { slot.ctx_sampling->cur.data(), slot.ctx_sampling->cur.size(), false };
-                    result.tok = id;
+                const int32_t n_probs = slot.sparams.n_probs;
+                if (slot.sparams.temp <= 0 && n_probs > 0) {
+                    // for llama_sample_token_greedy we need to sort candidates
+                    llama_sample_softmax(ctx, &cur_p);
+                }
 
-                    const int32_t n_probs = slot.sparams.n_probs;
-                    if (slot.sparams.temp <= 0 && n_probs > 0) {
-                        // for llama_sample_token_greedy we need to sort candidates
-                        llama_sample_softmax(ctx, &cur_p);
-                    }
+                for (size_t i = 0; i < std::min(cur_p.size, (size_t) n_probs); ++i) {
+                    result.probs.push_back({
+                        cur_p.data[i].id,
+                        cur_p.data[i].p
+                    });
+                }
 
-                    for (size_t i = 0; i < std::min(cur_p.size, (size_t) n_probs); ++i) {
-                        result.probs.push_back({
-                            cur_p.data[i].id,
-                            cur_p.data[i].p
-                        });
-                    }
-
-                    if (!process_token(result, slot)) {
-                        slot.release();
-                        slot.print_timings();
-                        send_final_response(slot);
-                        metrics.on_prediction(slot);
-                    }
+                if (!process_token(result, slot)) {
+                    slot.release();
+                    slot.print_timings();
+                    send_final_response(slot);
+                    metrics.on_prediction(slot);
                 }
 
                 slot.i_batch = -1;
