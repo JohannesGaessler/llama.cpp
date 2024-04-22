@@ -7,6 +7,8 @@
 #include "grammar-parser.h"
 #include "llama.h"
 #include "ngram-cache.h"
+#include <cstdint>
+#include <cstring>
 
 #ifndef NDEBUG
 // crash the server in debug mode, otherwise send an http 500 error
@@ -727,6 +729,8 @@ struct server_context {
             slot.n_ctx = n_ctx_slot;
             slot.n_predict = params.n_predict;
 
+            slot.context_tokens.resize(n_ctx_slot);
+
             LOG_INFO("new slot", {
                 {"id_slot",    slot.id},
                 {"n_ctx_slot", slot.n_ctx}
@@ -1078,6 +1082,10 @@ struct server_context {
 
             for (int i = 0; i < (int)system_tokens.size(); ++i) {
                 llama_batch_add(batch, system_tokens[i], i, { 0 }, false);
+            }
+            for (auto slot : slots) {
+                memcpy(slot.context_tokens.data(), system_tokens.data(), system_tokens.size()*sizeof(llama_token));
+                llama_ngram_cache_update(slot.nc_context, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, system_tokens, system_tokens.size(), false);
             }
 
             const int32_t n_batch = llama_n_batch(ctx);
@@ -1840,6 +1848,9 @@ struct server_context {
 
                     llama_kv_cache_seq_rm (ctx, slot.id + 1, n_keep            , n_keep + n_discard);
                     llama_kv_cache_seq_add(ctx, slot.id + 1, n_keep + n_discard, system_tokens.size() + slot.n_past, -n_discard);
+                    for (int j = n_keep; j < slot.n_past - n_discard; ++j) {
+                        slot.context_tokens[j] = slot.context_tokens[j + n_discard];
+                    }
 
                     if (slot.params.cache_prompt) {
                         for (size_t i = n_keep + n_discard; i < slot.cache_tokens.size(); i++) {
@@ -1872,6 +1883,9 @@ struct server_context {
             // TODO: we always have to take into account the "system_tokens"
             //       this is not great and needs to be improved somehow
             llama_batch_add(batch, slot.sampled, system_tokens.size() + slot_npast, { slot.id + 1 }, true);
+            slot.context_tokens[system_tokens.size() + slot_npast] = slot.sampled;
+            std::vector<llama_token> tail(slot.context_tokens.begin(), slot.context_tokens.begin() + system_tokens.size() + slot_npast);
+            llama_ngram_cache_update(slot.nc_context, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, tail, 1, false);
 
             slot.n_past += 1;
 
@@ -2101,6 +2115,9 @@ struct server_context {
                         }
 
                         llama_batch_add(batch, prompt_tokens[slot.n_past], system_tokens.size() + slot_npast, { slot.id + 1 }, false);
+                        slot.context_tokens[system_tokens.size() + slot_npast] = prompt_tokens[slot.n_past];
+                        std::vector<llama_token> tail(slot.context_tokens.begin(), slot.context_tokens.begin() + slot_npast);
+                        llama_ngram_cache_update(slot.nc_context, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, tail, 1, false);
 
                         if (slot.params.cache_prompt) {
                             slot.cache_tokens.push_back(prompt_tokens[slot.n_past]);
@@ -2199,6 +2216,36 @@ struct server_context {
                 0, 0, 0, // unused
             };
 
+            for (auto & slot : slots) {
+                if (slot.n_past == 0) {
+                    continue;
+                }
+
+                const int32_t tail_start = std::max(slot.n_past - LLAMA_NGRAM_MAX, 0);
+                std::vector<llama_token> context_tail(slot.context_tokens.begin() + tail_start, slot.context_tokens.begin() + slot.n_past);
+
+                slot.draft.clear();
+                slot.draft.push_back(slot.context_tokens[slot.n_past - 1]);
+                llama_ngram_cache_draft(
+                    context_tail, slot.draft, n_draft, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, slot.nc_context, nc_dynamic, nc_static);
+                // fprintf(stderr, "draft post: slot.draft.size()=%d\n", (int)slot.draft.size());
+
+                // if (slot.draft.size() > 1) {
+                //     fprintf(stderr, "context_tail: ");
+                //     for (llama_token t : context_tail) {
+                //         const std::string s = llama_token_to_piece(ctx, t);
+                //         fprintf(stderr, "'%s' ", s.c_str());
+                //     }
+                //     fprintf(stderr, "\n");
+                //     fprintf(stderr, "draft:");
+                //     for (llama_token t : slot.draft) {
+                //         const std::string s = llama_token_to_piece(ctx, t);
+                //         fprintf(stderr, "'%s' ", s.c_str());
+                //     }
+                //     fprintf(stderr, "\n");
+                // }
+            }
+
             const int ret = llama_decode(ctx, batch_view);
 
             if (ret != 0) {
@@ -2246,6 +2293,16 @@ struct server_context {
 
                 completion_token_output result;
                 const llama_token id = llama_sampling_sample(slot.ctx_sampling, ctx, NULL, slot.i_batch - i);
+                const std::string s = llama_token_to_piece(ctx, id);
+                // fprintf(stderr, "Sampled: '%s'\n", s.c_str());
+                if (slot.draft.size() > 1) {
+                    const std::string d0 = llama_token_to_piece(ctx, slot.draft[0]);
+                    const std::string d1 = llama_token_to_piece(ctx, slot.draft[1]);
+                    // fprintf(stderr, "Prediction: '%s' -> '%s'\n", d0.c_str(), d1.c_str());
+                    if (slot.draft[1] == id) {
+                        fprintf(stderr, "Prediction correct: '%s' -> '%s'\n", d0.c_str(), d1.c_str());
+                    }
+                }
 
                 llama_sampling_accept(slot.ctx_sampling, ctx, id, true);
 
