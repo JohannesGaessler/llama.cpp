@@ -2230,20 +2230,26 @@ struct server_context {
                     context_tail, slot.draft, n_draft, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, slot.nc_context, nc_dynamic, nc_static);
                 // fprintf(stderr, "draft post: slot.draft.size()=%d\n", (int)slot.draft.size());
 
-                // if (slot.draft.size() > 1) {
-                //     fprintf(stderr, "context_tail: ");
-                //     for (llama_token t : context_tail) {
-                //         const std::string s = llama_token_to_piece(ctx, t);
-                //         fprintf(stderr, "'%s' ", s.c_str());
-                //     }
-                //     fprintf(stderr, "\n");
-                //     fprintf(stderr, "draft:");
-                //     for (llama_token t : slot.draft) {
-                //         const std::string s = llama_token_to_piece(ctx, t);
-                //         fprintf(stderr, "'%s' ", s.c_str());
-                //     }
-                //     fprintf(stderr, "\n");
-                // }
+                if (slot.draft.size() > 1) {
+                    fprintf(stderr, "context_tail: ");
+                    for (llama_token t : context_tail) {
+                        const std::string s = llama_token_to_piece(ctx, t);
+                        fprintf(stderr, "'%s' ", s.c_str());
+                    }
+                    fprintf(stderr, "\n");
+
+                    fprintf(stderr, "draft:");
+                    for (llama_token t : slot.draft) {
+                        const std::string s = llama_token_to_piece(ctx, t);
+                        fprintf(stderr, "'%s' ", s.c_str());
+                    }
+                    fprintf(stderr, "\n");
+                }
+
+                for (int j = 1; j < (int)slot.draft.size(); ++j) {
+                    llama_batch_add(batch_view, slot.draft[j], slot.n_past, {slot.id + 1}, true);
+                    slot.n_past++;
+                }
             }
 
             const int ret = llama_decode(ctx, batch_view);
@@ -2291,49 +2297,56 @@ struct server_context {
                     continue; // continue loop of slots
                 }
 
-                completion_token_output result;
-                const llama_token id = llama_sampling_sample(slot.ctx_sampling, ctx, NULL, slot.i_batch - i);
-                const std::string s = llama_token_to_piece(ctx, id);
-                // fprintf(stderr, "Sampled: '%s'\n", s.c_str());
-                if (slot.draft.size() > 1) {
-                    const std::string d0 = llama_token_to_piece(ctx, slot.draft[0]);
-                    const std::string d1 = llama_token_to_piece(ctx, slot.draft[1]);
-                    // fprintf(stderr, "Prediction: '%s' -> '%s'\n", d0.c_str(), d1.c_str());
-                    if (slot.draft[1] == id) {
+                int j = 0;
+                do { // while (j < slot.draft.size() && slot.sampled == draft[j])
+                    completion_token_output result;
+                    const llama_token id = llama_sampling_sample(slot.ctx_sampling, ctx, NULL, slot.i_batch - i + j);
+                    const std::string s = llama_token_to_piece(ctx, id);
+                    fprintf(stderr, "Sampled: j=%d '%s'\n", j, s.c_str());
+                    if (j >= 1) {
+                        const std::string d0 = llama_token_to_piece(ctx, slot.draft[j-1]);
+                        const std::string d1 = llama_token_to_piece(ctx, slot.draft[j-0]);
                         fprintf(stderr, "Prediction correct: '%s' -> '%s'\n", d0.c_str(), d1.c_str());
                     }
-                }
 
-                llama_sampling_accept(slot.ctx_sampling, ctx, id, true);
+                    llama_sampling_accept(slot.ctx_sampling, ctx, id, true);
 
-                slot.n_decoded += 1;
-                if (slot.n_decoded == 1) {
-                    slot.t_start_generation = ggml_time_us();
-                    slot.t_prompt_processing = (slot.t_start_generation - slot.t_start_process_prompt) / 1e3;
-                    metrics.on_prompt_eval(slot);
-                }
+                    slot.n_decoded += 1;
+                    if (slot.n_decoded == 1) {
+                        slot.t_start_generation = ggml_time_us();
+                        slot.t_prompt_processing = (slot.t_start_generation - slot.t_start_process_prompt) / 1e3;
+                        metrics.on_prompt_eval(slot);
+                    }
 
-                llama_token_data_array cur_p = { slot.ctx_sampling->cur.data(), slot.ctx_sampling->cur.size(), false };
-                result.tok = id;
+                    llama_token_data_array cur_p = { slot.ctx_sampling->cur.data(), slot.ctx_sampling->cur.size(), false };
+                    result.tok = id;
 
-                const int32_t n_probs = slot.sparams.n_probs;
-                if (slot.sparams.temp <= 0 && n_probs > 0) {
-                    // for llama_sample_token_greedy we need to sort candidates
-                    llama_sample_softmax(ctx, &cur_p);
-                }
+                    const int32_t n_probs = slot.sparams.n_probs;
+                    if (slot.sparams.temp <= 0 && n_probs > 0) {
+                        // for llama_sample_token_greedy we need to sort candidates
+                        llama_sample_softmax(ctx, &cur_p);
+                    }
 
-                for (size_t i = 0; i < std::min(cur_p.size, (size_t) n_probs); ++i) {
-                    result.probs.push_back({
-                        cur_p.data[i].id,
-                        cur_p.data[i].p
-                    });
-                }
+                    for (size_t i = 0; i < std::min(cur_p.size, (size_t) n_probs); ++i) {
+                        result.probs.push_back({
+                            cur_p.data[i].id,
+                            cur_p.data[i].p
+                        });
+                    }
 
-                if (!process_token(result, slot)) {
-                    slot.release();
-                    slot.print_timings();
-                    send_final_response(slot);
-                    metrics.on_prediction(slot);
+                    if (!process_token(result, slot)) {
+                        slot.release();
+                        slot.print_timings();
+                        send_final_response(slot);
+                        metrics.on_prediction(slot);
+                    }
+
+                ++j;
+                } while (j < (int)slot.draft.size() && slot.sampled == slot.draft[j]);
+
+                if (j < (int)slot.draft.size()) {
+                    slot.n_past -= slot.draft.size() - j;
+                    llama_kv_cache_seq_rm(ctx, slot.id + 1, slot.n_past, -1);
                 }
 
                 slot.i_batch = -1;
