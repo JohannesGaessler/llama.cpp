@@ -2217,8 +2217,8 @@ struct server_context {
             };
 
             for (auto & slot : slots) {
-                if (slot.n_past == 0) {
-                    continue;
+                if (slot.state != SLOT_STATE_PROCESSING || slot.i_batch < (int) i || slot.i_batch >= (int) (i + n_tokens)) {
+                    continue; // continue loop of slots
                 }
 
                 const int32_t tail_start = std::max(slot.n_past - LLAMA_NGRAM_MAX, 0);
