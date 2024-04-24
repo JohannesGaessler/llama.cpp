@@ -12,7 +12,8 @@ Feature: Results
 
   Scenario Outline: Multi users completion
     Given <n_slots> slots
-    And   continuous batching
+    And   <n_draft> as draft
+    # And   continuous batching
     Then  the server is starting
     Then  the server is healthy
 
@@ -52,6 +53,8 @@ Feature: Results
     And  all slots are idle
     Then all predictions are equal
     Examples:
-      | n_slots |
-      | 1       |
-      | 2       |
+      | n_slots | n_draft |
+      | 1       | 0       |
+      | 1       | 3       |
+      | 2       | 0       |
+      | 2       | 3       |
