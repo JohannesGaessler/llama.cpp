@@ -1892,6 +1892,28 @@ struct server_context {
                 slot.cache_tokens.push_back(slot.sampled);
             }
 
+            if (slot.infill || slot.embedding) {
+                continue;
+            }
+
+            const int32_t max_draft = std::min(n_draft, slot.n_ctx - slot.n_past);
+            if (max_draft == 0) {
+                continue;
+            }
+
+            const int32_t tail_start = std::max(slot.n_past - LLAMA_NGRAM_MAX, 0);
+            std::vector<llama_token> context_tail(slot.context_tokens.begin() + tail_start, slot.context_tokens.begin() + slot.n_past);
+
+            slot.draft.clear();
+            slot.draft.push_back(slot.context_tokens[slot.n_past - 1]);
+            llama_ngram_cache_draft(
+                context_tail, slot.draft, max_draft, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, slot.nc_context, nc_dynamic, nc_static);
+
+            for (int j = 1; j < (int)slot.draft.size(); ++j) {
+                llama_batch_add(batch_view, slot.draft[j], slot.n_past, {slot.id + 1}, true);
+                slot.n_past++;
+            }
+
             LOG_VERBOSE("slot decode token", {
                 {"id_slot",         slot.id},
                 {"id_task",         slot.id_task},
@@ -2214,33 +2236,6 @@ struct server_context {
                 batch.logits   + i,
                 0, 0, 0, // unused
             };
-
-            for (auto & slot : slots) {
-                if (slot.infill || slot.embedding) {
-                    continue;
-                }
-                if (slot.state != SLOT_STATE_PROCESSING || slot.i_batch < (int) i || slot.i_batch >= (int) (i + n_tokens)) {
-                    continue; // continue loop of slots
-                }
-
-                const int32_t max_draft = std::min(n_draft, slot.n_ctx - slot.n_past);
-                if (max_draft == 0) {
-                    continue;
-                }
-
-                const int32_t tail_start = std::max(slot.n_past - LLAMA_NGRAM_MAX, 0);
-                std::vector<llama_token> context_tail(slot.context_tokens.begin() + tail_start, slot.context_tokens.begin() + slot.n_past);
-
-                slot.draft.clear();
-                slot.draft.push_back(slot.context_tokens[slot.n_past - 1]);
-                llama_ngram_cache_draft(
-                    context_tail, slot.draft, max_draft, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, slot.nc_context, nc_dynamic, nc_static);
-
-                for (int j = 1; j < (int)slot.draft.size(); ++j) {
-                    llama_batch_add(batch_view, slot.draft[j], slot.n_past, {slot.id + 1}, true);
-                    slot.n_past++;
-                }
-            }
 
             const int ret = llama_decode(ctx, batch_view);
 
