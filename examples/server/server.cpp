@@ -1081,7 +1081,8 @@ struct server_context {
             }
             for (auto slot : slots) {
                 memcpy(slot.context_tokens.data(), system_tokens.data(), system_tokens.size()*sizeof(llama_token));
-                llama_ngram_cache_update(slot.nc_context, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, system_tokens, system_tokens.size(), false);
+                llama_ngram_cache_update(
+                    slot.nc_context, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, system_tokens.data(), system_tokens.size(), system_tokens.size(), false);
             }
 
             const int32_t n_batch = llama_n_batch(ctx);
@@ -1901,8 +1902,8 @@ struct server_context {
             //       this is not great and needs to be improved somehow
             llama_batch_add(batch, slot.sampled, system_tokens.size() + slot_npast, { slot.id + 1 }, true);
             slot.context_tokens[system_tokens.size() + slot_npast] = slot.sampled;
-            std::vector<llama_token> tail(slot.context_tokens.begin(), slot.context_tokens.begin() + system_tokens.size() + slot_npast);
-            llama_ngram_cache_update(slot.nc_context, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, tail, 1, false);
+            llama_ngram_cache_update(
+                slot.nc_context, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, slot.context_tokens.data(), system_tokens.size() + slot_npast, 1, false);
 
             slot.n_past += 1;
 
@@ -2155,8 +2156,8 @@ struct server_context {
 
                         llama_batch_add(batch, prompt_tokens[slot.n_past], system_tokens.size() + slot_npast, { slot.id + 1 }, false);
                         slot.context_tokens[system_tokens.size() + slot_npast] = prompt_tokens[slot.n_past];
-                        std::vector<llama_token> tail(slot.context_tokens.begin(), slot.context_tokens.begin() + slot_npast);
-                        llama_ngram_cache_update(slot.nc_context, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, tail, 1, false);
+                        llama_ngram_cache_update(
+                            slot.nc_context, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, slot.context_tokens.data(), slot_npast, 1, false);
 
                         if (slot.params.cache_prompt) {
                             slot.cache_tokens.push_back(prompt_tokens[slot.n_past]);

@@ -6,19 +6,18 @@
 #include <fstream>
 
 void llama_ngram_cache_update(llama_ngram_cache & ngram_cache, int ngram_min, int ngram_max,
-                              std::vector<llama_token> & inp, int nnew, bool print_progress) {
+                              llama_token * inp_data, int inp_size, int nnew, bool print_progress) {
     const int64_t t_start_ms = ggml_time_ms();
-    const int64_t inp_size = inp.size();
 
     const int64_t n_todo = inp_size * (ngram_max - ngram_min + 1);
     int64_t n_done = 0;
 
     for (int64_t ngram_size = ngram_min; ngram_size <= ngram_max; ++ngram_size) {
-        const int64_t i_start = std::max(inp_size - nnew, ngram_size);
+        const int64_t i_start = std::max((int64_t)(inp_size - nnew), ngram_size);
         for (int64_t i = i_start; i < inp_size; ++i) {
             const int64_t ngram_start = i - ngram_size;
-            llama_ngram ngram(&inp[ngram_start], ngram_size);
-            const llama_token token = inp[i];
+            llama_ngram ngram(inp_data + ngram_start, ngram_size);
+            const llama_token token = inp_data[i];
 
             llama_ngram_cache::iterator part_it = ngram_cache.find(ngram);
             if (part_it == ngram_cache.end()) {
