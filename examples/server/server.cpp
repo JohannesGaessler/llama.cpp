@@ -1899,13 +1899,10 @@ struct server_context {
                 continue;
             }
 
-            const int32_t tail_start = std::max(slot.n_past - LLAMA_NGRAM_MAX, 0);
-            std::vector<llama_token> context_tail(slot.context_tokens.begin() + tail_start, slot.context_tokens.begin() + slot.n_past);
-
             slot.draft.clear();
             slot.draft.push_back(slot.context_tokens[slot.n_past - 1]);
             llama_ngram_cache_draft(
-                context_tail, slot.draft, n_draft, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, slot.nc_context, nc_dynamic, nc_static);
+                slot.context_tokens.data(), slot.n_past, slot.draft, n_draft, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, slot.nc_context, nc_dynamic, nc_static);
 
             for (int j = 1; j < (int)slot.draft.size(); ++j) {
                 llama_batch_add(batch, slot.draft[j], system_tokens.size() + slot.n_past, {slot.id + 1}, true);
