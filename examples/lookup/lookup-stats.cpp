@@ -101,7 +101,8 @@ int main(int argc, char ** argv){
 
                 {
                     const int64_t t_start_draft_us = ggml_time_us();
-                    llama_ngram_cache_update(ngram_cache_context, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, pseudo_output, 1, false);
+                    llama_ngram_cache_update(
+                        ngram_cache_context, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, pseudo_output.data(), pseudo_output.size(), 1, false);
                     t_draft_us += ggml_time_us() - t_start_draft_us;
                 }
             }
@@ -111,7 +112,8 @@ int main(int argc, char ** argv){
                 pseudo_output.push_back(inp_slice[pseudo_output.size()]);
                 {
                     const int64_t t_start_draft_us = ggml_time_us();
-                    llama_ngram_cache_update(ngram_cache_context, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, pseudo_output, 1, false);
+                    llama_ngram_cache_update(
+                        ngram_cache_context, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, pseudo_output.data(), pseudo_output.size(), 1, false);
                     t_draft_us += ggml_time_us() - t_start_draft_us;
                 }
             }

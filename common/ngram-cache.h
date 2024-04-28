@@ -64,7 +64,7 @@ typedef std::unordered_map<llama_ngram, llama_ngram_cache_part, llama_ngram_hash
 // In order to get correct results inp_data can ONLY BE APPENDED TO.
 // Changes in the middle need a complete rebuild.
 void llama_ngram_cache_update(
-    llama_ngram_cache & ngram_cache, int ngram_min, int ngram_max, std::vector<llama_token> & inp_data, int nnew, bool print_progress);
+    llama_ngram_cache & ngram_cache, int ngram_min, int ngram_max, llama_token * inp_data, int inp_size, int nnew, bool print_progress);
 
 // Try to draft tokens from ngram caches.
 // inp:                the tokens generated so far.

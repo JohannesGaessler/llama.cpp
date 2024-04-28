@@ -53,7 +53,7 @@ int main(int argc, char ** argv){
     {
         // Fill up context ngram cache with tokens from user input:
         const int64_t t_start_draft_us = ggml_time_us();
-        llama_ngram_cache_update(ngram_cache_context, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, inp, inp.size(), false);
+        llama_ngram_cache_update(ngram_cache_context, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, inp.data(), inp.size(), inp.size(), false);
 
         if (!params.lookup_cache_static.empty()) {
             if(!llama_ngram_cache_load(ngram_cache_static, params.lookup_cache_static)) {
@@ -153,7 +153,7 @@ int main(int argc, char ** argv){
                 {
                     // Update context ngram cache with the newly accepted token:
                     const int64_t t_start_draft_us = ggml_time_us();
-                    llama_ngram_cache_update(ngram_cache_context, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, inp, 1, false);
+                    llama_ngram_cache_update(ngram_cache_context, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, inp.data(), inp.size(), 1, false);
                     t_draft_us += ggml_time_us() - t_start_draft_us;
                 }
 
@@ -179,7 +179,7 @@ int main(int argc, char ** argv){
             {
                 // Update context ngram cache with the newly accepted token:
                 const int64_t t_start_draft_us = ggml_time_us();
-                llama_ngram_cache_update(ngram_cache_context, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, inp, 1, false);
+                llama_ngram_cache_update(ngram_cache_context, LLAMA_NGRAM_MIN, LLAMA_NGRAM_MAX, inp.data(), inp.size(), 1, false);
                 t_draft_us += ggml_time_us() - t_start_draft_us;
             }
             break;
