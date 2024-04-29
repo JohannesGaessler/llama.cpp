@@ -39,23 +39,11 @@ struct llama_ngram {
 
 struct llama_ngram_hash_function {
     size_t operator()(const llama_ngram & ngram) const {
-        size_t hash = 0;
+        size_t hash = ngram.tokens[0];
 
-        if (sizeof(size_t) == 8 && LLAMA_NGRAM_MAX == 4) {
-            llama_token token = ngram.tokens[0];
-            token &= 0x0000FFFF;
-            hash |= token;
-            for (int i = 1; i < LLAMA_NGRAM_MAX; ++i) {
-                hash <<= 16;
-
-                token = ngram.tokens[i];
-                token &= 0x0000FFFF;
-                hash |= token;
-            }
-        } else {
-            for (int i = 0; i < LLAMA_NGRAM_MAX; ++i) {
-                hash ^= std::hash<llama_token>{}(ngram.tokens[i]);
-            }
+        for (int i = 1; i < LLAMA_NGRAM_MAX; ++i) {
+            hash <<= 15;
+            hash ^= ngram.tokens[i];
         }
 
         return hash;
