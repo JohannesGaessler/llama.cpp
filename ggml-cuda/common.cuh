@@ -294,7 +294,7 @@ static __device__ __forceinline__ float warp_reduce_max(float x) {
     return x;
 }
 
-#if CUDART_VERSION < CUDART_HMAX
+#if !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) && CUDART_VERSION < CUDART_HMAX
 static __device__ __forceinline__ half __hmax(const half a, const half b) {
     return __half2float(a) > __half2float(b) ? a : b;
 }
@@ -304,7 +304,7 @@ static __device__ __forceinline__ half2 __hmax2(const half2 a, const half2 b) {
     reinterpret_cast<half&>(ret.y) = __high2float(a) > __high2float(b) ? __high2half(a) : __high2half(b);
     return ret;
 }
-#endif // CUDART_VERSION < CUDART_HMAX
+#endif // !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) && CUDART_VERSION < CUDART_HMAX
 
 static __device__ __forceinline__ half2 warp_reduce_max(half2 x) {
 #if !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) && __CUDA_ARCH__ >= CC_PASCAL
