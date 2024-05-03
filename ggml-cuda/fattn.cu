@@ -3,9 +3,9 @@
 
 #include <cstdint>
 
-// #if FP16_MMA_AVAILABLE
+#if FP16_MMA_AVAILABLE
 #include <mma.h>
-// #endif
+#endif
 
 #define FATTN_KQ_STRIDE       256
 #define HALF_MAX_HALF         __float2half(65504.0f/2) // Use neg. of this instead of -INFINITY to initialize KQ max vals to avoid NaN upon subtraction.
@@ -886,7 +886,7 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
     }
 
     if (Q->ne[0] % (2*WARP_SIZE) == 0) {
-        constexpr int cols_per_block = 1;
+        constexpr int cols_per_block = 8;
         constexpr int parallel_blocks = 1;
         switch (Q->ne[0]) {
             case 64:
