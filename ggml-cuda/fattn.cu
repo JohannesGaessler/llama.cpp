@@ -72,7 +72,7 @@ static __global__ void flash_attn_vec_ext_f16(
     for (int j = 0; j < ncols; ++j) {
         kqmax[j] = -HALF_MAX_HALF;
     }
-    half kqsum[ncols] = 0.0f;
+    half kqsum[ncols] = {0.0f};
 
     __shared__ half kqmax_shared[ncols][WARP_SIZE];
     __shared__ half kqsum_shared[ncols][WARP_SIZE];
