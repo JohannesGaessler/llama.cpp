@@ -366,16 +366,23 @@ static __device__ __forceinline__ float2 warp_reduce_sum(float2 a) {
 }
 
 static __device__ __forceinline__ half2 warp_reduce_sum(half2 a) {
-#if !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) && __CUDA_ARCH__ >= CC_PASCAL
+#if FP16_AVAILABLE
+#if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
+#pragma unroll
+   for (int mask = 16; mask > 0; mask >>= 1) {
+       const half2 a_other = __shfl_xor_sync(0xffffffff, a, mask, 32);
+       reinterpret_cast<half&>(a.x) +=  __low2half(a_other);
+       reinterpret_cast<half&>(a.y) += __high2half(a_other);
+   }
+   return a;
+#else
 #pragma unroll
    for (int mask = 16; mask > 0; mask >>= 1) {
        a = __hadd2(a, __shfl_xor_sync(0xffffffff, a, mask, 32));
    }
    return a;
-#else
-   GGML_UNUSED(a);
-   NO_DEVICE_CODE;
-#endif // !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) && __CUDA_ARCH__ >= CC_PASCAL
+#endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
+#endif // FP16_AVAILABLE
 }
 
 static __device__ __forceinline__ float warp_reduce_max(float x) {
