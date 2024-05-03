@@ -67,14 +67,21 @@ static __global__ void flash_attn_vec_ext_f16(
     }
     half2 * KQ2 = (half2 *) KQ;
 
-    half kqmax = -HALF_MAX_HALF;
-    half kqsum = 0.0f;
+    half kqmax[ncols];
+#pragma unroll
+    for (int j = 0; j < ncols; ++j) {
+        kqmax[j] = -HALF_MAX_HALF;
+    }
+    half kqsum[ncols] = 0.0f;
 
-    __shared__ half kqmax_shared[WARP_SIZE];
-    __shared__ half kqsum_shared[WARP_SIZE];
-    if (threadIdx.y == 0) {
-        kqmax_shared[threadIdx.x] = -HALF_MAX_HALF;
-        kqsum_shared[threadIdx.x] = 0.0f;
+    __shared__ half kqmax_shared[ncols][WARP_SIZE];
+    __shared__ half kqsum_shared[ncols][WARP_SIZE];
+#pragma unroll
+    for (int j = 0; j < ncols; ++j) {
+        if (threadIdx.y == 0) {
+            kqmax_shared[j][threadIdx.x] = -HALF_MAX_HALF;
+            kqsum_shared[j][threadIdx.x] = 0.0f;
+        }
     }
     __syncthreads();
 
@@ -95,7 +102,8 @@ static __global__ void flash_attn_vec_ext_f16(
     const int k_start  = parallel_blocks == 1 ? 0 : ip*D;
     for (int k_VKQ_0 = k_start; k_VKQ_0 < ne11; k_VKQ_0 += parallel_blocks*D) {
         // Calculate KQ tile and keep track of new maximum KQ values:
-        half kqmax_new = kqmax;
+        half kqmax_new[ncols];
+        memcpy(kqmax_new, kqmax, sizeof(kqmax));
 #pragma unroll
         for (int i_KQ_0 = 0; i_KQ_0 < D; i_KQ_0 += nwarps) {
             const int i_KQ = i_KQ_0 + threadIdx.y;
@@ -121,28 +129,31 @@ static __global__ void flash_attn_vec_ext_f16(
                 sum2 = warp_reduce_sum(sum2);
                 half sum = __low2half(sum2) + __high2half(sum2);
                 sum += mask ? maskh[k_VKQ_0 + i_KQ] : __float2half(0.0f);
-                kqmax_new = ggml_cuda_hmax(kqmax_new, sum);
+                kqmax_new[j] = ggml_cuda_hmax(kqmax_new[j], sum);
                 if (threadIdx.x == 0) {
                     KQ[j*(nwarps*WARP_SIZE) + i_KQ] = sum;
                 }
             }
         }
 
-        kqmax_new = warp_reduce_max(kqmax_new);
-        if (threadIdx.x == 0) {
-            kqmax_shared[threadIdx.y] = kqmax_new;
-        }
-        __syncthreads();
-        kqmax_new = kqmax_shared[threadIdx.x];
-        kqmax_new = warp_reduce_max(kqmax_new);
-
-        const half KQ_max_scale = hexp(kqmax - kqmax_new);
-        kqmax = kqmax_new;
-
 #pragma unroll
         for (int j = 0; j < ncols; ++j) {
-            const half val = hexp(KQ[j*(nwarps*WARP_SIZE) + tid] - kqmax);
-            kqsum = kqsum*KQ_max_scale + val;
+            kqmax_new[j] = warp_reduce_max(kqmax_new[j]);
+            if (threadIdx.x == 0) {
+                kqmax_shared[j][threadIdx.y] = kqmax_new[j];
+            }
+        }
+        __syncthreads();
+#pragma unroll
+        for (int j = 0; j < ncols; ++j) {
+            kqmax_new[j] = kqmax_shared[j][threadIdx.x];
+            kqmax_new[j] = warp_reduce_max(kqmax_new[j]);
+
+            const half KQ_max_scale = hexp(kqmax[j] - kqmax_new[j]);
+            kqmax[j] = kqmax_new[j];
+
+            const half val = hexp(KQ[j*(nwarps*WARP_SIZE) + tid] - kqmax[j]);
+            kqsum[j] = kqsum[j]*KQ_max_scale + val;
             KQ[j*(nwarps*WARP_SIZE) + tid] = val;
 
             VKQ *= __half2half2(KQ_max_scale);
@@ -170,32 +181,43 @@ static __global__ void flash_attn_vec_ext_f16(
         __syncthreads();
     }
 
-    if (tid >= D) {
-        kqsum = 0.0f;
+#pragma unroll
+    for (int j = 0; j < ncols; ++j) {
+        if (tid >= D) {
+            kqsum[j] = 0.0f;
+        }
+
+        kqsum[j] = warp_reduce_sum(kqsum[j]);
+        if (threadIdx.x == 0) {
+            kqsum_shared[j][threadIdx.y] = kqsum[j];
+        }
     }
 
-    kqsum = warp_reduce_sum(kqsum);
-    if (threadIdx.x == 0) {
-        kqsum_shared[threadIdx.y] = kqsum;
-    }
     __syncthreads();
-    kqsum = kqsum_shared[threadIdx.x];
-    kqsum = warp_reduce_sum(kqsum);
 
-    if (tid >= D) {
-        return;
-    }
+#pragma unroll
+    for (int j = 0; j < ncols; ++j) {
+        kqsum[j] = kqsum_shared[j][threadIdx.x];
+        kqsum[j] = warp_reduce_sum(kqsum[j]);
 
-    half dst_val = (__low2half(VKQ) + __high2half(VKQ));
-    if (parallel_blocks == 1) {
-        dst_val /= kqsum;
+        if (tid >= D) {
+            continue;
+        }
+
+        half dst_val = (__low2half(VKQ) + __high2half(VKQ));
+        if (parallel_blocks == 1) {
+            dst_val /= kqsum[j];
+        }
+        dst[D*gridDim.y*(blockIdx.x*ncols + j) + D*blockIdx.y + tid] = dst_val;
     }
-    dst[D*gridDim.y*blockIdx.x + D*blockIdx.y + tid] = dst_val;
 
     if (parallel_blocks == 1 || tid != 0) {
         return;
     }
-    dst_meta[ic0*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = make_float2(kqmax, kqsum);
+#pragma unroll
+    for (int j = 0; j < ncols; ++j) {
+        dst_meta[ic0*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = make_float2(kqmax[j], kqsum[j]);
+    }
 // #else
 //    NO_DEVICE_CODE;
 // #endif // FP16_AVAILABLE
