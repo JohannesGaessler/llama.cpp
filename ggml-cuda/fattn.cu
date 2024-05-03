@@ -3,15 +3,15 @@
 
 #include <cstdint>
 
-#if FP16_MMA_AVAILABLE
+// #if FP16_MMA_AVAILABLE
 #include <mma.h>
-#endif
+// #endif
 
 #define FATTN_KQ_STRIDE       256
 #define HALF_MAX_HALF         __float2half(65504.0f/2) // Use neg. of this instead of -INFINITY to initialize KQ max vals to avoid NaN upon subtraction.
 #define SOFTMAX_FTZ_THRESHOLD -20.0f                   // Softmax exp. of values smaller than this are flushed to zero to avoid NaNs.
 
-template<int D, int parallel_blocks> // D == head size
+template<int D, int cols_per_block, int parallel_blocks> // D == head size
 __launch_bounds__(((D + WARP_SIZE - 1) / WARP_SIZE)*WARP_SIZE, 1)
 static __global__ void flash_attn_vec_ext_f16(
         const char * __restrict__ Q,
@@ -41,7 +41,7 @@ static __global__ void flash_attn_vec_ext_f16(
         const int ne1,
         const int ne2,
         const int ne3) {
-#if FP16_AVAILABLE
+// #if FP16_AVAILABLE
     //In this kernel Q, K, V are matrices while i, j, k are matrix indices.
 
     const int ic = blockIdx.x / parallel_blocks; // Index of the Q/QKV column to work on.
@@ -184,9 +184,9 @@ static __global__ void flash_attn_vec_ext_f16(
         return;
     }
     dst_meta[ic*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = make_float2(kqmax, kqsum);
-#else
-   NO_DEVICE_CODE;
-#endif // FP16_AVAILABLE
+// #else
+//    NO_DEVICE_CODE;
+// #endif // FP16_AVAILABLE
 }
 
 // D == head size, VKQ_stride == num VKQ rows calculated in parallel:
@@ -642,7 +642,7 @@ static_assert(get_VKQ_stride( 80, 1, 16) ==  16, "Test failed.");
 static_assert(get_VKQ_stride( 80, 2, 16) ==  16, "Test failed.");
 static_assert(get_VKQ_stride( 80, 4, 16) ==  16, "Test failed.");
 
-template <int D, int parallel_blocks> void launch_fattn_vec_f16(
+template <int D, int cols_per_block, int parallel_blocks> void launch_fattn_vec_f16(
         const ggml_tensor * Q, const ggml_tensor * K, const ggml_tensor * V, ggml_tensor * KQV, const ggml_tensor * mask,
         ggml_cuda_pool & pool, cudaStream_t main_stream
 ) {
@@ -656,13 +656,13 @@ template <int D, int parallel_blocks> void launch_fattn_vec_f16(
 
     constexpr int  nwarps = (D + WARP_SIZE - 1) / WARP_SIZE;
     const     dim3 block_dim(WARP_SIZE, nwarps, 1);
-    const     dim3 blocks_num(parallel_blocks*Q->ne[1], Q->ne[2], Q->ne[3]);
+    const     dim3 blocks_num(parallel_blocks*((Q->ne[1] + cols_per_block - 1) / cols_per_block), Q->ne[2], Q->ne[3]);
     const     int  shmem = 0;
 
     float scale;
     memcpy(&scale, KQV->op_params, sizeof(float));
 
-    flash_attn_vec_ext_f16<D, parallel_blocks>
+    flash_attn_vec_ext_f16<D, cols_per_block, parallel_blocks>
         <<<blocks_num, block_dim, shmem, main_stream>>> (
                 (const char *) Q->data,
                 (const char *) K->data,
@@ -844,17 +844,18 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
         return;
     }
 
-    if (Q->ne[1] == 1 && Q->ne[0] % (2*WARP_SIZE) == 0) {
-        constexpr int parallel_blocks = 4;
+    if (Q->ne[0] % (2*WARP_SIZE) == 0) {
+        constexpr int cols_per_block = 1;
+        constexpr int parallel_blocks = 1;
         switch (Q->ne[0]) {
             case 64:
-                launch_fattn_vec_f16< 64, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
+                launch_fattn_vec_f16< 64, cols_per_block, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
                 break;
             case 128:
-                launch_fattn_vec_f16<128, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
+                launch_fattn_vec_f16<128, cols_per_block, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
                 break;
             case 256:
-                launch_fattn_vec_f16<256, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
+                launch_fattn_vec_f16<256, cols_per_block, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
                 break;
             default:
                 GGML_ASSERT(false);
