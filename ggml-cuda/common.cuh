@@ -366,11 +366,18 @@ static __device__ __forceinline__ float2 warp_reduce_sum(float2 a) {
 }
 
 static __device__ __forceinline__ half warp_reduce_sum(half x) {
+#if FP16_AVAILABLE
+
 #pragma unroll
     for (int mask = 16; mask > 0; mask >>= 1) {
         x += __shfl_xor_sync(0xffffffff, x, mask, 32);
     }
     return x;
+
+#else
+    NO_DEVICE_CODE;
+    return x;
+#endif // FP16_AVAILABLE
 }
 
 static __device__ __forceinline__ half2 warp_reduce_sum(half2 a) {
@@ -448,8 +455,8 @@ static __device__ __forceinline__ half2 ggml_cuda_hmax2(const half2 a, const hal
     return __hmax2(a, b);
 #else
     half2 ret;
-    reinterpret_cast<half&>(ret.x) =  __low2float(a) >  __low2float(b) ?  __low2half(a) :  __low2half(b);
-    reinterpret_cast<half&>(ret.y) = __high2float(a) > __high2float(b) ? __high2half(a) : __high2half(b);
+    reinterpret_cast<half&>(ret.x) = __float2half(fmaxf( __low2float(a),  __low2float(b)));
+    reinterpret_cast<half&>(ret.y) = __float2half(fmaxf(__high2float(a), __high2float(b)));
     return ret;
 #endif // CUDART_VERSION >= CUDART_HMAX
 
