@@ -60,8 +60,11 @@ static __global__ void flash_attn_vec_ext_f16(
     const int tid = WARP_SIZE*threadIdx.y + threadIdx.x;
     __builtin_assume(tid < nwarps*WARP_SIZE);
 
-    __shared__ half KQ[nwarps*WARP_SIZE];
-    KQ[tid] = -INFINITY;
+    __shared__ half KQ[ncols * nwarps*WARP_SIZE];
+#pragma unroll
+    for (int j = 0; j < ncols; ++j) {
+        KQ[j*(nwarps*WARP_SIZE) + tid] = -INFINITY;
+    }
     half2 * KQ2 = (half2 *) KQ;
 
     half kqmax = -HALF_MAX_HALF;
@@ -113,12 +116,15 @@ static __global__ void flash_attn_vec_ext_f16(
                 sum2 += K_ik * Q_h2[k_KQ_0/WARP_SIZE];
             }
 
-            sum2 = warp_reduce_sum(sum2);
-            half sum = __low2half(sum2) + __high2half(sum2);
-            sum += mask ? maskh[k_VKQ_0 + i_KQ] : __float2half(0.0f);
-            kqmax_new = ggml_cuda_hmax(kqmax_new, sum);
-            if (threadIdx.x == 0) {
-                KQ[i_KQ] = sum;
+#pragma unroll
+            for (int j = 0; j < ncols; ++j) {
+                sum2 = warp_reduce_sum(sum2);
+                half sum = __low2half(sum2) + __high2half(sum2);
+                sum += mask ? maskh[k_VKQ_0 + i_KQ] : __float2half(0.0f);
+                kqmax_new = ggml_cuda_hmax(kqmax_new, sum);
+                if (threadIdx.x == 0) {
+                    KQ[j*(nwarps*WARP_SIZE) + i_KQ] = sum;
+                }
             }
         }
 
@@ -133,11 +139,14 @@ static __global__ void flash_attn_vec_ext_f16(
         const half KQ_max_scale = hexp(kqmax - kqmax_new);
         kqmax = kqmax_new;
 
-        const half val = hexp(KQ[tid] - kqmax);
-        kqsum = kqsum*KQ_max_scale + val;
-        KQ[tid] = val;
+#pragma unroll
+        for (int j = 0; j < ncols; ++j) {
+            const half val = hexp(KQ[j*(nwarps*WARP_SIZE) + tid] - kqmax);
+            kqsum = kqsum*KQ_max_scale + val;
+            KQ[j*(nwarps*WARP_SIZE) + tid] = val;
 
-        VKQ *= __half2half2(KQ_max_scale);
+            VKQ *= __half2half2(KQ_max_scale);
+        }
 
         __syncthreads();
 
@@ -151,7 +160,10 @@ static __global__ void flash_attn_vec_ext_f16(
                 half2 V_k;
                 reinterpret_cast<half&>(V_k.x) = V_h[(k_VKQ_0 + k0 + 0)*stride_KV + tid];
                 reinterpret_cast<half&>(V_k.y) = V_h[(k_VKQ_0 + k0 + 1)*stride_KV + tid];
-                VKQ += V_k*KQ2[k0/2];
+#pragma unroll
+                for (int j = 0; j < ncols; ++j) {
+                    VKQ += V_k*KQ2[j*(nwarps*WARP_SIZE/2) + k0/2];
+                }
             }
         }
 
