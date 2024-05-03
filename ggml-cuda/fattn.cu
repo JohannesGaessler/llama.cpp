@@ -97,7 +97,7 @@ static __global__ void flash_attn_vec_ext_f16(
         Q_h2[i0/WARP_SIZE] = make_half2(scale, scale) * make_half2(Q_f2[i].x, Q_f2[i].y);
     }
 
-    half2 VKQ = make_half2(0.0f, 0.0f); // Each thread calculates a single VKQ value.
+    half2 VKQ[ncols] = {{0.0f, 0.0f}}; // Each thread calculates a single VKQ value.
 
     const int k_start  = parallel_blocks == 1 ? 0 : ip*D;
     for (int k_VKQ_0 = k_start; k_VKQ_0 < ne11; k_VKQ_0 += parallel_blocks*D) {
@@ -156,7 +156,7 @@ static __global__ void flash_attn_vec_ext_f16(
             kqsum[j] = kqsum[j]*KQ_max_scale + val;
             KQ[j*(nwarps*WARP_SIZE) + tid] = val;
 
-            VKQ *= __half2half2(KQ_max_scale);
+            VKQ[j] *= __half2half2(KQ_max_scale);
         }
 
         __syncthreads();
@@ -173,7 +173,7 @@ static __global__ void flash_attn_vec_ext_f16(
                 reinterpret_cast<half&>(V_k.y) = V_h[(k_VKQ_0 + k0 + 1)*stride_KV + tid];
 #pragma unroll
                 for (int j = 0; j < ncols; ++j) {
-                    VKQ += V_k*KQ2[j*(nwarps*WARP_SIZE/2) + k0/2];
+                    VKQ[j] += V_k*KQ2[j*(nwarps*WARP_SIZE/2) + k0/2];
                 }
             }
         }
@@ -204,7 +204,7 @@ static __global__ void flash_attn_vec_ext_f16(
             continue;
         }
 
-        half dst_val = (__low2half(VKQ) + __high2half(VKQ));
+        half dst_val = (__low2half(VKQ[j]) + __high2half(VKQ[j]));
         if (parallel_blocks == 1) {
             dst_val /= kqsum[j];
         }
