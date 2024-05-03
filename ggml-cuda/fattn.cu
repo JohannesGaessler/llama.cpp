@@ -824,9 +824,52 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
 
     ggml_cuda_set_device(ctx.device);
 
+    const int cc  = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
     const int nsm = ggml_cuda_info().devices[ggml_cuda_get_device()].nsm;
 
     const int32_t precision = KQV->op_params[1];
+
+    if (!fp16_mma_available(cc)) {
+        GGML_ASSERT(precision == GGML_PREC_DEFAULT);
+
+        if (Q->ne[1] == 1) {
+            constexpr int cols_per_block = 1;
+            constexpr int parallel_blocks = 4;
+            switch (Q->ne[0]) {
+                case 64:
+                    launch_fattn_vec_f16< 64, cols_per_block, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
+                    break;
+                case 128:
+                    launch_fattn_vec_f16<128, cols_per_block, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
+                    break;
+                case 256:
+                    launch_fattn_vec_f16<256, cols_per_block, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
+                    break;
+                default:
+                    GGML_ASSERT(false);
+                    break;
+            }
+            return;
+        }
+
+        constexpr int cols_per_block = 8;
+        constexpr int parallel_blocks = 1;
+        switch (Q->ne[0]) {
+            case 64:
+                launch_fattn_vec_f16< 64, cols_per_block, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
+                break;
+            case 128:
+                launch_fattn_vec_f16<128, cols_per_block, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
+                break;
+            case 256:
+                launch_fattn_vec_f16<256, cols_per_block, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
+                break;
+            default:
+                GGML_ASSERT(false);
+                break;
+        }
+        return;
+    }
 
     if (precision != GGML_PREC_DEFAULT) {
         if (Q->ne[1] <= 32 || Q->ne[0] > 128) {
@@ -885,9 +928,9 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
         return;
     }
 
-    if (Q->ne[0] % (2*WARP_SIZE) == 0) {
-        constexpr int cols_per_block = 8;
-        constexpr int parallel_blocks = 1;
+    if (Q->ne[1] == 1 && Q->ne[0] % (2*WARP_SIZE) == 0) {
+        constexpr int cols_per_block = 1;
+        constexpr int parallel_blocks = 4;
         switch (Q->ne[0]) {
             case 64:
                 launch_fattn_vec_f16< 64, cols_per_block, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());

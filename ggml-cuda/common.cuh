@@ -437,6 +437,10 @@ static __device__ __forceinline__ int __dp4a(const int a, const int b, int c) {
 
 #define FP16_MMA_AVAILABLE !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) && __CUDA_ARCH__ >= CC_VOLTA
 
+static bool fp16_mma_available(const int cc) {
+    return cc < CC_OFFSET_AMD ? cc >= CC_VOLTA : cc >= CC_RDNA1;
+}
+
 // TODO: move to ggml-common.h
 static const __device__ int8_t kvalues_iq4nl[16] = {-127, -104, -83, -65, -49, -35, -22, -10, 1, 13, 25, 38, 53, 69, 89, 113};
 
