@@ -78,13 +78,16 @@ static __global__ void flash_attn_vec_ext_f16(
 
     __shared__ half kqmax_shared[ncols][WARP_SIZE];
     __shared__ half kqsum_shared[ncols][WARP_SIZE];
+    __shared__ int all_masked_shared[WARP_SIZE];
+    if (threadIdx.y == 0) {
 #pragma unroll
-    for (int j = 0; j < ncols; ++j) {
-        if (threadIdx.y == 0) {
+        for (int j = 0; j < ncols; ++j) {
             kqmax_shared[j][threadIdx.x] = -HALF_MAX_HALF;
             kqsum_shared[j][threadIdx.x] = 0.0f;
         }
+        all_masked_shared[threadIdx.x] = 1;
     }
+
     __syncthreads();
 
     // Convert Q to half2 and store in registers:
@@ -104,6 +107,30 @@ static __global__ void flash_attn_vec_ext_f16(
 
     const int k_start = parallel_blocks == 1 ? 0 : ip*D;
     for (int k_VKQ_0 = k_start; k_VKQ_0 < ne11; k_VKQ_0 += parallel_blocks*D) {
+        bool all_masked = true;
+#pragma unroll
+        for (int j = 0; j < ncols; ++j) {
+            const half mask_val = mask ? maskh[j*ne11 + k_VKQ_0 + tid] : __float2half(0.0f);
+            all_masked &= __hisinf(mask_val);
+            KQ[j*D + tid] = mask_val;
+        }
+#pragma unroll
+        for (int mask = 16; mask > 0; mask >>= 1) {
+            all_masked &= __shfl_xor_sync(0xFFFFFFFF, all_masked, mask, 32);
+        }
+        if (threadIdx.x == 0) {
+            all_masked_shared[threadIdx.y] = all_masked;
+        }
+        __syncthreads();
+        all_masked = all_masked_shared[threadIdx.x];
+#pragma unroll
+        for (int mask = 16; mask > 0; mask >>= 1) {
+            all_masked &= __shfl_xor_sync(0xFFFFFFFF, all_masked, mask, 32);
+        }
+        if (all_masked) {
+            continue;
+        }
+
         // Calculate KQ tile and keep track of new maximum KQ values:
         half kqmax_new[ncols];
         memcpy(kqmax_new, kqmax, sizeof(kqmax));
@@ -132,10 +159,9 @@ static __global__ void flash_attn_vec_ext_f16(
             for (int j = 0; j < ncols; ++j) {
                 sum2[j] = warp_reduce_sum(sum2[j]);
                 half sum = __low2half(sum2[j]) + __high2half(sum2[j]);
-                sum += mask ? maskh[j*ne11 + k_VKQ_0 + i_KQ] : __float2half(0.0f);
                 kqmax_new[j] = ggml_cuda_hmax(kqmax_new[j], sum);
                 if (threadIdx.x == 0) {
-                    KQ[j*D + i_KQ] = sum;
+                    KQ[j*D + i_KQ] += sum;
                 }
             }
         }
@@ -822,7 +848,7 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
 
     const int32_t precision = KQV->op_params[1];
 
-    if (!fp16_mma_available(cc)) {
+    if (true || !fp16_mma_available(cc)) {
         GGML_ASSERT(precision == GGML_PREC_DEFAULT);
         GGML_ASSERT(Q->ne[0] == 64 || Q->ne[0] == 128 && "FlashAttention without tensor cores only supports head sizes 64 and 128.");
 
