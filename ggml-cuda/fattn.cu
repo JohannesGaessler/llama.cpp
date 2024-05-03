@@ -46,6 +46,10 @@ static __global__ void flash_attn_vec_ext_f16(
 #if FP16_AVAILABLE
     //In this kernel Q, K, V are matrices while i, j, k are matrix indices.
 
+    extern __shared__ half data_flash_attn_vec_ext_f16[];
+    half * Q_sh = data_flash_attn_vec_ext_f16;
+    half2 * Q_sh2 = (half2 *) Q_sh;
+
     const int ic0 = (blockIdx.x / parallel_blocks) * ncols; // Index of the Q/QKV column to work on.
     const int ip  =  blockIdx.x % parallel_blocks; // Index in group of blocks running for the same column in parallel.
 
@@ -85,20 +89,34 @@ static __global__ void flash_attn_vec_ext_f16(
             kqsum_shared[j][threadIdx.x] = 0.0f;
         }
     }
-    __syncthreads();
 
     // Convert Q to half2 and store in registers:
-    half2 Q_h2[ncols][D/(2*WARP_SIZE)];
+//     half2 Q_h2[ncols][D/(2*WARP_SIZE)];
+// #pragma unroll
+//     for (int j = 0; j < ncols; ++j) {
+// #pragma unroll
+//         for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
+//             const int i = i0 + threadIdx.x;
+
+//             const float2 tmp = Q_f2[j*(nb01/sizeof(float2)) + i];
+//             Q_h2[j][i0/WARP_SIZE] = make_half2(scale, scale) * make_half2(tmp.x, tmp.y);
+//         }
+//     }
+
 #pragma unroll
-    for (int j = 0; j < ncols; ++j) {
+    for (int j0 = 0; j0 < ncols; j0 += nwarps) {
+        const int j = j0 + threadIdx.y;
+
 #pragma unroll
         for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
             const int i = i0 + threadIdx.x;
 
             const float2 tmp = Q_f2[j*(nb01/sizeof(float2)) + i];
-            Q_h2[j][i0/WARP_SIZE] = make_half2(scale, scale) * make_half2(tmp.x, tmp.y);
+            Q_sh2[j*(D/2) + i] = make_half2(scale, scale) * make_half2(tmp.x, tmp.y);
         }
     }
+
+    __syncthreads();
 
     half2 VKQ[ncols] = {{0.0f, 0.0f}};
 
@@ -124,7 +142,7 @@ static __global__ void flash_attn_vec_ext_f16(
                 const half2 K_ik = K_h2[(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ];
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
-                    sum2[j] += K_ik * Q_h2[j][k_KQ_0/WARP_SIZE];
+                    sum2[j] += K_ik * Q_sh2[j*(D/2) + k_KQ];
                 }
             }
 
@@ -691,7 +709,7 @@ template <int D, int cols_per_block, int parallel_blocks> void launch_fattn_vec_
     constexpr int  nwarps = (D + WARP_SIZE - 1) / WARP_SIZE;
     const     dim3 block_dim(WARP_SIZE, nwarps, 1);
     const     dim3 blocks_num(parallel_blocks*((Q->ne[1] + cols_per_block - 1) / cols_per_block), Q->ne[2], Q->ne[3]);
-    const     int  shmem = 0;
+    const     int  shmem = cols_per_block*D*sizeof(half);
 
     float scale;
     memcpy(&scale, KQV->op_params, sizeof(float));
