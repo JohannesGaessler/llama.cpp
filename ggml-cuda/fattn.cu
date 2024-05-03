@@ -62,10 +62,10 @@ static __global__ void flash_attn_vec_ext_f16(
     constexpr int nwarps = D / WARP_SIZE;
     const int tid = WARP_SIZE*threadIdx.y + threadIdx.x;
 
-    __shared__ half KQ[ncols * D];
+    __shared__ half KQ[ncols*D];
 #pragma unroll
     for (int j = 0; j < ncols; ++j) {
-        KQ[j*D + tid] = -INFINITY;
+        KQ[j*D + tid] = -HALF_MAX_HALF;
     }
     half2 * KQ2 = (half2 *) KQ;
 
@@ -100,13 +100,14 @@ static __global__ void flash_attn_vec_ext_f16(
         }
     }
 
-    half2 VKQ[ncols] = {{0.0f, 0.0f}}; // Each thread calculates a single VKQ value.
+    half2 VKQ[ncols] = {{0.0f, 0.0f}};
 
-    const int k_start  = parallel_blocks == 1 ? 0 : ip*D;
+    const int k_start = parallel_blocks == 1 ? 0 : ip*D;
     for (int k_VKQ_0 = k_start; k_VKQ_0 < ne11; k_VKQ_0 += parallel_blocks*D) {
         // Calculate KQ tile and keep track of new maximum KQ values:
         half kqmax_new[ncols];
         memcpy(kqmax_new, kqmax, sizeof(kqmax));
+
 #pragma unroll
         for (int i_KQ_0 = 0; i_KQ_0 < D; i_KQ_0 += nwarps) {
             const int i_KQ = i_KQ_0 + threadIdx.y;
@@ -146,7 +147,9 @@ static __global__ void flash_attn_vec_ext_f16(
                 kqmax_shared[j][threadIdx.y] = kqmax_new[j];
             }
         }
+
         __syncthreads();
+
 #pragma unroll
         for (int j = 0; j < ncols; ++j) {
             kqmax_new[j] = kqmax_shared[j][threadIdx.x];
@@ -175,7 +178,7 @@ static __global__ void flash_attn_vec_ext_f16(
             reinterpret_cast<half&>(V_k.y) = V_h[(k_VKQ_0 + k0 + 1)*stride_KV + tid];
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
-                VKQ[j] += V_k*KQ2[j*(nwarps*WARP_SIZE/2) + k0/2];
+                VKQ[j] += V_k*KQ2[j*(D/2) + k0/2];
             }
         }
 
