@@ -394,19 +394,11 @@ static __device__ __forceinline__ float warp_reduce_max(float x) {
 }
 
 static __device__ __forceinline__ half ggml_cuda_hmax(const half a, const half b) {
-#if !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__))
-
-#if CUDART_VERSION >= CUDART_HMAX
-    return __hmax(a, b);
-#else
+#if (defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) || CUDART_VERSION < CUDART_HMAX
     return __half2float(a) > __half2float(b) ? a : b;
-#endif // CUDART_VERSION >= CUDART_HMAX
-
 #else
-    GGML_UNUSED(a);
-    GGML_UNUSED(b);
-    NO_DEVICE_CODE;
-#endif // !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) && CUDART_VERSION < CUDART_HMAX
+    return __hmax(a, b);
+#endif // (defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) || CUDART_VERSION < CUDART_HMAX
 }
 static __device__ __forceinline__ half2 ggml_cuda_hmax2(const half2 a, const half2 b) {
 #if !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__))
