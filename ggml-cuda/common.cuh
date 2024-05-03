@@ -410,7 +410,7 @@ static __device__ __forceinline__ half ggml_cuda_hmax(const half a, const half b
 #if FP16_AVAILABLE
 
 #if (defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) || CUDART_VERSION < CUDART_HMAX
-    return __float2half(max(__half2float(a), __half2float(b)));
+    return __float2half(fmaxf(__half2float(a), __half2float(b)));
 #else
     return __hmax(a, b);
 #endif // (defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) || CUDART_VERSION < CUDART_HMAX
