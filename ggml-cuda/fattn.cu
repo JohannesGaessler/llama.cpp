@@ -86,15 +86,19 @@ static __global__ void flash_attn_vec_ext_f16(
     __syncthreads();
 
     // Convert Q to half2 and store in registers:
-    half2 Q_h2[(D/2 + WARP_SIZE - 1) / WARP_SIZE];
+    half2 Q_h2[ncols][(D/2 + WARP_SIZE - 1) / WARP_SIZE];
 #pragma unroll
-    for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
-        const int i = i0 + threadIdx.x;
-        if (i0 + WARP_SIZE > D/2 && i >= D/2) {
-            break;
-        }
+    for (int j = 0; j < ncols; ++j) {
+#pragma unroll
+        for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
+            const int i = i0 + threadIdx.x;
+            if (i0 + WARP_SIZE > D/2 && i >= D/2) {
+                break;
+            }
 
-        Q_h2[i0/WARP_SIZE] = make_half2(scale, scale) * make_half2(Q_f2[i].x, Q_f2[i].y);
+            const float2 tmp = Q_f2[j*(nb01/sizeof(float2)) + i];
+            Q_h2[j][i0/WARP_SIZE] = make_half2(scale, scale) * make_half2(tmp.x, tmp.y);
+        }
     }
 
     half2 VKQ[ncols] = {{0.0f, 0.0f}}; // Each thread calculates a single VKQ value.
@@ -112,7 +116,7 @@ static __global__ void flash_attn_vec_ext_f16(
                 break;
             }
 
-            half2 sum2 = make_half2(0.0f, 0.0f);
+            half2 sum2[ncols] = {{0.0f, 0.0f}};
 #pragma unroll
             for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += WARP_SIZE) {
                 const int k_KQ = k_KQ_0 + threadIdx.x;
@@ -121,14 +125,17 @@ static __global__ void flash_attn_vec_ext_f16(
                 }
 
                 const half2 K_ik = K_h2[(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ];
-                sum2 += K_ik * Q_h2[k_KQ_0/WARP_SIZE];
+#pragma unroll
+            for (int j = 0; j < ncols; ++j) {
+                    sum2[j] += K_ik * Q_h2[j][k_KQ_0/WARP_SIZE];
+                }
             }
 
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
-                sum2 = warp_reduce_sum(sum2);
-                half sum = __low2half(sum2) + __high2half(sum2);
-                sum += mask ? maskh[k_VKQ_0 + i_KQ] : __float2half(0.0f);
+                sum2[j] = warp_reduce_sum(sum2[j]);
+                half sum = __low2half(sum2[j]) + __high2half(sum2[j]);
+                sum += mask ? maskh[j*ne11 + k_VKQ_0 + i_KQ] : __float2half(0.0f);
                 kqmax_new[j] = ggml_cuda_hmax(kqmax_new[j], sum);
                 if (threadIdx.x == 0) {
                     KQ[j*(nwarps*WARP_SIZE) + i_KQ] = sum;
