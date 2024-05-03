@@ -11,7 +11,7 @@
 #define HALF_MAX_HALF         __float2half(65504.0f/2) // Use neg. of this instead of -INFINITY to initialize KQ max vals to avoid NaN upon subtraction.
 #define SOFTMAX_FTZ_THRESHOLD -20.0f                   // Softmax exp. of values smaller than this are flushed to zero to avoid NaNs.
 
-template<int D, int cols_per_block, int parallel_blocks> // D == head size
+template<int D, int ncols, int parallel_blocks> // D == head size
 __launch_bounds__(((D + WARP_SIZE - 1) / WARP_SIZE)*WARP_SIZE, 1)
 static __global__ void flash_attn_vec_ext_f16(
         const char * __restrict__ Q,
@@ -44,14 +44,14 @@ static __global__ void flash_attn_vec_ext_f16(
 // #if FP16_AVAILABLE
     //In this kernel Q, K, V are matrices while i, j, k are matrix indices.
 
-    const int ic = blockIdx.x / parallel_blocks; // Index of the Q/QKV column to work on.
-    const int ip = blockIdx.x % parallel_blocks; // Index in group of blocks running for the same column in parallel.
+    const int ic0 = (blockIdx.x / parallel_blocks) * ncols; // Index of the Q/QKV column to work on.
+    const int ip  =  blockIdx.x % parallel_blocks; // Index in group of blocks running for the same column in parallel.
 
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
-    const float2 * Q_f2  = (const float2 *) (Q    + nb02* blockIdx.y              + nb01*ic);
+    const float2 * Q_f2  = (const float2 *) (Q    + nb02* blockIdx.y              + nb01*ic0);
     const half2  * K_h2  = (const half2  *) (K    + nb12*(blockIdx.y / gqa_ratio));
     const half   * V_h   = (const half   *) (V    + nb12*(blockIdx.y / gqa_ratio)); // K and V have same shape
-    const half   * maskh = (const half   *)  mask + ne11*ic;
+    const half   * maskh = (const half   *)  mask + ne11*ic0;
 
     const int stride_KV  = nb11 / sizeof(half);
     const int stride_KV2 = nb11 / sizeof(half2);
@@ -183,7 +183,7 @@ static __global__ void flash_attn_vec_ext_f16(
     if (parallel_blocks == 1 || tid != 0) {
         return;
     }
-    dst_meta[ic*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = make_float2(kqmax, kqsum);
+    dst_meta[ic0*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = make_float2(kqmax, kqsum);
 // #else
 //    NO_DEVICE_CODE;
 // #endif // FP16_AVAILABLE
