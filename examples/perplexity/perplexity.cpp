@@ -1858,11 +1858,10 @@ static void kl_divergence(llama_context * ctx, const gpt_params & params) {
 
         printf("\n\n");
 
-        const std::vector<llama_token> tokens_batch(tokens.begin() + start, tokens.begin() + end);
         printf("text: ");
         for (int j = start; j < end; ++j) {
             const std::string s = llama_token_to_piece(ctx, tokens[j]);
-            const float kld_j = kld_values[j];
+            const float kld_j = kld_values[j-start];
             if (kld_j >= 0.5f) {
                 printf("\033[31m%s\033[0m", s.c_str());
             } else {
