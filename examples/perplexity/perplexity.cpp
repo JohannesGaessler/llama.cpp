@@ -1858,6 +1858,12 @@ static void kl_divergence(llama_context * ctx, const gpt_params & params) {
 
         printf("\n");
 
+        printf("text: ");
+        for (llama_token t : tokens) {
+            const std::string s = llama_token_to_piece(ctx, t);
+            printf("%s", s.c_str());
+        }
+
         fflush(stdout);
 
         logits.clear();
