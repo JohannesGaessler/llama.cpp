@@ -1856,7 +1856,7 @@ static void kl_divergence(llama_context * ctx, const gpt_params & params) {
         double p_top_unc = sqrt(p_top_val*(1 - p_top_val)/(kld.count - 1));
         printf("    %6.3lf ± %6.3lf %%", 100.0*p_top_val, 100.0*p_top_unc);
 
-        printf("\n");
+        printf("\n\n");
 
         const std::vector<llama_token> tokens_batch(tokens.begin() + start, tokens.begin() + end);
         printf("text: ");
@@ -1864,6 +1864,7 @@ static void kl_divergence(llama_context * ctx, const gpt_params & params) {
             const std::string s = llama_token_to_piece(ctx, t);
             printf("%s", s.c_str());
         }
+        printf("\n\n");
 
         fflush(stdout);
 
