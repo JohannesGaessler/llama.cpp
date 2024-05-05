@@ -1862,12 +1862,16 @@ static void kl_divergence(llama_context * ctx, const gpt_params & params) {
         float max_kld = 0.0f;
         for (int j = start; j < end; ++j) {
             const std::string s = llama_token_to_piece(ctx, tokens[j]);
-            const float kld_j = kld_values[size_t(n_ctx - 1 - n_ctx/2)*i + j-start];
-            max_kld = fmaxf(max_kld, kld_j);
-            if (kld_j >= 0.5f) {
-                printf("\033[31m%s\033[0m", s.c_str());
-            } else {
+            if (end - j > n_ctx - 1 - n_ctx/2) {
                 printf("%s", s.c_str());
+            } else {
+                const float kld_j = kld_values[(n_ctx - 1 - n_ctx/2)*i + j-start-(n_ctx - 1 - n_ctx/2)];
+                max_kld = fmaxf(max_kld, kld_j);
+                if (kld_j >= 0.5f) {
+                    printf("\033[31m%s\033[0m", s.c_str());
+                } else {
+                    printf("%s", s.c_str());
+                }
             }
         }
         printf("\n\n");
