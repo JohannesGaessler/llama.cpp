@@ -87,15 +87,16 @@ static __global__ void flash_attn_vec_ext_f32(
     __syncthreads();
 
     // Convert Q to half2 and store in registers:
-    half2 Q_h2[ncols][D/(2*WARP_SIZE)];
+    float2 Q_h2[ncols][D/(2*WARP_SIZE)];
 #pragma unroll
     for (int j = 0; j < ncols; ++j) {
 #pragma unroll
         for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
             const int i = i0 + threadIdx.x;
 
-            const float2 tmp = Q_f2[j*(nb01/sizeof(float2)) + i];
-            Q_h2[j][i0/WARP_SIZE] = make_half2(scale, scale) * make_half2(tmp.x, tmp.y);
+            Q_h2[j][i0/WARP_SIZE]    = Q_f2[j*(nb01/sizeof(float2)) + i];
+            Q_h2[j][i0/WARP_SIZE].x *= scale;
+            Q_h2[j][i0/WARP_SIZE].y *= scale;
         }
     }
 
@@ -123,7 +124,7 @@ static __global__ void flash_attn_vec_ext_f32(
                 break;
             }
 
-            half2 sum2[ncols] = {{0.0f, 0.0f}};
+            float sum[ncols] = {0.0f};
 #pragma unroll
             for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += WARP_SIZE) {
                 const int k_KQ = k_KQ_0 + threadIdx.x;
@@ -131,24 +132,24 @@ static __global__ void flash_attn_vec_ext_f32(
                 const half2 K_ik = K_h2[(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ];
 #pragma unroll
                 for (int j = 0; j < ncols; ++j) {
-                    sum2[j] += K_ik * Q_h2[j][k_KQ_0/WARP_SIZE];
+                    sum[j] +=  __low2float(K_ik) * Q_h2[j][k_KQ_0/WARP_SIZE].x;
+                    sum[j] += __high2float(K_ik) * Q_h2[j][k_KQ_0/WARP_SIZE].y;
                 }
             }
 
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
-                sum2[j] = warp_reduce_sum(sum2[j]);
-                half sum = __low2half(sum2[j]) + __high2half(sum2[j]);
-                sum += mask ? maskh[j*ne11 + k_VKQ_0 + i_KQ] : __float2half(0.0f);
+                sum[j] = warp_reduce_sum(sum[j]);
+                sum[j] += mask ? __half2float(maskh[j*ne11 + k_VKQ_0 + i_KQ]) : 0.0f;
 
                 if (ncols == 1) {
-                    kqmax_new        = fmaxf(kqmax_new,        __half2float(sum));
+                    kqmax_new        = fmaxf(kqmax_new,        sum[j]);
                 } else {
-                    kqmax_new_arr[j] = fmaxf(kqmax_new_arr[j], __half2float(sum));
+                    kqmax_new_arr[j] = fmaxf(kqmax_new_arr[j], sum[j]);
                 }
 
                 if (threadIdx.x == 0) {
-                    KQ[j*D + i_KQ] = sum;
+                    KQ[j*D + i_KQ] = sum[j];
                 }
             }
         }
