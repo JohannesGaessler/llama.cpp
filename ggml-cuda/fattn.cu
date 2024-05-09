@@ -68,12 +68,12 @@ static __global__ void flash_attn_vec_ext_f32(
         KQ[j*D + tid] = -HALF_MAX_HALF;
     }
 
-    half kqmax[ncols];
+    float kqmax[ncols];
 #pragma unroll
     for (int j = 0; j < ncols; ++j) {
         kqmax[j] = -HALF_MAX_HALF;
     }
-    half kqsum[ncols] = {0.0f};
+    float kqsum[ncols] = {0.0f};
 
     __shared__ half kqmax_shared[ncols][WARP_SIZE];
     __shared__ half kqsum_shared[ncols][WARP_SIZE];
@@ -108,8 +108,8 @@ static __global__ void flash_attn_vec_ext_f32(
         // For unknown reasons using a half array of size 1 for kqmax_new causes a performance regression,
         // see https://github.com/ggerganov/llama.cpp/pull/7061 .
         // Therefore this variable is defined twice but only used once (so that the compiler can optimize out the unused variable).
-        half kqmax_new = kqmax[0];
-        half kqmax_new_arr[ncols];
+        float kqmax_new = kqmax[0];
+        float kqmax_new_arr[ncols];
 #pragma unroll
         for (int j = 0; j < ncols; ++j) {
             kqmax_new_arr[j] = kqmax[j];
@@ -142,9 +142,9 @@ static __global__ void flash_attn_vec_ext_f32(
                 sum += mask ? maskh[j*ne11 + k_VKQ_0 + i_KQ] : __float2half(0.0f);
 
                 if (ncols == 1) {
-                    kqmax_new        = ggml_cuda_hmax(kqmax_new,        sum);
+                    kqmax_new        = fmaxf(kqmax_new,        __half2float(sum));
                 } else {
-                    kqmax_new_arr[j] = ggml_cuda_hmax(kqmax_new_arr[j], sum);
+                    kqmax_new_arr[j] = fmaxf(kqmax_new_arr[j], __half2float(sum));
                 }
 
                 if (threadIdx.x == 0) {
@@ -155,7 +155,7 @@ static __global__ void flash_attn_vec_ext_f32(
 
 #pragma unroll
         for (int j = 0; j < ncols; ++j) {
-            half kqmax_new_j = ncols == 1 ? kqmax_new : kqmax_new_arr[j];
+            float kqmax_new_j = ncols == 1 ? kqmax_new : kqmax_new_arr[j];
 
             kqmax_new_j = warp_reduce_max(kqmax_new_j);
             if (threadIdx.x == 0) {
@@ -167,17 +167,17 @@ static __global__ void flash_attn_vec_ext_f32(
 
 #pragma unroll
         for (int j = 0; j < ncols; ++j) {
-            half kqmax_new_j = kqmax_shared[j][threadIdx.x];
+            float kqmax_new_j = kqmax_shared[j][threadIdx.x];
             kqmax_new_j = warp_reduce_max(kqmax_new_j);
 
-            const half KQ_max_scale = hexp(kqmax[j] - kqmax_new_j);
+            const float KQ_max_scale = expf(kqmax[j] - kqmax_new_j);
             kqmax[j] = kqmax_new_j;
 
-            const half val = hexp(__float2half(KQ[j*D + tid]) - kqmax[j]);
+            const float val = expf(KQ[j*D + tid] - kqmax[j]);
             kqsum[j] = kqsum[j]*KQ_max_scale + val;
             KQ[j*D + tid] = val;
 
-            VKQ[j] *= __half2float(KQ_max_scale);
+            VKQ[j] *= KQ_max_scale;
         }
 
         __syncthreads();
