@@ -75,8 +75,8 @@ static __global__ void flash_attn_vec_ext_f32(
     }
     float kqsum[ncols] = {0.0f};
 
-    __shared__ half kqmax_shared[ncols][WARP_SIZE];
-    __shared__ half kqsum_shared[ncols][WARP_SIZE];
+    __shared__ float kqmax_shared[ncols][WARP_SIZE];
+    __shared__ float kqsum_shared[ncols][WARP_SIZE];
 #pragma unroll
     for (int j = 0; j < ncols; ++j) {
         if (threadIdx.y == 0) {
