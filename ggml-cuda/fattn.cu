@@ -216,7 +216,7 @@ static __global__ void flash_attn_vec_ext_f32(
 
         float dst_val = VKQ[j_VKQ];
         if (parallel_blocks == 1) {
-            dst_val /= __half2float(kqsum[j_VKQ]);
+            dst_val /= kqsum[j_VKQ];
         }
         const int j_dst = (ic0 + j_VKQ)*parallel_blocks + ip;
         dst[j_dst*D*gridDim.y + D*blockIdx.y + tid] = dst_val;
