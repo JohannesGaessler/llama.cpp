@@ -62,12 +62,11 @@ static __global__ void flash_attn_vec_ext_f32(
     const int tid = WARP_SIZE*threadIdx.y + threadIdx.x;
     __builtin_assume(tid < D);
 
-    __shared__ half KQ[ncols*D];
+    __shared__ float KQ[ncols*D];
 #pragma unroll
     for (int j = 0; j < ncols; ++j) {
         KQ[j*D + tid] = -HALF_MAX_HALF;
     }
-    half2 * KQ2 = (half2 *) KQ;
 
     half kqmax[ncols];
 #pragma unroll
@@ -100,7 +99,7 @@ static __global__ void flash_attn_vec_ext_f32(
         }
     }
 
-    half2 VKQ[ncols] = {{0.0f, 0.0f}};
+    float VKQ[ncols] = {0.0f};
 
     const int k_start = parallel_blocks == 1 ? 0 : ip*D;
     for (int k_VKQ_0 = k_start; k_VKQ_0 < ne11; k_VKQ_0 += parallel_blocks*D) {
@@ -174,11 +173,11 @@ static __global__ void flash_attn_vec_ext_f32(
             const half KQ_max_scale = hexp(kqmax[j] - kqmax_new_j);
             kqmax[j] = kqmax_new_j;
 
-            const half val = hexp(KQ[j*D + tid] - kqmax[j]);
+            const half val = hexp(__float2half(KQ[j*D + tid]) - kqmax[j]);
             kqsum[j] = kqsum[j]*KQ_max_scale + val;
             KQ[j*D + tid] = val;
 
-            VKQ[j] *= __half2half2(KQ_max_scale);
+            VKQ[j] *= __half2float(KQ_max_scale);
         }
 
         __syncthreads();
@@ -194,7 +193,8 @@ static __global__ void flash_attn_vec_ext_f32(
             reinterpret_cast<half&>(V_k.y) = V_h[(k_VKQ_0 + k0 + 1)*stride_KV + tid];
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
-                VKQ[j] += V_k*KQ2[j*(D/2) + k0/2];
+                VKQ[j] +=  __low2float(V_k)*KQ[j*D + k0 + 0];
+                VKQ[j] += __high2float(V_k)*KQ[j*D + k0 + 1];
             }
         }
 
@@ -216,9 +216,9 @@ static __global__ void flash_attn_vec_ext_f32(
         kqsum[j_VKQ] = kqsum_shared[j_VKQ][threadIdx.x];
         kqsum[j_VKQ] = warp_reduce_sum(kqsum[j_VKQ]);
 
-        half dst_val = (__low2half(VKQ[j_VKQ]) + __high2half(VKQ[j_VKQ]));
+        float dst_val = VKQ[j_VKQ];
         if (parallel_blocks == 1) {
-            dst_val /= kqsum[j_VKQ];
+            dst_val /= __half2float(kqsum[j_VKQ]);
         }
         const int j_dst = (ic0 + j_VKQ)*parallel_blocks + ip;
         dst[j_dst*D*gridDim.y + D*blockIdx.y + tid] = dst_val;
