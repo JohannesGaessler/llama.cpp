@@ -184,18 +184,15 @@ static __global__ void flash_attn_vec_ext_f32(
         __syncthreads();
 
 #pragma unroll
-        for (int k0 = 0; k0 < D; k0 += 2) {
-            if (FATTN_KQ_STRIDE % D != 0 && k_VKQ_0 + k0 >= ne11) {
+        for (int k = 0; k < D; ++k) {
+            if (FATTN_KQ_STRIDE % D != 0 && k_VKQ_0 + k >= ne11) {
                 break;
             }
 
-            half2 V_k;
-            reinterpret_cast<half&>(V_k.x) = V_h[(k_VKQ_0 + k0 + 0)*stride_KV + tid];
-            reinterpret_cast<half&>(V_k.y) = V_h[(k_VKQ_0 + k0 + 1)*stride_KV + tid];
+            const float V_ki = __half2float(V_h[(k_VKQ_0 + k)*stride_KV + tid]);
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
-                VKQ[j] +=  __low2float(V_k)*KQ[j*D + k0 + 0];
-                VKQ[j] += __high2float(V_k)*KQ[j*D + k0 + 1];
+                VKQ[j] += V_ki*KQ[j*D + k];
             }
         }
 
