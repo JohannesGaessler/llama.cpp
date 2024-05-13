@@ -38,7 +38,7 @@ static __global__ void flash_attn_tile_ext_f16(
         const int ne1,
         const int ne2,
         const int ne3) {
-#if FP16_AVAILABLE
+// #if FP16_AVAILABLE
     //In this kernel Q, K, V are matrices while i, j, k are matrix indices.
 
     const int ic0 = (blockIdx.x / parallel_blocks) * ncols; // Index of the Q/QKV column to work on.
@@ -96,7 +96,7 @@ static __global__ void flash_attn_tile_ext_f16(
     __syncthreads();
 
     // Convert Q to half2 and store in registers:
-    half2 Q_h2[ncols][D/(2*WARP_SIZE)];
+    __shared__ half2 Q_h2[ncols][D/2];
 #pragma unroll
     for (int j = 0; j < ncols; ++j) {
 #pragma unroll
@@ -104,7 +104,7 @@ static __global__ void flash_attn_tile_ext_f16(
             const int i = i0 + threadIdx.x;
 
             const float2 tmp = Q_f2[j*(nb01/sizeof(float2)) + i];
-            Q_h2[j][i0/WARP_SIZE] = make_half2(scale, scale) * make_half2(tmp.x, tmp.y);
+            Q_h2[j][i] = make_half2(scale, scale) * make_half2(tmp.x, tmp.y);
         }
     }
 
@@ -140,7 +140,7 @@ static __global__ void flash_attn_tile_ext_f16(
                 const half2 K_ik = K_h2[(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ];
 #pragma unroll
                 for (int j = 0; j < ncols; ++j) {
-                    sum2[j] += K_ik * Q_h2[j][k_KQ_0/WARP_SIZE];
+                    sum2[j] += K_ik * Q_h2[j][k_KQ];
                 }
             }
 
@@ -238,9 +238,9 @@ static __global__ void flash_attn_tile_ext_f16(
             dst_meta[(ic0 + j)*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = make_float2(kqmax[j], kqsum[j]);
         }
     }
-#else
-   NO_DEVICE_CODE;
-#endif // FP16_AVAILABLE
+// #else
+//    NO_DEVICE_CODE;
+// #endif // FP16_AVAILABLE
 }
 
 template <int D, int cols_per_block, int parallel_blocks> void launch_fattn_tile_f16(
