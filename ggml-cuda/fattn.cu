@@ -1,5 +1,6 @@
 #include "common.cuh"
 #include "fattn-common.cuh"
+#include "fattn-tile-f16.cuh"
 #include "fattn-vec-f16.cuh"
 #include "fattn-vec-f32.cuh"
 #include "fattn.cuh"
@@ -540,6 +541,11 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
     const int nsm = ggml_cuda_info().devices[ggml_cuda_get_device()].nsm;
 
     const int32_t precision = KQV->op_params[2];
+
+    if (true) {
+        ggml_cuda_flash_attn_ext_tile_f16(ctx, dst);
+        return;
+    }
 
     if (!fast_fp16_available(cc)) {
         ggml_cuda_flash_attn_ext_vec_f32(ctx, dst);
