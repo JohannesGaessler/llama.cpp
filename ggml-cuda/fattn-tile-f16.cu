@@ -207,30 +207,34 @@ static __global__ void flash_attn_tile_ext_f16(
 
     __syncthreads();
 
-    half kqsum[ncols] = {0.0f};
 
 #pragma unroll
-    for (int j_VKQ = 0; j_VKQ < ncols; ++j_VKQ) {
+    for (int j_VKQ_0 = 0; j_VKQ_0 < ncols; j_VKQ_0 += nwarps) {
+        const int j_VKQ = j_VKQ_0 + threadIdx.y;
+
+        half kqsum = 0.0f;
 #pragma unroll
         for (int i0 = 0; i0 < D; i0 += WARP_SIZE) {
             const int i = i0 + threadIdx.x;
 
-            kqsum[j_VKQ] += kqsum_shared[j_VKQ][i];
+            kqsum += kqsum_shared[j_VKQ][i];
         }
-        kqsum[j_VKQ] = warp_reduce_sum(kqsum[j_VKQ]);
+        kqsum = warp_reduce_sum(kqsum);
 
-        half dst_val = (__low2half(VKQ[j_VKQ][tid]) + __high2half(VKQ[j_VKQ][tid]));
-        if (parallel_blocks == 1) {
-            dst_val /= kqsum[j_VKQ];
-        }
-        const int j_dst = (ic0 + j_VKQ)*parallel_blocks + ip;
-        dst[j_dst*D*gridDim.y + D*blockIdx.y + tid] = dst_val;
-    }
-
-    if (parallel_blocks != 1 && tid == 0) {
 #pragma unroll
-        for (int j = 0; j < ncols; ++j) {
-            dst_meta[(ic0 + j)*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = make_float2(kqmax_shared[j][threadIdx.x], kqsum[j]);
+        for (int i0 = 0; i0 < D; i0 += WARP_SIZE) {
+            const int i = i0 + threadIdx.x;
+
+            half dst_val = (__low2half(VKQ[j_VKQ][i]) + __high2half(VKQ[j_VKQ][i]));
+            if (parallel_blocks == 1) {
+                dst_val /= kqsum;
+            }
+            const int j_dst = (ic0 + j_VKQ)*parallel_blocks + ip;
+            dst[j_dst*D*gridDim.y + D*blockIdx.y + i] = dst_val;
+        }
+
+        if (parallel_blocks != 1 && threadIdx.x == 0) {
+            dst_meta[(ic0 + j_VKQ)*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = make_float2(kqmax_shared[j_VKQ][threadIdx.x], kqsum);
         }
     }
 // #else
