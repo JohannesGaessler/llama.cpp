@@ -422,7 +422,41 @@ void ggml_cuda_flash_attn_ext_tile_f16(ggml_backend_cuda_context & ctx, ggml_ten
         return;
     }
 
-    constexpr int cols_per_block = 8;
+    if (Q->ne[1] <= 16) {
+        constexpr int cols_per_block = 16;
+        constexpr int parallel_blocks = 4;
+        switch (Q->ne[0]) {
+            case 64:
+                launch_fattn_tile_f16< 64, cols_per_block, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
+                break;
+            case 128:
+                launch_fattn_tile_f16<128, cols_per_block, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
+                break;
+            default:
+                GGML_ASSERT(false);
+                break;
+        }
+        return;
+    }
+
+    if (Q->ne[1] <= 32) {
+        constexpr int cols_per_block = 32;
+        constexpr int parallel_blocks = 4;
+        switch (Q->ne[0]) {
+            case 64:
+                launch_fattn_tile_f16< 64, cols_per_block, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
+                break;
+            case 128:
+                launch_fattn_tile_f16<128, cols_per_block, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
+                break;
+            default:
+                GGML_ASSERT(false);
+                break;
+        }
+        return;
+    }
+
+    constexpr int cols_per_block = 32;
     constexpr int parallel_blocks = 1;
     switch (Q->ne[0]) {
         case 64:
