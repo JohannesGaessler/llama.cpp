@@ -77,11 +77,6 @@ static __global__ void flash_attn_tile_ext_f16(
     }
     half2 * KQ2 = (half2 *) KQ;
 
-    half kqmax[ncols];
-#pragma unroll
-    for (int j = 0; j < ncols; ++j) {
-        kqmax[j] = -HALF_MAX_HALF;
-    }
     half kqsum[ncols] = {0.0f};
 
     __shared__ half kqmax_shared[ncols][WARP_SIZE];
@@ -119,15 +114,15 @@ static __global__ void flash_attn_tile_ext_f16(
     for (int k_VKQ_0 = k_start; k_VKQ_0 < ne11; k_VKQ_0 += parallel_blocks*D) {
         // Calculate KQ tile and keep track of new maximum KQ values:
 
-        // For unknown reasons using a half array of size 1 for kqmax_new causes a performance regression,
-        // see https://github.com/ggerganov/llama.cpp/pull/7061 .
-        // Therefore this variable is defined twice but only used once (so that the compiler can optimize out the unused variable).
-        half kqmax_new = kqmax[0];
+        half kqmax_old_arr[ncols];
         half kqmax_new_arr[ncols];
 #pragma unroll
         for (int j = 0; j < ncols; ++j) {
-            kqmax_new_arr[j] = kqmax[j];
+            kqmax_old_arr[j] = kqmax_shared[j][threadIdx.x];
+            kqmax_new_arr[j] = kqmax_shared[j][threadIdx.x];
         }
+
+        __syncthreads();
 
 #pragma unroll
         for (int i_KQ_0 = 0; i_KQ_0 < D; i_KQ_0 += nwarps) {
@@ -155,11 +150,7 @@ static __global__ void flash_attn_tile_ext_f16(
                 half sum = __low2half(sum2[j]) + __high2half(sum2[j]);
                 sum += mask ? slopeh*maskh[j*ne11 + k_VKQ_0 + i_KQ] : __float2half(0.0f);
 
-                if (ncols == 1) {
-                    kqmax_new        = ggml_cuda_hmax(kqmax_new,        sum);
-                } else {
-                    kqmax_new_arr[j] = ggml_cuda_hmax(kqmax_new_arr[j], sum);
-                }
+                kqmax_new_arr[j] = ggml_cuda_hmax(kqmax_new_arr[j], sum);
 
                 if (threadIdx.x == 0) {
                     KQ[j*D + i_KQ] = sum;
@@ -169,7 +160,7 @@ static __global__ void flash_attn_tile_ext_f16(
 
 #pragma unroll
         for (int j = 0; j < ncols; ++j) {
-            half kqmax_new_j = ncols == 1 ? kqmax_new : kqmax_new_arr[j];
+            half kqmax_new_j = kqmax_new_arr[j];
 
             kqmax_new_j = warp_reduce_max(kqmax_new_j);
             if (threadIdx.x == 0) {
@@ -183,11 +174,13 @@ static __global__ void flash_attn_tile_ext_f16(
         for (int j = 0; j < ncols; ++j) {
             half kqmax_new_j = kqmax_shared[j][threadIdx.x];
             kqmax_new_j = warp_reduce_max(kqmax_new_j);
+            if (threadIdx.y == 0) {
+                kqmax_shared[j][threadIdx.x] = kqmax_new_j;
+            }
 
-            const half KQ_max_scale = hexp(kqmax[j] - kqmax_new_j);
-            kqmax[j] = kqmax_new_j;
+            const half KQ_max_scale = hexp(kqmax_old_arr[j] - kqmax_new_j);
 
-            const half val = hexp(KQ[j*D + tid] - kqmax[j]);
+            const half val = hexp(KQ[j*D + tid] - kqmax_new_j);
             kqsum[j] = kqsum[j]*KQ_max_scale + val;
             KQ[j*D + tid] = val;
 
@@ -240,7 +233,7 @@ static __global__ void flash_attn_tile_ext_f16(
     if (parallel_blocks != 1 && tid != 0) {
 #pragma unroll
         for (int j = 0; j < ncols; ++j) {
-            dst_meta[(ic0 + j)*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = make_float2(kqmax[j], kqsum[j]);
+            dst_meta[(ic0 + j)*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = make_float2(kqmax_shared[j][threadIdx.x], kqsum[j]);
         }
     }
 // #else
