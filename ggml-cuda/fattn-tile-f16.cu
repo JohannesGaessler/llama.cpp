@@ -73,7 +73,7 @@ static __global__ void flash_attn_tile_ext_f16(
     __shared__ half KQ[ncols*D];
 #pragma unroll
     for (int j = 0; j < ncols; ++j) {
-        KQ[j*D + tid] = -HALF_MAX_HALF;
+        KQ[j*D + tid] = 0.0f;
     }
     half2 * KQ2 = (half2 *) KQ;
 
@@ -108,8 +108,8 @@ static __global__ void flash_attn_tile_ext_f16(
 
     __syncthreads();
 
-    const int k_start = parallel_blocks == 1 ? 0 : ip*D;
-    for (int k_VKQ_0 = k_start; k_VKQ_0 < ne11; k_VKQ_0 += parallel_blocks*D) {
+    const int k_start = parallel_blocks == 1 ? 0 : ip*64;
+    for (int k_VKQ_0 = k_start; k_VKQ_0 < ne11; k_VKQ_0 += parallel_blocks*64) {
         // Calculate KQ tile and keep track of new maximum KQ values:
 
         half kqmax_old_arr[ncols];
@@ -123,7 +123,7 @@ static __global__ void flash_attn_tile_ext_f16(
         __syncthreads();
 
 #pragma unroll
-        for (int i_KQ_0 = 0; i_KQ_0 < D; i_KQ_0 += nwarps) {
+        for (int i_KQ_0 = 0; i_KQ_0 < 64; i_KQ_0 += nwarps) {
             const int i_KQ = i_KQ_0 + threadIdx.y;
 
             if ((i_KQ_0 + nwarps > D && i_KQ >= D) || (FATTN_KQ_STRIDE % D != 0 && k_VKQ_0 + i_KQ >= ne11)) {
@@ -179,12 +179,17 @@ static __global__ void flash_attn_tile_ext_f16(
             const half KQ_max_scale = hexp(kqmax_old_arr[j] - kqmax_new_j);
 
 #pragma unroll
-            for (int i0 = 0; i0 < D; i0 += WARP_SIZE) {
+            for (int i0 = 0; i0 < 64; i0 += WARP_SIZE) {
                 const int i = i0 + threadIdx.x;
 
                 const half val = hexp(KQ[j*D + i] - kqmax_new_j);
                 kqsum_shared[j][i] = kqsum_shared[j][i]*KQ_max_scale + val;
                 KQ[j*D + i] = val;
+            }
+
+#pragma unroll
+            for (int i0 = 0; i0 < D; i0 += WARP_SIZE) {
+                const int i = i0 + threadIdx.x;
 
                 VKQ[j][i] *= __half2half2(KQ_max_scale);
             }
@@ -193,7 +198,7 @@ static __global__ void flash_attn_tile_ext_f16(
         __syncthreads();
 
 #pragma unroll
-        for (int k0 = 0; k0 < D; k0 += 2) {
+        for (int k0 = 0; k0 < 64; k0 += 2) {
             if (FATTN_KQ_STRIDE % D != 0 && k_VKQ_0 + k0 >= ne11) {
                 break;
             }
@@ -219,7 +224,7 @@ static __global__ void flash_attn_tile_ext_f16(
 
         half kqsum = 0.0f;
 #pragma unroll
-        for (int i0 = 0; i0 < D; i0 += WARP_SIZE) {
+        for (int i0 = 0; i0 < 64; i0 += WARP_SIZE) {
             const int i = i0 + threadIdx.x;
 
             kqsum += kqsum_shared[j_VKQ][i];
