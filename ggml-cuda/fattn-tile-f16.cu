@@ -72,7 +72,12 @@ static __global__ void flash_attn_tile_ext_f16(
 
     __shared__ half2 KV_tmp[64][D/2 + 1];
 
-    __shared__ half kqmax_shared[ncols][WARP_SIZE];
+    half kqmax[ncols/nwarps];
+#pragma unroll
+    for (int j0 = 0; j0 < ncols; j0 += nwarps) {
+        kqmax[j0/nwarps] = -HALF_MAX_HALF;
+    }
+
     __shared__ half kqsum_shared[ncols][D];
     __shared__ half VKQ[ncols*D];
     half2 * VKQ2 = (half2 *) VKQ;
@@ -80,7 +85,6 @@ static __global__ void flash_attn_tile_ext_f16(
     for (int j0 = 0; j0 < ncols; j0 += nwarps) {
         const int j = j0 + threadIdx.y;
 
-        kqmax_shared[j][threadIdx.x] = -HALF_MAX_HALF;
 #pragma unroll
         for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
             const int i = i0 + threadIdx.x;
@@ -111,12 +115,10 @@ static __global__ void flash_attn_tile_ext_f16(
     for (int k_VKQ_0 = k_start; k_VKQ_0 < ne11; k_VKQ_0 += parallel_blocks*64) {
         // Calculate KQ tile and keep track of new maximum KQ values:
 
-        half kqmax_old_arr[ncols];
-        half kqmax_new_arr[ncols];
+        half kqmax_new[ncols/nwarps];
 #pragma unroll
-        for (int j = 0; j < ncols; ++j) {
-            kqmax_old_arr[j] = kqmax_shared[j][threadIdx.x];
-            kqmax_new_arr[j] = kqmax_shared[j][threadIdx.x];
+        for (int j = 0; j < ncols/nwarps; ++j) {
+            kqmax_new[j] = kqmax[j];
         }
 
 #pragma unroll
@@ -173,19 +175,9 @@ static __global__ void flash_attn_tile_ext_f16(
                 half sum = __low2half(sum2[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps]) + __high2half(sum2[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps]);
                 sum += mask ? slopeh*maskh[j_KQ*ne11 + k_VKQ_0 + i_KQ] : __float2half(0.0f);
 
-                kqmax_new_arr[j_KQ] = ggml_cuda_hmax(kqmax_new_arr[j_KQ], sum);
+                kqmax_new[j_KQ_0/nwarps] = ggml_cuda_hmax(kqmax_new[j_KQ_0/nwarps], sum);
 
                 KQ[j_KQ*64 + i_KQ] = sum;
-            }
-        }
-
-#pragma unroll
-        for (int j = 0; j < ncols; ++j) {
-            half kqmax_new_j = kqmax_new_arr[j];
-
-            kqmax_new_j = warp_reduce_max(kqmax_new_j);
-            if (threadIdx.x == 0) {
-                kqmax_shared[j][threadIdx.y] = kqmax_new_j;
             }
         }
 
@@ -195,17 +187,15 @@ static __global__ void flash_attn_tile_ext_f16(
         for (int j0 = 0; j0 < ncols; j0 += nwarps) {
             const int j = j0 + threadIdx.y;
 
-            half kqmax_new_j = kqmax_shared[j][threadIdx.x];
-            kqmax_new_j = warp_reduce_max(kqmax_new_j);
-            kqmax_shared[j][threadIdx.x] = kqmax_new_j;
-
-            const half KQ_max_scale = hexp(kqmax_old_arr[j] - kqmax_new_j);
+            kqmax_new[j0/nwarps] = warp_reduce_max(kqmax_new[j0/nwarps]);
+            const half KQ_max_scale = hexp(kqmax[j0/nwarps] - kqmax_new[j0/nwarps]);
+            kqmax[j0/nwarps] = kqmax_new[j0/nwarps];
 
 #pragma unroll
             for (int i0 = 0; i0 < 64; i0 += WARP_SIZE) {
                 const int i = i0 + threadIdx.x;
 
-                const half val = hexp(KQ[j*64 + i] - kqmax_new_j);
+                const half val = hexp(KQ[j*64 + i] - kqmax[j0/nwarps]);
                 kqsum_shared[j][i] = kqsum_shared[j][i]*KQ_max_scale + val;
                 KQ[j*64 + i] = val;
             }
@@ -309,7 +299,7 @@ static __global__ void flash_attn_tile_ext_f16(
         }
 
         if (parallel_blocks != 1 && threadIdx.x == 0) {
-            dst_meta[(ic0 + j_VKQ)*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = make_float2(kqmax_shared[j_VKQ][threadIdx.x], kqsum);
+            dst_meta[(ic0 + j_VKQ)*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = make_float2(kqmax[j_VKQ_0/nwarps], kqsum);
         }
     }
 // #else
