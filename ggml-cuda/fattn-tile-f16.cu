@@ -77,7 +77,7 @@ static __global__ void flash_attn_tile_ext_f16(
     for (int j0 = 0; j0 < ncols; j0 += nwarps) {
         kqmax[j0/nwarps] = -HALF_MAX_HALF;
     }
-    half kqsum[ncols/nwarps][64/WARP_SIZE] = {{0.0f}};
+    half2 kqsum[ncols/nwarps] = {{0.0f, 0.0f}};
 
     __shared__ half VKQ[ncols*D];
     half2 * VKQ2 = (half2 *) VKQ;
@@ -187,23 +187,18 @@ static __global__ void flash_attn_tile_ext_f16(
             const int j = j0 + threadIdx.y;
 
             kqmax_new[j0/nwarps] = warp_reduce_max(kqmax_new[j0/nwarps]);
-            const half KQ_max_scale = hexp(kqmax[j0/nwarps] - kqmax_new[j0/nwarps]);
+            const half2 KQ_max_scale = __half2half2(hexp(kqmax[j0/nwarps] - kqmax_new[j0/nwarps]));
             kqmax[j0/nwarps] = kqmax_new[j0/nwarps];
 
-#pragma unroll
-            for (int i0 = 0; i0 < 64; i0 += WARP_SIZE) {
-                const int i = i0 + threadIdx.x;
-
-                const half val = hexp(KQ[j*64 + i] - kqmax[j0/nwarps]);
-                kqsum[j0/nwarps][i0/WARP_SIZE] = kqsum[j0/nwarps][i0/WARP_SIZE]*KQ_max_scale + val;
-                KQ[j*64 + i] = val;
-            }
+            const half2 val = h2exp(KQ2[j*(64/2) + threadIdx.x] - __half2half2(kqmax[j0/nwarps]));
+            kqsum[j0/nwarps] = kqsum[j0/nwarps]*KQ_max_scale + val;
+            KQ2[j*(64/2) + threadIdx.x] = val;
 
 #pragma unroll
-            for (int i0 = 0; i0 < D; i0 += WARP_SIZE) {
+            for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
                 const int i = i0 + threadIdx.x;
 
-                VKQ[j*D + i] *= KQ_max_scale;
+                VKQ2[j*(D/2) + i] *= KQ_max_scale;
             }
         }
 
@@ -276,8 +271,8 @@ static __global__ void flash_attn_tile_ext_f16(
     for (int j_VKQ_0 = 0; j_VKQ_0 < ncols; j_VKQ_0 += nwarps) {
         const int j_VKQ = j_VKQ_0 + threadIdx.y;
 
-        half kqsumsum = kqsum[j_VKQ_0/nwarps][0] + kqsum[j_VKQ_0/nwarps][1];
-        kqsumsum = warp_reduce_sum(kqsumsum);
+        half kqsum_j = __low2half(kqsum[j_VKQ_0/nwarps]) + __high2half(kqsum[j_VKQ_0/nwarps]);
+        kqsum_j = warp_reduce_sum(kqsum_j);
 
 #pragma unroll
         for (int i0 = 0; i0 < D; i0 += WARP_SIZE) {
@@ -285,14 +280,14 @@ static __global__ void flash_attn_tile_ext_f16(
 
             half dst_val = VKQ[j_VKQ*D + i];
             if (parallel_blocks == 1) {
-                dst_val /= kqsumsum;
+                dst_val /= kqsum_j;
             }
             const int j_dst = (ic0 + j_VKQ)*parallel_blocks + ip;
             dst[j_dst*D*gridDim.y + D*blockIdx.y + i] = dst_val;
         }
 
         if (parallel_blocks != 1 && threadIdx.x == 0) {
-            dst_meta[(ic0 + j_VKQ)*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = make_float2(kqmax[j_VKQ_0/nwarps], kqsumsum);
+            dst_meta[(ic0 + j_VKQ)*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = make_float2(kqmax[j_VKQ_0/nwarps], kqsum_j);
         }
     }
 // #else
