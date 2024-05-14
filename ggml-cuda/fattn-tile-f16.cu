@@ -93,7 +93,6 @@ static __global__ void flash_attn_tile_ext_f16(
             kqsum_shared[j][threadIdx.x] = 0.0f;
         }
     }
-    __syncthreads();
 
     // Convert Q to half2 and store in registers:
     __shared__ half2 Q_h2[ncols][D/2];
@@ -108,7 +107,13 @@ static __global__ void flash_attn_tile_ext_f16(
         }
     }
 
-    half2 VKQ[ncols] = {{0.0f, 0.0f}};
+    __shared__ half2 VKQ[ncols][D];
+#pragma unroll
+    for (int j = 0; j < ncols; ++j) {
+        VKQ[j][tid] = make_half2(0.0f, 0.0f);
+    }
+
+    __syncthreads();
 
     const int k_start = parallel_blocks == 1 ? 0 : ip*D;
     for (int k_VKQ_0 = k_start; k_VKQ_0 < ne11; k_VKQ_0 += parallel_blocks*D) {
@@ -186,7 +191,7 @@ static __global__ void flash_attn_tile_ext_f16(
             kqsum[j] = kqsum[j]*KQ_max_scale + val;
             KQ[j*D + tid] = val;
 
-            VKQ[j] *= __half2half2(KQ_max_scale);
+            VKQ[j][tid] *= __half2half2(KQ_max_scale);
         }
 
         __syncthreads();
@@ -202,7 +207,7 @@ static __global__ void flash_attn_tile_ext_f16(
             reinterpret_cast<half&>(V_k.y) = V_h[(k_VKQ_0 + k0 + 1)*stride_KV + tid];
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
-                VKQ[j] += V_k*KQ2[j*(D/2) + k0/2];
+                VKQ[j][tid] += V_k*KQ2[j*(D/2) + k0/2];
             }
         }
 
@@ -224,7 +229,7 @@ static __global__ void flash_attn_tile_ext_f16(
         kqsum[j_VKQ] = kqsum_shared[j_VKQ][threadIdx.x];
         kqsum[j_VKQ] = warp_reduce_sum(kqsum[j_VKQ]);
 
-        half dst_val = (__low2half(VKQ[j_VKQ]) + __high2half(VKQ[j_VKQ]));
+        half dst_val = (__low2half(VKQ[j_VKQ][tid]) + __high2half(VKQ[j_VKQ][tid]));
         if (parallel_blocks == 1) {
             dst_val /= kqsum[j_VKQ];
         }
