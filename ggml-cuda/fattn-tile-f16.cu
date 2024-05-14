@@ -88,7 +88,9 @@ static __global__ void flash_attn_tile_ext_f16(
     // Convert Q to half2 and store in registers:
     __shared__ half2 Q_h2[ncols][D/2];
 #pragma unroll
-    for (int j = 0; j < ncols; ++j) {
+    for (int j0 = 0; j0 < ncols; j0 += nwarps) {
+        const int j = j0 + threadIdx.y;
+
 #pragma unroll
         for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
             const int i = i0 + threadIdx.x;
