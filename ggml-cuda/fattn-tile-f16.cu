@@ -73,6 +73,8 @@ static __global__ void flash_attn_tile_ext_f16(
     __shared__ half KQ[ncols*64];
     half2 * KQ2 = (half2 *) KQ;
 
+    __shared__ half2 KV_tmp[64][D/2 + 1];
+
     __shared__ half kqmax_shared[ncols][WARP_SIZE];
     __shared__ half kqsum_shared[ncols][D];
 #pragma unroll
@@ -116,39 +118,63 @@ static __global__ void flash_attn_tile_ext_f16(
             kqmax_new_arr[j] = kqmax_shared[j][threadIdx.x];
         }
 
-        __syncthreads();
-
 #pragma unroll
         for (int i_KQ_0 = 0; i_KQ_0 < 64; i_KQ_0 += nwarps) {
             const int i_KQ = i_KQ_0 + threadIdx.y;
 
-            if ((i_KQ_0 + nwarps > D && i_KQ >= D) || (FATTN_KQ_STRIDE % D != 0 && k_VKQ_0 + i_KQ >= ne11)) {
-                break;
-            }
-
-            half2 sum2[ncols] = {{0.0f, 0.0f}};
 #pragma unroll
             for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += WARP_SIZE) {
                 const int k_KQ = k_KQ_0 + threadIdx.x;
 
-                const half2 K_ik = K_h2[(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ];
+                KV_tmp[i_KQ][k_KQ] = K_h2[(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ];
+            }
+        }
+
+        __syncthreads();
+
+        half2 sum2[64/WARP_SIZE][ncols/nwarps] = {{{0.0f, 0.0f}}};
+
 #pragma unroll
-                for (int j = 0; j < ncols; ++j) {
-                    sum2[j] += K_ik * Q_h2[j][k_KQ];
-                }
+        for (int k_KQ = 0; k_KQ < D/2; ++k_KQ) {
+            half2 K_k[64/WARP_SIZE];
+            half2 Q_k[ncols/nwarps];
+
+#pragma unroll
+            for (int i_KQ_0 = 0; i_KQ_0 < 64; i_KQ_0 += WARP_SIZE) {
+                const int i_KQ = i_KQ_0 + threadIdx.x;
+
+                K_k[i_KQ_0/WARP_SIZE] = KV_tmp[i_KQ][k_KQ];
+            }
+#pragma unroll
+            for (int j_KQ_0 = 0; j_KQ_0 < ncols; j_KQ_0 += nwarps) {
+                const int j_KQ = j_KQ_0 + threadIdx.y;
+
+                Q_k[j_KQ_0/nwarps] = Q_h2[j_KQ][k_KQ];
             }
 
 #pragma unroll
-            for (int j = 0; j < ncols; ++j) {
-                sum2[j] = warp_reduce_sum(sum2[j]);
-                half sum = __low2half(sum2[j]) + __high2half(sum2[j]);
-                sum += mask ? slopeh*maskh[j*ne11 + k_VKQ_0 + i_KQ] : __float2half(0.0f);
-
-                kqmax_new_arr[j] = ggml_cuda_hmax(kqmax_new_arr[j], sum);
-
-                if (threadIdx.x == 0) {
-                    KQ[j*64 + i_KQ] = sum;
+            for (int i_KQ_0 = 0; i_KQ_0 < 64; i_KQ_0 += WARP_SIZE) {
+#pragma unroll
+                for (int j_KQ_0 = 0; j_KQ_0 < ncols; j_KQ_0 += nwarps) {
+                    sum2[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps] += K_k[i_KQ_0/WARP_SIZE]*Q_k[j_KQ_0/nwarps];
                 }
+            }
+        }
+
+#pragma unroll
+        for (int i_KQ_0 = 0; i_KQ_0 < 64; i_KQ_0 += WARP_SIZE) {
+            const int i_KQ = i_KQ_0 + threadIdx.x;
+
+#pragma unroll
+            for (int j_KQ_0 = 0; j_KQ_0 < ncols; j_KQ_0 += nwarps) {
+                const int j_KQ = j_KQ_0 + threadIdx.y;
+
+                half sum = __low2half(sum2[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps]) + __high2half(sum2[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps]);
+                sum += mask ? slopeh*maskh[j_KQ*ne11 + k_VKQ_0 + i_KQ] : __float2half(0.0f);
+
+                kqmax_new_arr[j_KQ] = ggml_cuda_hmax(kqmax_new_arr[j_KQ], sum);
+
+                KQ[j_KQ*64 + i_KQ] = sum;
             }
         }
 
@@ -320,40 +346,6 @@ void ggml_cuda_flash_attn_ext_tile_f16(ggml_backend_cuda_context & ctx, ggml_ten
     const int32_t precision = KQV->op_params[2];
     GGML_ASSERT(precision == GGML_PREC_DEFAULT);
     GGML_ASSERT(Q->ne[0] == 64 || Q->ne[0] == 128 && "FlashAttention without tensor cores only supports head sizes 64 and 128.");
-
-    if (Q->ne[1] == 1) {
-        constexpr int cols_per_block = 1;
-        constexpr int parallel_blocks = 4;
-        switch (Q->ne[0]) {
-            case 64:
-                launch_fattn_tile_f16< 64, cols_per_block, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
-                break;
-            case 128:
-                launch_fattn_tile_f16<128, cols_per_block, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
-                break;
-            default:
-                GGML_ASSERT(false);
-                break;
-        }
-        return;
-    }
-
-    if (Q->ne[1] == 2) {
-        constexpr int cols_per_block = 2;
-        constexpr int parallel_blocks = 4;
-        switch (Q->ne[0]) {
-            case 64:
-                launch_fattn_tile_f16< 64, cols_per_block, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
-                break;
-            case 128:
-                launch_fattn_tile_f16<128, cols_per_block, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
-                break;
-            default:
-                GGML_ASSERT(false);
-                break;
-        }
-        return;
-    }
 
     if (Q->ne[1] <= 4) {
         constexpr int cols_per_block = 4;
