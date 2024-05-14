@@ -50,7 +50,6 @@ static __global__ void flash_attn_tile_ext_f16(
     const half2  * V_h2  = (const half2  *) (V    + nb12*(blockIdx.y / gqa_ratio)); // K and V have same shape
     const half   * maskh = (const half   *)  mask + ne11*ic0;
 
-    const int stride_KV  = nb11 / sizeof(half);
     const int stride_KV2 = nb11 / sizeof(half2);
 
     half  slopeh = __float2half(1.0f);
@@ -67,8 +66,6 @@ static __global__ void flash_attn_tile_ext_f16(
 
     static_assert(D % (2*WARP_SIZE) == 0, "D not divisible by 2*WARP_SIZE == 64.");
     constexpr int nwarps = D / WARP_SIZE;
-    const int tid = WARP_SIZE*threadIdx.y + threadIdx.x;
-    __builtin_assume(tid < D);
 
     __shared__ half KQ[ncols*64];
     half2 * KQ2 = (half2 *) KQ;
@@ -77,12 +74,20 @@ static __global__ void flash_attn_tile_ext_f16(
 
     __shared__ half kqmax_shared[ncols][WARP_SIZE];
     __shared__ half kqsum_shared[ncols][D];
+    __shared__ half VKQ[ncols*D];
+    half2 * VKQ2 = (half2 *) VKQ;
 #pragma unroll
-    for (int j = 0; j < ncols; ++j) {
-        if (threadIdx.y == 0) {
-            kqmax_shared[j][threadIdx.x] = -HALF_MAX_HALF;
+    for (int j0 = 0; j0 < ncols; j0 += nwarps) {
+        const int j = j0 + threadIdx.y;
+
+        kqmax_shared[j][threadIdx.x] = -HALF_MAX_HALF;
+#pragma unroll
+        for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
+            const int i = i0 + threadIdx.x;
+
+            ((half2 *) kqsum_shared)[j*(D/2) + i] = make_half2(0.0f, 0.0f);
+            VKQ2[j*(D/2) + i] = make_half2(0.0f, 0.0f);
         }
-        kqsum_shared[j][tid] = 0.0f;
     }
 
     // Convert Q to half2 and store in registers:
@@ -99,13 +104,6 @@ static __global__ void flash_attn_tile_ext_f16(
             Q_h2[j][i] = make_half2(scale, scale) * make_half2(tmp.x, tmp.y);
         }
     }
-
-    __shared__ half VKQ[ncols*D];
-#pragma unroll
-    for (int j = 0; j < ncols; ++j) {
-        VKQ[j*D + tid] = 0.0f;
-    }
-    half2 * VKQ2 = (half2 *) VKQ;
 
     __syncthreads();
 
