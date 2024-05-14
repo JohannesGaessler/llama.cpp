@@ -47,7 +47,7 @@ static __global__ void flash_attn_tile_ext_f16(
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
     const float2 * Q_f2  = (const float2 *) (Q    + nb02* blockIdx.y              + nb01*ic0);
     const half2  * K_h2  = (const half2  *) (K    + nb12*(blockIdx.y / gqa_ratio));
-    const half   * V_h   = (const half   *) (V    + nb12*(blockIdx.y / gqa_ratio)); // K and V have same shape
+    const half2  * V_h2  = (const half2  *) (V    + nb12*(blockIdx.y / gqa_ratio)); // K and V have same shape
     const half   * maskh = (const half   *)  mask + ne11*ic0;
 
     const int stride_KV  = nb11 / sizeof(half);
@@ -98,11 +98,12 @@ static __global__ void flash_attn_tile_ext_f16(
         }
     }
 
-    __shared__ half2 VKQ[ncols][D];
+    __shared__ half VKQ[ncols*D];
 #pragma unroll
     for (int j = 0; j < ncols; ++j) {
-        VKQ[j][tid] = make_half2(0.0f, 0.0f);
+        VKQ[j*D + tid] = 0.0f;
     }
+    half2 * VKQ2 = (half2 *) VKQ;
 
     __syncthreads();
 
@@ -213,24 +214,64 @@ static __global__ void flash_attn_tile_ext_f16(
             for (int i0 = 0; i0 < D; i0 += WARP_SIZE) {
                 const int i = i0 + threadIdx.x;
 
-                VKQ[j][i] *= __half2half2(KQ_max_scale);
+                VKQ[j*D + i] *= KQ_max_scale;
             }
         }
 
         __syncthreads();
 
 #pragma unroll
-        for (int k0 = 0; k0 < 64; k0 += 2) {
-            if (FATTN_KQ_STRIDE % D != 0 && k_VKQ_0 + k0 >= ne11) {
-                break;
+        for (int k0 = 0; k0 < 64; k0 += nwarps) {
+            const int k = k0 + threadIdx.y;
+
+#pragma unroll
+            for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
+                const int i = i0 + threadIdx.x;
+
+                KV_tmp[k][i] = V_h2[(k_VKQ_0 + k)*stride_KV2 + i];
+            }
+        }
+
+        __syncthreads();
+
+        half2 sum22[(D/2)/WARP_SIZE][ncols/nwarps] = {{{0.0f, 0.0f}}};
+
+#pragma unroll
+        for (int k = 0; k < 64; ++k) {
+            half2  V_k[(D/2)/WARP_SIZE];
+            half  KQ_k[ncols/nwarps];
+
+#pragma unroll
+            for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
+                const int i = i0 + threadIdx.x;
+
+                V_k[i0/WARP_SIZE] = KV_tmp[k][i];
+            }
+#pragma unroll
+            for (int j0 = 0; j0 < ncols; j0 += nwarps) {
+                const int j = j0 + threadIdx.y;
+
+                KQ_k[j0/nwarps] = KQ[j*64 + k];
             }
 
-            half2 V_k;
-            reinterpret_cast<half&>(V_k.x) = V_h[(k_VKQ_0 + k0 + 0)*stride_KV + tid];
-            reinterpret_cast<half&>(V_k.y) = V_h[(k_VKQ_0 + k0 + 1)*stride_KV + tid];
 #pragma unroll
-            for (int j = 0; j < ncols; ++j) {
-                VKQ[j][tid] += V_k*KQ2[j*(64/2) + k0/2];
+            for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
+#pragma unroll
+                for (int j0 = 0; j0 < ncols; j0 += nwarps) {
+                    sum22[i0/WARP_SIZE][j0/nwarps] += V_k[i0/WARP_SIZE]*__half2half2(KQ_k[j0/nwarps]);
+                }
+            }
+        }
+
+#pragma unroll
+        for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
+            const int i = i0 + threadIdx.x;
+
+#pragma unroll
+            for (int j0 = 0; j0 < ncols; j0 += nwarps) {
+                const int j = j0 + threadIdx.y;
+
+                VKQ2[j*(D/2) + i] += sum22[i0/WARP_SIZE][j0/nwarps];
             }
         }
 
@@ -257,7 +298,7 @@ static __global__ void flash_attn_tile_ext_f16(
         for (int i0 = 0; i0 < D; i0 += WARP_SIZE) {
             const int i = i0 + threadIdx.x;
 
-            half dst_val = (__low2half(VKQ[j_VKQ][i]) + __high2half(VKQ[j_VKQ][i]));
+            half dst_val = VKQ[j_VKQ*D + i];
             if (parallel_blocks == 1) {
                 dst_val /= kqsum;
             }
