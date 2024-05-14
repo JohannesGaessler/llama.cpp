@@ -237,28 +237,30 @@ static __global__ void flash_attn_tile_ext_f16(
         half2 sum22[(D/2)/WARP_SIZE][ncols/nwarps] = {{{0.0f, 0.0f}}};
 
 #pragma unroll
-        for (int k = 0; k < 64; ++k) {
-            half2  V_k[(D/2)/WARP_SIZE];
-            half  KQ_k[ncols/nwarps];
+        for (int k0 = 0; k0 < 64; k0 += 2) {
+            half2  V_k[(D/2)/WARP_SIZE][2];
+            half2 KQ_k[ncols/nwarps];
 
 #pragma unroll
             for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
                 const int i = i0 + threadIdx.x;
 
-                V_k[i0/WARP_SIZE] = KV_tmp[k][i];
+                V_k[i0/WARP_SIZE][0] = KV_tmp[k0 + 0][i];
+                V_k[i0/WARP_SIZE][1] = KV_tmp[k0 + 1][i];
             }
 #pragma unroll
             for (int j0 = 0; j0 < ncols; j0 += nwarps) {
                 const int j = j0 + threadIdx.y;
 
-                KQ_k[j0/nwarps] = KQ[j*64 + k];
+                KQ_k[j0/nwarps] = KQ2[j*(64/2) + k0/2];
             }
 
 #pragma unroll
             for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
 #pragma unroll
                 for (int j0 = 0; j0 < ncols; j0 += nwarps) {
-                    sum22[i0/WARP_SIZE][j0/nwarps] += V_k[i0/WARP_SIZE]*__half2half2(KQ_k[j0/nwarps]);
+                    sum22[i0/WARP_SIZE][j0/nwarps] += V_k[i0/WARP_SIZE][0]* __low2half2(KQ_k[j0/nwarps]);
+                    sum22[i0/WARP_SIZE][j0/nwarps] += V_k[i0/WARP_SIZE][1]*__high2half2(KQ_k[j0/nwarps]);
                 }
             }
         }
