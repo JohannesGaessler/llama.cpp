@@ -70,11 +70,7 @@ static __global__ void flash_attn_tile_ext_f16(
     const int tid = WARP_SIZE*threadIdx.y + threadIdx.x;
     __builtin_assume(tid < D);
 
-    __shared__ half KQ[ncols*D];
-#pragma unroll
-    for (int j = 0; j < ncols; ++j) {
-        KQ[j*D + tid] = 0.0f;
-    }
+    __shared__ half KQ[ncols*64];
     half2 * KQ2 = (half2 *) KQ;
 
     __shared__ half kqmax_shared[ncols][WARP_SIZE];
@@ -151,7 +147,7 @@ static __global__ void flash_attn_tile_ext_f16(
                 kqmax_new_arr[j] = ggml_cuda_hmax(kqmax_new_arr[j], sum);
 
                 if (threadIdx.x == 0) {
-                    KQ[j*D + i_KQ] = sum;
+                    KQ[j*64 + i_KQ] = sum;
                 }
             }
         }
@@ -182,9 +178,9 @@ static __global__ void flash_attn_tile_ext_f16(
             for (int i0 = 0; i0 < 64; i0 += WARP_SIZE) {
                 const int i = i0 + threadIdx.x;
 
-                const half val = hexp(KQ[j*D + i] - kqmax_new_j);
+                const half val = hexp(KQ[j*64 + i] - kqmax_new_j);
                 kqsum_shared[j][i] = kqsum_shared[j][i]*KQ_max_scale + val;
-                KQ[j*D + i] = val;
+                KQ[j*64 + i] = val;
             }
 
 #pragma unroll
@@ -208,7 +204,7 @@ static __global__ void flash_attn_tile_ext_f16(
             reinterpret_cast<half&>(V_k.y) = V_h[(k_VKQ_0 + k0 + 1)*stride_KV + tid];
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
-                VKQ[j][tid] += V_k*KQ2[j*(D/2) + k0/2];
+                VKQ[j][tid] += V_k*KQ2[j*(64/2) + k0/2];
             }
         }
 
