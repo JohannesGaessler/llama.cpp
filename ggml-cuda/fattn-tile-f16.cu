@@ -77,16 +77,14 @@ static __global__ void flash_attn_tile_ext_f16(
     }
     half2 * KQ2 = (half2 *) KQ;
 
-    half kqsum[ncols] = {0.0f};
-
     __shared__ half kqmax_shared[ncols][WARP_SIZE];
-    __shared__ half kqsum_shared[ncols][WARP_SIZE];
+    __shared__ half kqsum_shared[ncols][D];
 #pragma unroll
     for (int j = 0; j < ncols; ++j) {
         if (threadIdx.y == 0) {
             kqmax_shared[j][threadIdx.x] = -HALF_MAX_HALF;
-            kqsum_shared[j][threadIdx.x] = 0.0f;
         }
+        kqsum_shared[j][tid] = 0.0f;
     }
 
     // Convert Q to half2 and store in registers:
@@ -181,7 +179,7 @@ static __global__ void flash_attn_tile_ext_f16(
             const half KQ_max_scale = hexp(kqmax_old_arr[j] - kqmax_new_j);
 
             const half val = hexp(KQ[j*D + tid] - kqmax_new_j);
-            kqsum[j] = kqsum[j]*KQ_max_scale + val;
+            kqsum_shared[j][tid] = kqsum_shared[j][tid]*KQ_max_scale + val;
             KQ[j*D + tid] = val;
 
             VKQ[j][tid] *= __half2half2(KQ_max_scale);
@@ -207,19 +205,18 @@ static __global__ void flash_attn_tile_ext_f16(
         __syncthreads();
     }
 
-#pragma unroll
-    for (int j = 0; j < ncols; ++j) {
-        kqsum[j] = warp_reduce_sum(kqsum[j]);
-        if (threadIdx.x == 0) {
-            kqsum_shared[j][threadIdx.y] = kqsum[j];
-        }
-    }
-
     __syncthreads();
+
+    half kqsum[ncols] = {0.0f};
 
 #pragma unroll
     for (int j_VKQ = 0; j_VKQ < ncols; ++j_VKQ) {
-        kqsum[j_VKQ] = kqsum_shared[j_VKQ][threadIdx.x];
+#pragma unroll
+        for (int i0 = 0; i0 < D; i0 += WARP_SIZE) {
+            const int i = i0 + threadIdx.x;
+
+            kqsum[j_VKQ] += kqsum_shared[j_VKQ][i];
+        }
         kqsum[j_VKQ] = warp_reduce_sum(kqsum[j_VKQ]);
 
         half dst_val = (__low2half(VKQ[j_VKQ][tid]) + __high2half(VKQ[j_VKQ][tid]));
@@ -230,7 +227,7 @@ static __global__ void flash_attn_tile_ext_f16(
         dst[j_dst*D*gridDim.y + D*blockIdx.y + tid] = dst_val;
     }
 
-    if (parallel_blocks != 1 && tid != 0) {
+    if (parallel_blocks != 1 && tid == 0) {
 #pragma unroll
         for (int j = 0; j < ncols; ++j) {
             dst_meta[(ic0 + j)*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = make_float2(kqmax_shared[j][threadIdx.x], kqsum[j]);
