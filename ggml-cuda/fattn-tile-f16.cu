@@ -169,20 +169,25 @@ static __global__ void flash_attn_tile_ext_f16(
         __syncthreads();
 
 #pragma unroll
-        for (int j = 0; j < ncols; ++j) {
+        for (int j0 = 0; j0 < ncols; j0 += nwarps) {
+            const int j = j0 + threadIdx.y;
+
             half kqmax_new_j = kqmax_shared[j][threadIdx.x];
             kqmax_new_j = warp_reduce_max(kqmax_new_j);
-            if (threadIdx.y == 0) {
-                kqmax_shared[j][threadIdx.x] = kqmax_new_j;
-            }
+            kqmax_shared[j][threadIdx.x] = kqmax_new_j;
 
             const half KQ_max_scale = hexp(kqmax_old_arr[j] - kqmax_new_j);
 
-            const half val = hexp(KQ[j*D + tid] - kqmax_new_j);
-            kqsum_shared[j][tid] = kqsum_shared[j][tid]*KQ_max_scale + val;
-            KQ[j*D + tid] = val;
+#pragma unroll
+            for (int i0 = 0; i0 < D; i0 += WARP_SIZE) {
+                const int i = i0 + threadIdx.x;
 
-            VKQ[j][tid] *= __half2half2(KQ_max_scale);
+                const half val = hexp(KQ[j*D + i] - kqmax_new_j);
+                kqsum_shared[j][i] = kqsum_shared[j][i]*KQ_max_scale + val;
+                KQ[j*D + i] = val;
+
+                VKQ[j][i] *= __half2half2(KQ_max_scale);
+            }
         }
 
         __syncthreads();
