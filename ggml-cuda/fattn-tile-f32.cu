@@ -215,33 +215,29 @@ static __global__ void flash_attn_tile_ext_f32(
         __syncthreads();
 
 #pragma unroll
-        for (int k0 = 0; k0 < FATTN_KQ_STRIDE_TILE_F32; k0 += 2) {
-            float2  V_k[(D/2)/WARP_SIZE][2];
-            float2  KQ_k[ncols/nwarps];
+        for (int k = 0; k < FATTN_KQ_STRIDE_TILE_F32; ++k) {
+            float2 V_k[(D/2)/WARP_SIZE];
+            float  KQ_k[ncols/nwarps];
 
 #pragma unroll
             for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
                 const int i = i0 + threadIdx.x;
 
-                V_k[i0/WARP_SIZE][0] = KV_tmp2[(k0 + 0)*(D/2) + i];
-                V_k[i0/WARP_SIZE][1] = KV_tmp2[(k0 + 1)*(D/2) + i];
+                V_k[i0/WARP_SIZE] = KV_tmp2[k*(D/2) + i];
             }
 #pragma unroll
             for (int j0 = 0; j0 < ncols; j0 += nwarps) {
                 const int j = j0 + threadIdx.y;
 
-                KQ_k[j0/nwarps].x = KQ2[j*(FATTN_KQ_STRIDE_TILE_F32/2) + k0/2].x;
-                KQ_k[j0/nwarps].y = KQ2[j*(FATTN_KQ_STRIDE_TILE_F32/2) + k0/2].y;
+                KQ_k[j0/nwarps] = KQ[j*FATTN_KQ_STRIDE_TILE_F32 + k];
             }
 
 #pragma unroll
             for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
 #pragma unroll
                 for (int j0 = 0; j0 < ncols; j0 += nwarps) {
-                    VKQ[j0/nwarps][i0/WARP_SIZE].x += V_k[i0/WARP_SIZE][0].x*KQ_k[j0/nwarps].x;
-                    VKQ[j0/nwarps][i0/WARP_SIZE].x += V_k[i0/WARP_SIZE][1].x*KQ_k[j0/nwarps].y;
-                    VKQ[j0/nwarps][i0/WARP_SIZE].y += V_k[i0/WARP_SIZE][0].y*KQ_k[j0/nwarps].x;
-                    VKQ[j0/nwarps][i0/WARP_SIZE].y += V_k[i0/WARP_SIZE][1].y*KQ_k[j0/nwarps].y;
+                    VKQ[j0/nwarps][i0/WARP_SIZE].x += V_k[i0/WARP_SIZE].x*KQ_k[j0/nwarps];
+                    VKQ[j0/nwarps][i0/WARP_SIZE].y += V_k[i0/WARP_SIZE].y*KQ_k[j0/nwarps];
                 }
             }
         }
