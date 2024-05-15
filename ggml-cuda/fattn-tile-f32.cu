@@ -221,7 +221,7 @@ static __global__ void flash_attn_tile_ext_f32(
 #pragma unroll
         for (int k0 = 0; k0 < FATTN_KQ_STRIDE_TILE_F32; k0 += 2) {
             float2  V_k[(D/2)/WARP_SIZE][2];
-            half2  KQ_k[ncols/nwarps];
+            float2  KQ_k[ncols/nwarps];
 
 #pragma unroll
             for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
@@ -234,17 +234,18 @@ static __global__ void flash_attn_tile_ext_f32(
             for (int j0 = 0; j0 < ncols; j0 += nwarps) {
                 const int j = j0 + threadIdx.y;
 
-                KQ_k[j0/nwarps] = make_half2(KQ2[j*(FATTN_KQ_STRIDE_TILE_F32/2) + k0/2].x, KQ2[j*(FATTN_KQ_STRIDE_TILE_F32/2) + k0/2].y);
+                KQ_k[j0/nwarps].x = KQ2[j*(FATTN_KQ_STRIDE_TILE_F32/2) + k0/2].x;
+                KQ_k[j0/nwarps].y = KQ2[j*(FATTN_KQ_STRIDE_TILE_F32/2) + k0/2].y;
             }
 
 #pragma unroll
             for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
 #pragma unroll
                 for (int j0 = 0; j0 < ncols; j0 += nwarps) {
-                    VKQ[j0/nwarps][i0/WARP_SIZE].x += V_k[i0/WARP_SIZE][0].x*  __low2float(KQ_k[j0/nwarps]);
-                    VKQ[j0/nwarps][i0/WARP_SIZE].x += V_k[i0/WARP_SIZE][1].x* __high2float(KQ_k[j0/nwarps]);
-                    VKQ[j0/nwarps][i0/WARP_SIZE].y += V_k[i0/WARP_SIZE][0].y*  __low2float(KQ_k[j0/nwarps]);
-                    VKQ[j0/nwarps][i0/WARP_SIZE].y += V_k[i0/WARP_SIZE][1].y* __high2float(KQ_k[j0/nwarps]);
+                    VKQ[j0/nwarps][i0/WARP_SIZE].x += V_k[i0/WARP_SIZE][0].x*KQ_k[j0/nwarps].x;
+                    VKQ[j0/nwarps][i0/WARP_SIZE].x += V_k[i0/WARP_SIZE][1].x*KQ_k[j0/nwarps].y;
+                    VKQ[j0/nwarps][i0/WARP_SIZE].y += V_k[i0/WARP_SIZE][0].y*KQ_k[j0/nwarps].x;
+                    VKQ[j0/nwarps][i0/WARP_SIZE].y += V_k[i0/WARP_SIZE][1].y*KQ_k[j0/nwarps].y;
                 }
             }
         }
