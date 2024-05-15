@@ -71,7 +71,7 @@ static __global__ void flash_attn_tile_ext_f32(
     __shared__ float KQ[ncols*FATTN_KQ_STRIDE_TILE_F32];
     float2 * KQ2 = (float2 *) KQ;
 
-    __shared__ half2 KV_tmp[FATTN_KQ_STRIDE_TILE_F32][D/2 + 1]; // Pad D to avoid memory bank conflicts.
+    __shared__ float2 KV_tmp[FATTN_KQ_STRIDE_TILE_F32][D/2 + 1]; // Pad D to avoid memory bank conflicts.
 
     float kqmax[ncols/nwarps];
 #pragma unroll
@@ -117,7 +117,8 @@ static __global__ void flash_attn_tile_ext_f32(
             for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += WARP_SIZE) {
                 const int k_KQ = k_KQ_0 + threadIdx.x;
 
-                KV_tmp[i_KQ][k_KQ] = K_h2[(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ];
+                KV_tmp[i_KQ][k_KQ].x =  __low2float(K_h2[(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ]);
+                KV_tmp[i_KQ][k_KQ].y = __high2float(K_h2[(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ]);
             }
         }
 
@@ -127,7 +128,7 @@ static __global__ void flash_attn_tile_ext_f32(
 
 #pragma unroll
         for (int k_KQ = 0; k_KQ < D/2; ++k_KQ) {
-            half2 K_k[FATTN_KQ_STRIDE_TILE_F32/WARP_SIZE];
+            float2 K_k[FATTN_KQ_STRIDE_TILE_F32/WARP_SIZE];
             half2 Q_k[ncols/nwarps];
 
 #pragma unroll
@@ -147,7 +148,7 @@ static __global__ void flash_attn_tile_ext_f32(
             for (int i_KQ_0 = 0; i_KQ_0 < FATTN_KQ_STRIDE_TILE_F32; i_KQ_0 += WARP_SIZE) {
 #pragma unroll
                 for (int j_KQ_0 = 0; j_KQ_0 < ncols; j_KQ_0 += nwarps) {
-                    sum2[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps] += K_k[i_KQ_0/WARP_SIZE]*Q_k[j_KQ_0/nwarps];
+                    sum2[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps] += make_half2(K_k[i_KQ_0/WARP_SIZE].x, K_k[i_KQ_0/WARP_SIZE].y)*Q_k[j_KQ_0/nwarps];
                 }
             }
         }
@@ -206,7 +207,8 @@ static __global__ void flash_attn_tile_ext_f32(
             for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
                 const int i = i0 + threadIdx.x;
 
-                KV_tmp[k][i] = V_h2[(k_VKQ_0 + k)*stride_KV2 + i];
+                KV_tmp[k][i].x =  __low2float(V_h2[(k_VKQ_0 + k)*stride_KV2 + i]);
+                KV_tmp[k][i].y = __high2float(V_h2[(k_VKQ_0 + k)*stride_KV2 + i]);
             }
         }
 
@@ -214,8 +216,8 @@ static __global__ void flash_attn_tile_ext_f32(
 
 #pragma unroll
         for (int k0 = 0; k0 < FATTN_KQ_STRIDE_TILE_F32; k0 += 2) {
-            half2  V_k[(D/2)/WARP_SIZE][2];
-            half2 KQ_k[ncols/nwarps];
+            float2  V_k[(D/2)/WARP_SIZE][2];
+            half2  KQ_k[ncols/nwarps];
 
 #pragma unroll
             for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
@@ -235,10 +237,10 @@ static __global__ void flash_attn_tile_ext_f32(
             for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
 #pragma unroll
                 for (int j0 = 0; j0 < ncols; j0 += nwarps) {
-                    VKQ[j0/nwarps][i0/WARP_SIZE].x +=  __low2float(V_k[i0/WARP_SIZE][0]*  __low2half2(KQ_k[j0/nwarps]));
-                    VKQ[j0/nwarps][i0/WARP_SIZE].x +=  __low2float(V_k[i0/WARP_SIZE][1]* __high2half2(KQ_k[j0/nwarps]));
-                    VKQ[j0/nwarps][i0/WARP_SIZE].y += __high2float(V_k[i0/WARP_SIZE][0]*  __low2half2(KQ_k[j0/nwarps]));
-                    VKQ[j0/nwarps][i0/WARP_SIZE].y += __high2float(V_k[i0/WARP_SIZE][1]* __high2half2(KQ_k[j0/nwarps]));
+                    VKQ[j0/nwarps][i0/WARP_SIZE].x += V_k[i0/WARP_SIZE][0].x*  __low2float(KQ_k[j0/nwarps]);
+                    VKQ[j0/nwarps][i0/WARP_SIZE].x += V_k[i0/WARP_SIZE][1].x* __high2float(KQ_k[j0/nwarps]);
+                    VKQ[j0/nwarps][i0/WARP_SIZE].y += V_k[i0/WARP_SIZE][0].y*  __low2float(KQ_k[j0/nwarps]);
+                    VKQ[j0/nwarps][i0/WARP_SIZE].y += V_k[i0/WARP_SIZE][1].y* __high2float(KQ_k[j0/nwarps]);
                 }
             }
         }
@@ -401,7 +403,7 @@ void ggml_cuda_flash_attn_ext_tile_f32(ggml_backend_cuda_context & ctx, ggml_ten
     }
 
     if (Q->ne[1] <= 32) {
-        constexpr int cols_per_block = 32;
+        constexpr int cols_per_block = 16;
         constexpr int parallel_blocks = 4;
         switch (Q->ne[0]) {
             case 64:
@@ -417,7 +419,7 @@ void ggml_cuda_flash_attn_ext_tile_f32(ggml_backend_cuda_context & ctx, ggml_ten
         return;
     }
 
-    constexpr int cols_per_block = 32;
+    constexpr int cols_per_block = 16;
     constexpr int parallel_blocks = 1;
     switch (Q->ne[0]) {
         case 64:
