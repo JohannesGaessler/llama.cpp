@@ -343,23 +343,6 @@ void ggml_cuda_flash_attn_ext_tile_f32(ggml_backend_cuda_context & ctx, ggml_ten
     GGML_ASSERT(precision == GGML_PREC_DEFAULT);
     GGML_ASSERT(Q->ne[0] == 64 || Q->ne[0] == 128 && "FlashAttention without tensor cores only supports head sizes 64 and 128.");
 
-    if (Q->ne[1] <= 8) {
-        constexpr int cols_per_block = 8;
-        constexpr int parallel_blocks = 4;
-        switch (Q->ne[0]) {
-            case 64:
-                launch_fattn_tile_f32< 64, cols_per_block, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
-                break;
-            case 128:
-                launch_fattn_tile_f32<128, cols_per_block, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
-                break;
-            default:
-                GGML_ASSERT(false);
-                break;
-        }
-        return;
-    }
-
     if (Q->ne[1] <= 16) {
         constexpr int cols_per_block = 16;
         constexpr int parallel_blocks = 4;
