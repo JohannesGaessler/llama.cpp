@@ -90,7 +90,7 @@ static __global__ void flash_attn_ext_f16(
 
     // ALiBi
     if (max_bias > 0.0f) {
-        const int h = blockIdx.y;
+        const uint32_t h = blockIdx.y;
 
         const float base = h < n_head_log2 ? m0 : m1;
         const int   exph = h < n_head_log2 ? h + 1 : 2*(h - n_head_log2) + 1;
@@ -544,7 +544,7 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
     const int32_t precision = KQV->op_params[2];
 
     if (true) {
-        ggml_cuda_flash_attn_ext_tile_f32(ctx, dst);
+        ggml_cuda_flash_attn_ext_tile_f16(ctx, dst);
         return;
     }
 

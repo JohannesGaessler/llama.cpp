@@ -4,9 +4,9 @@
 
 #define FATTN_KQ_STRIDE_TILE_F16 64
 
-template<int D, int ncols, int parallel_blocks> // D == head size
+template<int D, int ncols, int nwarps, int parallel_blocks> // D == head size
 #if !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__))
-__launch_bounds__(D, 1)
+__launch_bounds__(nwarps*WARP_SIZE, 1)
 #endif // !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__))
 static __global__ void flash_attn_tile_ext_f16(
         const char * __restrict__ Q,
@@ -54,11 +54,11 @@ static __global__ void flash_attn_tile_ext_f16(
 
     const int stride_KV2 = nb11 / sizeof(half2);
 
-    half  slopeh = __float2half(1.0f);
+    half slopeh = __float2half(1.0f);
 
     // ALiBi
     if (max_bias > 0.0f) {
-        const int h = blockIdx.y;
+        const uint32_t h = blockIdx.y;
 
         const float base = h < n_head_log2 ? m0 : m1;
         const int   exph = h < n_head_log2 ? h + 1 : 2*(h - n_head_log2) + 1;
@@ -67,7 +67,6 @@ static __global__ void flash_attn_tile_ext_f16(
     }
 
     static_assert(D % (2*WARP_SIZE) == 0, "D not divisible by 2*WARP_SIZE == 64.");
-    constexpr int nwarps = D / WARP_SIZE;
 
     __shared__ half KQ[ncols*FATTN_KQ_STRIDE_TILE_F16];
     half2 * KQ2 = (half2 *) KQ;
@@ -180,10 +179,15 @@ static __global__ void flash_attn_tile_ext_f16(
             const half2 KQ_max_scale = __half2half2(hexp(kqmax[j0/nwarps] - kqmax_new[j0/nwarps]));
             kqmax[j0/nwarps] = kqmax_new[j0/nwarps];
 
-            const half2 diff = KQ2[j*(FATTN_KQ_STRIDE_TILE_F16/2) + threadIdx.x] - __half2half2(kqmax[j0/nwarps]);
-            const half2 val = h2exp(diff);
-            kqsum[j0/nwarps] = kqsum[j0/nwarps]*KQ_max_scale + val;
-            KQ2[j*(FATTN_KQ_STRIDE_TILE_F16/2) + threadIdx.x] = val;
+#pragma unroll
+            for (int i0 = 0; i0 < FATTN_KQ_STRIDE_TILE_F16/2; i0 += WARP_SIZE) {
+                const int i = i0 + threadIdx.x;
+
+                const half2 diff = KQ2[j*(FATTN_KQ_STRIDE_TILE_F16/2) + i] - __half2half2(kqmax[j0/nwarps]);
+                const half2 val = h2exp(diff);
+                kqsum[j0/nwarps] = kqsum[j0/nwarps]*KQ_max_scale + val;
+                KQ2[j*(FATTN_KQ_STRIDE_TILE_F16/2) + i] = val;
+            }
 
 #pragma unroll
             for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
@@ -239,9 +243,6 @@ static __global__ void flash_attn_tile_ext_f16(
         __syncthreads();
     }
 
-    __syncthreads();
-
-
 #pragma unroll
     for (int j_VKQ_0 = 0; j_VKQ_0 < ncols; j_VKQ_0 += nwarps) {
         const int j_VKQ = j_VKQ_0 + threadIdx.y;
@@ -283,7 +284,7 @@ template <int D, int cols_per_block, int parallel_blocks> void launch_fattn_tile
         dst_tmp_meta.alloc(parallel_blocks*ggml_nrows(KQV));
     }
 
-    constexpr int  nwarps = (D + WARP_SIZE - 1) / WARP_SIZE;
+    constexpr int  nwarps = 8;
     const     dim3 block_dim(WARP_SIZE, nwarps, 1);
     const     dim3 blocks_num(parallel_blocks*((Q->ne[1] + cols_per_block - 1) / cols_per_block), Q->ne[2], Q->ne[3]);
     const     int  shmem = 0;
@@ -300,7 +301,7 @@ template <int D, int cols_per_block, int parallel_blocks> void launch_fattn_tile
     const float m0 = powf(2.0f, -(max_bias       ) / n_head_log2);
     const float m1 = powf(2.0f, -(max_bias / 2.0f) / n_head_log2);
 
-    flash_attn_tile_ext_f16<D, cols_per_block, parallel_blocks>
+    flash_attn_tile_ext_f16<D, cols_per_block, nwarps, parallel_blocks>
         <<<blocks_num, block_dim, shmem, main_stream>>> (
                 (const char *) Q->data,
                 (const char *) K->data,
@@ -343,23 +344,6 @@ void ggml_cuda_flash_attn_ext_tile_f16(ggml_backend_cuda_context & ctx, ggml_ten
     const int32_t precision = KQV->op_params[2];
     GGML_ASSERT(precision == GGML_PREC_DEFAULT);
     GGML_ASSERT(Q->ne[0] == 64 || Q->ne[0] == 128 && "FlashAttention without tensor cores only supports head sizes 64 and 128.");
-
-    if (Q->ne[1] <= 4) {
-        constexpr int cols_per_block = 4;
-        constexpr int parallel_blocks = 4;
-        switch (Q->ne[0]) {
-            case 64:
-                launch_fattn_tile_f16< 64, cols_per_block, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
-                break;
-            case 128:
-                launch_fattn_tile_f16<128, cols_per_block, parallel_blocks>(Q, K, V, KQV, mask, ctx.pool(), ctx.stream());
-                break;
-            default:
-                GGML_ASSERT(false);
-                break;
-        }
-        return;
-    }
 
     if (Q->ne[1] <= 8) {
         constexpr int cols_per_block = 8;
