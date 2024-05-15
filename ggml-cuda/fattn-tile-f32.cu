@@ -53,7 +53,7 @@ static __global__ void flash_attn_tile_ext_f32(
 
     const int stride_KV2 = nb11 / sizeof(half2);
 
-    half  slopeh = __float2half(1.0f);
+    float slope = 1.0f;
 
     // ALiBi
     if (max_bias > 0.0f) {
@@ -62,7 +62,7 @@ static __global__ void flash_attn_tile_ext_f32(
         const float base = h < n_head_log2 ? m0 : m1;
         const int   exph = h < n_head_log2 ? h + 1 : 2*(h - n_head_log2) + 1;
 
-        slopeh = __float2half(powf(base, exph));
+        slope = powf(base, exph);
     }
 
     static_assert(D % (2*WARP_SIZE) == 0, "D not divisible by 2*WARP_SIZE == 64.");
@@ -161,8 +161,8 @@ static __global__ void flash_attn_tile_ext_f32(
             for (int j_KQ_0 = 0; j_KQ_0 < ncols; j_KQ_0 += nwarps) {
                 const int j_KQ = j_KQ_0 + threadIdx.y;
 
-                half sum = __low2half(sum2[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps]) + __high2half(sum2[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps]);
-                sum += mask ? slopeh*maskh[j_KQ*ne11 + k_VKQ_0 + i_KQ] : __float2half(0.0f);
+                float sum = __low2float(sum2[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps]) + __high2float(sum2[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps]);
+                sum += mask ? slope*__half2float(maskh[j_KQ*ne11 + k_VKQ_0 + i_KQ]) : 0.0f;
 
                 kqmax_new[j_KQ_0/nwarps] = fmaxf(kqmax_new[j_KQ_0/nwarps], sum);
 
