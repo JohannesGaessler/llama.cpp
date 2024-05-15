@@ -83,7 +83,7 @@ static __global__ void flash_attn_tile_ext_f32(
     float2 VKQ[ncols/nwarps][(D/2)/WARP_SIZE] = {{{0.0f, 0.0f}}};
 
     // Convert Q to half2 and store in registers:
-    __shared__ half2 Q_h2[ncols][D/2];
+    __shared__ float2 Q_h2[ncols][D/2];
 #pragma unroll
     for (int j0 = 0; j0 < ncols; j0 += nwarps) {
         const int j = j0 + threadIdx.y;
@@ -92,8 +92,10 @@ static __global__ void flash_attn_tile_ext_f32(
         for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
             const int i = i0 + threadIdx.x;
 
-            const float2 tmp = Q_f2[j*(nb01/sizeof(float2)) + i];
-            Q_h2[j][i] = make_half2(scale, scale) * make_half2(tmp.x, tmp.y);
+            float2 tmp = Q_f2[j*(nb01/sizeof(float2)) + i];
+            tmp.x *= scale;
+            tmp.y *= scale;
+            Q_h2[j][i] = tmp;
         }
     }
 
@@ -124,12 +126,12 @@ static __global__ void flash_attn_tile_ext_f32(
 
         __syncthreads();
 
-        half2 sum2[FATTN_KQ_STRIDE_TILE_F32/WARP_SIZE][ncols/nwarps] = {{{0.0f, 0.0f}}};
+        float sum[FATTN_KQ_STRIDE_TILE_F32/WARP_SIZE][ncols/nwarps] = {{0.0f}};
 
 #pragma unroll
         for (int k_KQ = 0; k_KQ < D/2; ++k_KQ) {
             float2 K_k[FATTN_KQ_STRIDE_TILE_F32/WARP_SIZE];
-            half2 Q_k[ncols/nwarps];
+            float2 Q_k[ncols/nwarps];
 
 #pragma unroll
             for (int i_KQ_0 = 0; i_KQ_0 < FATTN_KQ_STRIDE_TILE_F32; i_KQ_0 += WARP_SIZE) {
@@ -148,7 +150,8 @@ static __global__ void flash_attn_tile_ext_f32(
             for (int i_KQ_0 = 0; i_KQ_0 < FATTN_KQ_STRIDE_TILE_F32; i_KQ_0 += WARP_SIZE) {
 #pragma unroll
                 for (int j_KQ_0 = 0; j_KQ_0 < ncols; j_KQ_0 += nwarps) {
-                    sum2[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps] += make_half2(K_k[i_KQ_0/WARP_SIZE].x, K_k[i_KQ_0/WARP_SIZE].y)*Q_k[j_KQ_0/nwarps];
+                    sum[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps] += K_k[i_KQ_0/WARP_SIZE].x * Q_k[j_KQ_0/nwarps].x;
+                    sum[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps] += K_k[i_KQ_0/WARP_SIZE].y * Q_k[j_KQ_0/nwarps].y;
                 }
             }
         }
@@ -161,12 +164,11 @@ static __global__ void flash_attn_tile_ext_f32(
             for (int j_KQ_0 = 0; j_KQ_0 < ncols; j_KQ_0 += nwarps) {
                 const int j_KQ = j_KQ_0 + threadIdx.y;
 
-                float sum = __low2float(sum2[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps]) + __high2float(sum2[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps]);
-                sum += mask ? slope*__half2float(maskh[j_KQ*ne11 + k_VKQ_0 + i_KQ]) : 0.0f;
+                sum[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps] += mask ? slope*__half2float(maskh[j_KQ*ne11 + k_VKQ_0 + i_KQ]) : 0.0f;
 
-                kqmax_new[j_KQ_0/nwarps] = fmaxf(kqmax_new[j_KQ_0/nwarps], sum);
+                kqmax_new[j_KQ_0/nwarps] = fmaxf(kqmax_new[j_KQ_0/nwarps], sum[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps]);
 
-                KQ[j_KQ*FATTN_KQ_STRIDE_TILE_F32 + i_KQ] = sum;
+                KQ[j_KQ*FATTN_KQ_STRIDE_TILE_F32 + i_KQ] = sum[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps];
             }
         }
 
