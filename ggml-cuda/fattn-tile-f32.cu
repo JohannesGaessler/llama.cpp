@@ -2,7 +2,7 @@
 #include "fattn-common.cuh"
 #include "fattn-tile-f32.cuh"
 
-#define FATTN_KQ_STRIDE_TILE_F32 64
+#define FATTN_KQ_STRIDE_TILE_F32 32
 
 template<int D, int ncols, int parallel_blocks> // D == head size
 #if !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__))
@@ -396,7 +396,7 @@ void ggml_cuda_flash_attn_ext_tile_f32(ggml_backend_cuda_context & ctx, ggml_ten
     }
 
     if (Q->ne[1] <= 32) {
-        constexpr int cols_per_block = 16;
+        constexpr int cols_per_block = 32;
         constexpr int parallel_blocks = 4;
         switch (Q->ne[0]) {
             case 64:
@@ -412,7 +412,7 @@ void ggml_cuda_flash_attn_ext_tile_f32(ggml_backend_cuda_context & ctx, ggml_ten
         return;
     }
 
-    constexpr int cols_per_block = 16;
+    constexpr int cols_per_block = 32;
     constexpr int parallel_blocks = 1;
     switch (Q->ne[0]) {
         case 64:
