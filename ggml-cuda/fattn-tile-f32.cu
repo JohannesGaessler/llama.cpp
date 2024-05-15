@@ -57,7 +57,7 @@ static __global__ void flash_attn_tile_ext_f32(
 
     // ALiBi
     if (max_bias > 0.0f) {
-        const int h = blockIdx.y;
+        const uint32_t h = blockIdx.y;
 
         const float base = h < n_head_log2 ? m0 : m1;
         const int   exph = h < n_head_log2 ? h + 1 : 2*(h - n_head_log2) + 1;
@@ -71,7 +71,8 @@ static __global__ void flash_attn_tile_ext_f32(
     __shared__ float KQ[ncols*FATTN_KQ_STRIDE_TILE_F32];
     float2 * KQ2 = (float2 *) KQ;
 
-    __shared__ float2 KV_tmp[FATTN_KQ_STRIDE_TILE_F32][D/2 + 1]; // Pad D to avoid memory bank conflicts.
+    __shared__ float KV_tmp[FATTN_KQ_STRIDE_TILE_F32][D + 1]; // Pad D to avoid memory bank conflicts.
+    float2 * KV_tmp2 = (float2 *) KV_tmp;
 
     float kqmax[ncols/nwarps];
 #pragma unroll
@@ -83,19 +84,16 @@ static __global__ void flash_attn_tile_ext_f32(
     float2 VKQ[ncols/nwarps][(D/2)/WARP_SIZE] = {{{0.0f, 0.0f}}};
 
     // Convert Q to half2 and store in registers:
-    __shared__ float2 Q_h2[ncols][D/2];
+    __shared__ float Q_f[ncols][D];
 #pragma unroll
     for (int j0 = 0; j0 < ncols; j0 += nwarps) {
         const int j = j0 + threadIdx.y;
 
 #pragma unroll
-        for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
-            const int i = i0 + threadIdx.x;
-
-            float2 tmp = Q_f2[j*(nb01/sizeof(float2)) + i];
-            tmp.x *= scale;
-            tmp.y *= scale;
-            Q_h2[j][i] = tmp;
+        for (int i0 = 0; i0 < D; i0 += 2*WARP_SIZE) {
+            float2 tmp = Q_f2[j*(nb01/sizeof(float2)) + i0/2 + threadIdx.x];
+            Q_f[j][i0 + threadIdx.x + 0*WARP_SIZE] = tmp.x * scale;
+            Q_f[j][i0 + threadIdx.x + 1*WARP_SIZE] = tmp.y * scale;
         }
     }
 
@@ -116,11 +114,10 @@ static __global__ void flash_attn_tile_ext_f32(
             const int i_KQ = i_KQ_0 + threadIdx.y;
 
 #pragma unroll
-            for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += WARP_SIZE) {
-                const int k_KQ = k_KQ_0 + threadIdx.x;
-
-                KV_tmp[i_KQ][k_KQ].x =  __low2float(K_h2[(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ]);
-                KV_tmp[i_KQ][k_KQ].y = __high2float(K_h2[(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ]);
+            for (int k_KQ_0 = 0; k_KQ_0 < D; k_KQ_0 += 2*WARP_SIZE) {
+                const half2 tmp = K_h2[(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ_0/2 + threadIdx.x];
+                KV_tmp[i_KQ][k_KQ_0 + threadIdx.x + 0*WARP_SIZE] =  __low2float(tmp);
+                KV_tmp[i_KQ][k_KQ_0 + threadIdx.x + 1*WARP_SIZE] = __high2float(tmp);
             }
         }
 
@@ -129,9 +126,9 @@ static __global__ void flash_attn_tile_ext_f32(
         float sum[FATTN_KQ_STRIDE_TILE_F32/WARP_SIZE][ncols/nwarps] = {{0.0f}};
 
 #pragma unroll
-        for (int k_KQ = 0; k_KQ < D/2; ++k_KQ) {
-            float2 K_k[FATTN_KQ_STRIDE_TILE_F32/WARP_SIZE];
-            float2 Q_k[ncols/nwarps];
+        for (int k_KQ = 0; k_KQ < D; ++k_KQ) {
+            float K_k[FATTN_KQ_STRIDE_TILE_F32/WARP_SIZE];
+            float Q_k[ncols/nwarps];
 
 #pragma unroll
             for (int i_KQ_0 = 0; i_KQ_0 < FATTN_KQ_STRIDE_TILE_F32; i_KQ_0 += WARP_SIZE) {
@@ -143,15 +140,14 @@ static __global__ void flash_attn_tile_ext_f32(
             for (int j_KQ_0 = 0; j_KQ_0 < ncols; j_KQ_0 += nwarps) {
                 const int j_KQ = j_KQ_0 + threadIdx.y;
 
-                Q_k[j_KQ_0/nwarps] = Q_h2[j_KQ][k_KQ];
+                Q_k[j_KQ_0/nwarps] = Q_f[j_KQ][k_KQ];
             }
 
 #pragma unroll
             for (int i_KQ_0 = 0; i_KQ_0 < FATTN_KQ_STRIDE_TILE_F32; i_KQ_0 += WARP_SIZE) {
 #pragma unroll
                 for (int j_KQ_0 = 0; j_KQ_0 < ncols; j_KQ_0 += nwarps) {
-                    sum[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps] += K_k[i_KQ_0/WARP_SIZE].x * Q_k[j_KQ_0/nwarps].x;
-                    sum[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps] += K_k[i_KQ_0/WARP_SIZE].y * Q_k[j_KQ_0/nwarps].y;
+                    sum[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps] += K_k[i_KQ_0/WARP_SIZE] * Q_k[j_KQ_0/nwarps];
                 }
             }
         }
@@ -211,8 +207,8 @@ static __global__ void flash_attn_tile_ext_f32(
             for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
                 const int i = i0 + threadIdx.x;
 
-                KV_tmp[k][i].x =  __low2float(V_h2[(k_VKQ_0 + k)*stride_KV2 + i]);
-                KV_tmp[k][i].y = __high2float(V_h2[(k_VKQ_0 + k)*stride_KV2 + i]);
+                KV_tmp2[k*(D/2) + i].x =  __low2float(V_h2[(k_VKQ_0 + k)*stride_KV2 + i]);
+                KV_tmp2[k*(D/2) + i].y = __high2float(V_h2[(k_VKQ_0 + k)*stride_KV2 + i]);
             }
         }
 
@@ -227,8 +223,8 @@ static __global__ void flash_attn_tile_ext_f32(
             for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
                 const int i = i0 + threadIdx.x;
 
-                V_k[i0/WARP_SIZE][0] = KV_tmp[k0 + 0][i];
-                V_k[i0/WARP_SIZE][1] = KV_tmp[k0 + 1][i];
+                V_k[i0/WARP_SIZE][0] = KV_tmp2[(k0 + 0)*(D/2) + i];
+                V_k[i0/WARP_SIZE][1] = KV_tmp2[(k0 + 1)*(D/2) + i];
             }
 #pragma unroll
             for (int j0 = 0; j0 < ncols; j0 += nwarps) {
