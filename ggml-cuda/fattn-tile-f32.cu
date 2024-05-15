@@ -78,7 +78,7 @@ static __global__ void flash_attn_tile_ext_f32(
     for (int j0 = 0; j0 < ncols; j0 += nwarps) {
         kqmax[j0/nwarps] = -FLT_MAX/2.0f;
     }
-    half2 kqsum[ncols/nwarps] = {{0.0f, 0.0f}};
+    float kqsum[ncols/nwarps] = {0.0f};
 
     half2 VKQ[ncols/nwarps][(D/2)/WARP_SIZE] = {{{0.0f, 0.0f}}};
 
@@ -185,7 +185,7 @@ static __global__ void flash_attn_tile_ext_f32(
                 KQ2[j*(FATTN_KQ_STRIDE_TILE_F32/2) + threadIdx.x].x - kqmax[j0/nwarps],
                 KQ2[j*(FATTN_KQ_STRIDE_TILE_F32/2) + threadIdx.x].y - kqmax[j0/nwarps]);
             const half2 val = h2exp(diff);
-            kqsum[j0/nwarps] = kqsum[j0/nwarps]*KQ_max_scale + val;
+            kqsum[j0/nwarps] = kqsum[j0/nwarps]*__low2float(KQ_max_scale) + __low2float(val) + __high2float(val);
             KQ2[j*(FATTN_KQ_STRIDE_TILE_F32/2) + threadIdx.x].x = __low2float(val);
             KQ2[j*(FATTN_KQ_STRIDE_TILE_F32/2) + threadIdx.x].y = __high2float(val);
 
@@ -250,7 +250,7 @@ static __global__ void flash_attn_tile_ext_f32(
     for (int j_VKQ_0 = 0; j_VKQ_0 < ncols; j_VKQ_0 += nwarps) {
         const int j_VKQ = j_VKQ_0 + threadIdx.y;
 
-        half kqsum_j = __low2half(kqsum[j_VKQ_0/nwarps]) + __high2half(kqsum[j_VKQ_0/nwarps]);
+        half kqsum_j = kqsum[j_VKQ_0/nwarps];
         kqsum_j = warp_reduce_sum(kqsum_j);
 
 #pragma unroll
