@@ -69,7 +69,6 @@ static __global__ void flash_attn_tile_ext_f32(
     constexpr int nwarps = D / WARP_SIZE;
 
     __shared__ float KQ[ncols*FATTN_KQ_STRIDE_TILE_F32];
-    float2 * KQ2 = (float2 *) KQ;
 
     __shared__ float KV_tmp[FATTN_KQ_STRIDE_TILE_F32][D + 1]; // Pad D to avoid memory bank conflicts.
     float2 * KV_tmp2 = (float2 *) KV_tmp;
@@ -92,8 +91,8 @@ static __global__ void flash_attn_tile_ext_f32(
 #pragma unroll
         for (int i0 = 0; i0 < D; i0 += 2*WARP_SIZE) {
             float2 tmp = Q_f2[j*(nb01/sizeof(float2)) + i0/2 + threadIdx.x];
-            Q_f[j][i0 + threadIdx.x + 0*WARP_SIZE] = tmp.x * scale;
-            Q_f[j][i0 + threadIdx.x + 1*WARP_SIZE] = tmp.y * scale;
+            Q_f[j][i0 + 0*WARP_SIZE + threadIdx.x] = tmp.x * scale;
+            Q_f[j][i0 + 1*WARP_SIZE + threadIdx.x] = tmp.y * scale;
         }
     }
 
@@ -116,8 +115,8 @@ static __global__ void flash_attn_tile_ext_f32(
 #pragma unroll
             for (int k_KQ_0 = 0; k_KQ_0 < D; k_KQ_0 += 2*WARP_SIZE) {
                 const half2 tmp = K_h2[(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ_0/2 + threadIdx.x];
-                KV_tmp[i_KQ][k_KQ_0 + threadIdx.x + 0*WARP_SIZE] =  __low2float(tmp);
-                KV_tmp[i_KQ][k_KQ_0 + threadIdx.x + 1*WARP_SIZE] = __high2float(tmp);
+                KV_tmp[i_KQ][k_KQ_0 + 0*WARP_SIZE + threadIdx.x] =  __low2float(tmp);
+                KV_tmp[i_KQ][k_KQ_0 + 1*WARP_SIZE + threadIdx.x] = __high2float(tmp);
             }
         }
 
@@ -180,7 +179,7 @@ static __global__ void flash_attn_tile_ext_f32(
 
             float kqsum_add = 0.0f;
 #pragma unroll
-            for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
+            for (int i0 = 0; i0 < FATTN_KQ_STRIDE_TILE_F32; i0 += WARP_SIZE) {
                 const int i = i0 + threadIdx.x;
 
                 const float diff = KQ[j*FATTN_KQ_STRIDE_TILE_F32 + i] - kqmax[j0/nwarps];
@@ -244,9 +243,6 @@ static __global__ void flash_attn_tile_ext_f32(
 
         __syncthreads();
     }
-
-    __syncthreads();
-
 
 #pragma unroll
     for (int j_VKQ_0 = 0; j_VKQ_0 < ncols; j_VKQ_0 += nwarps) {
