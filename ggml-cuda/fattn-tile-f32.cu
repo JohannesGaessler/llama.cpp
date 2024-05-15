@@ -73,10 +73,10 @@ static __global__ void flash_attn_tile_ext_f32(
 
     __shared__ half2 KV_tmp[FATTN_KQ_STRIDE_TILE_F32][D/2 + 1]; // Pad D to avoid memory bank conflicts.
 
-    half kqmax[ncols/nwarps];
+    float kqmax[ncols/nwarps];
 #pragma unroll
     for (int j0 = 0; j0 < ncols; j0 += nwarps) {
-        kqmax[j0/nwarps] = -HALF_MAX_HALF;
+        kqmax[j0/nwarps] = -FLT_MAX/2.0f;
     }
     half2 kqsum[ncols/nwarps] = {{0.0f, 0.0f}};
 
@@ -103,7 +103,7 @@ static __global__ void flash_attn_tile_ext_f32(
     for (int k_VKQ_0 = k_start; k_VKQ_0 < ne11; k_VKQ_0 += parallel_blocks*FATTN_KQ_STRIDE_TILE_F32) {
         // Calculate KQ tile and keep track of new maximum KQ values:
 
-        half kqmax_new[ncols/nwarps];
+        float kqmax_new[ncols/nwarps];
 #pragma unroll
         for (int j = 0; j < ncols/nwarps; ++j) {
             kqmax_new[j] = kqmax[j];
@@ -163,7 +163,7 @@ static __global__ void flash_attn_tile_ext_f32(
                 half sum = __low2half(sum2[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps]) + __high2half(sum2[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps]);
                 sum += mask ? slopeh*maskh[j_KQ*ne11 + k_VKQ_0 + i_KQ] : __float2half(0.0f);
 
-                kqmax_new[j_KQ_0/nwarps] = ggml_cuda_hmax(kqmax_new[j_KQ_0/nwarps], sum);
+                kqmax_new[j_KQ_0/nwarps] = fmaxf(kqmax_new[j_KQ_0/nwarps], sum);
 
                 KQ[j_KQ*FATTN_KQ_STRIDE_TILE_F32 + i_KQ] = sum;
             }
@@ -176,12 +176,14 @@ static __global__ void flash_attn_tile_ext_f32(
             const int j = j0 + threadIdx.y;
 
             kqmax_new[j0/nwarps] = warp_reduce_max(kqmax_new[j0/nwarps]);
-            const half2 KQ_max_scale = __half2half2(hexp(kqmax[j0/nwarps] - kqmax_new[j0/nwarps]));
+            const half2 KQ_max_scale = make_half2(
+                expf(kqmax[j0/nwarps] - kqmax_new[j0/nwarps]),
+                expf(kqmax[j0/nwarps] - kqmax_new[j0/nwarps]));
             kqmax[j0/nwarps] = kqmax_new[j0/nwarps];
 
             const half2 diff = make_half2(
-                KQ2[j*(FATTN_KQ_STRIDE_TILE_F32/2) + threadIdx.x].x,
-                KQ2[j*(FATTN_KQ_STRIDE_TILE_F32/2) + threadIdx.x].y) - __half2half2(kqmax[j0/nwarps]);
+                KQ2[j*(FATTN_KQ_STRIDE_TILE_F32/2) + threadIdx.x].x - kqmax[j0/nwarps],
+                KQ2[j*(FATTN_KQ_STRIDE_TILE_F32/2) + threadIdx.x].y - kqmax[j0/nwarps]);
             const half2 val = h2exp(diff);
             kqsum[j0/nwarps] = kqsum[j0/nwarps]*KQ_max_scale + val;
             KQ2[j*(FATTN_KQ_STRIDE_TILE_F32/2) + threadIdx.x].x = __low2float(val);
