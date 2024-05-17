@@ -431,7 +431,6 @@ static_assert(get_VKQ_stride( 80, 4, 16) ==  16, "Test failed.");
 
 template <int D, int cols_per_block, int nwarps, typename KQ_acc_t>
 void launch_fattn_f16(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-
     const ggml_tensor * Q = dst->src[0];
 
     constexpr int frag_m = cols_per_block == 8 && D % 32 == 0 ? 32 : 16;
@@ -445,12 +444,12 @@ void launch_fattn_f16(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
         return;
     }
     if (2*blocks_num_pb1 < 2*nsm) {
-        constexpr int parallel_blocks = 4;
+        constexpr int parallel_blocks = 2;
         fattn_kernel_t fattn_kernel = flash_attn_ext_f16<D, cols_per_block, nwarps, get_VKQ_stride(D, nwarps, frag_m), parallel_blocks, KQ_acc_t>;
         launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
         return;
     }
-    constexpr int parallel_blocks = 4;
+    constexpr int parallel_blocks = 1;
     fattn_kernel_t fattn_kernel = flash_attn_ext_f16<D, cols_per_block, nwarps, get_VKQ_stride(D, nwarps, frag_m), parallel_blocks, KQ_acc_t>;
     launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
 }
