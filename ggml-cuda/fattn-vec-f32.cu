@@ -211,7 +211,7 @@ static __global__ void flash_attn_vec_ext_f32(
         dst[j_dst*D*gridDim.y + D*blockIdx.y + tid] = dst_val;
     }
 
-    if (parallel_blocks != 1 && threadIdx.x < ncols) {
+    if (parallel_blocks != 1 && tid < ncols) {
         dst_meta[(ic0 + threadIdx.x)*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = make_float2(kqmax[threadIdx.x], kqsum[threadIdx.x]);
     }
 }
