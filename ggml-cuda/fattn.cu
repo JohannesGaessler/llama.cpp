@@ -45,6 +45,9 @@ static __global__ void flash_attn_ext_f16(
         const int nb11,
         const int nb12,
         const int nb13,
+        const int nb21,
+        const int nb22,
+        const int nb23,
         const int ne0,
         const int ne1,
         const int ne2,
@@ -481,8 +484,8 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
         return;
     }
 
-    if (!fp16_mma_available(cc)) {
-        if (Q->ne[1] <= 8) {
+    if (true || !fp16_mma_available(cc)) {
+        if (true || Q->ne[1] <= 8) {
             ggml_cuda_flash_attn_ext_vec_f16_no_mma(ctx, dst);
         } else {
             ggml_cuda_flash_attn_ext_tile_f16(ctx, dst);

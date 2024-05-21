@@ -1,4 +1,5 @@
 #include "common.cuh"
+#include "vecdotq.cuh"
 
 #include <cstdint>
 
@@ -34,10 +35,127 @@ typedef void (* fattn_kernel_t)(
         const int nb11,
         const int nb12,
         const int nb13,
+        const int nb21,
+        const int nb22,
+        const int nb23,
         const int ne0,
         const int ne1,
         const int ne2,
         const int ne3);
+
+typedef half (*vec_dot_fattn_vec_KQ_t)(
+    const char * __restrict__ K_c, const half2 * __restrict__ Q_h2, const int * __restrict__ Q_q8 , const half2 * __restrict__ Q_ds);
+
+template<int D>
+static __device__ __forceinline__ half vec_dot_fattn_vec_KQ_q4_0(
+    const char * __restrict__ K_c, const half2 * __restrict__ Q_h2, const int * __restrict__ Q_q8, const half2 * __restrict__ Q_ds) {
+
+    const block_q4_0 * K_q4_0 = (const block_q4_0 *) K_c;
+    GGML_UNUSED(Q_h2);
+
+    half sum = 0.0f;
+
+#pragma unroll
+    for (int k_KQ_0 = 0; k_KQ_0 < D/sizeof(int); k_KQ_0 += WARP_SIZE) {
+        const int k_KQ = k_KQ_0 + threadIdx.x;
+
+        const int ib    = k_KQ / QI8_1;
+        const int iqs4  = k_KQ % QI4_0;
+        const int shift = k_KQ & QI4_0;
+
+        const int v = (get_int_from_uint8(K_q4_0[ib].qs, iqs4) >> shift) & 0x0F0F0F0F;
+        const int u = Q_q8[k_KQ_0/WARP_SIZE];
+
+        const int   sumi = __dp4a(v, u, 0);
+        const half2 sum2 = __half2half2(K_q4_0[ib].d) * Q_ds[k_KQ_0/WARP_SIZE];
+        sum += ((half) sumi)*__low2half(sum2) - __high2half(sum2);
+    }
+
+    return sum;
+}
+
+template<int D>
+static __device__ __forceinline__ half vec_dot_fattn_vec_KQ_q8_0(
+    const char * __restrict__ K_c, const half2 * __restrict__ Q_h2, const int * __restrict__ Q_q8, const half2 * __restrict__ Q_ds) {
+
+    const block_q8_0 * K_q8_0 = (const block_q8_0 *) K_c;
+    GGML_UNUSED(Q_h2);
+
+    half sum = 0.0f;
+
+#pragma unroll
+    for (int k_KQ_0 = 0; k_KQ_0 < D/sizeof(int); k_KQ_0 += WARP_SIZE) {
+        const int k_KQ = k_KQ_0 + threadIdx.x;
+
+        const int ib  = k_KQ / QI8_0;
+        const int iqs = k_KQ % QI8_0;
+
+        const int v = get_int_from_int8(K_q8_0[ib].qs, iqs);
+
+        sum += vec_dot_q8_0_q8_1_impl<half, 1>(&v, &Q_q8[k_KQ_0/WARP_SIZE], K_q8_0[ib].d, __low2half(Q_ds[k_KQ_0/WARP_SIZE]));
+    }
+
+    return sum;
+}
+
+template<int D>
+static __device__ __forceinline__ half vec_dot_fattn_vec_KQ_f16(
+    const char * __restrict__ K_c, const half2 * __restrict__ Q_h2, const int * __restrict__ Q_q8 , const half2 * __restrict__ Q_ds) {
+
+    const half2 * K_h2 = (const half2 *) K_c;
+    GGML_UNUSED(Q_q8);
+    GGML_UNUSED(Q_ds);
+
+    half2 sum2 = make_half2(0.0f, 0.0f);
+
+#pragma unroll
+    for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += WARP_SIZE) {
+        const int k_KQ = k_KQ_0 + threadIdx.x;
+
+        const half2 K_ik = K_h2[k_KQ];
+        sum2 += K_ik * Q_h2[k_KQ_0/WARP_SIZE];
+    }
+
+    return __low2half(sum2) + __high2half(sum2);
+}
+
+typedef half  (*dequantize_1_f16_t)(const void *, const int64_t);
+typedef float (*dequantize_1_f32_t)(const void *, const int64_t);
+
+template <typename T>
+static __device__ __forceinline__ T dequantize_1_q4_0(const void * __restrict__ vx, const int64_t i) {
+    const block_q4_0 * x = (const block_q4_0 *) vx;
+
+    const int64_t ib    =  i          /  QK4_0;
+    const int     iqs   =  i          % (QK4_0/2);
+    const int     shift = (i % QK4_0) / (QK4_0/2);
+
+    const T   d  = x[ib].d;
+    const int q0 = x[ib].qs[iqs];
+    const int q  = ((q0 >> 4*shift) & 0x0F) - 8;
+
+    return d*((T) q);
+}
+
+template <typename T>
+static __device__ __forceinline__ T dequantize_1_q8_0(const void * __restrict__ vx, const int64_t i) {
+    const block_q8_0 * x = (const block_q8_0 *) vx;
+
+    const int64_t ib  = i / QK8_0;
+    const int     iqs = i % QK8_0;
+
+    const T   d = x[ib].d;
+    const int q = x[ib].qs[iqs];
+
+    return d*((T) q);
+}
+
+template <typename T>
+static __device__ __forceinline__ T dequantize_1_f16(const void * __restrict__ vx, const int64_t i) {
+    const half * x = (const half *) vx;
+
+    return x[i];
+}
 
 template<int D, int parallel_blocks> // D == head size
 #if !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__))
@@ -94,8 +212,6 @@ void launch_fattn(ggml_backend_cuda_context & ctx, ggml_tensor * dst, fattn_kern
     ggml_tensor * KQV = dst;
 
     GGML_ASSERT(Q->type == GGML_TYPE_F32);
-    GGML_ASSERT(K->type == GGML_TYPE_F16);
-    GGML_ASSERT(V->type == GGML_TYPE_F16);
     GGML_ASSERT(KQV->type == GGML_TYPE_F32);
 
     GGML_ASSERT(!mask || mask->type == GGML_TYPE_F16);
@@ -143,6 +259,7 @@ void launch_fattn(ggml_backend_cuda_context & ctx, ggml_tensor * dst, fattn_kern
         mask ? mask->ne[1] : 0, mask ?  mask->nb[1] : 0,
         Q->nb[1], Q->nb[2], Q->nb[3],
         K->nb[1], K->nb[2], K->nb[3],
+        V->nb[1], V->nb[2], V->nb[3],
         KQV->ne[0], KQV->ne[1], KQV->ne[2], KQV->ne[3]
     );
     CUDA_CHECK(cudaGetLastError());
