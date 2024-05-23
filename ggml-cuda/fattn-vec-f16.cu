@@ -104,7 +104,7 @@ static __global__ void flash_attn_vec_ext_f16(
             int8_t * tmp_q_i8 = (int8_t *) &KQ[j*D];
             half2  * tmp_q_ds = (half2  *) (tmp_q_i8 + D);
 
-            const float val  = Q_f[j*(nb01/sizeof(float)) + tid];
+            const float val  = ncols <= 2 || ic0 + j < ne01 ? Q_f[j*(nb01/sizeof(float)) + tid] : 0.0f;
             const float amax = warp_reduce_max(fabsf(val));
             const float sum  = warp_reduce_sum(val);
 
@@ -347,12 +347,12 @@ void launch_fattn_vec_f16_V_type(ggml_backend_cuda_context & ctx, ggml_tensor * 
     const ggml_tensor * V = dst->src[2];
 
     switch (V->type) {
-        // case GGML_TYPE_Q4_0:
-        //     launch_fattn_vec_f16_64_128<cols_per_block, parallel_blocks, dequantize_1_q4_0<half>>(ctx, dst);
-        //     break;
-        // case GGML_TYPE_Q8_0:
-        //     launch_fattn_vec_f16_64_128<cols_per_block, parallel_blocks, dequantize_1_q8_0<half>>(ctx, dst);
-        //     break;
+        case GGML_TYPE_Q4_0:
+            launch_fattn_vec_f16_64_128<cols_per_block, parallel_blocks, dequantize_1_q4_0<half>>(ctx, dst);
+            break;
+        case GGML_TYPE_Q8_0:
+            launch_fattn_vec_f16_64_128<cols_per_block, parallel_blocks, dequantize_1_q8_0<half>>(ctx, dst);
+            break;
         case GGML_TYPE_F16:
             launch_fattn_vec_f16_64_128<cols_per_block, parallel_blocks, dequantize_1_f16<half>>(ctx, dst);
             break;
@@ -370,7 +370,9 @@ void ggml_cuda_flash_attn_ext_vec_f16_no_mma(ggml_backend_cuda_context & ctx, gg
     GGML_ASSERT(precision == GGML_PREC_DEFAULT);
 
     if (Q->ne[1] == 1) {
-        ggml_cuda_flash_attn_ext_vec_f16(ctx, dst);
+        constexpr int cols_per_block  = 1;
+        constexpr int parallel_blocks = 4;
+        launch_fattn_vec_f16_V_type<cols_per_block, parallel_blocks>(ctx, dst);
         return;
     }
 
