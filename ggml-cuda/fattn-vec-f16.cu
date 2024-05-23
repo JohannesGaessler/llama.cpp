@@ -100,20 +100,62 @@ static __global__ void flash_attn_vec_ext_f16(
         }
     } else {
 #pragma unroll
-        for (int j = 0; j < ncols; ++j) {
-            int8_t * tmp_q_i8 = (int8_t *) &KQ[j*D];
-            half2  * tmp_q_ds = (half2  *) (tmp_q_i8 + D);
+        for (int j0 = 0; j0 < ncols; j0 += nwarps) {
+            const int j = j0 + threadIdx.y;
 
-            const float val  = ncols <= 2 || ic0 + j < ne01 ? Q_f[j*(nb01/sizeof(float)) + tid] : 0.0f;
-            const float amax = warp_reduce_max(fabsf(val));
-            const float sum  = warp_reduce_sum(val);
+            int   * tmp_q_i8 = (int   *) &KQ[j*D];
+            half2 * tmp_q_ds = (half2 *) (tmp_q_i8 + D/sizeof(int));
 
-            const float  d = amax / 127;
-            const int8_t q = amax == 0.0f ? 0 : roundf(val / d);
+            if (ncols > 2 && ic0 + j >= ne01) {
+#pragma unroll
+                for (int i0 = 0; i0 < D/sizeof(int); i0 += WARP_SIZE) {
+                    const int i = i0 + threadIdx.x;
 
-            tmp_q_i8[tid] = q;
-            if (threadIdx.x == 0) {
-                tmp_q_ds[threadIdx.y] = make_half2(scale, scale) * make_half2(d, sum);
+                    tmp_q_i8[i] = 0;
+                }
+                if (threadIdx.x < D/QK8_1) {
+                    tmp_q_ds[threadIdx.x] = make_half2(0.0f, 0.0f);
+                }
+                continue;
+            }
+#pragma unroll
+            for (int i0 = 0; i0 < D/sizeof(int); i0 += WARP_SIZE) {
+                const int i = i0 + threadIdx.x;
+
+                float vals[sizeof(int)] = {0.0f};
+#pragma unroll
+                for (int l = 0; l < sizeof(int); ++l) {
+                    vals[l] = scale * Q_f[j*(nb01/sizeof(float)) + 4*i + l];
+                }
+
+                float amax = fabsf(vals[0]);
+                float sum  = vals[0];
+#pragma unroll
+                for (int l = 1; l < sizeof(int); ++l) {
+                    amax = fmaxf(amax, fabsf(vals[l]));
+                    sum += vals[l];
+                }
+#pragma unroll
+                for (int mask = QI8_1/2; mask > 0; mask >>= 1) {
+                    amax = fmaxf(amax, __shfl_xor_sync(0xFFFFFFFF, amax, mask, 32));
+                    sum +=             __shfl_xor_sync(0xFFFFFFFF, sum,  mask, 32);
+                }
+
+                const float d = amax / 127;
+                int q32 = 0;
+                int8_t * q8 = (int8_t *) &q32;
+
+                if (d != 0.0f) {
+#pragma unroll
+                    for (int l = 0; l < sizeof(int); ++l) {
+                        q8[l] = roundf(vals[l] / d);
+                    }
+                }
+
+                tmp_q_i8[i] = q32;
+                if (threadIdx.x % QI8_1 == 0) {
+                    tmp_q_ds[threadIdx.x/QI8_1] = make_half2(d, sum);
+                }
             }
         }
 
