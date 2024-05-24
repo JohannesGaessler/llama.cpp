@@ -87,18 +87,7 @@ static __global__ void flash_attn_vec_ext_f16(
     half2 Q_h2[ncols][D/(2*WARP_SIZE)];
     int   Q_i8[ncols][D/(sizeof(int)*QK8_1)];
     half2 Q_ds[ncols][D/QK8_1];
-    if (!Q_q8_1) {
-#pragma unroll
-        for (int j = 0; j < ncols; ++j) {
-#pragma unroll
-            for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
-                const int i = i0 + threadIdx.x;
-
-                const float2 tmp = ncols <= 2 || ic0 + j < ne01 ? Q_f2[j*(nb01/sizeof(float2)) + i] : make_float2(0.0f, 0.0f);
-                Q_h2[j][i0/WARP_SIZE] = make_half2(scale, scale) * make_half2(tmp.x, tmp.y);
-            }
-        }
-    } else {
+    if (Q_q8_1) {
 #pragma unroll
         for (int j0 = 0; j0 < ncols; j0 += nwarps) {
             const int j = j0 + threadIdx.y;
@@ -176,6 +165,17 @@ static __global__ void flash_attn_vec_ext_f16(
         }
 
         __syncthreads();
+    } else {
+#pragma unroll
+        for (int j = 0; j < ncols; ++j) {
+#pragma unroll
+            for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
+                const int i = i0 + threadIdx.x;
+
+                const float2 tmp = ncols <= 2 || ic0 + j < ne01 ? Q_f2[j*(nb01/sizeof(float2)) + i] : make_float2(0.0f, 0.0f);
+                Q_h2[j][i0/WARP_SIZE] = make_half2(scale, scale) * make_half2(tmp.x, tmp.y);
+            }
+        }
     }
 
 
