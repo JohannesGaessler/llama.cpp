@@ -48,97 +48,136 @@ typedef half (*vec_dot_KQ_f16_t)(
 typedef float (*vec_dot_KQ_f32_t)(
     const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8 , const void * __restrict__ Q_ds);
 
-// template<int D>
-// static __device__ __forceinline__ half vec_dot_fattn_vec_KQ_q4_0(
-//     const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8, const half2 * __restrict__ Q_ds) {
+template<typename T, int D>
+static __device__ __forceinline__ T vec_dot_fattn_vec_KQ_q4_0(
+    const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8, const void * __restrict__ Q_ds_v) {
 
-//     const block_q4_0 * K_q4_0 = (const block_q4_0 *) K_c;
-//     GGML_UNUSED(Q_v);
+    const block_q4_0 * K_q4_0 = (const block_q4_0 *) K_c;
+    GGML_UNUSED(Q_v);
 
-//     half sum = 0.0f;
+    half sum = 0.0f;
 
-// #pragma unroll
-//     for (int k_KQ_0 = 0; k_KQ_0 < D/sizeof(int); k_KQ_0 += WARP_SIZE) {
-//         const int k_KQ = k_KQ_0 + threadIdx.x;
+#pragma unroll
+    for (int k_KQ_0 = 0; k_KQ_0 < D/sizeof(int); k_KQ_0 += WARP_SIZE) {
+        const int k_KQ = k_KQ_0 + threadIdx.x;
 
-//         const int ib    = k_KQ /  QI8_1;
-//         const int iqs4  = k_KQ %  QI4_0;
-//         const int shift = k_KQ & (QI8_1/2);
+        const int ib    = k_KQ /  QI8_1;
+        const int iqs4  = k_KQ %  QI4_0;
+        const int shift = k_KQ & (QI8_1/2);
 
-//         const int v = (get_int_from_uint8(K_q4_0[ib].qs, iqs4) >> shift) & 0x0F0F0F0F;
-//         const int u = Q_q8[k_KQ_0/WARP_SIZE];
+        const int v = (get_int_from_uint8(K_q4_0[ib].qs, iqs4) >> shift) & 0x0F0F0F0F;
+        const int u = Q_q8[k_KQ_0/WARP_SIZE];
 
-//         const int   sumi = __dp4a(v, u, 0);
-//         const half2 sum2 = __half2half2(K_q4_0[ib].d) * Q_ds[k_KQ_0/WARP_SIZE];
-//         sum += ((half) sumi)*__low2half(sum2) - __high2half(sum2) /* *8/QI8_1 == 1 */;
-//     }
+        const int sumi = __dp4a(v, u, 0);
 
-//     return sum;
-// }
+#if FP16_AVAILABLE
+        if (std::is_same<T, half>::value) {
+            const half2  * Q_ds = (const half2  *) Q_ds_v;
 
-// template<int D>
-// static __device__ __forceinline__ half vec_dot_fattn_vec_KQ_q4_1(
-//     const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8, const half2 * __restrict__ Q_ds) {
+            const half2 sum2 = __half2half2(K_q4_0[ib].d) * Q_ds[k_KQ_0/WARP_SIZE];
+            sum += (T) (((half) sumi)*__low2half(sum2) - __high2half(sum2) /* *8/QI8_1 == 1 */);
+        } else
+#endif // FP16_AVAILABLE
+        {
+            const float2 * Q_ds = (const float2 *) Q_ds_v;
 
-//     const block_q4_1 * K_q4_1 = (const block_q4_1 *) K_c;
-//     GGML_UNUSED(Q_v);
+            sum += (T) (__half2float(K_q4_0[ib].d) * (sumi*Q_ds[k_KQ_0/WARP_SIZE].x - (8/QI8_1)*Q_ds[k_KQ_0/WARP_SIZE].y));
+        }
+    }
 
-//     half sum = 0.0f;
+    return sum;
+}
 
-// #pragma unroll
-//     for (int k_KQ_0 = 0; k_KQ_0 < D/sizeof(int); k_KQ_0 += WARP_SIZE) {
-//         const int k_KQ = k_KQ_0 + threadIdx.x;
+template<typename T, int D>
+static __device__ __forceinline__ T vec_dot_fattn_vec_KQ_q4_1(
+    const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8, const void * __restrict__ Q_ds_v) {
 
-//         const int ib    = k_KQ /  QI8_1;
-//         const int iqs4  = k_KQ %  QI4_1;
-//         const int shift = k_KQ & (QI8_1/2);
+    const block_q4_1 * K_q4_1 = (const block_q4_1 *) K_c;
+    GGML_UNUSED(Q_v);
 
-//         const int v = (get_int_from_uint8_aligned(K_q4_1[ib].qs, iqs4) >> shift) & 0x0F0F0F0F;
-//         const int u = Q_q8[k_KQ_0/WARP_SIZE];
+    T sum = 0.0f;
 
-//         const int   sumi = __dp4a(v, u, 0);
-//         const half2 d4d8_m4s8 = K_q4_1[ib].dm * Q_ds[k_KQ_0/WARP_SIZE];
-//         const half2 sumid4d8_m4s8scaled = d4d8_m4s8 * make_half2(sumi, 1.0f/QI8_1);
-//         sum += __low2half(sumid4d8_m4s8scaled) + __high2half(sumid4d8_m4s8scaled);
-//     }
+#pragma unroll
+    for (int k_KQ_0 = 0; k_KQ_0 < D/sizeof(int); k_KQ_0 += WARP_SIZE) {
+        const int k_KQ = k_KQ_0 + threadIdx.x;
 
-//     return sum;
-// }
+        const int ib    = k_KQ /  QI8_1;
+        const int iqs4  = k_KQ %  QI4_1;
+        const int shift = k_KQ & (QI8_1/2);
 
-// template<int D>
-// static __device__ __forceinline__ half vec_dot_fattn_vec_KQ_q5_0(
-//     const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8, const half2 * __restrict__ Q_ds) {
+        const int v = (get_int_from_uint8_aligned(K_q4_1[ib].qs, iqs4) >> shift) & 0x0F0F0F0F;
+        const int u = Q_q8[k_KQ_0/WARP_SIZE];
 
-//     const block_q5_0 * K_q5_0 = (const block_q5_0 *) K_c;
-//     GGML_UNUSED(Q_v);
+        const int sumi = __dp4a(v, u, 0);
 
-//     half sum = 0.0f;
+#if FP16_AVAILABLE
+        if (std::is_same<T, half>::value) {
+            const half2  * Q_ds = (const half2  *) Q_ds_v;
 
-// #pragma unroll
-//     for (int k_KQ_0 = 0; k_KQ_0 < D/sizeof(int); k_KQ_0 += WARP_SIZE) {
-//         const int k_KQ = k_KQ_0 + threadIdx.x;
+            const half2 d4d8_m4s8 = K_q4_1[ib].dm * Q_ds[k_KQ_0/WARP_SIZE];
+            const half2 sumid4d8_m4s8scaled = d4d8_m4s8 * make_half2(sumi, 1.0f/QI8_1);
+            sum += (T) (__low2half(sumid4d8_m4s8scaled) + __high2half(sumid4d8_m4s8scaled));
+        } else
+#endif // FP16_AVAILABLE
+        {
+            const float2 * Q_ds = (const float2 *) Q_ds_v;
 
-//         const int ib    = k_KQ /  QI8_1;
-//         const int iqs4  = k_KQ %  QI5_0;
-//         const int iqs8  = k_KQ %  QI8_1;
-//         const int shift = k_KQ & (QI8_1/2);
+            const float sumid4d8   =  __low2float(K_q4_1[ib].dm)*Q_ds[k_KQ_0/WARP_SIZE].x * sumi;
+            const float m4s8scaled = __high2float(K_q4_1[ib].dm)*Q_ds[k_KQ_0/WARP_SIZE].y / QI8_1;
 
-//         int v = (get_int_from_uint8(K_q5_0[ib].qs, iqs4) >> shift) & 0x0F0F0F0F;
-//         const int vh = get_int_from_uint8(K_q5_0[ib].qh, 0) >> (iqs8 * QI5_0);
-//         v |= (vh <<  4) & 0x00000010; // 0 ->  4
-//         v |= (vh << 11) & 0x00001000; // 1 -> 12
-//         v |= (vh << 18) & 0x00100000; // 2 -> 20
-//         v |= (vh << 25) & 0x10000000; // 3 -> 28
+            sum += (T) (sumid4d8 + m4s8scaled);
+        }
+    }
 
-//         const int u = Q_q8[k_KQ_0/WARP_SIZE];
+    return sum;
+}
 
-//         const int   sumi = __dp4a(v, u, 0);
-//         const half2 sum2 = __half2half2(K_q5_0[ib].d) * Q_ds[k_KQ_0/WARP_SIZE];
-//         sum += ((half) sumi)*__low2half(sum2) - __high2half(sum2)*__float2half(2.0f) /* *16/QI8_1 == 2 */;
-//     }
+template<typename T, int D>
+static __device__ __forceinline__ T vec_dot_fattn_vec_KQ_q5_0(
+    const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8, const void * __restrict__ Q_ds_v) {
 
-//     return sum;
-// }
+    const block_q5_0 * K_q5_0 = (const block_q5_0 *) K_c;
+    GGML_UNUSED(Q_v);
+
+    T sum = 0.0f;
+
+#pragma unroll
+    for (int k_KQ_0 = 0; k_KQ_0 < D/sizeof(int); k_KQ_0 += WARP_SIZE) {
+        const int k_KQ = k_KQ_0 + threadIdx.x;
+
+        const int ib    = k_KQ /  QI8_1;
+        const int iqs4  = k_KQ %  QI5_0;
+        const int iqs8  = k_KQ %  QI8_1;
+        const int shift = k_KQ & (QI8_1/2);
+
+        int v = (get_int_from_uint8(K_q5_0[ib].qs, iqs4) >> shift) & 0x0F0F0F0F;
+        const int vh = get_int_from_uint8(K_q5_0[ib].qh, 0) >> (iqs8 * QI5_0);
+        v |= (vh <<  4) & 0x00000010; // 0 ->  4
+        v |= (vh << 11) & 0x00001000; // 1 -> 12
+        v |= (vh << 18) & 0x00100000; // 2 -> 20
+        v |= (vh << 25) & 0x10000000; // 3 -> 28
+
+        const int u = Q_q8[k_KQ_0/WARP_SIZE];
+
+        const int sumi = __dp4a(v, u, 0);
+
+#if FP16_AVAILABLE
+        if (std::is_same<T, half>::value) {
+            const half2  * Q_ds = (const half2  *) Q_ds_v;
+
+            const half2 sum2 = __half2half2(K_q5_0[ib].d) * Q_ds[k_KQ_0/WARP_SIZE];
+            sum += (T) (((half) sumi)*__low2half(sum2) - __high2half(sum2)*__float2half(2.0f)) /* *16/QI8_1 == 2 */;
+        } else
+#endif // FP16_AVAILABLE
+        {
+            const float2 * Q_ds = (const float2 *) Q_ds_v;
+
+            sum += (T) (__half2float(K_q5_0[ib].d) * (sumi*Q_ds[k_KQ_0/WARP_SIZE].x - (16/QI8_1)*Q_ds[k_KQ_0/WARP_SIZE].y));
+        }
+    }
+
+    return sum;
+}
 
 template<typename T, int D>
 static __device__ __forceinline__ T vec_dot_fattn_vec_KQ_q5_1(
@@ -175,7 +214,7 @@ static __device__ __forceinline__ T vec_dot_fattn_vec_KQ_q5_1(
 
             const half2 d5d8_m5s8 = K_q5_1[ib].dm * Q_ds[k_KQ_0/WARP_SIZE];
             const half2 sumid5d8_m5s8scaled = d5d8_m5s8 * make_half2(sumi, 1.0f/QI8_1);
-            sum += (T) __low2half(sumid5d8_m5s8scaled) + (T) __high2half(sumid5d8_m5s8scaled);
+            sum += (T) (__low2half(sumid5d8_m5s8scaled) + __high2half(sumid5d8_m5s8scaled));
         } else
 #endif // FP16_AVAILABLE
         {
@@ -184,7 +223,7 @@ static __device__ __forceinline__ T vec_dot_fattn_vec_KQ_q5_1(
             const float sumid5d8   =  __low2float(K_q5_1[ib].dm)*Q_ds[k_KQ_0/WARP_SIZE].x * sumi;
             const float m5s8scaled = __high2float(K_q5_1[ib].dm)*Q_ds[k_KQ_0/WARP_SIZE].y / QI8_1;
 
-            sum += (T) sumid5d8 + (T) m5s8scaled;
+            sum += (T) (sumid5d8 + m5s8scaled);
         }
     }
 
