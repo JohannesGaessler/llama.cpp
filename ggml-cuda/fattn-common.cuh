@@ -232,7 +232,7 @@ static __device__ __forceinline__ T dequantize_1_q4_0(const void * __restrict__ 
 
     const T   d  = x[ib].d;
     const int q0 = x[ib].qs[iqs];
-    const int q  = ((q0 >> 4*shift) & 0x0F) - 8;
+    const int q  = ((q0 >> (4*shift)) & 0x0F) - 8;
 
     return d*((T) q);
 }
@@ -247,9 +247,28 @@ static __device__ __forceinline__ T dequantize_1_q4_1(const void * __restrict__ 
 
     const half2 dm = x[ib].dm;
     const int   q0 = x[ib].qs[iqs];
-    const int   q  = ((q0 >> 4*shift) & 0x0F);
+    const int   q  = ((q0 >> (4*shift)) & 0x0F);
 
     return __low2half(dm)*((T) q) + __high2half(dm);
+}
+
+template <typename T>
+static __device__ __forceinline__ T dequantize_1_q5_0(const void * __restrict__ vx, const int64_t i) {
+    const block_q5_0 * x = (const block_q5_0 *) vx;
+
+    const int64_t ib    =  i          /  QK5_0;
+    const int     idq   =  i          %  QK5_0;
+    const int     iqs   =  i          % (QK5_0/2);
+    const int     shift = (i % QK5_0) / (QK5_0/2);
+
+    const T   d   = x[ib].d;
+    const int ql0 = x[ib].qs[iqs];
+    const int qh0 = get_int_from_uint8(x[ib].qh, 0);
+    const int ql  = ((ql0 >> (4*shift)) & 0x0F);
+    const int qh  = ((qh0 >> idq) << 4) & 0x10;
+    const int q   = (ql | qh) - 16;
+
+    return d*((T) q);
 }
 
 template <typename T>
