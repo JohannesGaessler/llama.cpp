@@ -85,8 +85,8 @@ static __global__ void flash_attn_vec_ext_f16(
 
     // Convert Q to half2 and store in registers:
     half2 Q_h2[ncols][D/(2*WARP_SIZE)];
-    int   Q_i8[ncols][D/(sizeof(int)*QK8_1)];
-    half2 Q_ds[ncols][D/QK8_1];
+    int   Q_i8[ncols][D/(sizeof(int)*QK8_1) == 0 ? 1 : D/(sizeof(int)*QK8_1)];
+    half2 Q_ds[ncols][D/QK8_1 == 0 ? 1 : D/QK8_1];
     if (Q_q8_1) {
 #pragma unroll
         for (int j0 = 0; j0 < ncols; j0 += nwarps) {
@@ -314,28 +314,34 @@ void launch_fattn_tile_f16_K_type(ggml_backend_cuda_context & ctx, ggml_tensor *
     const ggml_tensor * K = dst->src[1];
 
     switch (K->type) {
-        // case GGML_TYPE_Q4_0: {
-        //     fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f16<D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_q4_0<D>, true, dequantize_1_v>;
-        //     launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
-        // } break;
-        // case GGML_TYPE_Q4_1: {
-        //     fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f16<D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_q4_1<D>, true, dequantize_1_v>;
-        //     launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
-        // } break;
-        // case GGML_TYPE_Q5_0: {
-        //     fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f16<D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_q5_0<D>, true, dequantize_1_v>;
-        //     launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
-        // } break;
-        // case GGML_TYPE_Q5_1: {
-        //     fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f16<D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_q5_1<D>, true, dequantize_1_v>;
-        //     launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
-        // } break;
-        // case GGML_TYPE_Q8_0: {
-        //     fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f16<D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_q8_0<D>, true, dequantize_1_v>;
-        //     launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
-        // } break;
+        case GGML_TYPE_Q4_0: {
+            fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f16<
+                D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_q4_0<half, D>, true, dequantize_1_v>;
+            launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
+        } break;
+        case GGML_TYPE_Q4_1: {
+            fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f16<
+                D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_q4_1<half, D>, true, dequantize_1_v>;
+            launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
+        } break;
+        case GGML_TYPE_Q5_0: {
+            fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f16<
+                D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_q5_0<half, D>, true, dequantize_1_v>;
+            launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
+        } break;
+        case GGML_TYPE_Q5_1: {
+            fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f16<
+                D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_q5_1<half, D>, true, dequantize_1_v>;
+            launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
+        } break;
+        case GGML_TYPE_Q8_0: {
+            fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f16<
+                D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_q8_0<half, D>, true, dequantize_1_v>;
+            launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
+        } break;
         case GGML_TYPE_F16: {
-            fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f16<D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_f16<half, D>, false, dequantize_1_v>;
+            fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f16<
+                D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_f16<half, D>, false, dequantize_1_v>;
             launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
         } break;
         default:
@@ -348,12 +354,16 @@ template <int cols_per_block, int parallel_blocks, dequantize_1_f16_t dequantize
 void launch_fattn_vec_f16_64_128(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * Q = dst->src[0];
     switch (Q->ne[0]) {
-        // case  64: {
-        //     constexpr int D =  64;
-        //     launch_fattn_tile_f16_K_type<D, cols_per_block, parallel_blocks, dequantize_1_v>(ctx, dst);
-        // } break;
+        case  64: {
+            GGML_ASSERT(Q->type == GGML_TYPE_F16 && "Quantized K cache not supported for head size 64.");
+            constexpr int D      = 64;
+            constexpr int nwarps = D/WARP_SIZE;
+            fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f16<
+                D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_f16<half, D>, false, dequantize_1_v>;
+            launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
+        } break;
         case 128: {
-            constexpr int D = 128;
+            constexpr int D      = 128;
             launch_fattn_tile_f16_K_type<D, cols_per_block, parallel_blocks, dequantize_1_v>(ctx, dst);
         } break;
         default: {
@@ -367,21 +377,21 @@ void launch_fattn_vec_f16_V_type(ggml_backend_cuda_context & ctx, ggml_tensor * 
     const ggml_tensor * V = dst->src[2];
 
     switch (V->type) {
-        // case GGML_TYPE_Q4_0:
-        //     launch_fattn_vec_f16_64_128<cols_per_block, parallel_blocks, dequantize_1_q4_0<half>>(ctx, dst);
-        //     break;
-        // case GGML_TYPE_Q4_1:
-        //     launch_fattn_vec_f16_64_128<cols_per_block, parallel_blocks, dequantize_1_q4_1<half>>(ctx, dst);
-        //     break;
-        // case GGML_TYPE_Q5_0:
-        //     launch_fattn_vec_f16_64_128<cols_per_block, parallel_blocks, dequantize_1_q5_0<half>>(ctx, dst);
-        //     break;
-        // case GGML_TYPE_Q5_1:
-        //     launch_fattn_vec_f16_64_128<cols_per_block, parallel_blocks, dequantize_1_q5_1<half>>(ctx, dst);
-        //     break;
-        // case GGML_TYPE_Q8_0:
-        //     launch_fattn_vec_f16_64_128<cols_per_block, parallel_blocks, dequantize_1_q8_0<half>>(ctx, dst);
-        //     break;
+        case GGML_TYPE_Q4_0:
+            launch_fattn_vec_f16_64_128<cols_per_block, parallel_blocks, dequantize_1_q4_0<half>>(ctx, dst);
+            break;
+        case GGML_TYPE_Q4_1:
+            launch_fattn_vec_f16_64_128<cols_per_block, parallel_blocks, dequantize_1_q4_1<half>>(ctx, dst);
+            break;
+        case GGML_TYPE_Q5_0:
+            launch_fattn_vec_f16_64_128<cols_per_block, parallel_blocks, dequantize_1_q5_0<half>>(ctx, dst);
+            break;
+        case GGML_TYPE_Q5_1:
+            launch_fattn_vec_f16_64_128<cols_per_block, parallel_blocks, dequantize_1_q5_1<half>>(ctx, dst);
+            break;
+        case GGML_TYPE_Q8_0:
+            launch_fattn_vec_f16_64_128<cols_per_block, parallel_blocks, dequantize_1_q8_0<half>>(ctx, dst);
+            break;
         case GGML_TYPE_F16:
             launch_fattn_vec_f16_64_128<cols_per_block, parallel_blocks, dequantize_1_f16<half>>(ctx, dst);
             break;
