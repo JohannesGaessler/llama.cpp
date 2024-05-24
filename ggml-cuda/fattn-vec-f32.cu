@@ -52,7 +52,6 @@ static __global__ void flash_attn_vec_ext_f32(
     const char   * V_c   = (const char   *) (V    + nb22*(blockIdx.y / gqa_ratio)); // K and V have same shape
     const half   * maskh = (const half   *)  mask + ne11*ic0;
 
-    const int stride_KV  = nb11 / sizeof(half);
     const int stride_KV2 = nb11 / sizeof(half2);
 
     const float slope = get_alibi_slope(max_bias, blockIdx.y, n_head_log2, m0, m1);
@@ -285,15 +284,15 @@ void launch_fattn_vec_f32_V_type(ggml_backend_cuda_context & ctx, ggml_tensor * 
         case GGML_TYPE_Q4_0:
             launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks, dequantize_1_q4_0<float>>(ctx, dst);
             break;
-        // case GGML_TYPE_Q4_1:
-        //     launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks, dequantize_1_q4_1<float>>(ctx, dst);
-        //     break;
-        // case GGML_TYPE_Q5_0:
-        //     launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks, dequantize_1_q5_0<float>>(ctx, dst);
-        //     break;
-        // case GGML_TYPE_Q5_1:
-        //     launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks, dequantize_1_q5_1<float>>(ctx, dst);
-        //     break;
+        case GGML_TYPE_Q4_1:
+            launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks, dequantize_1_q4_1<float>>(ctx, dst);
+            break;
+        case GGML_TYPE_Q5_0:
+            launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks, dequantize_1_q5_0<float>>(ctx, dst);
+            break;
+        case GGML_TYPE_Q5_1:
+            launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks, dequantize_1_q5_1<float>>(ctx, dst);
+            break;
         case GGML_TYPE_Q8_0:
             launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks, dequantize_1_q8_0<float>>(ctx, dst);
             break;

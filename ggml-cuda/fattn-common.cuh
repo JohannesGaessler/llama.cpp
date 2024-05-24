@@ -249,7 +249,14 @@ static __device__ __forceinline__ T dequantize_1_q4_1(const void * __restrict__ 
     const int   q0 = x[ib].qs[iqs];
     const int   q  = ((q0 >> (4*shift)) & 0x0F);
 
-    return __low2half(dm)*((T) q) + __high2half(dm);
+#if FP16_AVAILABLE
+    if (std::is_same<T, half>::value) {
+        return __low2half(dm)*((half) q) + __high2half(dm);
+    } else
+#endif // FP16_AVAILABLE
+    {
+        return __low2float(dm)*((float) q) + __high2float(dm);
+    }
 }
 
 template <typename T>
@@ -287,7 +294,14 @@ static __device__ __forceinline__ T dequantize_1_q5_1(const void * __restrict__ 
     const int   qh  = ((qh0 >> idq) << 4) & 0x10;
     const int   q   = (ql | qh);
 
-    return __low2half(dm)*((T) q) + __high2half(dm);
+#if FP16_AVAILABLE
+    if (std::is_same<T, half>::value) {
+        return __low2half(dm)*((half) q) + __high2half(dm);
+    } else
+#endif // FP16_AVAILABLE
+    {
+        return __low2float(dm)*((float) q) + __high2float(dm);
+    }
 }
 
 template <typename T>
