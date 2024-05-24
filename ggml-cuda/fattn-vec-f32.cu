@@ -49,7 +49,7 @@ static __global__ void flash_attn_vec_ext_f32(
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
     const float2 * Q_f2  = (const float2 *) (Q    + nb02* blockIdx.y              + nb01*ic0);
     const half2  * K_h2  = (const half2  *) (K    + nb12*(blockIdx.y / gqa_ratio));
-    const half   * V_h   = (const half   *) (V    + nb12*(blockIdx.y / gqa_ratio)); // K and V have same shape
+    const char   * V_c   = (const char   *) (V    + nb22*(blockIdx.y / gqa_ratio)); // K and V have same shape
     const half   * maskh = (const half   *)  mask + ne11*ic0;
 
     const int stride_KV  = nb11 / sizeof(half);
@@ -181,7 +181,7 @@ static __global__ void flash_attn_vec_ext_f32(
                 break;
             }
 
-            const float V_ki = __half2float(V_h[(k_VKQ_0 + k)*stride_KV + tid]);
+            const float V_ki = dequantize_1_v(V_c + (k_VKQ_0 + k)*nb21, tid);
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
                 VKQ[j] += V_ki*KQ[j*D + k];
@@ -282,9 +282,9 @@ void launch_fattn_vec_f32_V_type(ggml_backend_cuda_context & ctx, ggml_tensor * 
     const ggml_tensor * V = dst->src[2];
 
     switch (V->type) {
-        // case GGML_TYPE_Q4_0:
-        //     launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks, dequantize_1_q4_0<float>>(ctx, dst);
-        //     break;
+        case GGML_TYPE_Q4_0:
+            launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks, dequantize_1_q4_0<float>>(ctx, dst);
+            break;
         // case GGML_TYPE_Q4_1:
         //     launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks, dequantize_1_q4_1<float>>(ctx, dst);
         //     break;
@@ -294,9 +294,9 @@ void launch_fattn_vec_f32_V_type(ggml_backend_cuda_context & ctx, ggml_tensor * 
         // case GGML_TYPE_Q5_1:
         //     launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks, dequantize_1_q5_1<float>>(ctx, dst);
         //     break;
-        // case GGML_TYPE_Q8_0:
-        //     launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks, dequantize_1_q8_0<float>>(ctx, dst);
-        //     break;
+        case GGML_TYPE_Q8_0:
+            launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks, dequantize_1_q8_0<float>>(ctx, dst);
+            break;
         case GGML_TYPE_F16:
             launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks, dequantize_1_f16<float>>(ctx, dst);
             break;
