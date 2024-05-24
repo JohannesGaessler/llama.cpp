@@ -176,37 +176,46 @@ typedef float (*vec_dot_KQ_f32_t)(
 //     return sum;
 // }
 
-// template<int D>
-// static __device__ __forceinline__ half vec_dot_fattn_vec_KQ_q8_0(
-//     const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8, const half2 * __restrict__ Q_ds) {
+template <typename T, int D>
+static __device__ __forceinline__ T vec_dot_fattn_vec_KQ_q8_0(
+    const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8, const void * __restrict__ Q_ds_v) {
 
-//     const block_q8_0 * K_q8_0 = (const block_q8_0 *) K_c;
-//     GGML_UNUSED(Q_v);
+    const block_q8_0 * K_q8_0 = (const block_q8_0 *) K_c;
+    GGML_UNUSED(Q_v);
 
-//     half sum = 0.0f;
+    T sum = 0.0f;
 
-// #pragma unroll
-//     for (int k_KQ_0 = 0; k_KQ_0 < D/sizeof(int); k_KQ_0 += WARP_SIZE) {
-//         const int k_KQ = k_KQ_0 + threadIdx.x;
+#pragma unroll
+    for (int k_KQ_0 = 0; k_KQ_0 < D/sizeof(int); k_KQ_0 += WARP_SIZE) {
+        const int k_KQ = k_KQ_0 + threadIdx.x;
 
-//         const int ib  = k_KQ / QI8_0;
-//         const int iqs = k_KQ % QI8_0;
+        const int ib  = k_KQ / QI8_0;
+        const int iqs = k_KQ % QI8_0;
 
-//         const int v = get_int_from_int8(K_q8_0[ib].qs, iqs);
+        const int v = get_int_from_int8(K_q8_0[ib].qs, iqs);
 
-//         sum += vec_dot_q8_0_q8_1_impl<half, 1>(&v, &Q_q8[k_KQ_0/WARP_SIZE], K_q8_0[ib].d, __low2half(Q_ds[k_KQ_0/WARP_SIZE]));
-//     }
+        T Q_d;
+        if (std::is_same<T, half>::value) {
+            const half2  * Q_ds = (const half2  *) Q_ds_v;
+            Q_d = __low2half(Q_ds[k_KQ_0/WARP_SIZE]);
+        } else {
+            const float2 * Q_ds = (const float2 *) Q_ds_v;
+            Q_d = Q_ds[k_KQ_0/WARP_SIZE].x;
+        }
 
-//     return sum;
-// }
+        sum += vec_dot_q8_0_q8_1_impl<T, 1>(&v, &Q_q8[k_KQ_0/WARP_SIZE], K_q8_0[ib].d, Q_d);
+    }
 
-template<typename T, int D>
+    return sum;
+}
+
+template <typename T, int D>
 static __device__ __forceinline__ T vec_dot_fattn_vec_KQ_f16(
-    const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8 , const void * __restrict__ Q_ds) {
+    const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8 , const void * __restrict__ Q_ds_v) {
 
     const half2 * K_h2 = (const half2 *) K_c;
     GGML_UNUSED(Q_q8);
-    GGML_UNUSED(Q_ds);
+    GGML_UNUSED(Q_ds_v);
 
 #if FP16_AVAILABLE
     if (std::is_same<T, half>::value) {

@@ -279,10 +279,10 @@ void launch_fattn_tile_f32_K_type(ggml_backend_cuda_context & ctx, ggml_tensor *
         //     fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f32<D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_q5_1<D>, true, dequantize_1_v>;
         //     launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
         // } break;
-        // case GGML_TYPE_Q8_0: {
-        //     fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f32<D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_q8_0<D>, true, dequantize_1_v>;
-        //     launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
-        // } break;
+        case GGML_TYPE_Q8_0: {
+            fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f32<D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_q8_0<float, D>, true, dequantize_1_v>;
+            launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
+        } break;
         case GGML_TYPE_F16: {
             fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f32<D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_f16<float, D>, false, dequantize_1_v>;
             launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
