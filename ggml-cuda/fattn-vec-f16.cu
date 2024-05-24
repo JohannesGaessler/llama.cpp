@@ -410,6 +410,9 @@ void launch_fattn_vec_f16_V_type(ggml_backend_cuda_context & ctx, ggml_tensor * 
         case GGML_TYPE_Q5_0:
             launch_fattn_vec_f16_64_128<cols_per_block, parallel_blocks, dequantize_1_q5_0<half>>(ctx, dst);
             break;
+        case GGML_TYPE_Q5_1:
+            launch_fattn_vec_f16_64_128<cols_per_block, parallel_blocks, dequantize_1_q5_1<half>>(ctx, dst);
+            break;
         case GGML_TYPE_Q8_0:
             launch_fattn_vec_f16_64_128<cols_per_block, parallel_blocks, dequantize_1_q8_0<half>>(ctx, dst);
             break;

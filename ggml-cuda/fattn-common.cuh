@@ -272,6 +272,25 @@ static __device__ __forceinline__ T dequantize_1_q5_0(const void * __restrict__ 
 }
 
 template <typename T>
+static __device__ __forceinline__ T dequantize_1_q5_1(const void * __restrict__ vx, const int64_t i) {
+    const block_q5_1 * x = (const block_q5_1 *) vx;
+
+    const int64_t ib    =  i          /  QK5_1;
+    const int     idq   =  i          %  QK5_1;
+    const int     iqs   =  i          % (QK5_1/2);
+    const int     shift = (i % QK5_1) / (QK5_1/2);
+
+    const half2 dm  = x[ib].dm;
+    const int   ql0 = x[ib].qs[iqs];
+    const int   qh0 = get_int_from_uint8_aligned(x[ib].qh, 0);
+    const int   ql  = ((ql0 >> (4*shift)) & 0x0F);
+    const int   qh  = ((qh0 >> idq) << 4) & 0x10;
+    const int   q   = (ql | qh);
+
+    return __low2half(dm)*((T) q) + __high2half(dm);
+}
+
+template <typename T>
 static __device__ __forceinline__ T dequantize_1_q8_0(const void * __restrict__ vx, const int64_t i) {
     const block_q8_0 * x = (const block_q8_0 *) vx;
 
