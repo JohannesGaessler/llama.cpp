@@ -284,22 +284,25 @@ void ggml_cuda_flash_attn_ext_vec_f16(ggml_backend_cuda_context & ctx, ggml_tens
     constexpr int cols_per_block  = 1;
     constexpr int parallel_blocks = 4;
     switch (Q->ne[0]) {
-        // case  64: {
-        //     constexpr int      D = 64;
-        //     constexpr int nwarps = D/WARP_SIZE;
-        //     fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f16<D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_f16<D>, false, dequantize_1_f16<half>>;
-        //     launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
-        // } break;
+        case  64: {
+            constexpr int      D = 64;
+            constexpr int nwarps = D/WARP_SIZE;
+            fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f16<
+                D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_f16<half, D>, false, dequantize_1_f16<half>>;
+            launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
+        } break;
         case 128: {
             constexpr int      D = 128;
             constexpr int nwarps = D/WARP_SIZE;
-            fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f16<D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_f16<half, D>, false, dequantize_1_f16<half>>;
+            fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f16<
+                D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_f16<half, D>, false, dequantize_1_f16<half>>;
             launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
         } break;
         case 256: {
             constexpr int      D = 256;
             constexpr int nwarps = D/WARP_SIZE;
-            fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f16<D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_f16<half, D>, false, dequantize_1_f16<half>>;
+            fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f16<
+                D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_f16<half, D>, false, dequantize_1_f16<half>>;
             launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
         } break;
         default:
