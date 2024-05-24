@@ -2,7 +2,7 @@
 #include "fattn-common.cuh"
 #include "fattn-vec-f32.cuh"
 
-template<int D, int ncols, int parallel_blocks> // D == head size
+template<int D, int ncols, int parallel_blocks, vec_dot_fattn_vec_KQ_t vec_dot_KQ, bool Q_q8_1, dequantize_1_f32_t dequantize_1_v> // D == head size
 #if !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__))
 __launch_bounds__(D, 1)
 #endif // !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__))
@@ -223,25 +223,86 @@ static __global__ void flash_attn_vec_ext_f32(
     }
 }
 
-template <int cols_per_block, int parallel_blocks>
+template <int D, int cols_per_block, int parallel_blocks, dequantize_1_f32_t dequantize_1_v>
+void launch_fattn_tile_f32_K_type(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    constexpr int nwarps = D/WARP_SIZE;
+    const ggml_tensor * K = dst->src[1];
+
+    switch (K->type) {
+        // case GGML_TYPE_Q4_0: {
+        //     fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f32<D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_q4_0<D>, true, dequantize_1_v>;
+        //     launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
+        // } break;
+        // case GGML_TYPE_Q4_1: {
+        //     fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f32<D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_q4_1<D>, true, dequantize_1_v>;
+        //     launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
+        // } break;
+        // case GGML_TYPE_Q5_0: {
+        //     fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f32<D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_q5_0<D>, true, dequantize_1_v>;
+        //     launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
+        // } break;
+        // case GGML_TYPE_Q5_1: {
+        //     fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f32<D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_q5_1<D>, true, dequantize_1_v>;
+        //     launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
+        // } break;
+        // case GGML_TYPE_Q8_0: {
+        //     fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f32<D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_q8_0<D>, true, dequantize_1_v>;
+        //     launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
+        // } break;
+        case GGML_TYPE_F16: {
+            fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f32<D, cols_per_block, parallel_blocks, vec_dot_fattn_vec_KQ_f16<D>, false, dequantize_1_v>;
+            launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
+        } break;
+        default:
+            GGML_ASSERT(false);
+            break;
+    }
+}
+
+template <int cols_per_block, int parallel_blocks, dequantize_1_f32_t dequantize_1_v>
 void launch_fattn_vec_f32_64_128(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * Q = dst->src[0];
     switch (Q->ne[0]) {
-        case  64: {
-            constexpr int      D = 64;
-            constexpr int nwarps = D/WARP_SIZE;
-            fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f32<D, cols_per_block, parallel_blocks>;
-            launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
-        } break;
+        // case  64: {
+        //     constexpr int D =  64;
+        //     launch_fattn_tile_f32_K_type<D, cols_per_block, parallel_blocks, dequantize_1_v>(ctx, dst);
+        // } break;
         case 128: {
-            constexpr int      D = 128;
-            constexpr int nwarps = D/WARP_SIZE;
-            fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f32<D, cols_per_block, parallel_blocks>;
-            launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block);
+            constexpr int D = 128;
+            launch_fattn_tile_f32_K_type<D, cols_per_block, parallel_blocks, dequantize_1_v>(ctx, dst);
         } break;
         default: {
             GGML_ASSERT(false && "FlashAttention without tensor cores only supports head sizes 64 and 128.");
         } break;
+    }
+}
+
+template <int cols_per_block, int parallel_blocks>
+void launch_fattn_vec_f32_V_type(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    const ggml_tensor * V = dst->src[2];
+
+    switch (V->type) {
+        // case GGML_TYPE_Q4_0:
+        //     launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks, dequantize_1_q4_0<float>>(ctx, dst);
+        //     break;
+        // case GGML_TYPE_Q4_1:
+        //     launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks, dequantize_1_q4_1<float>>(ctx, dst);
+        //     break;
+        // case GGML_TYPE_Q5_0:
+        //     launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks, dequantize_1_q5_0<float>>(ctx, dst);
+        //     break;
+        // case GGML_TYPE_Q5_1:
+        //     launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks, dequantize_1_q5_1<float>>(ctx, dst);
+        //     break;
+        // case GGML_TYPE_Q8_0:
+        //     launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks, dequantize_1_q8_0<float>>(ctx, dst);
+        //     break;
+        case GGML_TYPE_F16:
+            launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks, dequantize_1_f16<float>>(ctx, dst);
+            break;
+        default:
+            GGML_ASSERT(false);
+            break;
     }
 }
 
@@ -251,32 +312,32 @@ void ggml_cuda_flash_attn_ext_vec_f32(ggml_backend_cuda_context & ctx, ggml_tens
     if (Q->ne[1] == 1) {
         constexpr int cols_per_block  = 1;
         constexpr int parallel_blocks = 4;
-        launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks>(ctx, dst);
+        launch_fattn_vec_f32_V_type<cols_per_block, parallel_blocks>(ctx, dst);
         return;
     }
 
     if (Q->ne[1] == 2) {
         constexpr int cols_per_block  = 2;
         constexpr int parallel_blocks = 4;
-        launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks>(ctx, dst);
+        launch_fattn_vec_f32_V_type<cols_per_block, parallel_blocks>(ctx, dst);
         return;
     }
 
     if (Q->ne[1] <= 4) {
         constexpr int cols_per_block  = 4;
         constexpr int parallel_blocks = 4;
-        launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks>(ctx, dst);
+        launch_fattn_vec_f32_V_type<cols_per_block, parallel_blocks>(ctx, dst);
         return;
     }
 
     if (Q->ne[1] <= 8) {
         constexpr int cols_per_block  = 8;
         constexpr int parallel_blocks = 4;
-        launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks>(ctx, dst);
+        launch_fattn_vec_f32_V_type<cols_per_block, parallel_blocks>(ctx, dst);
         return;
     }
 
     constexpr int cols_per_block  = 8;
     constexpr int parallel_blocks = 1;
-    launch_fattn_vec_f32_64_128<cols_per_block, parallel_blocks>(ctx, dst);
+    launch_fattn_vec_f32_V_type<cols_per_block, parallel_blocks>(ctx, dst);
 }

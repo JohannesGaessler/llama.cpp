@@ -475,8 +475,8 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
         return;
     }
 
-    if (!fast_fp16_available(cc)) {
-        if (Q->ne[1] <= 8) {
+    if (true || !fast_fp16_available(cc)) {
+        if (true || Q->ne[1] <= 8) {
             ggml_cuda_flash_attn_ext_vec_f32(ctx, dst);
         } else {
             ggml_cuda_flash_attn_ext_tile_f32(ctx, dst);
@@ -484,8 +484,8 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
         return;
     }
 
-    if (true || !fp16_mma_available(cc)) {
-        if (true || Q->ne[1] <= 8) {
+    if (!fp16_mma_available(cc)) {
+        if (Q->ne[1] <= 8) {
             ggml_cuda_flash_attn_ext_vec_f16_no_mma(ctx, dst);
         } else {
             ggml_cuda_flash_attn_ext_tile_f16(ctx, dst);
