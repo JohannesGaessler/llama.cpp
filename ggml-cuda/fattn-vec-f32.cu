@@ -47,7 +47,8 @@ static __global__ void flash_attn_vec_ext_f32(
     const int ip  =  blockIdx.x % parallel_blocks; // Index in group of blocks running for the same column in parallel.
 
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
-    const float2 * Q_f2  = (const float2 *) (Q    + nb02* blockIdx.y              + nb01*ic0);
+    const float  * Q_f   = (const float  *) (Q    + nb02* blockIdx.y              + nb01*ic0);
+    const float2 * Q_f2  = (const float2 *)  Q_f;
     const char   * K_c   = (const char   *) (K    + nb12*(blockIdx.y / gqa_ratio));
     const char   * V_c   = (const char   *) (V    + nb22*(blockIdx.y / gqa_ratio)); // K and V have same shape
     const half   * maskh = (const half   *)  mask + ne11*ic0;
@@ -86,16 +87,62 @@ static __global__ void flash_attn_vec_ext_f32(
     // Convert Q to half2 and store in registers:
     float2 Q_h2[ncols][D/(2*WARP_SIZE)];
     int    Q_i8[ncols][D/(sizeof(int)*QK8_1)];
-    half2  Q_ds[ncols][D/QK8_1];
+    float2 Q_ds[ncols][D/QK8_1];
+    if (Q_q8_1) {
 #pragma unroll
-    for (int j = 0; j < ncols; ++j) {
-#pragma unroll
-        for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
-            const int i = i0 + threadIdx.x;
+        for (int j0 = 0; j0 < ncols; j0 += nwarps) {
+            const int j = j0 + threadIdx.y;
 
-            Q_h2[j][i0/WARP_SIZE]    = ncols <= 2 || ic0 + j ? Q_f2[j*(nb01/sizeof(float2)) + i] : make_float2(0.0f, 0.0f);
-            Q_h2[j][i0/WARP_SIZE].x *= scale;
-            Q_h2[j][i0/WARP_SIZE].y *= scale;
+            int    * tmp_q_i8 = (int    *) &KQ[j*D];
+            float2 * tmp_q_ds = (float2 *) (tmp_q_i8 + D/sizeof(int));
+
+            if (ncols > 2 && ic0 + j >= ne01) {
+#pragma unroll
+                for (int i0 = 0; i0 < D/sizeof(int); i0 += WARP_SIZE) {
+                    const int i = i0 + threadIdx.x;
+
+                    tmp_q_i8[i] = 0;
+                }
+                if (threadIdx.x < D/QK8_1) {
+                    tmp_q_ds[threadIdx.x] = make_float2(0.0f, 0.0f);
+                }
+                continue;
+            }
+
+#pragma unroll
+            for (int i0 = 0; i0 < D/sizeof(int); i0 += WARP_SIZE) {
+                quantize_q8_1_to_shared<float2>(Q_f + j*(nb01/sizeof(float)) + 4*i0, scale, tmp_q_i8, tmp_q_ds);
+            }
+        }
+
+        __syncthreads();
+
+#pragma unroll
+        for (int j = 0; j < ncols; ++j) {
+            int    * tmp_q_i8 = (int    *) &KQ[j*D];
+            float2 * tmp_q_ds = (float2 *) (tmp_q_i8 + D/sizeof(int));
+
+#pragma unroll
+            for (int i0 = 0; i0 < D/sizeof(int); i0 += WARP_SIZE) {
+                const int i = i0 + threadIdx.x;
+
+                Q_i8[j][i0/WARP_SIZE] = tmp_q_i8[i];
+                Q_ds[j][i0/WARP_SIZE] = tmp_q_ds[i/QI8_1];
+            }
+        }
+
+        __syncthreads();
+    } else {
+#pragma unroll
+        for (int j = 0; j < ncols; ++j) {
+#pragma unroll
+            for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
+                const int i = i0 + threadIdx.x;
+
+                Q_h2[j][i0/WARP_SIZE]    = ncols <= 2 || ic0 + j ? Q_f2[j*(nb01/sizeof(float2)) + i] : make_float2(0.0f, 0.0f);
+                Q_h2[j][i0/WARP_SIZE].x *= scale;
+                Q_h2[j][i0/WARP_SIZE].y *= scale;
+            }
         }
     }
 
