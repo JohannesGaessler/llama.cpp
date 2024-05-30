@@ -547,9 +547,20 @@ static __device__ __forceinline__ float vec_dot_q8_0_q8_1_mul_mat(
     const float * x_dmf = (const float *) x_dm;
     const float * y_df  = (const float *) y_ds;
 
-    return vec_dot_q8_0_q8_1_impl<VDR_Q8_0_Q8_1_MMQ>
-        (&x_ql[i * (WARP_SIZE + 1) + k], &y_qs[j * WARP_SIZE + k], x_dmf[i * (WARP_SIZE/QI8_0) + i/QI8_0 + k/QI8_0],
-         y_df[j * (WARP_SIZE/QI8_1) + k/QI8_1]);
+    const int * v = &x_ql[i * (WARP_SIZE + 1) + k];
+    const int * u = &y_qs[j * WARP_SIZE + k];
+    const float d8_0 = x_dmf[i * (WARP_SIZE/QI8_0) + i/QI8_0 + k/QI8_0];
+    const float d8_1 = y_df[j * (WARP_SIZE/QI8_1) + k/QI8_1];
+
+    int sumi = 0;
+
+#pragma unroll
+    for (int i = 0; i < VDR_Q8_0_Q8_1_MMQ; ++i) {
+        // SIMD dot product of quantized values
+        sumi = __dp4a(v[i], u[i], sumi);
+    }
+
+    return d8_0*d8_1 * sumi;
 }
 
 template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q2_K(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc) {
