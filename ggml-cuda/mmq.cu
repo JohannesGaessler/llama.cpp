@@ -1150,7 +1150,7 @@ static __device__ __forceinline__ void mul_mat_q_test(
             __syncthreads();
 
 // #pragma unroll // unrolling this loop causes too much register pressure
-            for (int k = ir*WARP_SIZE/qr; k < (ir+1)*WARP_SIZE/qr; k += vdr) {
+            for (int k0 = ir*WARP_SIZE/qr; k0 < (ir+1)*WARP_SIZE/qr; k0 += vdr) {
 #pragma unroll
                 for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
                     const int j = j0 + threadIdx.y;
@@ -1161,17 +1161,15 @@ static __device__ __forceinline__ void mul_mat_q_test(
                         const float * x_dmf = (const float *) tile_x_dm;
                         const float * y_df  = (const float *) tile_y_ds;
 
-                        const int * v = &tile_x_ql[i * (WARP_SIZE + 1) + k];
-                        const int * u = &tile_y_qs[j * WARP_SIZE + k];
-                        const float d8_0 = x_dmf[i * (WARP_SIZE/QI8_0) + i/QI8_0 + k/QI8_0];
-                        const float d8_1 = y_df[j * (WARP_SIZE/QI8_1) + k/QI8_1];
+                        const float d8_0 = x_dmf[i * (WARP_SIZE/QI8_0) + i/QI8_0 + k0/QI8_0];
+                        const float d8_1 = y_df[j * (WARP_SIZE/QI8_1) + k0/QI8_1];
 
                         int sumi = 0;
 
                     #pragma unroll
-                        for (int i = 0; i < VDR_Q8_0_Q8_1_MMQ; ++i) {
+                        for (int k = 0; k < VDR_Q8_0_Q8_1_MMQ; ++k) {
                             // SIMD dot product of quantized values
-                            sumi = __dp4a(v[i], u[i], sumi);
+                            sumi = __dp4a(tile_x_ql[i * (WARP_SIZE + 1) + k0 + k], tile_y_qs[j * WARP_SIZE + k0 + k], sumi);
                         }
 
                         sum[i0/WARP_SIZE][j0/nwarps] += d8_0*d8_1 * sumi;
