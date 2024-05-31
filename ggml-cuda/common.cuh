@@ -484,6 +484,52 @@ static __device__ __forceinline__ float get_alibi_slope(
     return powf(base, exph);
 }
 
+static constexpr __device__ int ggml_blck_size_device(ggml_type type) {
+    return type == GGML_TYPE_Q4_0 ? QK4_0 :
+        type == GGML_TYPE_Q4_1 ? QK4_1 :
+        type == GGML_TYPE_Q5_0 ? QK5_0 :
+        type == GGML_TYPE_Q5_1 ? QK5_1 :
+        type == GGML_TYPE_Q8_0 ? QK8_0 :
+        type == GGML_TYPE_Q2_K ? QK_K :
+        type == GGML_TYPE_Q3_K ? QK_K :
+        type == GGML_TYPE_Q4_K ? QK_K :
+        type == GGML_TYPE_Q5_K ? QK_K :
+        type == GGML_TYPE_Q6_K ? QK_K :
+        0;
+}
+
+static constexpr __device__ int ggml_type_size_device(ggml_type type) {
+    return type == GGML_TYPE_Q4_0 ? sizeof(block_q4_0) :
+        type == GGML_TYPE_Q4_1 ? sizeof(block_q4_1) :
+        type == GGML_TYPE_Q5_0 ? sizeof(block_q5_0) :
+        type == GGML_TYPE_Q5_1 ? sizeof(block_q5_1) :
+        type == GGML_TYPE_Q8_0 ? sizeof(block_q8_0) :
+        type == GGML_TYPE_Q2_K ? sizeof(block_q2_K) :
+        type == GGML_TYPE_Q3_K ? sizeof(block_q3_K) :
+        type == GGML_TYPE_Q4_K ? sizeof(block_q4_K) :
+        type == GGML_TYPE_Q5_K ? sizeof(block_q5_K) :
+        type == GGML_TYPE_Q6_K ? sizeof(block_q6_K) :
+        0;
+}
+
+static constexpr __device__ int get_qr_device(ggml_type type) {
+    return type == GGML_TYPE_Q4_0 ? QR4_0 :
+        type == GGML_TYPE_Q4_1 ? QR4_1 :
+        type == GGML_TYPE_Q5_0 ? QR5_0 :
+        type == GGML_TYPE_Q5_1 ? QR5_1 :
+        type == GGML_TYPE_Q8_0 ? QR8_0 :
+        type == GGML_TYPE_Q2_K ? QR2_K :
+        type == GGML_TYPE_Q3_K ? QR3_K :
+        type == GGML_TYPE_Q4_K ? QR4_K :
+        type == GGML_TYPE_Q5_K ? QR5_K :
+        type == GGML_TYPE_Q6_K ? QR6_K :
+        0;
+}
+
+static constexpr __device__ int get_qi_device(ggml_type type) {
+    return ggml_blck_size_device(type) / (sizeof(int)*get_qr_device(type));
+}
+
 //////////////////////
 
 struct ggml_cuda_device_info {
