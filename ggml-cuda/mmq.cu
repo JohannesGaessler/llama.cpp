@@ -1,5 +1,6 @@
 #include "mmq.cuh"
 #include "vecdotq.cuh"
+#include <cstdint>
 
 typedef void (*allocate_tiles_cuda_t)(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc);
 typedef void (*load_tiles_cuda_t)(
@@ -1172,7 +1173,7 @@ static constexpr __device__ vec_dot_q_mul_mat_cuda_t get_vec_dot_mmq(ggml_type t
 template <ggml_type type, bool need_check>
 static __global__ void mul_mat_q(
     const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
+    const int ncols_x, const int nrows_x, const int nb01, const int ncols_y, const int nrows_y, const int nrows_dst) {
 
     constexpr int  qk       = ggml_blck_size_device(type);
     constexpr int  ts       = ggml_type_size_device(type);
@@ -1195,7 +1196,6 @@ static __global__ void mul_mat_q(
     const block_q8_1 * y = (const block_q8_1 *) vy;
 
     const int blocks_per_row_x = ncols_x / qk;
-    const int nb01 = ncols_x * ts/qk;
     const int blocks_per_col_y = nrows_y / QK8_1;
     const int blocks_per_warp = WARP_SIZE / qi;
 
@@ -1296,15 +1296,15 @@ static __global__ void mul_mat_q(
     }
 }
 
-#define MMQ_SWITCH_CASE(type_suffix)                                                                        \
-    case GGML_TYPE_Q##type_suffix: if (row_diff % arch_config.y == 0) {                                     \
+#define MMQ_SWITCH_CASE(type)                                                                        \
+    case type: if (row_diff % arch_config.y == 0) {                                     \
         const bool need_check = false;                                                                      \
-        mul_mat_q<GGML_TYPE_Q##type_suffix, need_check><<<block_nums, block_dims, 0, stream>>>              \
-            (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst); \
+        mul_mat_q<type, need_check><<<block_nums, block_dims, 0, stream>>>              \
+            (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_ncols, src1_padded_row_size, nrows_dst); \
     } else {                                                                                                \
         const bool need_check = true;                                                                       \
-        mul_mat_q<GGML_TYPE_Q##type_suffix, need_check><<<block_nums, block_dims, 0, stream>>>              \
-            (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst); \
+        mul_mat_q<type, need_check><<<block_nums, block_dims, 0, stream>>>              \
+            (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_ncols, src1_padded_row_size, nrows_dst); \
     } break;                                                                                                \
 
 void ggml_cuda_op_mul_mat_q(
@@ -1314,6 +1314,8 @@ void ggml_cuda_op_mul_mat_q(
     const int64_t src1_padded_row_size, cudaStream_t stream) {
 
     const int64_t ne00 = src0->ne[0];
+
+    const int64_t nb01 = src0->nb[1];
 
     const int64_t ne10 = src1->ne[0];
     GGML_ASSERT(ne10 % QK8_1 == 0);
@@ -1386,16 +1388,16 @@ void ggml_cuda_op_mul_mat_q(
     const dim3 block_dims(WARP_SIZE, arch_config.nwarps, 1);
 
     switch (src0->type) {
-        MMQ_SWITCH_CASE(4_0)
-        MMQ_SWITCH_CASE(4_1)
-        MMQ_SWITCH_CASE(5_0)
-        MMQ_SWITCH_CASE(5_1)
-        MMQ_SWITCH_CASE(8_0)
-        MMQ_SWITCH_CASE(2_K)
-        MMQ_SWITCH_CASE(3_K)
-        MMQ_SWITCH_CASE(4_K)
-        MMQ_SWITCH_CASE(5_K)
-        MMQ_SWITCH_CASE(6_K)
+        MMQ_SWITCH_CASE(GGML_TYPE_Q4_0)
+        MMQ_SWITCH_CASE(GGML_TYPE_Q4_1)
+        MMQ_SWITCH_CASE(GGML_TYPE_Q5_0)
+        MMQ_SWITCH_CASE(GGML_TYPE_Q5_1)
+        MMQ_SWITCH_CASE(GGML_TYPE_Q8_0)
+        MMQ_SWITCH_CASE(GGML_TYPE_Q2_K)
+        MMQ_SWITCH_CASE(GGML_TYPE_Q3_K)
+        MMQ_SWITCH_CASE(GGML_TYPE_Q4_K)
+        MMQ_SWITCH_CASE(GGML_TYPE_Q5_K)
+        MMQ_SWITCH_CASE(GGML_TYPE_Q6_K)
         default:
             GGML_ASSERT(false);
             break;
