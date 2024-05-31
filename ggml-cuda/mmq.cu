@@ -1178,22 +1178,23 @@ static __device__ __forceinline__ void mul_mat_q_test(
                             : "+r"(sumi[0]), "+r"(sumi[1]), "+r"(sumi[2]), "+r"(sumi[3])
                             : "r"(v[0]), "r"(v[1]), "r"(v[2]), "r"(v[3]), "r"(u[0]), "r"(u[1]));
 
-                        float d8_0[2];
+                        float2 d8_0[2];
 #pragma unroll
                         for (int l = 0; l < 2; ++l) {
                             const int i = i0 + 8*l + threadIdx.x/4;
-                            d8_0[l] = x_dmf[i * (WARP_SIZE/QI8_0) + i/QI8_0 + k0/QI8_0];
+
+                            const float tmp = x_dmf[i * (WARP_SIZE/QI8_0) + i/QI8_0 + k0/QI8_0];
+                            d8_0[l].x = tmp;
+                            d8_0[l].y = tmp;
                         }
-                        float d8_1[2];
-#pragma unroll
-                        for (int l = 0; l < 2; ++l) {
-                            const int j = j0 + 2*(threadIdx.x%4) + l;
-                            d8_1[l] = y_df[j * (WARP_SIZE/QI8_1) + k0/QI8_1];
-                        }
+                        float2 d8_1;
+                        d8_1.x = y_df[(j0 + 2*(threadIdx.x%4) + 0) * (WARP_SIZE/QI8_1) + k0/QI8_1];
+                        d8_1.y = y_df[(j0 + 2*(threadIdx.x%4) + 1) * (WARP_SIZE/QI8_1) + k0/QI8_1];
 
 #pragma unroll
-                        for (int l = 0; l < 4; ++l) {
-                            sum[j00/(8*nwarps)][i0/16][l] += d8_0[l/2]*d8_1[l%2] * sumi[l];
+                        for (int l = 0; l < 2; ++l) {
+                            sum[j00/(8*nwarps)][i0/16][2*l + 0] += d8_0[l].x*d8_1.x * sumi[2*l + 0];
+                            sum[j00/(8*nwarps)][i0/16][2*l + 1] += d8_0[l].y*d8_1.y * sumi[2*l + 1];
                         }
                     }
                 }
