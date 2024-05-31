@@ -1173,7 +1173,7 @@ static constexpr __device__ vec_dot_q_mul_mat_cuda_t get_vec_dot_mmq(ggml_type t
 template <ggml_type type, bool need_check>
 static __global__ void mul_mat_q(
     const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int nb01, const int ncols_y, const int nrows_y, const int nrows_dst) {
+    const int ne00, const int ne01, const int nb01, const int ncols_y, const int nrows_y, const int nrows_dst) {
 
     constexpr int  qk       = ggml_blck_size_device(type);
     constexpr int  ts       = ggml_type_size_device(type);
@@ -1195,7 +1195,7 @@ static __global__ void mul_mat_q(
     const char       * x = (const char       *) vx;
     const block_q8_1 * y = (const block_q8_1 *) vy;
 
-    const int blocks_per_row_x = ncols_x / qk;
+    const int blocks_per_row_x = ne00 / qk;
     const int blocks_per_col_y = nrows_y / QK8_1;
     const int blocks_per_warp = WARP_SIZE / qi;
 
@@ -1222,7 +1222,7 @@ static __global__ void mul_mat_q(
     for (int ib0 = 0; ib0 < blocks_per_row_x; ib0 += blocks_per_warp) {
 
         load_tiles(x + row_x_0*nb01 + ib0*ts, tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc,
-                   threadIdx.y, nrows_x-row_x_0-1, threadIdx.x, blocks_per_row_x);
+                   threadIdx.y, ne01-row_x_0-1, threadIdx.x, blocks_per_row_x);
 
 #pragma unroll
         for (int ir = 0; ir < qr; ++ir) {
