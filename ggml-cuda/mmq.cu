@@ -486,7 +486,7 @@ static __device__ __forceinline__ float vec_dot_q5_1_q8_1_mul_mat(
 template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q8_0(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc) {
     GGML_UNUSED(x_qh); GGML_UNUSED(x_sc);
 
-    __shared__ int  tile_x_qs[mmq_y * (WARP_SIZE)       + mmq_y];
+    __shared__ int  tile_x_qs[mmq_y * (WARP_SIZE)       + mmq_y*4];
     __shared__ float tile_x_d[mmq_y * (WARP_SIZE/QI8_0) + mmq_y/QI8_0];
 
     *x_ql = tile_x_qs;
@@ -519,7 +519,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
         const block_q8_0 * bxi = bx0 + i*blocks_per_row + kbx;
 
-        x_ql[i * (WARP_SIZE + 1) + k] = get_int_from_int8(bxi->qs, kqsx);
+        x_ql[i * (WARP_SIZE + 4) + k] = get_int_from_int8(bxi->qs, kqsx);
     }
 
     const int blocks_per_tile_x_row = WARP_SIZE / QI8_0;
@@ -1165,7 +1165,7 @@ static __device__ __forceinline__ void mul_mat_q_test(
                         int v[4];
 #pragma unroll
                         for (int l = 0; l < 4; ++l) {
-                            v[l] = tile_x_ql[(i0 + (l%2)*8 + threadIdx.x/4) * (WARP_SIZE + 1) + k0 + (l/2)*4 + threadIdx.x%4];
+                            v[l] = tile_x_ql[(i0 + (l%2)*8 + threadIdx.x/4) * (WARP_SIZE + 4) + k0 + (l/2)*4 + threadIdx.x%4];
                         }
                         int u[2];
 #pragma unroll
