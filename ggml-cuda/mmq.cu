@@ -1108,7 +1108,8 @@ static __device__ __forceinline__ void mul_mat_q_test(
     __shared__ int    tile_y_qs[mmq_x * WARP_SIZE];
     __shared__ half2  tile_y_ds[mmq_x * WARP_SIZE/QI8_1];
 
-    float sum[mmq_y/WARP_SIZE][mmq_x/nwarps] = {{0.0f}};
+    static_assert(mmq_x % (8*nwarps) == 0, "assert");
+    float sum[mmq_x/(8*nwarps)][mmq_y/16][4] = {{{0.0f}}};
 
     for (int ib0 = 0; ib0 < blocks_per_row_x; ib0 += blocks_per_warp) {
 
@@ -1149,30 +1150,51 @@ static __device__ __forceinline__ void mul_mat_q_test(
 
             __syncthreads();
 
-// #pragma unroll // unrolling this loop causes too much register pressure
+            const float * x_dmf = (const float *) tile_x_dm;
+            const float * y_df  = (const float *) tile_y_ds;
+
+            static_assert(!need_sum);
+            static_assert(vdr == 32/sizeof(int));
+#pragma unroll
             for (int k0 = ir*WARP_SIZE/qr; k0 < (ir+1)*WARP_SIZE/qr; k0 += vdr) {
 #pragma unroll
-                for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
-                    const int j = j0 + threadIdx.y;
+                for (int j00 = 0; j00 < mmq_x; j00 += 8*nwarps) {
+                    const int j0 = j00 + 8*threadIdx.y;
 #pragma unroll
-                    for (int i0 = 0; i0 < mmq_y; i0 += WARP_SIZE) {
-                        const int i = i0 + threadIdx.x;
-
-                        const float * x_dmf = (const float *) tile_x_dm;
-                        const float * y_df  = (const float *) tile_y_ds;
-
-                        const float d8_0 = x_dmf[i * (WARP_SIZE/QI8_0) + i/QI8_0 + k0/QI8_0];
-                        const float d8_1 = y_df[j * (WARP_SIZE/QI8_1) + k0/QI8_1];
-
-                        int sumi = 0;
-
-                    #pragma unroll
-                        for (int k = 0; k < VDR_Q8_0_Q8_1_MMQ; ++k) {
-                            // SIMD dot product of quantized values
-                            sumi = __dp4a(tile_x_ql[i * (WARP_SIZE + 1) + k0 + k], tile_y_qs[j * WARP_SIZE + k0 + k], sumi);
+                    for (int i0 = 0; i0 < mmq_y; i0 += 16) {
+                        int v[4];
+#pragma unroll
+                        for (int l = 0; l < 4; ++l) {
+                            v[l] = tile_x_ql[(i0 + (l%2)*8 + threadIdx.x/4) * (WARP_SIZE + 1) + k0 + (l/2)*4 + threadIdx.x%4];
+                        }
+                        int u[2];
+#pragma unroll
+                        for (int l = 0; l < 2; ++l) {
+                            u[l] = tile_y_qs[(j0 + threadIdx.x/4) * WARP_SIZE + k0 + 4*l + threadIdx.x%4];
                         }
 
-                        sum[i0/WARP_SIZE][j0/nwarps] += d8_0*d8_1 * sumi;
+                        int sumi[4] = {0};
+                        asm("mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9}, {%0, %1, %2, %3};"
+                            : "+r"(sumi[0]), "+r"(sumi[1]), "+r"(sumi[2]), "+r"(sumi[3])
+                            : "r"(v[0]), "r"(v[1]), "r"(v[2]), "r"(v[3]), "r"(u[0]), "r"(u[1]));
+
+                        float d8_0[2];
+#pragma unroll
+                        for (int l = 0; l < 2; ++l) {
+                            const int i = i0 + 8*l + threadIdx.x/4;
+                            d8_0[l] = x_dmf[i * (WARP_SIZE/QI8_0) + i/QI8_0 + k0/QI8_0];
+                        }
+                        float d8_1[2];
+#pragma unroll
+                        for (int l = 0; l < 2; ++l) {
+                            const int j = j0 + 2*(threadIdx.x%4) + l;
+                            d8_1[l] = y_df[j * (WARP_SIZE/QI8_1) + k0/QI8_1];
+                        }
+
+#pragma unroll
+                        for (int l = 0; l < 4; ++l) {
+                            sum[j00/(8*nwarps)][i0/16][l] += d8_0[l/2]*d8_1[l%2] * sumi[l];
+                        }
                     }
                 }
             }
@@ -1182,22 +1204,27 @@ static __device__ __forceinline__ void mul_mat_q_test(
     }
 
 #pragma unroll
-    for (int j = 0; j < mmq_x; j += nwarps) {
-        const int col_dst = col_dst_0 + j + threadIdx.y;
-
-        if (col_dst >= ncols_dst) {
-            return;
-        }
+    for (int j00 = 0; j00 < mmq_x; j00 += 8*nwarps) {
+        const int j0 = j00 + 8*threadIdx.y + 2*(threadIdx.x%4);
+#pragma unroll
+        for (int i00 = 0; i00 < mmq_y; i00 += 16) {
+            const int i0 = i00 + threadIdx.x/4;
 
 #pragma unroll
-        for (int i = 0; i < mmq_y; i += WARP_SIZE) {
-            const int row_dst = row_dst_0 + threadIdx.x + i;
+            for (int l = 0; l < 4; ++l) {
+                const int i = i0 + 8*(l/2);
+                const int j = j0 +   (l%2);
 
-            if (row_dst >= nrows_dst) {
-                continue;
+                const int row_dst = row_dst_0 + i;
+                const int col_dst = col_dst_0 + j;
+                if (row_dst >= nrows_dst) {
+                    continue;
+                }
+                if (col_dst >= ncols_dst) {
+                    continue;
+                }
+                dst[col_dst*nrows_dst + row_dst] = sum[j00/(8*nwarps)][i00/16][l];
             }
-
-            dst[col_dst*nrows_dst + row_dst] = sum[i/WARP_SIZE][j/nwarps];
         }
     }
 }
