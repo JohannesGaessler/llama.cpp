@@ -1177,6 +1177,10 @@ static __device__ __forceinline__ void mul_mat_q_test(
                         asm("mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9}, {%0, %1, %2, %3};"
                             : "+r"(sumi[0]), "+r"(sumi[1]), "+r"(sumi[2]), "+r"(sumi[3])
                             : "r"(v[0]), "r"(v[1]), "r"(v[2]), "r"(v[3]), "r"(u[0]), "r"(u[1]));
+#pragma unroll
+                        for (int l = 0; l < 4; ++l) {
+                            sumi[l] /= 16;
+                        }
 
                         half2 d8_0[2];
 #pragma unroll
@@ -1192,9 +1196,9 @@ static __device__ __forceinline__ void mul_mat_q_test(
 
 #pragma unroll
                         for (int l = 0; l < 2; ++l) {
-                            const half2 prod = d8_0[l]*d8_1;
-                            sum[j00/(8*nwarps)][i0/16][2*l + 0] +=  __low2float(prod) * sumi[2*l + 0];
-                            sum[j00/(8*nwarps)][i0/16][2*l + 1] += __high2float(prod) * sumi[2*l + 1];
+                            const half2 prod = d8_0[l]*d8_1 * make_half2(sumi[2*l + 0], sumi[2*l + 1]);
+                            sum[j00/(8*nwarps)][i0/16][2*l + 0] +=  __low2float(prod);
+                            sum[j00/(8*nwarps)][i0/16][2*l + 1] += __high2float(prod);
                         }
                     }
                 }
@@ -1224,7 +1228,7 @@ static __device__ __forceinline__ void mul_mat_q_test(
                 if (col_dst >= ncols_dst) {
                     continue;
                 }
-                dst[col_dst*nrows_dst + row_dst] = sum[j00/(8*nwarps)][i00/16][l];
+                dst[col_dst*nrows_dst + row_dst] = 16.0f*sum[j00/(8*nwarps)][i00/16][l];
             }
         }
     }
