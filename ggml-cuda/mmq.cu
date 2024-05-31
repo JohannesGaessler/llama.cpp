@@ -1072,10 +1072,11 @@ static __device__ __forceinline__ void mul_mat_q(
     const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
     const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
 
-    const block_q_t  * x = (const block_q_t  *) vx;
+    const char       * x = (const char       *) vx;
     const block_q8_1 * y = (const block_q8_1 *) vy;
 
     const int blocks_per_row_x = ncols_x / qk;
+    const int nb01 = ncols_x * sizeof(block_q_t)/qk;
     const int blocks_per_col_y = nrows_y / QK8_1;
     const int blocks_per_warp = WARP_SIZE / qi;
 
@@ -1101,7 +1102,7 @@ static __device__ __forceinline__ void mul_mat_q(
 
     for (int ib0 = 0; ib0 < blocks_per_row_x; ib0 += blocks_per_warp) {
 
-        load_tiles(x + row_x_0*blocks_per_row_x + ib0, tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc,
+        load_tiles(x + row_x_0*nb01 + ib0*sizeof(block_q_t), tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc,
                    threadIdx.y, nrows_x-row_x_0-1, threadIdx.x, blocks_per_row_x);
 
 #pragma unroll
