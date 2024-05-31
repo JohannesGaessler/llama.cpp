@@ -1165,8 +1165,8 @@ static constexpr __device__ vec_dot_q_mul_mat_cuda_t get_vec_dot_mmq(ggml_type t
         type == GGML_TYPE_Q2_K ? vec_dot_q2_K_q8_1_mul_mat :
         type == GGML_TYPE_Q3_K ? vec_dot_q3_K_q8_1_mul_mat :
         type == GGML_TYPE_Q4_K ? vec_dot_q4_K_q8_1_mul_mat :
-        type == GGML_TYPE_Q5_K ? vec_dot_q4_K_q8_1_mul_mat :
-        type == GGML_TYPE_Q6_K ? vec_dot_q5_K_q8_1_mul_mat :
+        type == GGML_TYPE_Q5_K ? vec_dot_q5_K_q8_1_mul_mat :
+        type == GGML_TYPE_Q6_K ? vec_dot_q6_K_q8_1_mul_mat :
         nullptr;
 }
 
