@@ -1249,6 +1249,34 @@ static constexpr __device__ load_tiles_cuda_t get_load_tiles(ggml_type type) {
         nullptr;
 }
 
+static constexpr __device__ int get_vdr_mmq(ggml_type type) {
+    return type == GGML_TYPE_Q4_0 ? VDR_Q4_0_Q8_1_MMQ :
+        type == GGML_TYPE_Q4_1 ? VDR_Q4_1_Q8_1_MMQ :
+        type == GGML_TYPE_Q5_0 ? VDR_Q5_0_Q8_1_MMQ :
+        type == GGML_TYPE_Q5_1 ? VDR_Q5_1_Q8_1_MMQ :
+        type == GGML_TYPE_Q8_0 ? VDR_Q8_0_Q8_1_MMQ :
+        type == GGML_TYPE_Q2_K ? VDR_Q2_K_Q8_1_MMQ :
+        type == GGML_TYPE_Q3_K ? VDR_Q3_K_Q8_1_MMQ :
+        type == GGML_TYPE_Q4_K ? VDR_Q4_K_Q8_1_MMQ :
+        type == GGML_TYPE_Q5_K ? VDR_Q5_K_Q8_1_MMQ :
+        type == GGML_TYPE_Q6_K ? VDR_Q6_K_Q8_1_MMQ :
+        0;
+}
+
+static constexpr __device__ vec_dot_q_mul_mat_cuda_t get_vec_dot_mmq(ggml_type type) {
+    return type == GGML_TYPE_Q4_0 ? vec_dot_q4_0_q8_1_mul_mat :
+        type == GGML_TYPE_Q4_1 ? vec_dot_q4_1_q8_1_mul_mat :
+        type == GGML_TYPE_Q5_0 ? vec_dot_q5_0_q8_1_mul_mat :
+        type == GGML_TYPE_Q5_1 ? vec_dot_q5_1_q8_1_mul_mat :
+        type == GGML_TYPE_Q8_0 ? vec_dot_q8_0_q8_1_mul_mat :
+        type == GGML_TYPE_Q2_K ? vec_dot_q2_K_q8_1_mul_mat :
+        type == GGML_TYPE_Q3_K ? vec_dot_q3_K_q8_1_mul_mat :
+        type == GGML_TYPE_Q4_K ? vec_dot_q4_K_q8_1_mul_mat :
+        type == GGML_TYPE_Q5_K ? vec_dot_q4_K_q8_1_mul_mat :
+        type == GGML_TYPE_Q6_K ? vec_dot_q5_K_q8_1_mul_mat :
+        nullptr;
+}
+
 template <bool need_check> static __global__ void
 #if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
 #if defined(RDNA3) || defined(RDNA2)
@@ -1266,7 +1294,7 @@ template <bool need_check> static __global__ void
 
     mul_mat_q<ggml_blck_size_device(type), get_qr_device(type), get_qi_device(type), get_need_sum(type), block_q4_0,
         arch_config.x, arch_config.y, arch_config.nwarps, get_allocate_tiles<arch_config.y>(type),
-        get_load_tiles<arch_config.y, arch_config.nwarps, need_check>(type), VDR_Q4_0_Q8_1_MMQ, vec_dot_q4_0_q8_1_mul_mat>
+        get_load_tiles<arch_config.y, arch_config.nwarps, need_check>(type), get_vdr_mmq(type), get_vec_dot_mmq(type)>
         (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
 #else
     GGML_UNUSED(get_arch_config_device);
