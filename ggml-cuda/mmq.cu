@@ -1197,6 +1197,35 @@ static constexpr __device__ mmq_arch_config_t get_arch_config_device(mmq_config_
 #endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
 }
 
+static constexpr __device__ mmq_config_t get_mmq_config(ggml_type type) {
+    return type == GGML_TYPE_Q4_0 ? MMQ_CONFIG_Q4_0 :
+        type == GGML_TYPE_Q4_1 ? MMQ_CONFIG_Q4_1 :
+        type == GGML_TYPE_Q5_0 ? MMQ_CONFIG_Q5_0 :
+        type == GGML_TYPE_Q5_1 ? MMQ_CONFIG_Q5_1 :
+        type == GGML_TYPE_Q8_0 ? MMQ_CONFIG_Q8_0 :
+        type == GGML_TYPE_Q2_K ? MMQ_CONFIG_Q2_K :
+        type == GGML_TYPE_Q3_K ? MMQ_CONFIG_Q3_K :
+        type == GGML_TYPE_Q4_K ? MMQ_CONFIG_Q4_K :
+        type == GGML_TYPE_Q5_K ? MMQ_CONFIG_Q5_K :
+        type == GGML_TYPE_Q6_K ? MMQ_CONFIG_Q6_K :
+        mmq_config_t();
+}
+
+template <int mmq_y>
+static constexpr __device__ allocate_tiles_cuda_t get_allocate_tiles(ggml_type type) {
+    return type == GGML_TYPE_Q4_0 ? allocate_tiles_q4_0<mmq_y> :
+        type == GGML_TYPE_Q4_1 ? allocate_tiles_q4_1<mmq_y> :
+        type == GGML_TYPE_Q5_0 ? allocate_tiles_q5_0<mmq_y> :
+        type == GGML_TYPE_Q5_1 ? allocate_tiles_q5_1<mmq_y> :
+        type == GGML_TYPE_Q8_0 ? allocate_tiles_q8_0<mmq_y> :
+        type == GGML_TYPE_Q2_K ? allocate_tiles_q2_K<mmq_y> :
+        type == GGML_TYPE_Q3_K ? allocate_tiles_q3_K<mmq_y> :
+        type == GGML_TYPE_Q4_K ? allocate_tiles_q4_K<mmq_y> :
+        type == GGML_TYPE_Q5_K ? allocate_tiles_q5_K<mmq_y> :
+        type == GGML_TYPE_Q6_K ? allocate_tiles_q6_K<mmq_y> :
+        nullptr;
+}
+
 template <bool need_check> static __global__ void
 #if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
 #if defined(RDNA3) || defined(RDNA2)
@@ -1208,9 +1237,11 @@ template <bool need_check> static __global__ void
     const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
 
 #if __CUDA_ARCH__ >= MIN_CC_DP4A
-    constexpr mmq_arch_config_t arch_config = get_arch_config_device(MMQ_CONFIG_Q4_0);
+    constexpr ggml_type type = GGML_TYPE_Q4_0;
+    constexpr mmq_config_t       mmq_config = get_mmq_config(type);
+    constexpr mmq_arch_config_t arch_config = get_arch_config_device(mmq_config);
 
-    mul_mat_q<QK4_0, QR4_0, QI4_0, true, block_q4_0, arch_config.x, arch_config.y, arch_config.nwarps, allocate_tiles_q4_0<arch_config.y>,
+    mul_mat_q<QK4_0, QR4_0, QI4_0, true, block_q4_0, arch_config.x, arch_config.y, arch_config.nwarps, get_allocate_tiles<arch_config.y>(type),
         load_tiles_q4_0<arch_config.y, arch_config.nwarps, need_check>, VDR_Q4_0_Q8_1_MMQ, vec_dot_q4_0_q8_1_mul_mat>
         (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
 #else
