@@ -1109,7 +1109,7 @@ static __device__ __forceinline__ void mul_mat_q_test(
     __shared__ half2  tile_y_ds[mmq_x * WARP_SIZE/QI8_1];
 
     static_assert(mmq_x % (8*nwarps) == 0, "assert");
-    float sum[mmq_x/(8*nwarps)][mmq_y/16][4] = {{{0.0f}}};
+    half2 sum[mmq_x/(8*nwarps)][mmq_y/16][4] = {{{{0.0f, 0.0f}}}};
 
     for (int ib0 = 0; ib0 < blocks_per_row_x; ib0 += blocks_per_warp) {
 
@@ -1196,9 +1196,7 @@ static __device__ __forceinline__ void mul_mat_q_test(
 
 #pragma unroll
                         for (int l = 0; l < 2; ++l) {
-                            const half2 prod = d8_0[l]*d8_1 * make_half2(sumi[2*l + 0], sumi[2*l + 1]);
-                            sum[j00/(8*nwarps)][i0/16][2*l + 0] +=  __low2float(prod);
-                            sum[j00/(8*nwarps)][i0/16][2*l + 1] += __high2float(prod);
+                            sum[j00/(8*nwarps)][i0/16][l] += d8_0[l]*d8_1 * make_half2(sumi[2*l + 0], sumi[2*l + 1]);
                         }
                     }
                 }
@@ -1216,19 +1214,22 @@ static __device__ __forceinline__ void mul_mat_q_test(
             const int i0 = i00 + threadIdx.x/4;
 
 #pragma unroll
-            for (int l = 0; l < 4; ++l) {
-                const int i = i0 + 8*(l/2);
-                const int j = j0 +   (l%2);
+            for (int l = 0; l < 2; ++l) {
+                const int i = i0 + 8*l;
 
                 const int row_dst = row_dst_0 + i;
-                const int col_dst = col_dst_0 + j;
                 if (row_dst >= nrows_dst) {
                     continue;
                 }
-                if (col_dst >= ncols_dst) {
+                if (col_dst_0 + j0 + 0 >= ncols_dst) {
                     continue;
                 }
-                dst[col_dst*nrows_dst + row_dst] = 16.0f*sum[j00/(8*nwarps)][i00/16][l];
+                sum[j00/(8*nwarps)][i00/16][l] *= make_half2(16.0f, 16.0f);
+                dst[(col_dst_0 + j0 + 0)*nrows_dst + row_dst] =  __low2float(sum[j00/(8*nwarps)][i00/16][l]);
+                if (col_dst_0 + j0 + 1 >= ncols_dst) {
+                    continue;
+                }
+                dst[(col_dst_0 + j0 + 1)*nrows_dst + row_dst] = __high2float(sum[j00/(8*nwarps)][i00/16][l]);
             }
         }
     }
