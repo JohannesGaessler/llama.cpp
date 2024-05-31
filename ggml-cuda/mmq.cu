@@ -1105,7 +1105,7 @@ static __device__ __forceinline__ void mul_mat_q_test(
 
     allocate_tiles(&tile_x_ql, &tile_x_dm, &tile_x_qh, &tile_x_sc);
 
-    __shared__ int    tile_y_qs[mmq_x * WARP_SIZE];
+    __shared__ int    tile_y_qs[mmq_x * WARP_SIZE       + mmq_x*4];
     __shared__ half2  tile_y_ds[mmq_x * WARP_SIZE/QI8_1];
 
     static_assert(mmq_x % (8*nwarps) == 0, "assert");
@@ -1127,7 +1127,7 @@ static __device__ __forceinline__ void mul_mat_q_test(
 
                 const block_q8_1 * by0 = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + kbxd];
 
-                const int index_y = (threadIdx.y + i) * WARP_SIZE + kqs % WARP_SIZE;
+                const int index_y = (threadIdx.y + i) * (WARP_SIZE + 4) + kqs % WARP_SIZE;
                 tile_y_qs[index_y] = get_int_from_int8_aligned(by0->qs, threadIdx.x % QI8_1);
             }
 
@@ -1170,7 +1170,7 @@ static __device__ __forceinline__ void mul_mat_q_test(
                         int u[2];
 #pragma unroll
                         for (int l = 0; l < 2; ++l) {
-                            u[l] = tile_y_qs[(j0 + threadIdx.x/4) * WARP_SIZE + k0 + 4*l + threadIdx.x%4];
+                            u[l] = tile_y_qs[(j0 + threadIdx.x/4) * (WARP_SIZE + 4) + k0 + 4*l + threadIdx.x%4];
                         }
 
                         int sumi[4] = {0};
