@@ -1066,17 +1066,136 @@ static __device__ __forceinline__ float vec_dot_q6_K_q8_1_mul_mat(
     return vec_dot_q6_K_q8_1_impl_mmq(&x_ql[index_x], &y_qs[index_y], sc, x_dmf[i * (WARP_SIZE/QI6_K) + i/QI6_K], &y_df[index_y/QI8_1]);
 }
 
-template <int qk, int qr, int qi, bool need_sum, typename block_q_t, int mmq_x, int mmq_y, int nwarps,
-              allocate_tiles_cuda_t allocate_tiles, load_tiles_cuda_t load_tiles, int vdr, vec_dot_q_mul_mat_cuda_t vec_dot>
-static __device__ __forceinline__ void mul_mat_q(
+// -------------------------------------------------------------------------------------------------------------------------------------
+
+static constexpr __device__ mmq_config_t get_mmq_config(ggml_type type) {
+    return type == GGML_TYPE_Q4_0 ? MMQ_CONFIG_Q4_0 :
+        type == GGML_TYPE_Q4_1 ? MMQ_CONFIG_Q4_1 :
+        type == GGML_TYPE_Q5_0 ? MMQ_CONFIG_Q5_0 :
+        type == GGML_TYPE_Q5_1 ? MMQ_CONFIG_Q5_1 :
+        type == GGML_TYPE_Q8_0 ? MMQ_CONFIG_Q8_0 :
+        type == GGML_TYPE_Q2_K ? MMQ_CONFIG_Q2_K :
+        type == GGML_TYPE_Q3_K ? MMQ_CONFIG_Q3_K :
+        type == GGML_TYPE_Q4_K ? MMQ_CONFIG_Q4_K :
+        type == GGML_TYPE_Q5_K ? MMQ_CONFIG_Q5_K :
+        type == GGML_TYPE_Q6_K ? MMQ_CONFIG_Q6_K :
+        mmq_config_t();
+}
+
+static constexpr __device__ mmq_arch_config_t get_arch_config_device(mmq_config_t mmq_config) {
+
+#if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
+
+#if defined(RDNA3) || defined(RDNA2)
+    return mmq_config.rdna2;
+#else
+    return mmq_config.rdna1;
+#endif // defined(RDNA3) || defined(RDNA2)
+
+#else
+
+#if __CUDA_ARCH__ >= CC_VOLTA
+    return mmq_config.ampere;
+#else
+    return mmq_config.pascal;
+#endif // __CUDA_ARCH__ >= CC_VOLTA
+
+#endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
+}
+
+template <int mmq_y>
+static constexpr __device__ allocate_tiles_cuda_t get_allocate_tiles(ggml_type type) {
+    return type == GGML_TYPE_Q4_0 ? allocate_tiles_q4_0<mmq_y> :
+        type == GGML_TYPE_Q4_1 ? allocate_tiles_q4_1<mmq_y> :
+        type == GGML_TYPE_Q5_0 ? allocate_tiles_q5_0<mmq_y> :
+        type == GGML_TYPE_Q5_1 ? allocate_tiles_q5_1<mmq_y> :
+        type == GGML_TYPE_Q8_0 ? allocate_tiles_q8_0<mmq_y> :
+        type == GGML_TYPE_Q2_K ? allocate_tiles_q2_K<mmq_y> :
+        type == GGML_TYPE_Q3_K ? allocate_tiles_q3_K<mmq_y> :
+        type == GGML_TYPE_Q4_K ? allocate_tiles_q4_K<mmq_y> :
+        type == GGML_TYPE_Q5_K ? allocate_tiles_q5_K<mmq_y> :
+        type == GGML_TYPE_Q6_K ? allocate_tiles_q6_K<mmq_y> :
+        nullptr;
+}
+
+static constexpr __device__ int get_need_sum(ggml_type type) {
+    return type == GGML_TYPE_Q4_0 ||
+        type == GGML_TYPE_Q4_1 ||
+        type == GGML_TYPE_Q5_1 ||
+        type == GGML_TYPE_Q4_K ||
+        type == GGML_TYPE_Q5_K;
+}
+
+template <int mmq_y, int nwarps, bool need_check>
+static constexpr __device__ load_tiles_cuda_t get_load_tiles(ggml_type type) {
+    return type == GGML_TYPE_Q4_0 ? load_tiles_q4_0<mmq_y, nwarps, need_check> :
+        type == GGML_TYPE_Q4_1 ? load_tiles_q4_1<mmq_y, nwarps, need_check> :
+        type == GGML_TYPE_Q5_0 ? load_tiles_q5_0<mmq_y, nwarps, need_check> :
+        type == GGML_TYPE_Q5_1 ? load_tiles_q5_1<mmq_y, nwarps, need_check> :
+        type == GGML_TYPE_Q8_0 ? load_tiles_q8_0<mmq_y, nwarps, need_check> :
+        type == GGML_TYPE_Q2_K ? load_tiles_q2_K<mmq_y, nwarps, need_check> :
+        type == GGML_TYPE_Q3_K ? load_tiles_q3_K<mmq_y, nwarps, need_check> :
+        type == GGML_TYPE_Q4_K ? load_tiles_q4_K<mmq_y, nwarps, need_check> :
+        type == GGML_TYPE_Q5_K ? load_tiles_q5_K<mmq_y, nwarps, need_check> :
+        type == GGML_TYPE_Q6_K ? load_tiles_q6_K<mmq_y, nwarps, need_check> :
+        nullptr;
+}
+
+static constexpr __device__ int get_vdr_mmq(ggml_type type) {
+    return type == GGML_TYPE_Q4_0 ? VDR_Q4_0_Q8_1_MMQ :
+        type == GGML_TYPE_Q4_1 ? VDR_Q4_1_Q8_1_MMQ :
+        type == GGML_TYPE_Q5_0 ? VDR_Q5_0_Q8_1_MMQ :
+        type == GGML_TYPE_Q5_1 ? VDR_Q5_1_Q8_1_MMQ :
+        type == GGML_TYPE_Q8_0 ? VDR_Q8_0_Q8_1_MMQ :
+        type == GGML_TYPE_Q2_K ? VDR_Q2_K_Q8_1_MMQ :
+        type == GGML_TYPE_Q3_K ? VDR_Q3_K_Q8_1_MMQ :
+        type == GGML_TYPE_Q4_K ? VDR_Q4_K_Q8_1_MMQ :
+        type == GGML_TYPE_Q5_K ? VDR_Q5_K_Q8_1_MMQ :
+        type == GGML_TYPE_Q6_K ? VDR_Q6_K_Q8_1_MMQ :
+        0;
+}
+
+static constexpr __device__ vec_dot_q_mul_mat_cuda_t get_vec_dot_mmq(ggml_type type) {
+    return type == GGML_TYPE_Q4_0 ? vec_dot_q4_0_q8_1_mul_mat :
+        type == GGML_TYPE_Q4_1 ? vec_dot_q4_1_q8_1_mul_mat :
+        type == GGML_TYPE_Q5_0 ? vec_dot_q5_0_q8_1_mul_mat :
+        type == GGML_TYPE_Q5_1 ? vec_dot_q5_1_q8_1_mul_mat :
+        type == GGML_TYPE_Q8_0 ? vec_dot_q8_0_q8_1_mul_mat :
+        type == GGML_TYPE_Q2_K ? vec_dot_q2_K_q8_1_mul_mat :
+        type == GGML_TYPE_Q3_K ? vec_dot_q3_K_q8_1_mul_mat :
+        type == GGML_TYPE_Q4_K ? vec_dot_q4_K_q8_1_mul_mat :
+        type == GGML_TYPE_Q5_K ? vec_dot_q4_K_q8_1_mul_mat :
+        type == GGML_TYPE_Q6_K ? vec_dot_q5_K_q8_1_mul_mat :
+        nullptr;
+}
+
+template <ggml_type type, bool need_check>
+static __global__ void mul_mat_q(
     const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
     const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
+
+    constexpr int  qk       = ggml_blck_size_device(type);
+    constexpr int  ts       = ggml_type_size_device(type);
+    constexpr int  qr       = get_qr_device(type);
+    constexpr int  qi       = get_qi_device(type);
+    constexpr bool need_sum = get_need_sum(type);
+    constexpr int  vdr      = get_vdr_mmq(type);
+
+    constexpr mmq_config_t       mmq_config = get_mmq_config(type);
+    constexpr mmq_arch_config_t arch_config = get_arch_config_device(mmq_config);
+    constexpr int mmq_x  = arch_config.x;
+    constexpr int mmq_y  = arch_config.y;
+    constexpr int nwarps = arch_config.nwarps;
+
+    constexpr    allocate_tiles_cuda_t allocate_tiles = get_allocate_tiles<mmq_y>(type);
+    constexpr        load_tiles_cuda_t     load_tiles = get_load_tiles<mmq_y, nwarps, need_check>(type);
+    constexpr vec_dot_q_mul_mat_cuda_t        vec_dot = get_vec_dot_mmq(type);
 
     const char       * x = (const char       *) vx;
     const block_q8_1 * y = (const block_q8_1 *) vy;
 
     const int blocks_per_row_x = ncols_x / qk;
-    const int nb01 = ncols_x * sizeof(block_q_t)/qk;
+    const int nb01 = ncols_x * ts/qk;
     const int blocks_per_col_y = nrows_y / QK8_1;
     const int blocks_per_warp = WARP_SIZE / qi;
 
@@ -1102,7 +1221,7 @@ static __device__ __forceinline__ void mul_mat_q(
 
     for (int ib0 = 0; ib0 < blocks_per_row_x; ib0 += blocks_per_warp) {
 
-        load_tiles(x + row_x_0*nb01 + ib0*sizeof(block_q_t), tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc,
+        load_tiles(x + row_x_0*nb01 + ib0*ts, tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc,
                    threadIdx.y, nrows_x-row_x_0-1, threadIdx.x, blocks_per_row_x);
 
 #pragma unroll
@@ -1177,356 +1296,14 @@ static __device__ __forceinline__ void mul_mat_q(
     }
 }
 
-static constexpr __device__ mmq_arch_config_t get_arch_config_device(mmq_config_t mmq_config) {
-
-#if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-
-#if defined(RDNA3) || defined(RDNA2)
-    return mmq_config.rdna2;
-#else
-    return mmq_config.rdna1;
-#endif // defined(RDNA3) || defined(RDNA2)
-
-#else
-
-#if __CUDA_ARCH__ >= CC_VOLTA
-    return mmq_config.ampere;
-#else
-    return mmq_config.pascal;
-#endif // __CUDA_ARCH__ >= CC_VOLTA
-
-#endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-}
-
-static constexpr __device__ mmq_config_t get_mmq_config(ggml_type type) {
-    return type == GGML_TYPE_Q4_0 ? MMQ_CONFIG_Q4_0 :
-        type == GGML_TYPE_Q4_1 ? MMQ_CONFIG_Q4_1 :
-        type == GGML_TYPE_Q5_0 ? MMQ_CONFIG_Q5_0 :
-        type == GGML_TYPE_Q5_1 ? MMQ_CONFIG_Q5_1 :
-        type == GGML_TYPE_Q8_0 ? MMQ_CONFIG_Q8_0 :
-        type == GGML_TYPE_Q2_K ? MMQ_CONFIG_Q2_K :
-        type == GGML_TYPE_Q3_K ? MMQ_CONFIG_Q3_K :
-        type == GGML_TYPE_Q4_K ? MMQ_CONFIG_Q4_K :
-        type == GGML_TYPE_Q5_K ? MMQ_CONFIG_Q5_K :
-        type == GGML_TYPE_Q6_K ? MMQ_CONFIG_Q6_K :
-        mmq_config_t();
-}
-
-template <int mmq_y>
-static constexpr __device__ allocate_tiles_cuda_t get_allocate_tiles(ggml_type type) {
-    return type == GGML_TYPE_Q4_0 ? allocate_tiles_q4_0<mmq_y> :
-        type == GGML_TYPE_Q4_1 ? allocate_tiles_q4_1<mmq_y> :
-        type == GGML_TYPE_Q5_0 ? allocate_tiles_q5_0<mmq_y> :
-        type == GGML_TYPE_Q5_1 ? allocate_tiles_q5_1<mmq_y> :
-        type == GGML_TYPE_Q8_0 ? allocate_tiles_q8_0<mmq_y> :
-        type == GGML_TYPE_Q2_K ? allocate_tiles_q2_K<mmq_y> :
-        type == GGML_TYPE_Q3_K ? allocate_tiles_q3_K<mmq_y> :
-        type == GGML_TYPE_Q4_K ? allocate_tiles_q4_K<mmq_y> :
-        type == GGML_TYPE_Q5_K ? allocate_tiles_q5_K<mmq_y> :
-        type == GGML_TYPE_Q6_K ? allocate_tiles_q6_K<mmq_y> :
-        nullptr;
-}
-
-static constexpr __device__ int get_need_sum(ggml_type type) {
-    return type == GGML_TYPE_Q4_0 ||
-        type == GGML_TYPE_Q4_1 ||
-        type == GGML_TYPE_Q5_1 ||
-        type == GGML_TYPE_Q4_K ||
-        type == GGML_TYPE_Q5_K;
-}
-
-template <int mmq_y, int nwarps, bool need_check>
-static constexpr __device__ load_tiles_cuda_t get_load_tiles(ggml_type type) {
-    return type == GGML_TYPE_Q4_0 ? load_tiles_q4_0<mmq_y, nwarps, need_check> :
-        type == GGML_TYPE_Q4_1 ? load_tiles_q4_1<mmq_y, nwarps, need_check> :
-        type == GGML_TYPE_Q5_0 ? load_tiles_q5_0<mmq_y, nwarps, need_check> :
-        type == GGML_TYPE_Q5_1 ? load_tiles_q5_1<mmq_y, nwarps, need_check> :
-        type == GGML_TYPE_Q8_0 ? load_tiles_q8_0<mmq_y, nwarps, need_check> :
-        type == GGML_TYPE_Q2_K ? load_tiles_q2_K<mmq_y, nwarps, need_check> :
-        type == GGML_TYPE_Q3_K ? load_tiles_q3_K<mmq_y, nwarps, need_check> :
-        type == GGML_TYPE_Q4_K ? load_tiles_q4_K<mmq_y, nwarps, need_check> :
-        type == GGML_TYPE_Q5_K ? load_tiles_q5_K<mmq_y, nwarps, need_check> :
-        type == GGML_TYPE_Q6_K ? load_tiles_q6_K<mmq_y, nwarps, need_check> :
-        nullptr;
-}
-
-static constexpr __device__ int get_vdr_mmq(ggml_type type) {
-    return type == GGML_TYPE_Q4_0 ? VDR_Q4_0_Q8_1_MMQ :
-        type == GGML_TYPE_Q4_1 ? VDR_Q4_1_Q8_1_MMQ :
-        type == GGML_TYPE_Q5_0 ? VDR_Q5_0_Q8_1_MMQ :
-        type == GGML_TYPE_Q5_1 ? VDR_Q5_1_Q8_1_MMQ :
-        type == GGML_TYPE_Q8_0 ? VDR_Q8_0_Q8_1_MMQ :
-        type == GGML_TYPE_Q2_K ? VDR_Q2_K_Q8_1_MMQ :
-        type == GGML_TYPE_Q3_K ? VDR_Q3_K_Q8_1_MMQ :
-        type == GGML_TYPE_Q4_K ? VDR_Q4_K_Q8_1_MMQ :
-        type == GGML_TYPE_Q5_K ? VDR_Q5_K_Q8_1_MMQ :
-        type == GGML_TYPE_Q6_K ? VDR_Q6_K_Q8_1_MMQ :
-        0;
-}
-
-static constexpr __device__ vec_dot_q_mul_mat_cuda_t get_vec_dot_mmq(ggml_type type) {
-    return type == GGML_TYPE_Q4_0 ? vec_dot_q4_0_q8_1_mul_mat :
-        type == GGML_TYPE_Q4_1 ? vec_dot_q4_1_q8_1_mul_mat :
-        type == GGML_TYPE_Q5_0 ? vec_dot_q5_0_q8_1_mul_mat :
-        type == GGML_TYPE_Q5_1 ? vec_dot_q5_1_q8_1_mul_mat :
-        type == GGML_TYPE_Q8_0 ? vec_dot_q8_0_q8_1_mul_mat :
-        type == GGML_TYPE_Q2_K ? vec_dot_q2_K_q8_1_mul_mat :
-        type == GGML_TYPE_Q3_K ? vec_dot_q3_K_q8_1_mul_mat :
-        type == GGML_TYPE_Q4_K ? vec_dot_q4_K_q8_1_mul_mat :
-        type == GGML_TYPE_Q5_K ? vec_dot_q4_K_q8_1_mul_mat :
-        type == GGML_TYPE_Q6_K ? vec_dot_q5_K_q8_1_mul_mat :
-        nullptr;
-}
-
-template <bool need_check> static __global__ void
-#if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-#if defined(RDNA3) || defined(RDNA2)
-    __launch_bounds__(WARP_SIZE*MMQ_CONFIG_Q4_0.rdna2.nwarps, 2)
-#endif // defined(RDNA3) || defined(RDNA2)
-#endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-    mul_mat_q4_0(
-    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
-
-#if __CUDA_ARCH__ >= MIN_CC_DP4A
-    constexpr ggml_type type = GGML_TYPE_Q4_0;
-    constexpr mmq_config_t       mmq_config = get_mmq_config(type);
-    constexpr mmq_arch_config_t arch_config = get_arch_config_device(mmq_config);
-
-    mul_mat_q<ggml_blck_size_device(type), get_qr_device(type), get_qi_device(type), get_need_sum(type), block_q4_0,
-        arch_config.x, arch_config.y, arch_config.nwarps, get_allocate_tiles<arch_config.y>(type),
-        get_load_tiles<arch_config.y, arch_config.nwarps, need_check>(type), get_vdr_mmq(type), get_vec_dot_mmq(type)>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-#else
-    GGML_UNUSED(get_arch_config_device);
-    GGML_UNUSED(vec_dot_q4_0_q8_1_mul_mat);
-    NO_DEVICE_CODE;
-#endif // __CUDA_ARCH__ >= MIN_CC_DP4A
-}
-
-template <bool need_check> static __global__ void
-#if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-#if defined(RDNA3) || defined(RDNA2)
-    __launch_bounds__(WARP_SIZE*MMQ_CONFIG_Q4_1.rdna2.nwarps, 2)
-#endif // defined(RDNA3) || defined(RDNA2)
-#elif __CUDA_ARCH__ < CC_VOLTA
-    __launch_bounds__(WARP_SIZE*MMQ_CONFIG_Q4_1.pascal.nwarps, 2)
-#endif // __CUDA_ARCH__ < CC_VOLTA
-    mul_mat_q4_1(
-    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
-
-#if __CUDA_ARCH__ >= MIN_CC_DP4A
-    constexpr mmq_arch_config_t arch_config = get_arch_config_device(MMQ_CONFIG_Q4_1);
-
-    mul_mat_q<QK4_1, QR4_1, QI4_1, true, block_q4_1, arch_config.x, arch_config.y, arch_config.nwarps, allocate_tiles_q4_1<arch_config.y>,
-        load_tiles_q4_1<arch_config.y, arch_config.nwarps, need_check>, VDR_Q4_1_Q8_1_MMQ, vec_dot_q4_1_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-#else
-    GGML_UNUSED(get_arch_config_device);
-    GGML_UNUSED(vec_dot_q4_1_q8_1_mul_mat);
-    NO_DEVICE_CODE;
-#endif // __CUDA_ARCH__ >= MIN_CC_DP4A
-}
-
-template <bool need_check> static __global__ void
-#if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-#if defined(RDNA3) || defined(RDNA2)
-    __launch_bounds__(WARP_SIZE*MMQ_CONFIG_Q5_0.rdna2.nwarps, 2)
-#endif // defined(RDNA3) || defined(RDNA2)
-#endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-    mul_mat_q5_0(
-    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
-
-#if __CUDA_ARCH__ >= MIN_CC_DP4A
-    constexpr mmq_arch_config_t arch_config = get_arch_config_device(MMQ_CONFIG_Q5_0);
-
-    mul_mat_q<QK5_0, QR5_0, QI5_0, false, block_q5_0, arch_config.x, arch_config.y, arch_config.nwarps, allocate_tiles_q5_0<arch_config.y>,
-        load_tiles_q5_0<arch_config.y, arch_config.nwarps, need_check>, VDR_Q5_0_Q8_1_MMQ, vec_dot_q5_0_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-#else
-    GGML_UNUSED(get_arch_config_device);
-    GGML_UNUSED(vec_dot_q5_0_q8_1_mul_mat);
-    NO_DEVICE_CODE;
-#endif // __CUDA_ARCH__ >= MIN_CC_DP4A
-}
-
-template <bool need_check> static __global__ void
-#if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-#if defined(RDNA3) || defined(RDNA2)
-    __launch_bounds__(WARP_SIZE*MMQ_CONFIG_Q5_1.rdna2.nwarps, 2)
-#endif // defined(RDNA3) || defined(RDNA2)
-#endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-mul_mat_q5_1(
-    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
-
-#if __CUDA_ARCH__ >= MIN_CC_DP4A
-    constexpr mmq_arch_config_t arch_config = get_arch_config_device(MMQ_CONFIG_Q5_1);
-
-    mul_mat_q<QK5_1, QR5_1, QI5_1, true, block_q5_1, arch_config.x, arch_config.y, arch_config.nwarps, allocate_tiles_q5_1<arch_config.y>,
-        load_tiles_q5_1<arch_config.y, arch_config.nwarps, need_check>, VDR_Q5_1_Q8_1_MMQ, vec_dot_q5_1_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-#else
-    GGML_UNUSED(get_arch_config_device);
-    GGML_UNUSED(vec_dot_q5_1_q8_1_mul_mat);
-    NO_DEVICE_CODE;
-#endif // __CUDA_ARCH__ >= MIN_CC_DP4A
-}
-
-template <bool need_check> static __global__ void
-#if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-#if defined(RDNA3) || defined(RDNA2)
-    __launch_bounds__(WARP_SIZE*MMQ_CONFIG_Q8_0.rdna2.nwarps, 2)
-#endif // defined(RDNA3) || defined(RDNA2)
-#endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-    mul_mat_q8_0(
-    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
-
-#if __CUDA_ARCH__ >= MIN_CC_DP4A
-    constexpr mmq_arch_config_t arch_config = get_arch_config_device(MMQ_CONFIG_Q8_0);
-
-    mul_mat_q<QK8_0, QR8_0, QI8_0, false, block_q8_0, arch_config.x, arch_config.y, arch_config.nwarps, allocate_tiles_q8_0<arch_config.y>,
-        load_tiles_q8_0<arch_config.y, arch_config.nwarps, need_check>, VDR_Q8_0_Q8_1_MMQ, vec_dot_q8_0_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-#else
-    GGML_UNUSED(get_arch_config_device);
-    GGML_UNUSED(vec_dot_q8_0_q8_1_mul_mat);
-    NO_DEVICE_CODE;
-#endif // __CUDA_ARCH__ >= MIN_CC_DP4A
-}
-
-template <bool need_check> static __global__ void
-#if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-#if defined(RDNA3) || defined(RDNA2)
-    __launch_bounds__(WARP_SIZE*MMQ_CONFIG_Q2_K.rdna2.nwarps, 2)
-#endif // defined(RDNA3) || defined(RDNA2)
-#endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-mul_mat_q2_K(
-    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
-
-#if __CUDA_ARCH__ >= MIN_CC_DP4A
-    constexpr mmq_arch_config_t arch_config = get_arch_config_device(MMQ_CONFIG_Q2_K);
-
-    mul_mat_q<QK_K, QR2_K, QI2_K, false, block_q2_K, arch_config.x, arch_config.y, arch_config.nwarps, allocate_tiles_q2_K<arch_config.y>,
-        load_tiles_q2_K<arch_config.y, arch_config.nwarps, need_check>, VDR_Q2_K_Q8_1_MMQ, vec_dot_q2_K_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-#else
-    GGML_UNUSED(get_arch_config_device);
-    GGML_UNUSED(vec_dot_q2_K_q8_1_mul_mat);
-    NO_DEVICE_CODE;
-#endif // __CUDA_ARCH__ >= MIN_CC_DP4A
-}
-
-template <bool need_check> static __global__ void
-#if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-#if defined(RDNA3) || defined(RDNA2)
-    __launch_bounds__(WARP_SIZE*MMQ_CONFIG_Q3_K.rdna2.nwarps, 2)
-#endif // defined(RDNA3) || defined(RDNA2)
-#elif __CUDA_ARCH__ < CC_VOLTA
-    __launch_bounds__(WARP_SIZE*MMQ_CONFIG_Q3_K.pascal.nwarps, 2)
-#endif // __CUDA_ARCH__ < CC_VOLTA
-    mul_mat_q3_K(
-    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
-
-#if __CUDA_ARCH__ >= MIN_CC_DP4A
-    constexpr mmq_arch_config_t arch_config = get_arch_config_device(MMQ_CONFIG_Q3_K);
-
-    mul_mat_q<QK_K, QR3_K, QI3_K, false, block_q3_K, arch_config.x, arch_config.y, arch_config.nwarps, allocate_tiles_q3_K<arch_config.y>,
-        load_tiles_q3_K<arch_config.y, arch_config.nwarps, need_check>, VDR_Q3_K_Q8_1_MMQ, vec_dot_q3_K_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-#else
-    GGML_UNUSED(get_arch_config_device);
-    GGML_UNUSED(vec_dot_q3_K_q8_1_mul_mat);
-    NO_DEVICE_CODE;
-#endif // __CUDA_ARCH__ >= MIN_CC_DP4A
-}
-
-template <bool need_check> static __global__ void
-#if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-#if defined(RDNA3) || defined(RDNA2)
-    __launch_bounds__(WARP_SIZE*MMQ_CONFIG_Q4_K.rdna2.nwarps, 2)
-#endif // defined(RDNA3) || defined(RDNA2)
-#elif __CUDA_ARCH__ < CC_VOLTA
-    __launch_bounds__(WARP_SIZE*MMQ_CONFIG_Q4_K.pascal.nwarps, 2)
-#endif // __CUDA_ARCH__ < CC_VOLTA
-    mul_mat_q4_K(
-    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
-
-#if __CUDA_ARCH__ >= MIN_CC_DP4A
-    constexpr mmq_arch_config_t arch_config = get_arch_config_device(MMQ_CONFIG_Q4_K);
-
-    mul_mat_q<QK_K, QR4_K, QI4_K, true, block_q4_K, arch_config.x, arch_config.y, arch_config.nwarps, allocate_tiles_q4_K<arch_config.y>,
-        load_tiles_q4_K<arch_config.y, arch_config.nwarps, need_check>, VDR_Q4_K_Q8_1_MMQ, vec_dot_q4_K_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-#else
-    GGML_UNUSED(get_arch_config_device);
-    GGML_UNUSED(vec_dot_q4_K_q8_1_mul_mat);
-    NO_DEVICE_CODE;
-#endif // __CUDA_ARCH__ >= MIN_CC_DP4A
-}
-
-template <bool need_check> static __global__ void
-#if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-#if defined(RDNA3) || defined(RDNA2)
-    __launch_bounds__(WARP_SIZE*MMQ_CONFIG_Q5_K.rdna2.nwarps, 2)
-#endif // defined(RDNA3) || defined(RDNA2)
-#endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-mul_mat_q5_K(
-    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
-
-#if __CUDA_ARCH__ >= MIN_CC_DP4A
-    constexpr mmq_arch_config_t arch_config = get_arch_config_device(MMQ_CONFIG_Q5_K);
-
-    mul_mat_q<QK_K, QR5_K, QI5_K, true, block_q5_K, arch_config.x, arch_config.y, arch_config.nwarps, allocate_tiles_q5_K<arch_config.y>,
-        load_tiles_q5_K<arch_config.y, arch_config.nwarps, need_check>, VDR_Q5_K_Q8_1_MMQ, vec_dot_q5_K_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-#else
-    GGML_UNUSED(get_arch_config_device);
-    GGML_UNUSED(vec_dot_q5_K_q8_1_mul_mat);
-    NO_DEVICE_CODE;
-#endif // __CUDA_ARCH__ >= MIN_CC_DP4A
-}
-
-template <bool need_check> static __global__ void
-#if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-#if defined(RDNA3) || defined(RDNA2)
-    __launch_bounds__(WARP_SIZE*MMQ_CONFIG_Q6_K.rdna2.nwarps, 2)
-#endif // defined(RDNA3) || defined(RDNA2)
-#elif __CUDA_ARCH__ < CC_VOLTA
-    __launch_bounds__(WARP_SIZE*MMQ_CONFIG_Q4_K.pascal.nwarps, 2)
-#endif // __CUDA_ARCH__ < CC_VOLTA
-    mul_mat_q6_K(
-    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst) {
-
-#if __CUDA_ARCH__ >= MIN_CC_DP4A
-    constexpr mmq_arch_config_t arch_config = get_arch_config_device(MMQ_CONFIG_Q6_K);
-
-    mul_mat_q<QK_K, QR6_K, QI6_K, false, block_q6_K, arch_config.x, arch_config.y, arch_config.nwarps, allocate_tiles_q6_K<arch_config.y>,
-        load_tiles_q6_K<arch_config.y, arch_config.nwarps, need_check>, VDR_Q6_K_Q8_1_MMQ, vec_dot_q6_K_q8_1_mul_mat>
-        (vx, vy, dst, ncols_x, nrows_x, ncols_y, nrows_y, nrows_dst);
-#else
-    GGML_UNUSED(get_arch_config_device);
-    GGML_UNUSED(vec_dot_q6_K_q8_1_mul_mat);
-    NO_DEVICE_CODE;
-#endif // __CUDA_ARCH__ >= MIN_CC_DP4A
-}
-
 #define MMQ_SWITCH_CASE(type_suffix)                                                                        \
     case GGML_TYPE_Q##type_suffix: if (row_diff % arch_config.y == 0) {                                     \
         const bool need_check = false;                                                                      \
-        mul_mat_q##type_suffix<need_check><<<block_nums, block_dims, 0, stream>>>                           \
+        mul_mat_q<GGML_TYPE_Q##type_suffix, need_check><<<block_nums, block_dims, 0, stream>>>              \
             (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst); \
     } else {                                                                                                \
         const bool need_check = true;                                                                       \
-        mul_mat_q##type_suffix<need_check><<<block_nums, block_dims, 0, stream>>>                           \
+        mul_mat_q<GGML_TYPE_Q##type_suffix, need_check><<<block_nums, block_dims, 0, stream>>>              \
             (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, src1_padded_row_size, nrows_dst); \
     } break;                                                                                                \
 
