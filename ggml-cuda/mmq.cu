@@ -1179,8 +1179,7 @@ static __global__ void mul_mat_q(
 
     const int & ne1 = ne11;
 
-    x   += row_stride_x*ts * blockIdx.x*mmq_y;
-    dst +=                   blockIdx.x*mmq_y;
+    x += row_stride_x*ts * blockIdx.x*mmq_y;
 
     const int tile_x_max_i = ne01 - blockIdx.x*mmq_y - 1;
 
@@ -1271,7 +1270,7 @@ static __global__ void mul_mat_q(
                 continue;
             }
 
-            dst[col_dst*ne0 + i] = sum[i0/WARP_SIZE][j/nwarps];
+            dst[col_dst*ne0 + blockIdx.x*mmq_y + i] = sum[i0/WARP_SIZE][j/nwarps];
         }
     }
 }
