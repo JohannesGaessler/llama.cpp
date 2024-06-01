@@ -1,3 +1,4 @@
+#include "common.cuh"
 #include "mmq.cuh"
 #include "vecdotq.cuh"
 #include <cstdint>
@@ -1146,7 +1147,14 @@ static constexpr __device__ vec_dot_q_mul_mat_cuda_t get_vec_dot_mmq(ggml_type t
         nullptr;
 }
 
-template <ggml_type type, bool need_check>
+template <ggml_type type, int mmq_x, bool need_check>
+#if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
+#if defined(RDNA3) || defined(RDNA2)
+__launch_bounds__(8*WARP_SIZE, 2)
+#endif // defined(RDNA3) || defined(RDNA2)
+#else
+__launch_bounds__(8*WARP_SIZE, (mmq_x*mmq_y <= 64*128) ? 2 : 1)
+#endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
 static __global__ void mul_mat_q(
     const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst,
     const int ne00, const int ne01, const int row_stride_x, const int ne10, const int ne11, const int ne0) {
@@ -1158,11 +1166,8 @@ static __global__ void mul_mat_q(
     constexpr bool need_sum = get_need_sum(type);
     constexpr int  vdr      = get_vdr_mmq(type);
 
-    constexpr mmq_config_t       mmq_config = get_mmq_config(type);
-    constexpr mmq_arch_config_t arch_config = get_arch_config_device(mmq_config);
-    constexpr int mmq_x  = arch_config.x;
-    constexpr int mmq_y  = arch_config.y;
-    constexpr int nwarps = arch_config.nwarps;
+    constexpr int mmq_y  = 128;
+    constexpr int nwarps = 8;
 
     constexpr    allocate_tiles_cuda_t allocate_tiles = get_allocate_tiles<mmq_y>(type);
     constexpr        load_tiles_cuda_t     load_tiles = get_load_tiles<mmq_y, nwarps, need_check>(type);
@@ -1176,9 +1181,9 @@ static __global__ void mul_mat_q(
 
     const int & ne1 = ne11;
 
-    x += row_stride_x*ts * blockIdx.x*mmq_y;
+    x += row_stride_x*ts * blockIdx.y*mmq_y;
 
-    const int tile_x_max_i = ne01 - blockIdx.x*mmq_y - 1;
+    const int tile_x_max_i = ne01 - blockIdx.y*mmq_y - 1;
 
     int   * tile_x_ql = nullptr;
     half2 * tile_x_dm = nullptr;
@@ -1204,7 +1209,7 @@ static __global__ void mul_mat_q(
 
 #pragma unroll
             for (int i0 = 0; i0 < mmq_x; i0 += nwarps) {
-                const int i = min(blockIdx.y*mmq_x + threadIdx.y + i0, ne11-1); // to prevent out-of-bounds memory accesses
+                const int i = min(blockIdx.x*mmq_x + threadIdx.y + i0, ne11-1); // to prevent out-of-bounds memory accesses
 
                 const block_q8_1 * by0 = &y[i*blocks_per_col_y + kb0 * (qk/QK8_1) + kbxd];
 
@@ -1216,7 +1221,7 @@ static __global__ void mul_mat_q(
             for (int ids0 = 0; ids0 < mmq_x; ids0 += nwarps * QI8_1) {
                 const int ids = (ids0 + threadIdx.y * QI8_1 + threadIdx.x / (WARP_SIZE/QI8_1)) % mmq_x;
                 const int kby = threadIdx.x % (WARP_SIZE/QI8_1);
-                const int i_y_eff = min(blockIdx.y*mmq_x + ids, ne11-1);
+                const int i_y_eff = min(blockIdx.x*mmq_x + ids, ne11-1);
 
                 // if the sum is not needed it's faster to transform the scale to f32 ahead of time
                 const half2 * dsi_src = &y[i_y_eff*blocks_per_col_y + kb0 * (qk/QK8_1) + kr*(WARP_SIZE/QI8_1) + kby].ds;
@@ -1231,7 +1236,9 @@ static __global__ void mul_mat_q(
 
             __syncthreads();
 
-// #pragma unroll // unrolling this loop causes too much register pressure
+#if !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__))
+#pragma unroll
+#endif // !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__))
             for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
 #pragma unroll
                 for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
@@ -1250,7 +1257,7 @@ static __global__ void mul_mat_q(
 
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
-        const int j = blockIdx.y*mmq_x + j0 + threadIdx.y;
+        const int j = blockIdx.x*mmq_x + j0 + threadIdx.y;
 
         if (j >= ne1) {
             return;
@@ -1258,7 +1265,7 @@ static __global__ void mul_mat_q(
 
 #pragma unroll
         for (int i0 = 0; i0 < mmq_y; i0 += WARP_SIZE) {
-            const int i = blockIdx.x*mmq_y + i0 + threadIdx.x;
+            const int i = blockIdx.y*mmq_y + i0 + threadIdx.x;
 
             if (need_check && i > ne0) {
                 continue;
@@ -1268,17 +1275,6 @@ static __global__ void mul_mat_q(
         }
     }
 }
-
-#define MMQ_SWITCH_CASE(type)                                                                        \
-    case type: if (row_diff % arch_config.y == 0) {                                     \
-        const bool need_check = false;                                                                      \
-        mul_mat_q<type, need_check><<<block_nums, block_dims, 0, stream>>>              \
-            (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, row_stride_x, src1_padded_row_size, src1_ncols, nrows_dst); \
-    } else {                                                                                                \
-        const bool need_check = true;                                                                       \
-        mul_mat_q<type, need_check><<<block_nums, block_dims, 0, stream>>>              \
-            (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, row_stride_x, src1_padded_row_size, src1_ncols, nrows_dst); \
-    } break;                                                                                                \
 
 void ggml_cuda_op_mul_mat_q(
     ggml_backend_cuda_context & ctx,
@@ -1305,75 +1301,102 @@ void ggml_cuda_op_mul_mat_q(
     // nrows_dst == nrows of the matrix that the kernel writes into
     const int64_t nrows_dst = id == ctx.device ? ne0 : row_diff;
 
-    mmq_config_t mmq_config;
+    constexpr int mmq_y = 128;
+    constexpr int nwarps = 8;
+    const int block_num_y = (row_diff + mmq_y - 1) / mmq_y;
 
-    switch (src0->type) {
-        case GGML_TYPE_Q4_0:
-            mmq_config = MMQ_CONFIG_Q4_0;
-            break;
-        case GGML_TYPE_Q4_1:
-            mmq_config = MMQ_CONFIG_Q4_1;
-            break;
-        case GGML_TYPE_Q5_0:
-            mmq_config = MMQ_CONFIG_Q5_0;
-            break;
-        case GGML_TYPE_Q5_1:
-            mmq_config = MMQ_CONFIG_Q5_1;
-            break;
-        case GGML_TYPE_Q8_0:
-            mmq_config = MMQ_CONFIG_Q8_0;
-            break;
-        case GGML_TYPE_Q2_K:
-            mmq_config = MMQ_CONFIG_Q2_K;
-            break;
-        case GGML_TYPE_Q3_K:
-            mmq_config = MMQ_CONFIG_Q3_K;
-            break;
-        case GGML_TYPE_Q4_K:
-            mmq_config = MMQ_CONFIG_Q4_K;
-            break;
-        case GGML_TYPE_Q5_K:
-            mmq_config = MMQ_CONFIG_Q5_K;
-            break;
-        case GGML_TYPE_Q6_K:
-            mmq_config = MMQ_CONFIG_Q6_K;
-            break;
-        default:
-            GGML_ASSERT(false);
-            break;
+    const int nsm = ggml_cuda_info().devices[ggml_cuda_get_device()].nsm;
+
+    int mmq_x_best = 8;
+    int block_num_x_best = (src1_ncols + mmq_x_best - 1) / mmq_x_best;
+    int nwaves_best = (block_num_x_best*block_num_y + nsm - 1) / nsm;
+
+    for (int mmq_x = 16; mmq_x < 128 && nwaves_best > 1; mmq_x += 8) {
+        const int block_num_x = (src1_ncols + mmq_x - 1) / mmq_x;
+        const int nwaves = (block_num_x*block_num_y + nsm - 1) / nsm;
+
+        if (nwaves < nwaves_best) {
+            mmq_x_best       = mmq_x;
+            block_num_x_best = block_num_x;
+            nwaves_best      = nwaves;
+        }
     }
 
-    mmq_arch_config_t arch_config;
-    if (compute_capability >= CC_RDNA2) {
-        arch_config = mmq_config.rdna2;
-    } else if (compute_capability >= CC_OFFSET_AMD) {
-        arch_config = mmq_config.rdna1;
-    } else if (compute_capability >= CC_VOLTA) {
-        arch_config = mmq_config.ampere;
-    } else if (compute_capability >= MIN_CC_DP4A) {
-        arch_config = mmq_config.pascal;
-    } else {
-        GGML_ASSERT(false);
-    }
+    const dim3 block_nums(block_num_x_best, block_num_y, 1);
+    const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
-    const int block_num_x = (row_diff   + arch_config.y - 1) / arch_config.y;
-    const int block_num_y = (src1_ncols + arch_config.x - 1) / arch_config.x;
-    const dim3 block_nums(block_num_x, block_num_y, 1);
-    const dim3 block_dims(WARP_SIZE, arch_config.nwarps, 1);
+    constexpr ggml_type type = GGML_TYPE_Q8_0;
+    constexpr bool need_check = false;
 
-    switch (src0->type) {
-        MMQ_SWITCH_CASE(GGML_TYPE_Q4_0)
-        MMQ_SWITCH_CASE(GGML_TYPE_Q4_1)
-        MMQ_SWITCH_CASE(GGML_TYPE_Q5_0)
-        MMQ_SWITCH_CASE(GGML_TYPE_Q5_1)
-        MMQ_SWITCH_CASE(GGML_TYPE_Q8_0)
-        MMQ_SWITCH_CASE(GGML_TYPE_Q2_K)
-        MMQ_SWITCH_CASE(GGML_TYPE_Q3_K)
-        MMQ_SWITCH_CASE(GGML_TYPE_Q4_K)
-        MMQ_SWITCH_CASE(GGML_TYPE_Q5_K)
-        MMQ_SWITCH_CASE(GGML_TYPE_Q6_K)
-        default:
-            GGML_ASSERT(false);
+    // fprintf(stderr, "\n");
+    // fprintf(stderr, "dst: {%ld, %ld, %ld, %ld}\n", dst->ne[0], dst->ne[1], dst->ne[2], dst->ne[3]);
+    // fprintf(stderr, "mmq_x_best=%d nwaves_best=%d\n", mmq_x_best, nwaves_best);
+    // fprintf(stderr, "\n");
+
+    switch (mmq_x_best) {
+        case 8:
+            mul_mat_q<type,  8, need_check><<<block_nums, block_dims, 0, stream>>>
+                (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, row_stride_x, src1_padded_row_size, src1_ncols, nrows_dst);
+            break;
+        case 16:
+            mul_mat_q<type, 16, need_check><<<block_nums, block_dims, 0, stream>>>
+                (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, row_stride_x, src1_padded_row_size, src1_ncols, nrows_dst);
+            break;
+        case 24:
+            mul_mat_q<type, 24, need_check><<<block_nums, block_dims, 0, stream>>>
+                (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, row_stride_x, src1_padded_row_size, src1_ncols, nrows_dst);
+            break;
+        case 32:
+            mul_mat_q<type, 32, need_check><<<block_nums, block_dims, 0, stream>>>
+                (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, row_stride_x, src1_padded_row_size, src1_ncols, nrows_dst);
+            break;
+        case 40:
+            mul_mat_q<type, 40, need_check><<<block_nums, block_dims, 0, stream>>>
+                (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, row_stride_x, src1_padded_row_size, src1_ncols, nrows_dst);
+            break;
+        case 48:
+            mul_mat_q<type, 48, need_check><<<block_nums, block_dims, 0, stream>>>
+                (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, row_stride_x, src1_padded_row_size, src1_ncols, nrows_dst);
+            break;
+        case 56:
+            mul_mat_q<type, 56, need_check><<<block_nums, block_dims, 0, stream>>>
+                (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, row_stride_x, src1_padded_row_size, src1_ncols, nrows_dst);
+            break;
+        case 64:
+            mul_mat_q<type, 64, need_check><<<block_nums, block_dims, 0, stream>>>
+                (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, row_stride_x, src1_padded_row_size, src1_ncols, nrows_dst);
+            break;
+        case 72:
+            mul_mat_q<type, 72, need_check><<<block_nums, block_dims, 0, stream>>>
+                (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, row_stride_x, src1_padded_row_size, src1_ncols, nrows_dst);
+            break;
+        case 80:
+            mul_mat_q<type, 80, need_check><<<block_nums, block_dims, 0, stream>>>
+                (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, row_stride_x, src1_padded_row_size, src1_ncols, nrows_dst);
+            break;
+        case 88:
+            mul_mat_q<type, 88, need_check><<<block_nums, block_dims, 0, stream>>>
+                (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, row_stride_x, src1_padded_row_size, src1_ncols, nrows_dst);
+            break;
+        case 96:
+            mul_mat_q<type, 96, need_check><<<block_nums, block_dims, 0, stream>>>
+                (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, row_stride_x, src1_padded_row_size, src1_ncols, nrows_dst);
+            break;
+        case 104:
+            mul_mat_q<type, 104, need_check><<<block_nums, block_dims, 0, stream>>>
+                (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, row_stride_x, src1_padded_row_size, src1_ncols, nrows_dst);
+            break;
+        case 112:
+            mul_mat_q<type, 112, need_check><<<block_nums, block_dims, 0, stream>>>
+                (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, row_stride_x, src1_padded_row_size, src1_ncols, nrows_dst);
+            break;
+        case 120:
+            mul_mat_q<type, 120, need_check><<<block_nums, block_dims, 0, stream>>>
+                (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, row_stride_x, src1_padded_row_size, src1_ncols, nrows_dst);
+            break;
+        case 128:
+            mul_mat_q<type, 128, need_check><<<block_nums, block_dims, 0, stream>>>
+                (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, row_stride_x, src1_padded_row_size, src1_ncols, nrows_dst);
             break;
     }
 
