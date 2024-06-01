@@ -1150,7 +1150,7 @@ static constexpr __device__ vec_dot_q_mul_mat_cuda_t get_vec_dot_mmq(ggml_type t
         nullptr;
 }
 
-template <ggml_type type, bool need_check>
+template <ggml_type type, bool need_check_x, bool need_check_y>
 static __global__ void mul_mat_q(
     const char * __restrict__ x, const char * __restrict__ y, float * __restrict__ dst,
     const int ne00, const int ne01, const int nb01, const int ne10, const int ne11, const int nb11, const int ne0) {
@@ -1169,13 +1169,11 @@ static __global__ void mul_mat_q(
     constexpr int nwarps = arch_config.nwarps;
 
     constexpr    allocate_tiles_cuda_t allocate_tiles = get_allocate_tiles<mmq_y>(type);
-    constexpr        load_tiles_cuda_t     load_tiles = get_load_tiles<mmq_y, nwarps, need_check>(type);
+    constexpr        load_tiles_cuda_t     load_tiles = get_load_tiles<mmq_y, nwarps, need_check_x>(type);
     constexpr vec_dot_q_mul_mat_cuda_t        vec_dot = get_vec_dot_mmq(type);
 
     const int blocks_per_row_x = ne00 / qk;
     const int blocks_per_warp = WARP_SIZE / qi;
-
-    const int & ne1 = ne11;
 
     x   +=                           nb01 * blockIdx.x*mmq_y;
     y   += nb11 * blockIdx.y*mmq_x;
@@ -1207,25 +1205,33 @@ static __global__ void mul_mat_q(
             const int kbxd = kqs / QI8_1;
 
 #pragma unroll
-            for (int i0 = 0; i0 < mmq_x; i0 += nwarps) {
-                const int i = min(i0 + threadIdx.y, tile_y_max_j); // to prevent out-of-bounds memory accesses
+            for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
+                int j = j0 + threadIdx.y;
 
-                const block_q8_1 * by0 = ((const block_q8_1 *) (y + i*nb11)) + kb0 * (qk/QK8_1) + kbxd;
+                if (need_check_y) {
+                    j = min(j, tile_y_max_j);
+                }
 
-                const int index_y = (i0 + threadIdx.y) * WARP_SIZE + kqs % WARP_SIZE;
+                const block_q8_1 * by0 = ((const block_q8_1 *) (y + j*nb11)) + kb0 * (qk/QK8_1) + kbxd;
+
+                const int index_y = (j0 + threadIdx.y) * WARP_SIZE + kqs % WARP_SIZE;
                 tile_y_qs[index_y] = get_int_from_int8_aligned(by0->qs, threadIdx.x % QI8_1);
             }
 
 #pragma unroll
-            for (int ids0 = 0; ids0 < mmq_x; ids0 += nwarps * QI8_1) {
-                const int ids = (ids0 + threadIdx.y * QI8_1 + threadIdx.x / (WARP_SIZE/QI8_1)) % mmq_x;
+            for (int jds0 = 0; jds0 < mmq_x; jds0 += nwarps * QI8_1) {
+                int jds = (jds0 + threadIdx.y * QI8_1 + threadIdx.x / (WARP_SIZE/QI8_1)) % mmq_x;
+
+                if (need_check_y) {
+                    jds = min(jds, tile_y_max_j);
+                }
+
                 const int kby = threadIdx.x % (WARP_SIZE/QI8_1);
-                const int col_y_eff = min(ids, tile_y_max_j);
 
                 // if the sum is not needed it's faster to transform the scale to f32 ahead of time
-                const block_q8_1 * by = ((const block_q8_1 *) (y + col_y_eff*nb11)) + kb0 * (qk/QK8_1) + kr*(WARP_SIZE/QI8_1) + kby;
+                const block_q8_1 * by = ((const block_q8_1 *) (y + jds*nb11)) + kb0 * (qk/QK8_1) + kr*(WARP_SIZE/QI8_1) + kby;
                 const half2 * dsi_src = &by->ds;
-                half2       * dsi_dst = &tile_y_ds[ids * (WARP_SIZE/QI8_1) + kby];
+                half2       * dsi_dst = &tile_y_ds[jds * (WARP_SIZE/QI8_1) + kby];
                 if (need_sum) {
                     *dsi_dst = *dsi_src;
                 } else {
@@ -1257,7 +1263,7 @@ static __global__ void mul_mat_q(
     for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
         const int j = j0 + threadIdx.y;
 
-        if (j > tile_y_max_j) {
+        if (need_check_y && j > tile_y_max_j) {
             return;
         }
 
@@ -1265,7 +1271,7 @@ static __global__ void mul_mat_q(
         for (int i0 = 0; i0 < mmq_y; i0 += WARP_SIZE) {
             const int i = i0 + threadIdx.x;
 
-            if (need_check && i > tile_x_max_i) {
+            if (need_check_x && i > tile_x_max_i) {
                 continue;
             }
 
@@ -1276,12 +1282,14 @@ static __global__ void mul_mat_q(
 
 #define MMQ_SWITCH_CASE(type)                                                                        \
     case type: if (row_diff % arch_config.y == 0) {                                     \
-        const bool need_check = false;                                                                      \
-        mul_mat_q<type, need_check><<<block_nums, block_dims, 0, stream>>>              \
+        const bool need_check_x = false;                                                                      \
+        const bool need_check_y = false;                                                                      \
+        mul_mat_q<type, need_check_x, need_check_y><<<block_nums, block_dims, 0, stream>>>              \
             (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nb11, nrows_dst); \
     } else {                                                                                                \
-        const bool need_check = true;                                                                       \
-        mul_mat_q<type, need_check><<<block_nums, block_dims, 0, stream>>>              \
+        const bool need_check_x = true;                                                                       \
+        const bool need_check_y = false;                                                                       \
+        mul_mat_q<type, need_check_x, need_check_y><<<block_nums, block_dims, 0, stream>>>              \
             (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nb11, nrows_dst); \
     } break;                                                                                                \
 
