@@ -12,130 +12,6 @@ typedef float (*vec_dot_q_mul_mat_cuda_t)(
     const int * __restrict__ y_qs, const half2 * __restrict__ y_ms, const int & i, const int & j, const int & k);
 typedef void (*dot_kernel_k_t)(const void * __restrict__ vx, const int ib, const int iqs, const float * __restrict__ y, float & v);
 
-struct mmq_arch_config_t {
-    int x;
-    int y;
-    int nwarps;
-};
-
-struct mmq_config_t {
-    mmq_arch_config_t rdna2;
-    mmq_arch_config_t rdna1;
-    mmq_arch_config_t ampere;
-    mmq_arch_config_t pascal;
-};
-
-constexpr mmq_config_t MMQ_CONFIG_Q4_0 = {
-//        x    y  nwarps
-        { 64, 128, 8},
-        { 64,  64, 8},
-#ifdef CUDA_USE_TENSOR_CORES
-        {  4,  32, 4},
-#else
-        { 64, 128, 4},
-#endif // CUDA_USE_TENSOR_CORES
-        { 64,  64, 8},
-};
-constexpr mmq_config_t MMQ_CONFIG_Q4_1 = {
-//        x    y  nwarps
-        { 64, 128, 8},
-        { 64,  64, 8},
-#ifdef CUDA_USE_TENSOR_CORES
-        {  4,  32, 4},
-#else
-        { 64, 128, 4},
-#endif // CUDA_USE_TENSOR_CORES
-        { 64,  64, 8},
-};
-constexpr mmq_config_t MMQ_CONFIG_Q5_0 = {
-//        x    y  nwarps
-        { 64, 128, 8},
-        { 64,  64, 8},
-#ifdef CUDA_USE_TENSOR_CORES
-        {  4,  32, 4},
-#else
-        {128,  64, 4},
-#endif // CUDA_USE_TENSOR_CORES
-        { 64,  64, 8},
-};
-constexpr mmq_config_t MMQ_CONFIG_Q5_1 = {
-//        x    y  nwarps
-        { 64, 128, 8},
-        { 64,  64, 8},
-#ifdef CUDA_USE_TENSOR_CORES
-        {  4,  32, 4},
-#else
-        {128,  64, 4},
-#endif // CUDA_USE_TENSOR_CORES
-        { 64,  64, 8},
-};
-constexpr mmq_config_t MMQ_CONFIG_Q8_0 = {
-//        x    y  nwarps
-        { 64, 128, 8},
-        { 64,  64, 8},
-#ifdef CUDA_USE_TENSOR_CORES
-        {  4,  32, 4},
-#else
-        {128,  64, 4},
-#endif // CUDA_USE_TENSOR_CORES
-        { 64,  64, 8},
-};
-constexpr mmq_config_t MMQ_CONFIG_Q2_K = {
-//        x    y  nwarps
-        { 64, 128, 8},
-        {128,  32, 8},
-#ifdef CUDA_USE_TENSOR_CORES
-        {  4,  32, 4},
-#else
-        { 64, 128, 4},
-#endif // CUDA_USE_TENSOR_CORES
-        { 64,  64, 8},
-};
-constexpr mmq_config_t MMQ_CONFIG_Q3_K = {
-//        x    y  nwarps
-        {128,  64, 8},
-        { 32, 128, 8},
-#ifdef CUDA_USE_TENSOR_CORES
-        {  4,  32, 4},
-#else
-        {128, 128, 4},
-#endif // CUDA_USE_TENSOR_CORES
-        { 64,  64, 8},
-};
-constexpr mmq_config_t MMQ_CONFIG_Q4_K = {
-//        x    y  nwarps
-        { 64, 128, 8},
-        { 32,  64, 8},
-#ifdef CUDA_USE_TENSOR_CORES
-        {  4,  32, 4},
-#else
-        { 64, 128, 4},
-#endif // CUDA_USE_TENSOR_CORES
-        { 64,  64, 8},
-};
-constexpr mmq_config_t MMQ_CONFIG_Q5_K = {
-//        x    y  nwarps
-        { 64, 128, 8},
-        { 32,  64, 8},
-#ifdef CUDA_USE_TENSOR_CORES
-        {  4,  32, 4},
-#else
-        { 64, 128, 4},
-#endif // CUDA_USE_TENSOR_CORES
-        { 64,  64, 8},
-};
-constexpr mmq_config_t MMQ_CONFIG_Q6_K = {
-//        x    y  nwarps
-        { 64, 128, 8},
-        { 32,  64, 8},
-#ifdef CUDA_USE_TENSOR_CORES
-        {  4,  32, 4},
-#else
-        { 64,  64, 4},
-#endif // CUDA_USE_TENSOR_CORES
-        { 64,  64, 8},
-};
-
 // ------------------------------------------------------------
 
 template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q4_0(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc) {
@@ -1046,41 +922,6 @@ static __device__ __forceinline__ float vec_dot_q6_K_q8_1_mul_mat(
 
 // -------------------------------------------------------------------------------------------------------------------------------------
 
-static constexpr __device__ mmq_config_t get_mmq_config(ggml_type type) {
-    return type == GGML_TYPE_Q4_0 ? MMQ_CONFIG_Q4_0 :
-        type == GGML_TYPE_Q4_1 ? MMQ_CONFIG_Q4_1 :
-        type == GGML_TYPE_Q5_0 ? MMQ_CONFIG_Q5_0 :
-        type == GGML_TYPE_Q5_1 ? MMQ_CONFIG_Q5_1 :
-        type == GGML_TYPE_Q8_0 ? MMQ_CONFIG_Q8_0 :
-        type == GGML_TYPE_Q2_K ? MMQ_CONFIG_Q2_K :
-        type == GGML_TYPE_Q3_K ? MMQ_CONFIG_Q3_K :
-        type == GGML_TYPE_Q4_K ? MMQ_CONFIG_Q4_K :
-        type == GGML_TYPE_Q5_K ? MMQ_CONFIG_Q5_K :
-        type == GGML_TYPE_Q6_K ? MMQ_CONFIG_Q6_K :
-        mmq_config_t();
-}
-
-static constexpr __device__ mmq_arch_config_t get_arch_config_device(mmq_config_t mmq_config) {
-
-#if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-
-#if defined(RDNA3) || defined(RDNA2)
-    return mmq_config.rdna2;
-#else
-    return mmq_config.rdna1;
-#endif // defined(RDNA3) || defined(RDNA2)
-
-#else
-
-#if __CUDA_ARCH__ >= CC_VOLTA
-    return mmq_config.ampere;
-#else
-    return mmq_config.pascal;
-#endif // __CUDA_ARCH__ >= CC_VOLTA
-
-#endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-}
-
 template <int mmq_y>
 static constexpr __device__ allocate_tiles_cuda_t get_allocate_tiles(ggml_type type) {
     return type == GGML_TYPE_Q4_0 ? allocate_tiles_q4_0<mmq_y> :
@@ -1147,8 +988,8 @@ static constexpr __device__ vec_dot_q_mul_mat_cuda_t get_vec_dot_mmq(ggml_type t
         nullptr;
 }
 
-template <ggml_type type, int mmq_x, bool need_check>
-__launch_bounds__(8*WARP_SIZE, 1)
+template <ggml_type type, int mmq_x, int mmq_y, bool need_check>
+__launch_bounds__(8*WARP_SIZE, (mmq_x*mmq_y <= 64*128) ? 2 : 1)
 static __global__ void mul_mat_q(
     const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst,
     const int ne00, const int ne01, const int nb01, const int ne10, const int ne11, const int ne0) {
@@ -1160,7 +1001,6 @@ static __global__ void mul_mat_q(
     constexpr bool need_sum = get_need_sum(type);
     constexpr int  vdr      = get_vdr_mmq(type);
 
-    constexpr int mmq_y  = 128;
     constexpr int nwarps = 8;
 
     constexpr    allocate_tiles_cuda_t allocate_tiles = get_allocate_tiles<mmq_y>(type);
@@ -1302,7 +1142,10 @@ void ggml_cuda_op_mul_mat_q(
     int block_num_x_best = (src1_ncols + mmq_x_best - 1) / mmq_x_best;
     int nwaves_best = (block_num_x_best*block_num_y + nsm - 1) / nsm;
 
-    for (int mmq_x = 16; mmq_x < 128 && nwaves_best > 1; mmq_x += 8) {
+    const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
+    const int mmq_x_max = cc >= CC_VOLTA ? 128 : 64;
+
+    for (int mmq_x = 16; mmq_x <= mmq_x_max && nwaves_best > 1; mmq_x += 8) {
         const int block_num_x = (src1_ncols + mmq_x - 1) / mmq_x;
         const int nwaves = (block_num_x*block_num_y + nsm - 1) / nsm;
 
@@ -1319,74 +1162,69 @@ void ggml_cuda_op_mul_mat_q(
     constexpr ggml_type type = GGML_TYPE_Q8_0;
     constexpr bool need_check = false;
 
-    // fprintf(stderr, "\n");
-    // fprintf(stderr, "dst: {%ld, %ld, %ld, %ld}\n", dst->ne[0], dst->ne[1], dst->ne[2], dst->ne[3]);
-    // fprintf(stderr, "mmq_x_best=%d nwaves_best=%d\n", mmq_x_best, nwaves_best);
-    // fprintf(stderr, "\n");
-
     switch (mmq_x_best) {
         case 8:
-            mul_mat_q<type,  8, need_check><<<block_nums, block_dims, 0, stream>>>
+            mul_mat_q<type,  8, mmq_y, need_check><<<block_nums, block_dims, 0, stream>>>
                 (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nrows_dst);
             break;
         case 16:
-            mul_mat_q<type, 16, need_check><<<block_nums, block_dims, 0, stream>>>
+            mul_mat_q<type, 16, mmq_y, need_check><<<block_nums, block_dims, 0, stream>>>
                 (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nrows_dst);
             break;
         case 24:
-            mul_mat_q<type, 24, need_check><<<block_nums, block_dims, 0, stream>>>
+            mul_mat_q<type, 24, mmq_y, need_check><<<block_nums, block_dims, 0, stream>>>
                 (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nrows_dst);
             break;
         case 32:
-            mul_mat_q<type, 32, need_check><<<block_nums, block_dims, 0, stream>>>
+            mul_mat_q<type, 32, mmq_y, need_check><<<block_nums, block_dims, 0, stream>>>
                 (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nrows_dst);
             break;
         case 40:
-            mul_mat_q<type, 40, need_check><<<block_nums, block_dims, 0, stream>>>
+            mul_mat_q<type, 40, mmq_y, need_check><<<block_nums, block_dims, 0, stream>>>
                 (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nrows_dst);
             break;
         case 48:
-            mul_mat_q<type, 48, need_check><<<block_nums, block_dims, 0, stream>>>
+            mul_mat_q<type, 48, mmq_y, need_check><<<block_nums, block_dims, 0, stream>>>
                 (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nrows_dst);
             break;
         case 56:
-            mul_mat_q<type, 56, need_check><<<block_nums, block_dims, 0, stream>>>
+            mul_mat_q<type, 56, mmq_y, need_check><<<block_nums, block_dims, 0, stream>>>
                 (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nrows_dst);
             break;
         case 64:
-            mul_mat_q<type, 64, need_check><<<block_nums, block_dims, 0, stream>>>
+            mul_mat_q<type, 64, mmq_y, need_check><<<block_nums, block_dims, 0, stream>>>
                 (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nrows_dst);
             break;
         case 72:
-            mul_mat_q<type, 72, need_check><<<block_nums, block_dims, 0, stream>>>
+            mul_mat_q<type, 72, mmq_y, need_check><<<block_nums, block_dims, 0, stream>>>
                 (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nrows_dst);
             break;
         case 80:
-            mul_mat_q<type, 80, need_check><<<block_nums, block_dims, 0, stream>>>
+            mul_mat_q<type, 80, mmq_y, need_check><<<block_nums, block_dims, 0, stream>>>
                 (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nrows_dst);
             break;
         case 88:
-            mul_mat_q<type, 88, need_check><<<block_nums, block_dims, 0, stream>>>
+            mul_mat_q<type, 88, mmq_y, need_check><<<block_nums, block_dims, 0, stream>>>
                 (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nrows_dst);
             break;
         case 96:
-            mul_mat_q<type, 96, need_check><<<block_nums, block_dims, 0, stream>>>
+            mul_mat_q<type, 96, mmq_y, need_check><<<block_nums, block_dims, 0, stream>>>
                 (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nrows_dst);
             break;
         case 104:
-            mul_mat_q<type, 104, need_check><<<block_nums, block_dims, 0, stream>>>
+            mul_mat_q<type, 104, mmq_y, need_check><<<block_nums, block_dims, 0, stream>>>
                 (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nrows_dst);
             break;
         case 112:
-            mul_mat_q<type, 112, need_check><<<block_nums, block_dims, 0, stream>>>
+            mul_mat_q<type, 112, mmq_y, need_check><<<block_nums, block_dims, 0, stream>>>
                 (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nrows_dst);
             break;
         case 120:
-            mul_mat_q<type, 120, need_check><<<block_nums, block_dims, 0, stream>>>
+            mul_mat_q<type, 120, mmq_y, need_check><<<block_nums, block_dims, 0, stream>>>
                 (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nrows_dst);
             break;
         case 128:
-            mul_mat_q<type, 128, need_check><<<block_nums, block_dims, 0, stream>>>
+            mul_mat_q<type, 128, mmq_y, need_check><<<block_nums, block_dims, 0, stream>>>
                 (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nrows_dst);
             break;
     }
