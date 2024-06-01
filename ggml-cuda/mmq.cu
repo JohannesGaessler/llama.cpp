@@ -1179,11 +1179,10 @@ static __global__ void mul_mat_q(
 
     const int & ne1 = ne11;
 
-    x += nb01 * blockIdx.x*mmq_y;
+    x   += nb01 * blockIdx.x*mmq_y;
+    dst +=        blockIdx.x*mmq_y;
 
     const int tile_x_max_i = ne01 - blockIdx.x*mmq_y - 1;
-
-    const int row_dst_0 = blockIdx.x*mmq_y;
 
     const int col_dst_0 = blockIdx.y*mmq_x;
     const int & col_y_0 = col_dst_0;
@@ -1265,14 +1264,14 @@ static __global__ void mul_mat_q(
         }
 
 #pragma unroll
-        for (int i = 0; i < mmq_y; i += WARP_SIZE) {
-            const int row_dst = row_dst_0 + threadIdx.x + i;
+        for (int i0 = 0; i0 < mmq_y; i0 += WARP_SIZE) {
+            const int i = i0 + threadIdx.x;
 
-            if (row_dst >= ne0) {
+            if (need_check && i > tile_x_max_i) {
                 continue;
             }
 
-            dst[col_dst*ne0 + row_dst] = sum[i/WARP_SIZE][j/nwarps];
+            dst[col_dst*ne0 + i] = sum[i0/WARP_SIZE][j/nwarps];
         }
     }
 }
