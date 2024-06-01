@@ -1173,7 +1173,7 @@ static constexpr __device__ vec_dot_q_mul_mat_cuda_t get_vec_dot_mmq(ggml_type t
 template <ggml_type type, bool need_check>
 static __global__ void mul_mat_q(
     const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ne00, const int ne01, const int nb01, const int ncols_y, const int nrows_y, const int nrows_dst) {
+    const int ne00, const int ne01, const int nb01, const int ne10, const int ne11, const int ne0) {
 
     constexpr int  qk       = ggml_blck_size_device(type);
     constexpr int  ts       = ggml_type_size_device(type);
@@ -1196,10 +1196,10 @@ static __global__ void mul_mat_q(
     const block_q8_1 * y = (const block_q8_1 *) vy;
 
     const int blocks_per_row_x = ne00 / qk;
-    const int blocks_per_col_y = nrows_y / QK8_1;
+    const int blocks_per_col_y = ne10 / QK8_1;
     const int blocks_per_warp = WARP_SIZE / qi;
 
-    const int & ncols_dst = ncols_y;
+    const int & ne1 = ne11;
 
     const int row_dst_0 = blockIdx.x*mmq_y;
     const int & row_x_0 = row_dst_0;
@@ -1231,7 +1231,7 @@ static __global__ void mul_mat_q(
 
 #pragma unroll
             for (int i = 0; i < mmq_x; i += nwarps) {
-                const int col_y_eff = min(col_y_0 + threadIdx.y + i, ncols_y-1); // to prevent out-of-bounds memory accesses
+                const int col_y_eff = min(col_y_0 + threadIdx.y + i, ne11-1); // to prevent out-of-bounds memory accesses
 
                 const block_q8_1 * by0 = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + kbxd];
 
@@ -1243,7 +1243,7 @@ static __global__ void mul_mat_q(
             for (int ids0 = 0; ids0 < mmq_x; ids0 += nwarps * QI8_1) {
                 const int ids = (ids0 + threadIdx.y * QI8_1 + threadIdx.x / (WARP_SIZE/QI8_1)) % mmq_x;
                 const int kby = threadIdx.x % (WARP_SIZE/QI8_1);
-                const int col_y_eff = min(col_y_0 + ids, ncols_y-1);
+                const int col_y_eff = min(col_y_0 + ids, ne11-1);
 
                 // if the sum is not needed it's faster to transform the scale to f32 ahead of time
                 const half2 * dsi_src = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + ir*(WARP_SIZE/QI8_1) + kby].ds;
@@ -1279,7 +1279,7 @@ static __global__ void mul_mat_q(
     for (int j = 0; j < mmq_x; j += nwarps) {
         const int col_dst = col_dst_0 + j + threadIdx.y;
 
-        if (col_dst >= ncols_dst) {
+        if (col_dst >= ne1) {
             return;
         }
 
@@ -1287,11 +1287,11 @@ static __global__ void mul_mat_q(
         for (int i = 0; i < mmq_y; i += WARP_SIZE) {
             const int row_dst = row_dst_0 + threadIdx.x + i;
 
-            if (row_dst >= nrows_dst) {
+            if (row_dst >= ne0) {
                 continue;
             }
 
-            dst[col_dst*nrows_dst + row_dst] = sum[i/WARP_SIZE][j/nwarps];
+            dst[col_dst*ne0 + row_dst] = sum[i/WARP_SIZE][j/nwarps];
         }
     }
 }
@@ -1300,11 +1300,11 @@ static __global__ void mul_mat_q(
     case type: if (row_diff % arch_config.y == 0) {                                     \
         const bool need_check = false;                                                                      \
         mul_mat_q<type, need_check><<<block_nums, block_dims, 0, stream>>>              \
-            (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_ncols, src1_padded_row_size, nrows_dst); \
+            (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nrows_dst); \
     } else {                                                                                                \
         const bool need_check = true;                                                                       \
         mul_mat_q<type, need_check><<<block_nums, block_dims, 0, stream>>>              \
-            (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_ncols, src1_padded_row_size, nrows_dst); \
+            (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nrows_dst); \
     } break;                                                                                                \
 
 void ggml_cuda_op_mul_mat_q(
