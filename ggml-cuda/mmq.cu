@@ -1181,8 +1181,9 @@ static __global__ void mul_mat_q(
 
     x += nb01 * blockIdx.x*mmq_y;
 
+    const int tile_x_max_i = ne01 - blockIdx.x*mmq_y - 1;
+
     const int row_dst_0 = blockIdx.x*mmq_y;
-    const int & row_x_0 = row_dst_0;
 
     const int col_dst_0 = blockIdx.y*mmq_x;
     const int & col_y_0 = col_dst_0;
@@ -1202,7 +1203,7 @@ static __global__ void mul_mat_q(
     for (int ib0 = 0; ib0 < blocks_per_row_x; ib0 += blocks_per_warp) {
 
         load_tiles(x + ib0*ts, tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc,
-                   threadIdx.y, ne01-row_x_0-1, threadIdx.x, nb01);
+                   threadIdx.y, tile_x_max_i, threadIdx.x, nb01);
 
 #pragma unroll
         for (int ir = 0; ir < qr; ++ir) {
