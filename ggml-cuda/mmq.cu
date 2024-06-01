@@ -1,3 +1,4 @@
+#include "common.cuh"
 #include "mmq.cuh"
 #include "vecdotq.cuh"
 #include <cstdint>
@@ -1151,8 +1152,8 @@ static constexpr __device__ vec_dot_q_mul_mat_cuda_t get_vec_dot_mmq(ggml_type t
 
 template <ggml_type type, bool need_check>
 static __global__ void mul_mat_q(
-    const char * __restrict__ x, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ne00, const int ne01, const int nb01, const int ne10, const int ne11, const int ne0) {
+    const char * __restrict__ x, const char * __restrict__ y, float * __restrict__ dst,
+    const int ne00, const int ne01, const int nb01, const int ne10, const int ne11, const int nb11, const int ne0) {
 
     constexpr int  qk       = ggml_blck_size_device(type);
     constexpr int  ts       = ggml_type_size_device(type);
@@ -1170,8 +1171,6 @@ static __global__ void mul_mat_q(
     constexpr    allocate_tiles_cuda_t allocate_tiles = get_allocate_tiles<mmq_y>(type);
     constexpr        load_tiles_cuda_t     load_tiles = get_load_tiles<mmq_y, nwarps, need_check>(type);
     constexpr vec_dot_q_mul_mat_cuda_t        vec_dot = get_vec_dot_mmq(type);
-
-    const block_q8_1 * y = (const block_q8_1 *) vy;
 
     const int blocks_per_row_x = ne00 / qk;
     const int blocks_per_col_y = ne10 / QK8_1;
@@ -1213,7 +1212,7 @@ static __global__ void mul_mat_q(
             for (int i = 0; i < mmq_x; i += nwarps) {
                 const int col_y_eff = min(col_y_0 + threadIdx.y + i, ne11-1); // to prevent out-of-bounds memory accesses
 
-                const block_q8_1 * by0 = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + kbxd];
+                const block_q8_1 * by0 = ((const block_q8_1 *) (y + col_y_eff*nb11)) + ib0 * (qk/QK8_1) + kbxd;
 
                 const int index_y = (threadIdx.y + i) * WARP_SIZE + kqs % WARP_SIZE;
                 tile_y_qs[index_y] = get_int_from_int8_aligned(by0->qs, threadIdx.x % QI8_1);
@@ -1226,7 +1225,8 @@ static __global__ void mul_mat_q(
                 const int col_y_eff = min(col_y_0 + ids, ne11-1);
 
                 // if the sum is not needed it's faster to transform the scale to f32 ahead of time
-                const half2 * dsi_src = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + ir*(WARP_SIZE/QI8_1) + kby].ds;
+                const block_q8_1 * by = ((const block_q8_1 *) (y + col_y_eff*nb11)) + ib0 * (qk/QK8_1) + ir*(WARP_SIZE/QI8_1) + kby;
+                const half2 * dsi_src = &by->ds;
                 half2       * dsi_dst = &tile_y_ds[ids * (WARP_SIZE/QI8_1) + kby];
                 if (need_sum) {
                     *dsi_dst = *dsi_src;
@@ -1280,11 +1280,11 @@ static __global__ void mul_mat_q(
     case type: if (row_diff % arch_config.y == 0) {                                     \
         const bool need_check = false;                                                                      \
         mul_mat_q<type, need_check><<<block_nums, block_dims, 0, stream>>>              \
-            (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nrows_dst); \
+            (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nb11, nrows_dst); \
     } else {                                                                                                \
         const bool need_check = true;                                                                       \
         mul_mat_q<type, need_check><<<block_nums, block_dims, 0, stream>>>              \
-            (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nrows_dst); \
+            (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nb11, nrows_dst); \
     } break;                                                                                                \
 
 void ggml_cuda_op_mul_mat_q(
@@ -1299,6 +1299,8 @@ void ggml_cuda_op_mul_mat_q(
 
     const int64_t ne10 = src1->ne[0];
     GGML_ASSERT(ne10 % QK8_1 == 0);
+
+    const int64_t nb11 = src1_padded_row_size * ggml_type_size(GGML_TYPE_Q8_1)/ggml_blck_size(GGML_TYPE_Q8_1);
 
     const int64_t ne0 = dst->ne[0];
 
