@@ -1179,6 +1179,8 @@ static __global__ void mul_mat_q(
 
     const int & ne1 = ne11;
 
+    x += row_stride_x*ts * blockIdx.x*mmq_y;
+
     const int row_dst_0 = blockIdx.x*mmq_y;
     const int & row_x_0 = row_dst_0;
 
@@ -1199,7 +1201,7 @@ static __global__ void mul_mat_q(
 
     for (int ib0 = 0; ib0 < blocks_per_row_x; ib0 += blocks_per_warp) {
 
-        load_tiles(x + (row_x_0*row_stride_x + ib0)*ts, tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc,
+        load_tiles(x + ib0*ts, tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc,
                    threadIdx.y, ne01-row_x_0-1, threadIdx.x, row_stride_x);
 
 #pragma unroll
