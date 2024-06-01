@@ -1192,23 +1192,23 @@ static __global__ void mul_mat_q(
 
     float sum[mmq_y/WARP_SIZE][mmq_x/nwarps] = {{0.0f}};
 
-    for (int ib0 = 0; ib0 < blocks_per_row_x; ib0 += blocks_per_warp) {
+    for (int kb0 = 0; kb0 < blocks_per_row_x; kb0 += blocks_per_warp) {
 
-        load_tiles(x + ib0*ts, tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc,
+        load_tiles(x + kb0*ts, tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc,
                    threadIdx.y, tile_x_max_i, threadIdx.x, row_stride_x);
 
 #pragma unroll
-        for (int ir = 0; ir < qr; ++ir) {
-            const int kqs = ir*WARP_SIZE + threadIdx.x;
+        for (int kr = 0; kr < qr; ++kr) {
+            const int kqs = kr*WARP_SIZE + threadIdx.x;
             const int kbxd = kqs / QI8_1;
 
 #pragma unroll
-            for (int i = 0; i < mmq_x; i += nwarps) {
-                const int col_y_eff = min(blockIdx.y*mmq_x + threadIdx.y + i, ne11-1); // to prevent out-of-bounds memory accesses
+            for (int i0 = 0; i0 < mmq_x; i0 += nwarps) {
+                const int i = min(blockIdx.y*mmq_x + threadIdx.y + i0, ne11-1); // to prevent out-of-bounds memory accesses
 
-                const block_q8_1 * by0 = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + kbxd];
+                const block_q8_1 * by0 = &y[i*blocks_per_col_y + kb0 * (qk/QK8_1) + kbxd];
 
-                const int index_y = (threadIdx.y + i) * WARP_SIZE + kqs % WARP_SIZE;
+                const int index_y = (i0 + threadIdx.y) * WARP_SIZE + kqs % WARP_SIZE;
                 tile_y_qs[index_y] = get_int_from_int8_aligned(by0->qs, threadIdx.x % QI8_1);
             }
 
@@ -1216,10 +1216,10 @@ static __global__ void mul_mat_q(
             for (int ids0 = 0; ids0 < mmq_x; ids0 += nwarps * QI8_1) {
                 const int ids = (ids0 + threadIdx.y * QI8_1 + threadIdx.x / (WARP_SIZE/QI8_1)) % mmq_x;
                 const int kby = threadIdx.x % (WARP_SIZE/QI8_1);
-                const int col_y_eff = min(blockIdx.y*mmq_x + ids, ne11-1);
+                const int i_y_eff = min(blockIdx.y*mmq_x + ids, ne11-1);
 
                 // if the sum is not needed it's faster to transform the scale to f32 ahead of time
-                const half2 * dsi_src = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + ir*(WARP_SIZE/QI8_1) + kby].ds;
+                const half2 * dsi_src = &y[i_y_eff*blocks_per_col_y + kb0 * (qk/QK8_1) + kr*(WARP_SIZE/QI8_1) + kby].ds;
                 half2       * dsi_dst = &tile_y_ds[ids * (WARP_SIZE/QI8_1) + kby];
                 if (need_sum) {
                     *dsi_dst = *dsi_src;
@@ -1232,14 +1232,14 @@ static __global__ void mul_mat_q(
             __syncthreads();
 
 // #pragma unroll // unrolling this loop causes too much register pressure
-            for (int k = ir*WARP_SIZE/qr; k < (ir+1)*WARP_SIZE/qr; k += vdr) {
+            for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
 #pragma unroll
-                for (int j = 0; j < mmq_x; j += nwarps) {
+                for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
 #pragma unroll
-                    for (int i = 0; i < mmq_y; i += WARP_SIZE) {
-                        sum[i/WARP_SIZE][j/nwarps] += vec_dot(
+                    for (int i0 = 0; i0 < mmq_y; i0 += WARP_SIZE) {
+                        sum[i0/WARP_SIZE][j0/nwarps] += vec_dot(
                             tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc, tile_y_qs, tile_y_ds,
-                            threadIdx.x + i, threadIdx.y + j, k);
+                            i0 + threadIdx.x, j0 + threadIdx.y, k0);
                     }
                 }
             }
