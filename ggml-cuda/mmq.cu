@@ -1189,8 +1189,8 @@ static __global__ void mul_mat_q(
 
     allocate_tiles(&tile_x_ql, &tile_x_dm, &tile_x_qh, &tile_x_sc);
 
-    __shared__ int    tile_y_qs[mmq_x * WARP_SIZE];
-    __shared__ half2  tile_y_ds[mmq_x * WARP_SIZE/QI8_1];
+    __shared__ int   tile_y_qs[mmq_x * WARP_SIZE];
+    __shared__ half2 tile_y_ds[mmq_x * WARP_SIZE/QI8_1];
 
     float sum[mmq_y/WARP_SIZE][mmq_x/nwarps] = {{0.0f}};
 
@@ -1243,14 +1243,14 @@ static __global__ void mul_mat_q(
             __syncthreads();
 
 // #pragma unroll // unrolling this loop causes too much register pressure
-            for (int k = kr*WARP_SIZE/qr; k < (kr+1)*WARP_SIZE/qr; k += vdr) {
+            for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
 #pragma unroll
                 for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
 #pragma unroll
                     for (int i0 = 0; i0 < mmq_y; i0 += WARP_SIZE) {
                         sum[i0/WARP_SIZE][j0/nwarps] += vec_dot(
                             tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc, tile_y_qs, tile_y_ds,
-                            i0 + threadIdx.x, j0 + threadIdx.y, k);
+                            i0 + threadIdx.x, j0 + threadIdx.y, k0);
                     }
                 }
             }
