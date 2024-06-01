@@ -4,8 +4,8 @@
 
 typedef void (*allocate_tiles_cuda_t)(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc);
 typedef void (*load_tiles_cuda_t)(
-    const void * __restrict__ vx, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
-    int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & blocks_per_row);
+    const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
+    int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & stride);
 typedef float (*vec_dot_q_mul_mat_cuda_t)(
     const int * __restrict__ x_ql, const half2 * __restrict__ x_dm, const int * __restrict__ x_qh, const int * __restrict__ x_sc,
     const int * __restrict__ y_qs, const half2 * __restrict__ y_ms, const int & i, const int & j, const int & k);
@@ -152,8 +152,8 @@ template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q4_0(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q4_0(
-    const void * __restrict__ vx, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
-    int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & blocks_per_row) {
+    const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
+    int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & stride) {
     GGML_UNUSED(x_qh); GGML_UNUSED(x_sc);
     GGML_CUDA_ASSUME(i_offset >= 0);
     GGML_CUDA_ASSUME(i_offset <  nwarps);
@@ -162,8 +162,6 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
     const int kbx  = k / QI4_0;
     const int kqsx = k % QI4_0;
-
-    const block_q4_0 * bx0 = (const block_q4_0 *) vx;
 
     float * x_dmf = (float *) x_dm;
 
@@ -175,10 +173,9 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q4_0 * bxi = bx0 + i*blocks_per_row + kbx;
+        const block_q4_0 * bxi = (const block_q4_0 *) x + i*stride + kbx;
 
         x_ql[i * (WARP_SIZE + 1) + k] = get_int_from_uint8(bxi->qs, kqsx);
-        // x_dmf[i * (WARP_SIZE/QI4_0) + i / QI4_0 + kbx] = bxi->d;
     }
 
     const int blocks_per_tile_x_row = WARP_SIZE / QI4_0;
@@ -192,7 +189,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q4_0 * bxi = bx0 + i*blocks_per_row + kbxd;
+        const block_q4_0 * bxi = (const block_q4_0 *) x + i*stride + kbxd;
 
         x_dmf[i * (WARP_SIZE/QI4_0) + i / QI4_0 + kbxd] = bxi->d;
     }
@@ -230,8 +227,8 @@ template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q4_1(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q4_1(
-    const void * __restrict__ vx, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
-    int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & blocks_per_row) {
+    const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
+    int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & stride) {
     GGML_UNUSED(x_qh); GGML_UNUSED(x_sc);
 
     GGML_CUDA_ASSUME(i_offset >= 0);
@@ -242,8 +239,6 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
     const int kbx  = k / QI4_1;
     const int kqsx = k % QI4_1;
 
-    const block_q4_1 * bx0 = (const block_q4_1 *) vx;
-
 #pragma unroll
     for (int i0 = 0; i0 < mmq_y; i0 += nwarps) {
         int i = i0 + i_offset;
@@ -252,7 +247,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q4_1 * bxi = bx0 + i*blocks_per_row + kbx;
+        const block_q4_1 * bxi = (const block_q4_1 *) x + i*stride + kbx;
 
         x_ql[i * (WARP_SIZE + 1) + k] = get_int_from_uint8_aligned(bxi->qs, kqsx);
     }
@@ -268,7 +263,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q4_1 * bxi = bx0 + i*blocks_per_row + kbxd;
+        const block_q4_1 * bxi = (const block_q4_1 *) x + i*stride + kbxd;
 
         x_dm[i * (WARP_SIZE/QI4_1) + i / QI4_1 + kbxd] = bxi->dm;
     }
@@ -305,8 +300,8 @@ template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q5_0(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q5_0(
-    const void * __restrict__ vx, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
-    int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & blocks_per_row) {
+    const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
+    int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & stride) {
     GGML_UNUSED(x_qh); GGML_UNUSED(x_sc);
 
     GGML_CUDA_ASSUME(i_offset >= 0);
@@ -317,8 +312,6 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
     const int kbx  = k / QI5_0;
     const int kqsx = k % QI5_0;
 
-    const block_q5_0 * bx0 = (const block_q5_0 *) vx;
-
 #pragma unroll
     for (int i0 = 0; i0 < mmq_y; i0 += nwarps) {
         int i = i0 + i_offset;
@@ -327,7 +320,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q5_0 * bxi = bx0 + i*blocks_per_row + kbx;
+        const block_q5_0 * bxi = (const block_q5_0 *) x + i*stride + kbx;
 
         const int ql = get_int_from_uint8(bxi->qs, kqsx);
         const int qh = get_int_from_uint8(bxi->qh, 0) >> (4 * (k % QI5_0));
@@ -363,7 +356,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q5_0 * bxi = bx0 + i*blocks_per_row + kbxd;
+        const block_q5_0 * bxi = (const block_q5_0 *) x + i*stride + kbxd;
 
         x_dmf[i * (WARP_SIZE/QI5_0) + i / QI5_0 + kbxd] = bxi->d;
     }
@@ -403,8 +396,8 @@ template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q5_1(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q5_1(
-    const void * __restrict__ vx, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
-    int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & blocks_per_row) {
+    const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
+    int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & stride) {
     GGML_UNUSED(x_qh); GGML_UNUSED(x_sc);
 
     GGML_CUDA_ASSUME(i_offset >= 0);
@@ -415,8 +408,6 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
     const int kbx  = k / QI5_1;
     const int kqsx = k % QI5_1;
 
-    const block_q5_1 * bx0 = (const block_q5_1 *) vx;
-
 #pragma unroll
     for (int i0 = 0; i0 < mmq_y; i0 += nwarps) {
         int i = i0 + i_offset;
@@ -425,7 +416,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q5_1 * bxi = bx0 + i*blocks_per_row + kbx;
+        const block_q5_1 * bxi = (const block_q5_1 *) x + i*stride + kbx;
 
         const int ql = get_int_from_uint8_aligned(bxi->qs, kqsx);
         const int qh = get_int_from_uint8_aligned(bxi->qh, 0) >> (4 * (k % QI5_1));
@@ -458,7 +449,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q5_1 * bxi = bx0 + i*blocks_per_row + kbxd;
+        const block_q5_1 * bxi = (const block_q5_1 *) x + i*stride + kbxd;
 
         x_dm[i * (WARP_SIZE/QI5_1) + i / QI5_1 + kbxd] = bxi->dm;
     }
@@ -495,8 +486,8 @@ template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q8_0(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q8_0(
-    const void * __restrict__ vx, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
-    int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & blocks_per_row) {
+    const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
+    int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & stride) {
     GGML_UNUSED(x_qh); GGML_UNUSED(x_sc);
 
     GGML_CUDA_ASSUME(i_offset >= 0);
@@ -508,8 +499,6 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
     const int kqsx = k % QI8_0;
     float * x_dmf = (float *) x_dm;
 
-    const block_q8_0 * bx0 = (const block_q8_0 *) vx;
-
 #pragma unroll
     for (int i0 = 0; i0 < mmq_y; i0 += nwarps) {
         int i = i0 + i_offset;
@@ -518,7 +507,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q8_0 * bxi = bx0 + i*blocks_per_row + kbx;
+        const block_q8_0 * bxi = (const block_q8_0 *) x + i*stride + kbx;
 
         x_ql[i * (WARP_SIZE + 1) + k] = get_int_from_int8(bxi->qs, kqsx);
     }
@@ -534,7 +523,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q8_0 * bxi = bx0 + i*blocks_per_row + kbxd;
+        const block_q8_0 * bxi = (const block_q8_0 *) x + i*stride + kbxd;
 
         x_dmf[i * (WARP_SIZE/QI8_0) + i / QI8_0 + kbxd] = bxi->d;
     }
@@ -566,8 +555,8 @@ template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q2_K(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q2_K(
-    const void * __restrict__ vx, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
-    int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & blocks_per_row) {
+    const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
+    int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & stride) {
     GGML_UNUSED(x_qh);
 
     GGML_CUDA_ASSUME(i_offset >= 0);
@@ -578,8 +567,6 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
     const int kbx  = k / QI2_K;
     const int kqsx = k % QI2_K;
 
-    const block_q2_K * bx0 = (const block_q2_K *) vx;
-
 #pragma unroll
     for (int i0 = 0; i0 < mmq_y; i0 += nwarps) {
         int i = i0 + i_offset;
@@ -588,7 +575,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q2_K * bxi = bx0 + i*blocks_per_row + kbx;
+        const block_q2_K * bxi = (const block_q2_K *) x + i*stride + kbx;
 
         x_ql[i * (WARP_SIZE + 1) + k] = get_int_from_uint8_aligned(bxi->qs, kqsx);
     }
@@ -604,7 +591,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q2_K * bxi = bx0 + i*blocks_per_row + kbxd;
+        const block_q2_K * bxi = (const block_q2_K *) x + i*stride + kbxd;
 
         x_dm[i * (WARP_SIZE/QI2_K) + i / QI2_K + kbxd] = bxi->dm;
     }
@@ -617,7 +604,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q2_K * bxi = bx0 + i*blocks_per_row + (k % (WARP_SIZE/4)) / (QI2_K/4);
+        const block_q2_K * bxi = (const block_q2_K *) x + i*stride + (k % (WARP_SIZE/4)) / (QI2_K/4);
 
         x_sc[i * (WARP_SIZE/4) + i / 4 + k % (WARP_SIZE/4)] = get_int_from_uint8_aligned(bxi->scales, k % (QI2_K/4));
     }
@@ -662,8 +649,8 @@ template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q3_K(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q3_K(
-    const void * __restrict__ vx, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
-    int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & blocks_per_row) {
+    const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
+    int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & stride) {
 
     GGML_CUDA_ASSUME(i_offset >= 0);
     GGML_CUDA_ASSUME(i_offset <  nwarps);
@@ -673,8 +660,6 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
     const int kbx  = k / QI3_K;
     const int kqsx = k % QI3_K;
 
-    const block_q3_K * bx0 = (const block_q3_K *) vx;
-
 #pragma unroll
     for (int i0 = 0; i0 < mmq_y; i0 += nwarps) {
         int i = i0 + i_offset;
@@ -683,7 +668,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q3_K * bxi = bx0 + i*blocks_per_row + kbx;
+        const block_q3_K * bxi = (const block_q3_K *) x + i*stride + kbx;
 
         x_ql[i * (WARP_SIZE + 1) + k] = get_int_from_uint8(bxi->qs, kqsx);
     }
@@ -700,7 +685,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q3_K * bxi = bx0 + i*blocks_per_row + kbxd;
+        const block_q3_K * bxi = (const block_q3_K *) x + i*stride + kbxd;
 
         x_dmf[i * (WARP_SIZE/QI3_K) + i / QI3_K + kbxd] = bxi->d;
     }
@@ -713,7 +698,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q3_K * bxi = bx0 + i*blocks_per_row + (k % (WARP_SIZE/2)) / (QI3_K/2);
+        const block_q3_K * bxi = (const block_q3_K *) x + i*stride + (k % (WARP_SIZE/2)) / (QI3_K/2);
 
         // invert the mask with ~ so that a 0/1 results in 4/0 being subtracted
         x_qh[i * (WARP_SIZE/2) + i / 2 + k % (WARP_SIZE/2)] = ~get_int_from_uint8(bxi->hmask, k % (QI3_K/2));
@@ -727,7 +712,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q3_K * bxi = bx0 + i*blocks_per_row + (k % (WARP_SIZE/4)) / (QI3_K/4);
+        const block_q3_K * bxi = (const block_q3_K *) x + i*stride + (k % (WARP_SIZE/4)) / (QI3_K/4);
 
         const int ksc = k % (QI3_K/4);
 
@@ -787,8 +772,8 @@ template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q4_K(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q4_K(
-    const void * __restrict__ vx, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
-    int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & blocks_per_row) {
+    const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
+    int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & stride) {
     GGML_UNUSED(x_qh);
 
     GGML_CUDA_ASSUME(i_offset >= 0);
@@ -799,8 +784,6 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
     const int kbx  = k / QI4_K; // == 0 if QK_K == 256
     const int kqsx = k % QI4_K; // == k if QK_K == 256
 
-    const block_q4_K * bx0 = (const block_q4_K *) vx;
-
 #pragma unroll
     for (int i0 = 0; i0 < mmq_y; i0 += nwarps) {
         int i = i0 + i_offset;
@@ -809,7 +792,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q4_K * bxi = bx0 + i*blocks_per_row + kbx;
+        const block_q4_K * bxi = (const block_q4_K *) x + i*stride + kbx;
 
         x_ql[i * (WARP_SIZE + 1) + k] = get_int_from_uint8_aligned(bxi->qs, kqsx);
     }
@@ -825,7 +808,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q4_K * bxi = bx0 + i*blocks_per_row + kbxd;
+        const block_q4_K * bxi = (const block_q4_K *) x + i*stride + kbxd;
 
         x_dm[i * (WARP_SIZE/QI4_K) + i / QI4_K + kbxd] = bxi->dm;
     }
@@ -838,7 +821,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q4_K * bxi = bx0 + i*blocks_per_row + (k % (WARP_SIZE/8)) / (QI4_K/8);
+        const block_q4_K * bxi = (const block_q4_K *) x + i*stride + (k % (WARP_SIZE/8)) / (QI4_K/8);
 
         const int * scales = (const int *) bxi->scales;
 
@@ -877,8 +860,8 @@ template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q5_K(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q5_K(
-    const void * __restrict__ vx, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
-    int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & blocks_per_row) {
+    const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
+    int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & stride) {
     GGML_UNUSED(x_qh);
 
     GGML_CUDA_ASSUME(i_offset >= 0);
@@ -889,8 +872,6 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
     const int kbx  = k / QI5_K; // == 0 if QK_K == 256
     const int kqsx = k % QI5_K; // == k if QK_K == 256
 
-    const block_q5_K * bx0 = (const block_q5_K *) vx;
-
 #pragma unroll
     for (int i0 = 0; i0 < mmq_y; i0 += nwarps) {
         int i = i0 + i_offset;
@@ -899,7 +880,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q5_K * bxi = bx0 + i*blocks_per_row + kbx;
+        const block_q5_K * bxi = (const block_q5_K *) x + i*stride + kbx;
         const int ky = QR5_K*kqsx;
 
         const int ql = get_int_from_uint8_aligned(bxi->qs, kqsx);
@@ -928,7 +909,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q5_K * bxi = bx0 + i*blocks_per_row + kbxd;
+        const block_q5_K * bxi = (const block_q5_K *) x + i*stride + kbxd;
 
         x_dm[i * (WARP_SIZE/QI5_K) + i / QI5_K + kbxd] = bxi->dm;
     }
@@ -941,7 +922,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q5_K * bxi = bx0 + i*blocks_per_row + (k % (WARP_SIZE/8)) / (QI5_K/8);
+        const block_q5_K * bxi = (const block_q5_K *) x + i*stride + (k % (WARP_SIZE/8)) / (QI5_K/8);
 
         const int * scales = (const int *) bxi->scales;
 
@@ -981,8 +962,8 @@ template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q6_K(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q6_K(
-    const void * __restrict__ vx, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
-    int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & blocks_per_row) {
+    const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
+    int * __restrict__ x_sc, const int & i_offset, const int & i_max, const int & k, const int & stride) {
     GGML_UNUSED(x_qh);
 
     GGML_CUDA_ASSUME(i_offset >= 0);
@@ -993,8 +974,6 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
     const int kbx  = k / QI6_K; // == 0 if QK_K == 256
     const int kqsx = k % QI6_K; // == k if QK_K == 256
 
-    const block_q6_K * bx0 = (const block_q6_K *) vx;
-
 #pragma unroll
     for (int i0 = 0; i0 < mmq_y; i0 += nwarps) {
         int i = i0 + i_offset;
@@ -1003,7 +982,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q6_K * bxi = bx0 + i*blocks_per_row + kbx;
+        const block_q6_K * bxi = (const block_q6_K *) x + i*stride + kbx;
         const int ky = QR6_K*kqsx;
 
         const int ql = get_int_from_uint8(bxi->ql, kqsx);
@@ -1033,7 +1012,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q6_K * bxi = bx0 + i*blocks_per_row + kbxd;
+        const block_q6_K * bxi = (const block_q6_K *) x + i*stride + kbxd;
 
         x_dmf[i * (WARP_SIZE/QI6_K) + i / QI6_K + kbxd] = bxi->d;
     }
@@ -1046,7 +1025,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q6_K * bxi = bx0 + i*blocks_per_row + (k % (WARP_SIZE/8)) / 4;
+        const block_q6_K * bxi = (const block_q6_K *) x + i*stride + (k % (WARP_SIZE/8)) / 4;
 
         x_sc[i * (WARP_SIZE/8) + i / 8 + k % (WARP_SIZE/8)] = get_int_from_int8(bxi->scales, k % (QI6_K/8));
     }
@@ -1172,8 +1151,8 @@ static constexpr __device__ vec_dot_q_mul_mat_cuda_t get_vec_dot_mmq(ggml_type t
 
 template <ggml_type type, bool need_check>
 static __global__ void mul_mat_q(
-    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ne00, const int ne01, const int nb01, const int ne10, const int ne11, const int ne0) {
+    const char * __restrict__ x, const void * __restrict__ vy, float * __restrict__ dst,
+    const int ne00, const int ne01, const int row_stride_x, const int ne10, const int ne11, const int ne0) {
 
     constexpr int  qk       = ggml_blck_size_device(type);
     constexpr int  ts       = ggml_type_size_device(type);
@@ -1192,7 +1171,6 @@ static __global__ void mul_mat_q(
     constexpr        load_tiles_cuda_t     load_tiles = get_load_tiles<mmq_y, nwarps, need_check>(type);
     constexpr vec_dot_q_mul_mat_cuda_t        vec_dot = get_vec_dot_mmq(type);
 
-    const char       * x = (const char       *) vx;
     const block_q8_1 * y = (const block_q8_1 *) vy;
 
     const int blocks_per_row_x = ne00 / qk;
@@ -1221,8 +1199,8 @@ static __global__ void mul_mat_q(
 
     for (int ib0 = 0; ib0 < blocks_per_row_x; ib0 += blocks_per_warp) {
 
-        load_tiles(x + row_x_0*nb01 + ib0*ts, tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc,
-                   threadIdx.y, ne01-row_x_0-1, threadIdx.x, blocks_per_row_x);
+        load_tiles(x + (row_x_0*row_stride_x + ib0)*ts, tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc,
+                   threadIdx.y, ne01-row_x_0-1, threadIdx.x, row_stride_x);
 
 #pragma unroll
         for (int ir = 0; ir < qr; ++ir) {
@@ -1300,11 +1278,11 @@ static __global__ void mul_mat_q(
     case type: if (row_diff % arch_config.y == 0) {                                     \
         const bool need_check = false;                                                                      \
         mul_mat_q<type, need_check><<<block_nums, block_dims, 0, stream>>>              \
-            (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nrows_dst); \
+            (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, row_stride_x, src1_padded_row_size, src1_ncols, nrows_dst); \
     } else {                                                                                                \
         const bool need_check = true;                                                                       \
         mul_mat_q<type, need_check><<<block_nums, block_dims, 0, stream>>>              \
-            (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nrows_dst); \
+            (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, row_stride_x, src1_padded_row_size, src1_ncols, nrows_dst); \
     } break;                                                                                                \
 
 void ggml_cuda_op_mul_mat_q(
@@ -1323,6 +1301,7 @@ void ggml_cuda_op_mul_mat_q(
     const int64_t ne0 = dst->ne[0];
 
     const int64_t row_diff = row_high - row_low;
+    const int64_t row_stride_x = nb01 / ggml_type_size(src0->type);
 
     int id = ggml_cuda_get_device();
     const int compute_capability = ggml_cuda_info().devices[id].cc;
