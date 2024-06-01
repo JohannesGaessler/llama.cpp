@@ -1280,18 +1280,28 @@ static __global__ void mul_mat_q(
     }
 }
 
-#define MMQ_SWITCH_CASE(type)                                                                        \
-    case type: if (row_diff % arch_config.y == 0) {                                     \
-        const bool need_check_x = false;                                                                      \
-        const bool need_check_y = false;                                                                      \
-        mul_mat_q<type, need_check_x, need_check_y><<<block_nums, block_dims, 0, stream>>>              \
+#define MMQ_SWITCH_CASE(type)                                                                                           \
+    case type: if (src1_ncols % arch_config.x == 0 && row_diff % arch_config.y == 0) {                                  \
+        const bool need_check_x = false;                                                                                \
+        const bool need_check_y = false;                                                                                \
+        mul_mat_q<type, need_check_x, need_check_y><<<block_nums, block_dims, 0, stream>>>                              \
             (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nb11, nrows_dst); \
-    } else {                                                                                                \
-        const bool need_check_x = true;                                                                       \
-        const bool need_check_y = false;                                                                       \
-        mul_mat_q<type, need_check_x, need_check_y><<<block_nums, block_dims, 0, stream>>>              \
+    } else if (src1_ncols % arch_config.x == 0 && row_diff % arch_config.y != 0) {                                      \
+        const bool need_check_x = true;                                                                                 \
+        const bool need_check_y = false;                                                                                \
+        mul_mat_q<type, need_check_x, need_check_y><<<block_nums, block_dims, 0, stream>>>                              \
             (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nb11, nrows_dst); \
-    } break;                                                                                                \
+    } else if (src1_ncols % arch_config.x != 0 && row_diff % arch_config.y == 0) {                                      \
+        const bool need_check_x = false;                                                                                \
+        const bool need_check_y = true;                                                                                 \
+        mul_mat_q<type, need_check_x, need_check_y><<<block_nums, block_dims, 0, stream>>>                              \
+            (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nb11, nrows_dst); \
+    } else {                                                                                                            \
+        const bool need_check_x = true;                                                                                 \
+        const bool need_check_y = true;                                                                                 \
+        mul_mat_q<type, need_check_x, need_check_y><<<block_nums, block_dims, 0, stream>>>                              \
+            (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, nb01, src1_padded_row_size, src1_ncols, nb11, nrows_dst); \
+    } break;                                                                                                            \
 
 void ggml_cuda_op_mul_mat_q(
     ggml_backend_cuda_context & ctx,
