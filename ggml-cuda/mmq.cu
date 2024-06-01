@@ -10,9 +10,6 @@ typedef float (*vec_dot_q_mul_mat_cuda_t)(
     const int * __restrict__ x_ql, const half2 * __restrict__ x_dm, const int * __restrict__ x_qh, const int * __restrict__ x_sc,
     const int * __restrict__ y_qs, const half2 * __restrict__ y_ms, const int & i, const int & j, const int & k);
 typedef void (*dot_kernel_k_t)(const void * __restrict__ vx, const int ib, const int iqs, const float * __restrict__ y, float & v);
-typedef void (mul_mat_q_t)(
-    const void * __restrict__ vx, const void * __restrict__ vy, float * __restrict__ dst,
-    const int ncols_x, const int nrows_x, const int ncols_y, const int nrows_y, const int nrows_dst);
 
 struct mmq_arch_config_t {
     int x;
@@ -1151,7 +1148,7 @@ static constexpr __device__ vec_dot_q_mul_mat_cuda_t get_vec_dot_mmq(ggml_type t
 
 template <ggml_type type, bool need_check>
 static __global__ void mul_mat_q(
-    const char * __restrict__ x, const void * __restrict__ vy, float * __restrict__ dst,
+    const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst,
     const int ne00, const int ne01, const int row_stride_x, const int ne10, const int ne11, const int ne0) {
 
     constexpr int  qk       = ggml_blck_size_device(type);
@@ -1171,7 +1168,7 @@ static __global__ void mul_mat_q(
     constexpr        load_tiles_cuda_t     load_tiles = get_load_tiles<mmq_y, nwarps, need_check>(type);
     constexpr vec_dot_q_mul_mat_cuda_t        vec_dot = get_vec_dot_mmq(type);
 
-    const block_q8_1 * y = (const block_q8_1 *) vy;
+    const block_q8_1 * y = (const block_q8_1 *) yc;
 
     const int blocks_per_row_x = ne00 / qk;
     const int blocks_per_col_y = ne10 / QK8_1;
@@ -1182,9 +1179,6 @@ static __global__ void mul_mat_q(
     x += row_stride_x*ts * blockIdx.x*mmq_y;
 
     const int tile_x_max_i = ne01 - blockIdx.x*mmq_y - 1;
-
-    const int col_dst_0 = blockIdx.y*mmq_x;
-    const int & col_y_0 = col_dst_0;
 
     int   * tile_x_ql = nullptr;
     half2 * tile_x_dm = nullptr;
@@ -1210,7 +1204,7 @@ static __global__ void mul_mat_q(
 
 #pragma unroll
             for (int i = 0; i < mmq_x; i += nwarps) {
-                const int col_y_eff = min(col_y_0 + threadIdx.y + i, ne11-1); // to prevent out-of-bounds memory accesses
+                const int col_y_eff = min(blockIdx.y*mmq_x + threadIdx.y + i, ne11-1); // to prevent out-of-bounds memory accesses
 
                 const block_q8_1 * by0 = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + kbxd];
 
@@ -1222,7 +1216,7 @@ static __global__ void mul_mat_q(
             for (int ids0 = 0; ids0 < mmq_x; ids0 += nwarps * QI8_1) {
                 const int ids = (ids0 + threadIdx.y * QI8_1 + threadIdx.x / (WARP_SIZE/QI8_1)) % mmq_x;
                 const int kby = threadIdx.x % (WARP_SIZE/QI8_1);
-                const int col_y_eff = min(col_y_0 + ids, ne11-1);
+                const int col_y_eff = min(blockIdx.y*mmq_x + ids, ne11-1);
 
                 // if the sum is not needed it's faster to transform the scale to f32 ahead of time
                 const half2 * dsi_src = &y[col_y_eff*blocks_per_col_y + ib0 * (qk/QK8_1) + ir*(WARP_SIZE/QI8_1) + kby].ds;
@@ -1255,22 +1249,22 @@ static __global__ void mul_mat_q(
     }
 
 #pragma unroll
-    for (int j = 0; j < mmq_x; j += nwarps) {
-        const int col_dst = col_dst_0 + j + threadIdx.y;
+    for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
+        const int j = blockIdx.y*mmq_x + j0 + threadIdx.y;
 
-        if (col_dst >= ne1) {
+        if (j >= ne1) {
             return;
         }
 
 #pragma unroll
         for (int i0 = 0; i0 < mmq_y; i0 += WARP_SIZE) {
-            const int i = i0 + threadIdx.x;
+            const int i = blockIdx.x*mmq_y + i0 + threadIdx.x;
 
-            if (need_check && i > tile_x_max_i) {
+            if (need_check && i > ne0) {
                 continue;
             }
 
-            dst[col_dst*ne0 + blockIdx.x*mmq_y + i] = sum[i0/WARP_SIZE][j/nwarps];
+            dst[j*ne0 + i] = sum[i0/WARP_SIZE][j0/nwarps];
         }
     }
 }
