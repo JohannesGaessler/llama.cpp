@@ -1178,13 +1178,12 @@ static __global__ void mul_mat_q(
 
     const int & ne1 = ne11;
 
-    x   += nb01 * blockIdx.x*mmq_y;
-    dst +=        blockIdx.x*mmq_y;
+    x   +=                           nb01 * blockIdx.x*mmq_y;
+    y   += nb11 * blockIdx.y*mmq_x;
+    dst += ne0  * blockIdx.y*mmq_x +        blockIdx.x*mmq_y;
 
     const int tile_x_max_i = ne01 - blockIdx.x*mmq_y - 1;
-
-    const int col_dst_0 = blockIdx.y*mmq_x;
-    const int & col_y_0 = col_dst_0;
+    const int tile_y_max_j = ne11 - blockIdx.y*mmq_x - 1;
 
     int   * tile_x_ql = nullptr;
     half2 * tile_x_dm = nullptr;
@@ -1210,7 +1209,7 @@ static __global__ void mul_mat_q(
 
 #pragma unroll
             for (int i = 0; i < mmq_x; i += nwarps) {
-                const int col_y_eff = min(col_y_0 + threadIdx.y + i, ne11-1); // to prevent out-of-bounds memory accesses
+                const int col_y_eff = min(threadIdx.y + i, tile_y_max_j); // to prevent out-of-bounds memory accesses
 
                 const block_q8_1 * by0 = ((const block_q8_1 *) (y + col_y_eff*nb11)) + ib0 * (qk/QK8_1) + kbxd;
 
@@ -1222,7 +1221,7 @@ static __global__ void mul_mat_q(
             for (int ids0 = 0; ids0 < mmq_x; ids0 += nwarps * QI8_1) {
                 const int ids = (ids0 + threadIdx.y * QI8_1 + threadIdx.x / (WARP_SIZE/QI8_1)) % mmq_x;
                 const int kby = threadIdx.x % (WARP_SIZE/QI8_1);
-                const int col_y_eff = min(col_y_0 + ids, ne11-1);
+                const int col_y_eff = min(ids, tile_y_max_j);
 
                 // if the sum is not needed it's faster to transform the scale to f32 ahead of time
                 const block_q8_1 * by = ((const block_q8_1 *) (y + col_y_eff*nb11)) + ib0 * (qk/QK8_1) + ir*(WARP_SIZE/QI8_1) + kby;
@@ -1257,9 +1256,9 @@ static __global__ void mul_mat_q(
 
 #pragma unroll
     for (int j = 0; j < mmq_x; j += nwarps) {
-        const int col_dst = col_dst_0 + j + threadIdx.y;
+        const int col_dst = j + threadIdx.y;
 
-        if (col_dst >= ne1) {
+        if (col_dst > tile_y_max_j) {
             return;
         }
 
