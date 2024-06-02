@@ -1054,16 +1054,34 @@ static __global__ void mul_mat_q(
     }
 }
 
-#define MMQ_SWITCH_CASE(type)                                                                        \
-    case type: if (row_diff % mmq_y == 0) {                                     \
-        const bool need_check = false;                                                                      \
-        mul_mat_q<type, mmq_x, mmq_y, nwarps, need_check><<<block_nums, block_dims, 0, stream>>>              \
-            (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, row_stride_x, src1_padded_row_size, src1_ncols, nrows_dst); \
-    } else {                                                                                                \
-        const bool need_check = true;                                                                       \
-        mul_mat_q<type, mmq_x, mmq_y, nwarps, need_check><<<block_nums, block_dims, 0, stream>>>              \
-            (src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, row_stride_x, src1_padded_row_size, src1_ncols, nrows_dst); \
-    } break;                                                                                                \
+struct mmq_args {
+    const char * x; const char * y; float * dst;
+    int64_t ne00; int64_t ne01; int64_t stride00;
+    int64_t ne10; int64_t ne11;
+    int64_t ne0;
+};
+
+template <ggml_type type>
+static void mul_mat_q_case(ggml_backend_cuda_context & ctx, cudaStream_t stream, const mmq_args & args) {
+    constexpr int mmq_x  = 64;
+    constexpr int mmq_y  = 64;
+    constexpr int nwarps =  8;
+
+    const int block_num_x = (args.ne01 + mmq_y - 1) / mmq_y;
+    const int block_num_y = (args.ne11 + mmq_x - 1) / mmq_x;
+    const dim3 block_nums(block_num_x, block_num_y, 1);
+    const dim3 block_dims(WARP_SIZE, nwarps, 1);
+
+    if (args.ne01 % mmq_y == 0) {
+        const bool need_check = false;
+        mul_mat_q<type, mmq_x, mmq_y, nwarps, need_check><<<block_nums, block_dims, 0, stream>>>
+            (args.x, args.y, args.dst, args.ne00, args.ne01, args.stride00, args.ne10, args.ne11, args.ne0);
+    } else {
+        const bool need_check = true;
+        mul_mat_q<type, mmq_x, mmq_y, nwarps, need_check><<<block_nums, block_dims, 0, stream>>>
+            (args.x, args.y, args.dst, args.ne00, args.ne01, args.stride00, args.ne10, args.ne11, args.ne0);
+    }
+}
 
 void ggml_cuda_op_mul_mat_q(
     ggml_backend_cuda_context & ctx,
@@ -1081,7 +1099,7 @@ void ggml_cuda_op_mul_mat_q(
     const int64_t ne0 = dst->ne[0];
 
     const int64_t row_diff = row_high - row_low;
-    const int64_t row_stride_x = nb01 / ggml_type_size(src0->type);
+    const int64_t stride00 = nb01 / ggml_type_size(src0->type);
 
     int id = ggml_cuda_get_device();
     const int compute_capability = ggml_cuda_info().devices[id].cc;
@@ -1090,26 +1108,39 @@ void ggml_cuda_op_mul_mat_q(
     // nrows_dst == nrows of the matrix that the kernel writes into
     const int64_t nrows_dst = id == ctx.device ? ne0 : row_diff;
 
-    constexpr int mmq_x  = 64;
-    constexpr int mmq_y  = 64;
-    constexpr int nwarps =  8;
-
-    const int block_num_x = (row_diff   + mmq_y - 1) / mmq_y;
-    const int block_num_y = (src1_ncols + mmq_x - 1) / mmq_x;
-    const dim3 block_nums(block_num_x, block_num_y, 1);
-    const dim3 block_dims(WARP_SIZE, nwarps, 1);
+    const mmq_args args = {src0_dd_i, src1_ddq_i, dst_dd_i, ne00, row_diff, stride00, src1_padded_row_size, src1_ncols, nrows_dst};
 
     switch (src0->type) {
-        MMQ_SWITCH_CASE(GGML_TYPE_Q4_0)
-        MMQ_SWITCH_CASE(GGML_TYPE_Q4_1)
-        MMQ_SWITCH_CASE(GGML_TYPE_Q5_0)
-        MMQ_SWITCH_CASE(GGML_TYPE_Q5_1)
-        MMQ_SWITCH_CASE(GGML_TYPE_Q8_0)
-        MMQ_SWITCH_CASE(GGML_TYPE_Q2_K)
-        MMQ_SWITCH_CASE(GGML_TYPE_Q3_K)
-        MMQ_SWITCH_CASE(GGML_TYPE_Q4_K)
-        MMQ_SWITCH_CASE(GGML_TYPE_Q5_K)
-        MMQ_SWITCH_CASE(GGML_TYPE_Q6_K)
+        case GGML_TYPE_Q4_0:
+            mul_mat_q_case<GGML_TYPE_Q4_0>(ctx, stream, args);
+            break;
+        case GGML_TYPE_Q4_1:
+            mul_mat_q_case<GGML_TYPE_Q4_1>(ctx, stream, args);
+            break;
+        case GGML_TYPE_Q5_0:
+            mul_mat_q_case<GGML_TYPE_Q5_0>(ctx, stream, args);
+            break;
+        case GGML_TYPE_Q5_1:
+            mul_mat_q_case<GGML_TYPE_Q5_1>(ctx, stream, args);
+            break;
+        case GGML_TYPE_Q8_0:
+            mul_mat_q_case<GGML_TYPE_Q8_0>(ctx, stream, args);
+            break;
+        case GGML_TYPE_Q2_K:
+            mul_mat_q_case<GGML_TYPE_Q2_K>(ctx, stream, args);
+            break;
+        case GGML_TYPE_Q3_K:
+            mul_mat_q_case<GGML_TYPE_Q3_K>(ctx, stream, args);
+            break;
+        case GGML_TYPE_Q4_K:
+            mul_mat_q_case<GGML_TYPE_Q4_K>(ctx, stream, args);
+            break;
+        case GGML_TYPE_Q5_K:
+            mul_mat_q_case<GGML_TYPE_Q5_K>(ctx, stream, args);
+            break;
+        case GGML_TYPE_Q6_K:
+            mul_mat_q_case<GGML_TYPE_Q6_K>(ctx, stream, args);
+            break;
         default:
             GGML_ASSERT(false);
             break;
