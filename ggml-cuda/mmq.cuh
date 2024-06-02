@@ -1082,11 +1082,84 @@ static void launch_mul_mat_q(const mmq_args & args, cudaStream_t stream) {
 
 template <ggml_type type>
 void mul_mat_q_case(const mmq_args & args, cudaStream_t stream) {
-    constexpr int mmq_x  = 64;
-    constexpr int mmq_y  = 64;
-    constexpr int nwarps =  8;
+    constexpr int mmq_y  = 128;
+    constexpr int nwarps =   8;
+    const int block_num_y = (args.ne01 + mmq_y - 1) / mmq_y;
 
-    launch_mul_mat_q<type, mmq_x, mmq_y, nwarps>(args, stream);
+    const int id  = ggml_cuda_get_device();
+    const int nsm = ggml_cuda_info().devices[id].nsm;
+    const int cc  = ggml_cuda_info().devices[id].cc;
+
+    int mmq_x_best = 8;
+    // int block_num_x_best = (args.ne11 + mmq_x_best - 1) / mmq_x_best;
+    // int nwaves_best = (block_num_x_best*block_num_y + nsm - 1) / nsm;
+
+    // const int mmq_x_max = cc >= CC_VOLTA && cc < CC_OFFSET_AMD ? 128 : 64;
+
+    // for (int mmq_x = 16; mmq_x <= mmq_x_max && nwaves_best > 1; mmq_x += 8) {
+    //     const int block_num_x = (args.ne11 + mmq_x - 1) / mmq_x;
+    //     const int nwaves = (block_num_x*block_num_y + nsm - 1) / nsm;
+
+    //     if (nwaves < nwaves_best) {
+    //         mmq_x_best       = mmq_x;
+    //         block_num_x_best = block_num_x;
+    //         nwaves_best      = nwaves;
+    //     }
+    // }
+
+    switch (mmq_x_best) {
+        case   8:
+            launch_mul_mat_q<type,   8, mmq_y, nwarps>(args, stream);
+            break;
+        case  16:
+            launch_mul_mat_q<type,  16, mmq_y, nwarps>(args, stream);
+            break;
+        case  24:
+            launch_mul_mat_q<type,  24, mmq_y, nwarps>(args, stream);
+            break;
+        case  32:
+            launch_mul_mat_q<type,  32, mmq_y, nwarps>(args, stream);
+            break;
+        case  40:
+            launch_mul_mat_q<type,  40, mmq_y, nwarps>(args, stream);
+            break;
+        case  48:
+            launch_mul_mat_q<type,  48, mmq_y, nwarps>(args, stream);
+            break;
+        case  56:
+            launch_mul_mat_q<type,  56, mmq_y, nwarps>(args, stream);
+            break;
+        case  64:
+            launch_mul_mat_q<type,  64, mmq_y, nwarps>(args, stream);
+            break;
+        case  72:
+            launch_mul_mat_q<type,  72, mmq_y, nwarps>(args, stream);
+            break;
+        case  80:
+            launch_mul_mat_q<type,  80, mmq_y, nwarps>(args, stream);
+            break;
+        case  88:
+            launch_mul_mat_q<type,  88, mmq_y, nwarps>(args, stream);
+            break;
+        case  96:
+            launch_mul_mat_q<type,  96, mmq_y, nwarps>(args, stream);
+            break;
+        case 104:
+            launch_mul_mat_q<type, 104, mmq_y, nwarps>(args, stream);
+            break;
+        case 112:
+            launch_mul_mat_q<type, 112, mmq_y, nwarps>(args, stream);
+            break;
+        case 120:
+            launch_mul_mat_q<type, 120, mmq_y, nwarps>(args, stream);
+            break;
+        case 128:
+            launch_mul_mat_q<type, 128, mmq_y, nwarps>(args, stream);
+            break;
+        default:
+            GGML_ASSERT(false);
+            break;
+    }
 }
 
 #define DECL_MMQ_CASE(type)                                                        \
