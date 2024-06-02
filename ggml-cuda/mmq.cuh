@@ -1046,6 +1046,13 @@ static void launch_mul_mat_q(const mmq_args & args, cudaStream_t stream) {
     constexpr int shmem_y = mmq_x*WARP_SIZE*sizeof(int) + mmq_x*(WARP_SIZE/QI8_1)*sizeof(half2);
     constexpr int shmem = shmem_x + shmem_y;
 
+    static bool shmem_limit_raised = false;
+    if (!shmem_limit_raised) {
+        CUDA_CHECK(cudaFuncSetAttribute(mul_mat_q<type, mmq_x, mmq_y, nwarps, false>, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem));
+        CUDA_CHECK(cudaFuncSetAttribute(mul_mat_q<type, mmq_x, mmq_y, nwarps, true>,  cudaFuncAttributeMaxDynamicSharedMemorySize, shmem));
+        shmem_limit_raised = true;
+    }
+
     if (args.ne01 % mmq_y == 0) {
         const bool need_check = false;
         mul_mat_q<type, mmq_x, mmq_y, nwarps, need_check><<<block_nums, block_dims, shmem, stream>>>
@@ -1070,8 +1077,7 @@ void mul_mat_q_case(const mmq_args & args, cudaStream_t stream) {
     int mmq_x_best  = 0;
     int nwaves_best = INT_MAX;
 
-    // const int mmq_x_max = cc >= CC_VOLTA && cc < CC_OFFSET_AMD ? 128 : 64;
-    const int mmq_x_max = 64;
+    const int mmq_x_max = cc >= CC_VOLTA && cc < CC_OFFSET_AMD ? 128 : 64;
 
     for (int mmq_x = 8; mmq_x <= mmq_x_max && nwaves_best > 1; mmq_x += 8) {
         const int block_num_x = (args.ne11 + mmq_x - 1) / mmq_x;
