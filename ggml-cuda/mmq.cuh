@@ -10,9 +10,10 @@ typedef void (*load_tiles_cuda_t)(
     const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
     int * __restrict__ x_sc, const int & kbx0, const int & i_max, const int & stride);
 typedef float (*vec_dot_q_mul_mat_cuda_t)(
+// typedef void (*vec_dot_q_mul_mat_cuda_t)(
     const int * __restrict__ x_ql, const half2 * __restrict__ x_dm, const int * __restrict__ x_qh, const int * __restrict__ x_sc,
     const int * __restrict__ y_qs, const half2 * __restrict__ y_ms, const int & i, const int & j, const int & k);
-typedef void (*dot_kernel_k_t)(const void * __restrict__ vx, const int ib, const int iqs, const float * __restrict__ y, float & v);
+    // const int * __restrict__ y_qs, const half2 * __restrict__ y_ms, float * __restrict__ sum);
 
 struct tile_x_sizes {
     int ql;
@@ -954,7 +955,7 @@ static __global__ void mul_mat_q(
 
     const int tile_x_max_i = ne01 - blockIdx.x*mmq_y - 1;
 
-    float sum[mmq_y/WARP_SIZE][mmq_x/nwarps] = {{0.0f}};
+    float sum[mmq_x/nwarps * mmq_y/WARP_SIZE] = {0.0f};
 
     for (int kb0 = 0; kb0 < blocks_per_row_x; kb0 += blocks_per_warp) {
 
@@ -1000,7 +1001,7 @@ static __global__ void mul_mat_q(
                 for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
 #pragma unroll
                     for (int i0 = 0; i0 < mmq_y; i0 += WARP_SIZE) {
-                        sum[i0/WARP_SIZE][j0/nwarps] += vec_dot(
+                        sum[j0/nwarps * mmq_y/WARP_SIZE + i0/WARP_SIZE] += vec_dot(
                             tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc, tile_y_qs, tile_y_ds,
                             i0 + threadIdx.x, j0 + threadIdx.y, k0);
                     }
@@ -1027,7 +1028,7 @@ static __global__ void mul_mat_q(
                 continue;
             }
 
-            dst[j*ne0 + i] = sum[i0/WARP_SIZE][j0/nwarps];
+            dst[j*ne0 + i] = sum[j0/nwarps * mmq_y/WARP_SIZE + i0/WARP_SIZE];
         }
     }
 }
