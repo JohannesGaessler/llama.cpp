@@ -1062,12 +1062,8 @@ struct mmq_args {
     int64_t ne0;
 };
 
-template <ggml_type type>
-void mul_mat_q_case(ggml_backend_cuda_context & ctx, cudaStream_t stream, const mmq_args & args) {
-    constexpr int mmq_x  = 64;
-    constexpr int mmq_y  = 64;
-    constexpr int nwarps =  8;
-
+template <ggml_type type, int mmq_x, int mmq_y, int nwarps>
+static void launch_mul_mat_q(const mmq_args & args, cudaStream_t stream) {
     const int block_num_x = (args.ne01 + mmq_y - 1) / mmq_y;
     const int block_num_y = (args.ne11 + mmq_x - 1) / mmq_x;
     const dim3 block_nums(block_num_x, block_num_y, 1);
@@ -1084,9 +1080,18 @@ void mul_mat_q_case(ggml_backend_cuda_context & ctx, cudaStream_t stream, const 
     }
 }
 
+template <ggml_type type>
+void mul_mat_q_case(ggml_backend_cuda_context & ctx, const mmq_args & args, cudaStream_t stream) {
+    constexpr int mmq_x  = 64;
+    constexpr int mmq_y  = 64;
+    constexpr int nwarps =  8;
+
+    launch_mul_mat_q<type, mmq_x, mmq_y, nwarps>(args, stream);
+}
+
 #define DECL_MMQ_CASE(type)                                                             \
     template void mul_mat_q_case                                                        \
-    <type>(ggml_backend_cuda_context & ctx, cudaStream_t stream, const mmq_args & args) \
+    <type>(ggml_backend_cuda_context & ctx, const mmq_args & args, cudaStream_t stream) \
 
 extern DECL_MMQ_CASE(GGML_TYPE_Q4_0);
 extern DECL_MMQ_CASE(GGML_TYPE_Q4_1);
