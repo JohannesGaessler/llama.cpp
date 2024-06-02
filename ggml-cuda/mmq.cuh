@@ -1,6 +1,7 @@
 #include "common.cuh"
 #include "vecdotq.cuh"
 
+#include <climits>
 #include <cstdint>
 
 typedef void (*allocate_tiles_cuda_t)(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc);
@@ -1090,22 +1091,20 @@ void mul_mat_q_case(const mmq_args & args, cudaStream_t stream) {
     const int nsm = ggml_cuda_info().devices[id].nsm;
     const int cc  = ggml_cuda_info().devices[id].cc;
 
-    int mmq_x_best = 8;
-    // int block_num_x_best = (args.ne11 + mmq_x_best - 1) / mmq_x_best;
-    // int nwaves_best = (block_num_x_best*block_num_y + nsm - 1) / nsm;
+    int mmq_x_best  = 0;
+    int nwaves_best = INT_MAX;
 
-    // const int mmq_x_max = cc >= CC_VOLTA && cc < CC_OFFSET_AMD ? 128 : 64;
+    const int mmq_x_max = cc >= CC_VOLTA && cc < CC_OFFSET_AMD ? 120 : 64;
 
-    // for (int mmq_x = 16; mmq_x <= mmq_x_max && nwaves_best > 1; mmq_x += 8) {
-    //     const int block_num_x = (args.ne11 + mmq_x - 1) / mmq_x;
-    //     const int nwaves = (block_num_x*block_num_y + nsm - 1) / nsm;
+    for (int mmq_x = 8; mmq_x <= mmq_x_max && nwaves_best > 1; mmq_x += 8) {
+        const int block_num_x = (args.ne11 + mmq_x - 1) / mmq_x;
+        const int nwaves = (block_num_x*block_num_y + nsm - 1) / nsm;
 
-    //     if (nwaves < nwaves_best) {
-    //         mmq_x_best       = mmq_x;
-    //         block_num_x_best = block_num_x;
-    //         nwaves_best      = nwaves;
-    //     }
-    // }
+        if (nwaves < nwaves_best) {
+            mmq_x_best  = mmq_x;
+            nwaves_best = nwaves;
+        }
+    }
 
     switch (mmq_x_best) {
         case   8:
