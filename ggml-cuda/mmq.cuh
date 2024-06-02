@@ -1048,7 +1048,6 @@ static __global__ void mul_mat_q(
     const int ne00, const int ne01, const int stride00, const int ne10, const int ne11, const int ne0) {
 
     constexpr int  qk       = ggml_blck_size_device(type);
-    constexpr int  ts       = ggml_type_size_device(type);
     constexpr int  qr       = get_qr_device(type);
     constexpr int  qi       = get_qi_device(type);
     constexpr bool need_sum = get_need_sum(type);
