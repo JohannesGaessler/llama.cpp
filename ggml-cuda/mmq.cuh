@@ -1211,7 +1211,7 @@ void mul_mat_q_case(const mmq_args & args, cudaStream_t stream) {
 
     switch (mmq_x_best) {
         case   8:
-            launch_mul_mat_q<type,   8, mmq_y, 4>(args, stream);
+            launch_mul_mat_q<type,   8,    64, 4>(args, stream);
             break;
         case  16:
             launch_mul_mat_q<type,  16, mmq_y, 8>(args, stream);
