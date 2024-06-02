@@ -1014,7 +1014,7 @@ static constexpr __device__ vec_dot_q_mul_mat_cuda_t get_vec_dot_mmq(ggml_type t
 }
 
 template <ggml_type type, int mmq_x, int nwarps, bool need_check>
-__launch_bounds__(nwarps*WARP_SIZE, 128/get_mmq_y_device(mmq_x))
+__launch_bounds__(nwarps*WARP_SIZE, 1)
 static __global__ void mul_mat_q(
     const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst,
     const int ne00, const int ne01, const int stride00, const int ne10, const int ne11, const int ne0) {
