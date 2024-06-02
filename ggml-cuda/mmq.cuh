@@ -20,6 +20,22 @@ struct tile_x_sizes {
     int sc;
 };
 
+static int get_mmq_x_max_host(const int cc) {
+    return cc >= CC_VOLTA && cc < CC_OFFSET_AMD ? 128 : 64;
+}
+
+static constexpr __device__ int get_mmq_x_max_device() {
+#if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
+    return 64;
+#else
+#if __CUDA_ARCH__ >= CC_VOLTA
+    return 128;
+#else
+    return 64;
+#endif // __CUDA_ARCH__ >= CC_VOLTA
+#endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
+}
+
 static int get_mmq_y_host(const int cc, const int mmq_x) {
     return cc >= CC_VOLTA && cc < CC_OFFSET_AMD && mmq_x >= 32 ? 128 : 64;
 }
@@ -998,16 +1014,15 @@ static constexpr __device__ vec_dot_q_mul_mat_cuda_t get_vec_dot_mmq(ggml_type t
 }
 
 template <ggml_type type, int mmq_x, int nwarps, bool need_check>
-#if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-#if defined(RDNA3) || defined(RDNA2)
-__launch_bounds__(nwarps*WARP_SIZE, 2)
-#endif // defined(RDNA3) || defined(RDNA2)
-#else
-__launch_bounds__(nwarps*WARP_SIZE, (mmq_x*get_mmq_y_device(mmq_x) <= 64*128) ? 2 : 1)
-#endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
+__launch_bounds__(nwarps*WARP_SIZE, 128/get_mmq_y_device(mmq_x))
 static __global__ void mul_mat_q(
     const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst,
     const int ne00, const int ne01, const int stride00, const int ne10, const int ne11, const int ne0) {
+
+    // Skip unused template specializations for faster compilation:
+    if (mmq_x > get_mmq_x_max_device()) {
+        return;
+    }
 
     constexpr int  mmq_y    = get_mmq_y_device(mmq_x);
     constexpr int  qk       = ggml_blck_size_device(type);
@@ -1153,13 +1168,12 @@ static void launch_mul_mat_q(const mmq_args & args, cudaStream_t stream) {
 
 template <ggml_type type>
 void mul_mat_q_case(const mmq_args & args, cudaStream_t stream) {
-    constexpr int mmq_x_max = 128;
-
     const int id = ggml_cuda_get_device();
     const int nsm = ggml_cuda_info().devices[id].nsm;
     const int cc  = ggml_cuda_info().devices[id].cc;
 
-    const int mmq_y = get_mmq_y_host(cc, mmq_x_max); // use
+    const int mmq_x_max = get_mmq_x_max_host(cc);
+    const int mmq_y = get_mmq_y_host(cc, mmq_x_max);
     const int block_num_y = (args.ne01 + mmq_y - 1) / mmq_y;
 
     int mmq_x_best  = 0;
