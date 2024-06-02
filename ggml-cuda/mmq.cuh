@@ -1053,12 +1053,14 @@ static void launch_mul_mat_q(const mmq_args & args, cudaStream_t stream) {
     constexpr int shmem_y = mmq_x*WARP_SIZE*sizeof(int) + mmq_x*(WARP_SIZE/QI8_1)*sizeof(half2);
     constexpr int shmem = shmem_x + shmem_y;
 
+#if !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__))
     static bool shmem_limit_raised = false;
     if (!shmem_limit_raised) {
         CUDA_CHECK(cudaFuncSetAttribute(mul_mat_q<type, mmq_x, mmq_y, nwarps, false>, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem));
         CUDA_CHECK(cudaFuncSetAttribute(mul_mat_q<type, mmq_x, mmq_y, nwarps, true>,  cudaFuncAttributeMaxDynamicSharedMemorySize, shmem));
         shmem_limit_raised = true;
     }
+#endif // !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__))
 
     if (args.ne01 % mmq_y == 0) {
         const bool need_check = false;

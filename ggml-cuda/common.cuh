@@ -69,8 +69,6 @@
 #define cudaEventDestroy hipEventDestroy
 #define cudaFree hipFree
 #define cudaFreeHost hipHostFree
-#define cudaFuncAttributeMaxDynamicSharedMemorySize hipFuncAttributeMaxDynamicSharedMemorySize
-#define cudaFuncSetAttribute hipFuncSetAttribute
 #define cudaGetDevice hipGetDevice
 #define cudaGetDeviceCount hipGetDeviceCount
 #define cudaGetDeviceProperties hipGetDeviceProperties
