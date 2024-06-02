@@ -8,7 +8,7 @@
 
 typedef void (*load_tiles_cuda_t)(
     const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
-    int * __restrict__ x_sc, const int & i_max, const int & stride);
+    int * __restrict__ x_sc, const int & kbx0, const int & i_max, const int & stride);
 typedef float (*vec_dot_q_mul_mat_cuda_t)(
     const int * __restrict__ x_ql, const half2 * __restrict__ x_dm, const int * __restrict__ x_qh, const int * __restrict__ x_sc,
     const int * __restrict__ y_qs, const half2 * __restrict__ y_ms, const int & i, const int & j, const int & k);
@@ -116,7 +116,7 @@ constexpr __device__ tile_x_sizes get_tile_x_sizes_device(ggml_type type) {
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q4_0(
     const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
-    int * __restrict__ x_sc, const int & i_max, const int & stride) {
+    int * __restrict__ x_sc, const int & kbx0, const int & i_max, const int & stride) {
     GGML_UNUSED(x_qh); GGML_UNUSED(x_sc);
 
     const int kbx  = threadIdx.x / QI4_0;
@@ -132,7 +132,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q4_0 * bxi = (const block_q4_0 *) x + i*stride + kbx;
+        const block_q4_0 * bxi = (const block_q4_0 *) x + kbx0 + i*stride + kbx;
 
         x_ql[i * (WARP_SIZE + 1) + threadIdx.x] = get_int_from_uint8(bxi->qs, kqsx);
     }
@@ -148,7 +148,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q4_0 * bxi = (const block_q4_0 *) x + i*stride + kbxd;
+        const block_q4_0 * bxi = (const block_q4_0 *) x + kbx0 + i*stride + kbxd;
 
         x_dmf[i * (WARP_SIZE/QI4_0) + i / QI4_0 + kbxd] = bxi->d;
     }
@@ -177,7 +177,7 @@ static __device__ __forceinline__ float vec_dot_q4_0_q8_1_mul_mat(
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q4_1(
     const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
-    int * __restrict__ x_sc, const int & i_max, const int & stride) {
+    int * __restrict__ x_sc, const int & kbx0, const int & i_max, const int & stride) {
     GGML_UNUSED(x_qh); GGML_UNUSED(x_sc);
 
     const int kbx  = threadIdx.x / QI4_1;
@@ -191,7 +191,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q4_1 * bxi = (const block_q4_1 *) x + i*stride + kbx;
+        const block_q4_1 * bxi = (const block_q4_1 *) x + kbx0 + i*stride + kbx;
 
         x_ql[i * (WARP_SIZE + 1) + threadIdx.x] = get_int_from_uint8_aligned(bxi->qs, kqsx);
     }
@@ -207,7 +207,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q4_1 * bxi = (const block_q4_1 *) x + i*stride + kbxd;
+        const block_q4_1 * bxi = (const block_q4_1 *) x + kbx0 + i*stride + kbxd;
 
         x_dm[i * (WARP_SIZE/QI4_1) + i / QI4_1 + kbxd] = bxi->dm;
     }
@@ -235,7 +235,7 @@ static __device__ __forceinline__ float vec_dot_q4_1_q8_1_mul_mat(
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q5_0(
     const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
-    int * __restrict__ x_sc, const int & i_max, const int & stride) {
+    int * __restrict__ x_sc, const int & kbx0, const int & i_max, const int & stride) {
     GGML_UNUSED(x_qh); GGML_UNUSED(x_sc);
 
     const int kbx  = threadIdx.x / QI5_0;
@@ -249,7 +249,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q5_0 * bxi = (const block_q5_0 *) x + i*stride + kbx;
+        const block_q5_0 * bxi = (const block_q5_0 *) x + kbx0 + i*stride + kbx;
 
         const int ql = get_int_from_uint8(bxi->qs, kqsx);
         const int qh = get_int_from_uint8(bxi->qh, 0) >> (4 * (threadIdx.x % QI5_0));
@@ -285,7 +285,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q5_0 * bxi = (const block_q5_0 *) x + i*stride + kbxd;
+        const block_q5_0 * bxi = (const block_q5_0 *) x + kbx0 + i*stride + kbxd;
 
         x_dmf[i * (WARP_SIZE/QI5_0) + i / QI5_0 + kbxd] = bxi->d;
     }
@@ -316,7 +316,7 @@ static __device__ __forceinline__ float vec_dot_q5_0_q8_1_mul_mat(
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q5_1(
     const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
-    int * __restrict__ x_sc, const int & i_max, const int & stride) {
+    int * __restrict__ x_sc, const int & kbx0, const int & i_max, const int & stride) {
     GGML_UNUSED(x_qh); GGML_UNUSED(x_sc);
 
     const int kbx  = threadIdx.x / QI5_1;
@@ -330,7 +330,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q5_1 * bxi = (const block_q5_1 *) x + i*stride + kbx;
+        const block_q5_1 * bxi = (const block_q5_1 *) x + kbx0 + i*stride + kbx;
 
         const int ql = get_int_from_uint8_aligned(bxi->qs, kqsx);
         const int qh = get_int_from_uint8_aligned(bxi->qh, 0) >> (4 * (threadIdx.x % QI5_1));
@@ -363,7 +363,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q5_1 * bxi = (const block_q5_1 *) x + i*stride + kbxd;
+        const block_q5_1 * bxi = (const block_q5_1 *) x + kbx0 + i*stride + kbxd;
 
         x_dm[i * (WARP_SIZE/QI5_1) + i / QI5_1 + kbxd] = bxi->dm;
     }
@@ -391,7 +391,7 @@ static __device__ __forceinline__ float vec_dot_q5_1_q8_1_mul_mat(
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q8_0(
     const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
-    int * __restrict__ x_sc, const int & i_max, const int & stride) {
+    int * __restrict__ x_sc, const int & kbx0, const int & i_max, const int & stride) {
     GGML_UNUSED(x_qh); GGML_UNUSED(x_sc);
 
     const int kbx  = threadIdx.x / QI8_0;
@@ -406,7 +406,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q8_0 * bxi = (const block_q8_0 *) x + i*stride + kbx;
+        const block_q8_0 * bxi = (const block_q8_0 *) x + kbx0 + i*stride + kbx;
 
         x_ql[i * (WARP_SIZE + 1) + threadIdx.x] = get_int_from_int8(bxi->qs, kqsx);
     }
@@ -422,7 +422,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q8_0 * bxi = (const block_q8_0 *) x + i*stride + kbxd;
+        const block_q8_0 * bxi = (const block_q8_0 *) x + kbx0 + i*stride + kbxd;
 
         x_dmf[i * (WARP_SIZE/QI8_0) + i / QI8_0 + kbxd] = bxi->d;
     }
@@ -443,7 +443,7 @@ static __device__ __forceinline__ float vec_dot_q8_0_q8_1_mul_mat(
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q2_K(
     const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
-    int * __restrict__ x_sc, const int & i_max, const int & stride) {
+    int * __restrict__ x_sc, const int & kbx0, const int & i_max, const int & stride) {
     GGML_UNUSED(x_qh);
 
     const int kbx  = threadIdx.x / QI2_K;
@@ -457,7 +457,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q2_K * bxi = (const block_q2_K *) x + i*stride + kbx;
+        const block_q2_K * bxi = (const block_q2_K *) x + kbx0 + i*stride + kbx;
 
         x_ql[i * (WARP_SIZE + 1) + threadIdx.x] = get_int_from_uint8_aligned(bxi->qs, kqsx);
     }
@@ -473,7 +473,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q2_K * bxi = (const block_q2_K *) x + i*stride + kbxd;
+        const block_q2_K * bxi = (const block_q2_K *) x + kbx0 + i*stride + kbxd;
 
         x_dm[i * (WARP_SIZE/QI2_K) + i / QI2_K + kbxd] = bxi->dm;
     }
@@ -486,7 +486,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q2_K * bxi = (const block_q2_K *) x + i*stride + (threadIdx.x % (WARP_SIZE/4)) / (QI2_K/4);
+        const block_q2_K * bxi = (const block_q2_K *) x + kbx0 + i*stride + (threadIdx.x % (WARP_SIZE/4)) / (QI2_K/4);
 
         x_sc[i * (WARP_SIZE/4) + i / 4 + threadIdx.x % (WARP_SIZE/4)] = get_int_from_uint8_aligned(bxi->scales, threadIdx.x % (QI2_K/4));
     }
@@ -519,7 +519,7 @@ static __device__ __forceinline__ float vec_dot_q2_K_q8_1_mul_mat(
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q3_K(
     const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
-    int * __restrict__ x_sc, const int & i_max, const int & stride) {
+    int * __restrict__ x_sc, const int & kbx0, const int & i_max, const int & stride) {
 
     const int kbx  = threadIdx.x / QI3_K;
     const int kqsx = threadIdx.x % QI3_K;
@@ -532,7 +532,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q3_K * bxi = (const block_q3_K *) x + i*stride + kbx;
+        const block_q3_K * bxi = (const block_q3_K *) x + kbx0 + i*stride + kbx;
 
         x_ql[i * (WARP_SIZE + 1) + threadIdx.x] = get_int_from_uint8(bxi->qs, kqsx);
     }
@@ -549,7 +549,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q3_K * bxi = (const block_q3_K *) x + i*stride + kbxd;
+        const block_q3_K * bxi = (const block_q3_K *) x + kbx0 + i*stride + kbxd;
 
         x_dmf[i * (WARP_SIZE/QI3_K) + i / QI3_K + kbxd] = bxi->d;
     }
@@ -562,7 +562,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q3_K * bxi = (const block_q3_K *) x + i*stride + (threadIdx.x % (WARP_SIZE/2)) / (QI3_K/2);
+        const block_q3_K * bxi = (const block_q3_K *) x + kbx0 + i*stride + (threadIdx.x % (WARP_SIZE/2)) / (QI3_K/2);
 
         // invert the mask with ~ so that a 0/1 results in 4/0 being subtracted
         x_qh[i * (WARP_SIZE/2) + i / 2 + threadIdx.x % (WARP_SIZE/2)] = ~get_int_from_uint8(bxi->hmask, threadIdx.x % (QI3_K/2));
@@ -576,7 +576,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q3_K * bxi = (const block_q3_K *) x + i*stride + (threadIdx.x % (WARP_SIZE/4)) / (QI3_K/4);
+        const block_q3_K * bxi = (const block_q3_K *) x + kbx0 + i*stride + (threadIdx.x % (WARP_SIZE/4)) / (QI3_K/4);
 
         const int ksc = threadIdx.x % (QI3_K/4);
 
@@ -625,7 +625,7 @@ static __device__ __forceinline__ float vec_dot_q3_K_q8_1_mul_mat(
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q4_K(
     const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
-    int * __restrict__ x_sc, const int & i_max, const int & stride) {
+    int * __restrict__ x_sc, const int & kbx0, const int & i_max, const int & stride) {
     GGML_UNUSED(x_qh);
 
     const int kbx  = 0;           // threadIdx.x / QI4_K
@@ -639,7 +639,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q4_K * bxi = (const block_q4_K *) x + i*stride + kbx;
+        const block_q4_K * bxi = (const block_q4_K *) x + kbx0 + i*stride + kbx;
 
         x_ql[i * (WARP_SIZE + 1) + threadIdx.x] = get_int_from_uint8_aligned(bxi->qs, kqsx);
     }
@@ -655,7 +655,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q4_K * bxi = (const block_q4_K *) x + i*stride + kbxd;
+        const block_q4_K * bxi = (const block_q4_K *) x + kbx0 + i*stride + kbxd;
 
         x_dm[i * (WARP_SIZE/QI4_K) + i / QI4_K + kbxd] = bxi->dm;
     }
@@ -668,7 +668,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q4_K * bxi = (const block_q4_K *) x + i*stride + (threadIdx.x % (WARP_SIZE/8)) / (QI4_K/8);
+        const block_q4_K * bxi = (const block_q4_K *) x + kbx0 + i*stride + (threadIdx.x % (WARP_SIZE/8)) / (QI4_K/8);
 
         const int * scales = (const int *) bxi->scales;
 
@@ -696,7 +696,7 @@ static __device__ __forceinline__ float vec_dot_q4_K_q8_1_mul_mat(
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q5_K(
     const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
-    int * __restrict__ x_sc, const int & i_max, const int & stride) {
+    int * __restrict__ x_sc, const int & kbx0, const int & i_max, const int & stride) {
     GGML_UNUSED(x_qh);
 
     const int kbx  = 0;           // threadIdx.x / QI5_K
@@ -710,7 +710,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q5_K * bxi = (const block_q5_K *) x + i*stride + kbx;
+        const block_q5_K * bxi = (const block_q5_K *) x + kbx0 + i*stride + kbx;
         const int ky = QR5_K*kqsx;
 
         const int ql = get_int_from_uint8_aligned(bxi->qs, kqsx);
@@ -739,7 +739,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q5_K * bxi = (const block_q5_K *) x + i*stride + kbxd;
+        const block_q5_K * bxi = (const block_q5_K *) x + kbx0 + i*stride + kbxd;
 
         x_dm[i * (WARP_SIZE/QI5_K) + i / QI5_K + kbxd] = bxi->dm;
     }
@@ -752,7 +752,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q5_K * bxi = (const block_q5_K *) x + i*stride + (threadIdx.x % (WARP_SIZE/8)) / (QI5_K/8);
+        const block_q5_K * bxi = (const block_q5_K *) x + kbx0 + i*stride + (threadIdx.x % (WARP_SIZE/8)) / (QI5_K/8);
 
         const int * scales = (const int *) bxi->scales;
 
@@ -781,7 +781,7 @@ static __device__ __forceinline__ float vec_dot_q5_K_q8_1_mul_mat(
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q6_K(
     const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
-    int * __restrict__ x_sc, const int & i_max, const int & stride) {
+    int * __restrict__ x_sc, const int & kbx0, const int & i_max, const int & stride) {
     GGML_UNUSED(x_qh);
 
     const int kbx  = 0;           // threadIdx.x / QI6_K
@@ -795,7 +795,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q6_K * bxi = (const block_q6_K *) x + i*stride + kbx;
+        const block_q6_K * bxi = (const block_q6_K *) x + kbx0 + i*stride + kbx;
         const int ky = QR6_K*kqsx;
 
         const int ql = get_int_from_uint8(bxi->ql, kqsx);
@@ -825,7 +825,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q6_K * bxi = (const block_q6_K *) x + i*stride + kbxd;
+        const block_q6_K * bxi = (const block_q6_K *) x + kbx0 + i*stride + kbxd;
 
         x_dmf[i * (WARP_SIZE/QI6_K) + i / QI6_K + kbxd] = bxi->d;
     }
@@ -838,7 +838,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             i = min(i, i_max);
         }
 
-        const block_q6_K * bxi = (const block_q6_K *) x + i*stride + (threadIdx.x % (WARP_SIZE/8)) / 4;
+        const block_q6_K * bxi = (const block_q6_K *) x + kbx0 + i*stride + (threadIdx.x % (WARP_SIZE/8)) / 4;
 
         x_sc[i * (WARP_SIZE/8) + i / 8 + threadIdx.x % (WARP_SIZE/8)] = get_int_from_int8(bxi->scales, threadIdx.x % (QI6_K/8));
     }
@@ -922,7 +922,7 @@ __launch_bounds__(nwarps*WARP_SIZE, (mmq_x*mmq_y <= 64*128) ? 2 : 1)
 #endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
 static __global__ void mul_mat_q(
     const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst,
-    const int ne00, const int ne01, const int row_stride_x, const int ne10, const int ne11, const int ne0) {
+    const int ne00, const int ne01, const int stride00, const int ne10, const int ne11, const int ne0) {
 
     constexpr int  qk       = ggml_blck_size_device(type);
     constexpr int  ts       = ggml_type_size_device(type);
@@ -942,7 +942,7 @@ static __global__ void mul_mat_q(
     half2 * tile_y_ds = (half2 *) (tile_y_qs + mmq_x*WARP_SIZE); // [mmq_x * WARP_SIZE/QI8_1];
 
     constexpr        load_tiles_cuda_t load_tiles = get_load_tiles<mmq_y, nwarps, need_check>(type);
-    constexpr vec_dot_q_mul_mat_cuda_t    vec_dot = get_vec_dot_mmq(type);
+    constexpr vec_dot_q_mul_mat_cuda_t vec_dot    = get_vec_dot_mmq(type);
 
     const block_q8_1 * y = (const block_q8_1 *) yc;
 
@@ -952,15 +952,13 @@ static __global__ void mul_mat_q(
 
     const int & ne1 = ne11;
 
-    x += row_stride_x*ts * blockIdx.x*mmq_y;
-
     const int tile_x_max_i = ne01 - blockIdx.x*mmq_y - 1;
 
     float sum[mmq_y/WARP_SIZE][mmq_x/nwarps] = {{0.0f}};
 
     for (int kb0 = 0; kb0 < blocks_per_row_x; kb0 += blocks_per_warp) {
 
-        load_tiles(x + kb0*ts, tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc, tile_x_max_i, row_stride_x);
+        load_tiles(x, tile_x_ql, tile_x_dm, tile_x_qh, tile_x_sc, stride00*blockIdx.x*mmq_y + kb0, tile_x_max_i, stride00);
 
 #pragma unroll
         for (int kr = 0; kr < qr; ++kr) {
@@ -1075,8 +1073,8 @@ static void launch_mul_mat_q(const mmq_args & args, cudaStream_t stream) {
 
 template <ggml_type type>
 void mul_mat_q_case(const mmq_args & args, cudaStream_t stream) {
-    constexpr int mmq_y  = 128;
-    constexpr int nwarps =   8;
+    constexpr int mmq_y  = MMQ_Y; // Possibly different choice for tensor cores.
+    constexpr int nwarps = 8;
     const int block_num_y = (args.ne01 + mmq_y - 1) / mmq_y;
 
     const int id  = ggml_cuda_get_device();
