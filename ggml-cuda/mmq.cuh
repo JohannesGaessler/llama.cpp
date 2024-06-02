@@ -1063,7 +1063,7 @@ struct mmq_args {
 };
 
 template <ggml_type type>
-static void mul_mat_q_case(ggml_backend_cuda_context & ctx, cudaStream_t stream, const mmq_args & args) {
+void mul_mat_q_case(ggml_backend_cuda_context & ctx, cudaStream_t stream, const mmq_args & args) {
     constexpr int mmq_x  = 64;
     constexpr int mmq_y  = 64;
     constexpr int nwarps =  8;
@@ -1084,20 +1084,20 @@ static void mul_mat_q_case(ggml_backend_cuda_context & ctx, cudaStream_t stream,
     }
 }
 
-// #define DECL_MUL_MAT_Q_CASE(type)                                                 \
-//     template void mul_mat_q_case                                                  \
-//     <type>(ggml_backend_cuda_context & ctx, cudaStream_t stream, mmq_args & args) \
+#define DECL_MMQ_CASE(type)                                                             \
+    template void mul_mat_q_case                                                        \
+    <type>(ggml_backend_cuda_context & ctx, cudaStream_t stream, const mmq_args & args) \
 
-// extern DECL_MUL_MAT_Q_CASE(GGML_TYPE_Q4_0);
-// extern DECL_MUL_MAT_Q_CASE(GGML_TYPE_Q4_1);
-// extern DECL_MUL_MAT_Q_CASE(GGML_TYPE_Q5_0);
-// extern DECL_MUL_MAT_Q_CASE(GGML_TYPE_Q5_1);
-// extern DECL_MUL_MAT_Q_CASE(GGML_TYPE_Q8_0);
-// extern DECL_MUL_MAT_Q_CASE(GGML_TYPE_Q2_K);
-// extern DECL_MUL_MAT_Q_CASE(GGML_TYPE_Q3_K);
-// extern DECL_MUL_MAT_Q_CASE(GGML_TYPE_Q4_K);
-// extern DECL_MUL_MAT_Q_CASE(GGML_TYPE_Q5_K);
-// extern DECL_MUL_MAT_Q_CASE(GGML_TYPE_Q6_K);
+extern DECL_MMQ_CASE(GGML_TYPE_Q4_0);
+extern DECL_MMQ_CASE(GGML_TYPE_Q4_1);
+extern DECL_MMQ_CASE(GGML_TYPE_Q5_0);
+extern DECL_MMQ_CASE(GGML_TYPE_Q5_1);
+extern DECL_MMQ_CASE(GGML_TYPE_Q8_0);
+extern DECL_MMQ_CASE(GGML_TYPE_Q2_K);
+extern DECL_MMQ_CASE(GGML_TYPE_Q3_K);
+extern DECL_MMQ_CASE(GGML_TYPE_Q4_K);
+extern DECL_MMQ_CASE(GGML_TYPE_Q5_K);
+extern DECL_MMQ_CASE(GGML_TYPE_Q6_K);
 
 // -------------------------------------------------------------------------------------------------------------------------
 
