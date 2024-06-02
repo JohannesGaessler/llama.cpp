@@ -20,16 +20,36 @@ struct tile_x_sizes {
     int sc;
 };
 
-#define TILE_X_SIZES_Q4_0 tile_x_sizes{MMQ_Y*WARP_SIZE   + MMQ_Y, MMQ_Y*WARP_SIZE/QI4_0 + MMQ_Y/QI4_0, 0,                           0}
-#define TILE_X_SIZES_Q4_1 tile_x_sizes{MMQ_Y*WARP_SIZE   + MMQ_Y, MMQ_Y*WARP_SIZE/QI4_1 + MMQ_Y/QI4_1, 0,                           0}
-#define TILE_X_SIZES_Q5_0 tile_x_sizes{MMQ_Y*WARP_SIZE*2 + MMQ_Y, MMQ_Y*WARP_SIZE/QI5_0 + MMQ_Y/QI5_0, 0,                           0}
-#define TILE_X_SIZES_Q5_1 tile_x_sizes{MMQ_Y*WARP_SIZE*2 + MMQ_Y, MMQ_Y*WARP_SIZE/QI5_1 + MMQ_Y/QI5_1, 0,                           0}
-#define TILE_X_SIZES_Q8_0 tile_x_sizes{MMQ_Y*WARP_SIZE   + MMQ_Y, MMQ_Y*WARP_SIZE/QI8_0 + MMQ_Y/QI8_0, 0,                           0}
-#define TILE_X_SIZES_Q2_K tile_x_sizes{MMQ_Y*WARP_SIZE   + MMQ_Y, MMQ_Y*WARP_SIZE/QI2_K + MMQ_Y/QI2_K, 0,                           MMQ_Y*WARP_SIZE/4 + MMQ_Y/4}
-#define TILE_X_SIZES_Q3_K tile_x_sizes{MMQ_Y*WARP_SIZE   + MMQ_Y, MMQ_Y*WARP_SIZE/QI3_K + MMQ_Y/QI3_K, MMQ_Y*WARP_SIZE/2 + MMQ_Y/2, MMQ_Y*WARP_SIZE/4 + MMQ_Y/4}
-#define TILE_X_SIZES_Q4_K tile_x_sizes{MMQ_Y*WARP_SIZE   + MMQ_Y, MMQ_Y*WARP_SIZE/QI4_K + MMQ_Y/QI4_K, 0,                           MMQ_Y*WARP_SIZE/8 + MMQ_Y/8}
-#define TILE_X_SIZES_Q5_K tile_x_sizes{MMQ_Y*WARP_SIZE*2 + MMQ_Y, MMQ_Y*WARP_SIZE/QI5_K + MMQ_Y/QI5_K, 0,                           MMQ_Y*WARP_SIZE/8 + MMQ_Y/8}
-#define TILE_X_SIZES_Q6_K tile_x_sizes{MMQ_Y*WARP_SIZE*2 + MMQ_Y, MMQ_Y*WARP_SIZE/QI6_K + MMQ_Y/QI6_K, 0,                           MMQ_Y*WARP_SIZE/8 + MMQ_Y/8}
+static int get_mmq_y_host(const int cc, const int mmq_x) {
+    return cc >= CC_VOLTA && cc < CC_OFFSET_AMD && mmq_x >= 32 ? 128 : 64;
+}
+
+#if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
+static constexpr __device__ int get_mmq_y_device(int /*mmq_x*/) {
+    return 64;
+}
+#else
+#if __CUDA_ARCH__ >= CC_VOLTA
+static constexpr __device__ int get_mmq_y_device(int mmq_x) {
+    return mmq_x >= 32 ? 128 : 64;
+}
+#else
+static constexpr __device__ int get_mmq_y_device(int /*mmq_x*/) {
+    return 64;
+}
+#endif // __CUDA_ARCH__ >= CC_VOLTA
+#endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
+
+#define TILE_X_SIZES_Q4_0 tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI4_0 + mmq_y/QI4_0, 0,                           0}
+#define TILE_X_SIZES_Q4_1 tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI4_1 + mmq_y/QI4_1, 0,                           0}
+#define TILE_X_SIZES_Q5_0 tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI5_0 + mmq_y/QI5_0, 0,                           0}
+#define TILE_X_SIZES_Q5_1 tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI5_1 + mmq_y/QI5_1, 0,                           0}
+#define TILE_X_SIZES_Q8_0 tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI8_0 + mmq_y/QI8_0, 0,                           0}
+#define TILE_X_SIZES_Q2_K tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI2_K + mmq_y/QI2_K, 0,                           mmq_y*WARP_SIZE/4 + mmq_y/4}
+#define TILE_X_SIZES_Q3_K tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI3_K + mmq_y/QI3_K, mmq_y*WARP_SIZE/2 + mmq_y/2, mmq_y*WARP_SIZE/4 + mmq_y/4}
+#define TILE_X_SIZES_Q4_K tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI4_K + mmq_y/QI4_K, 0,                           mmq_y*WARP_SIZE/8 + mmq_y/8}
+#define TILE_X_SIZES_Q5_K tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI5_K + mmq_y/QI5_K, 0,                           mmq_y*WARP_SIZE/8 + mmq_y/8}
+#define TILE_X_SIZES_Q6_K tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI6_K + mmq_y/QI6_K, 0,                           mmq_y*WARP_SIZE/8 + mmq_y/8}
 
 #define GET_TILE_X_SIZES_BODY                           \
     return type == GGML_TYPE_Q4_0 ? TILE_X_SIZES_Q4_0 : \
@@ -44,11 +64,12 @@ struct tile_x_sizes {
         type == GGML_TYPE_Q6_K ? TILE_X_SIZES_Q6_K :    \
         tile_x_sizes{0, 0, 0, 0}
 
-constexpr tile_x_sizes get_tile_x_sizes_host(ggml_type type) {
+static tile_x_sizes get_tile_x_sizes_host(const ggml_type type, const int mmq_y) {
     GET_TILE_X_SIZES_BODY;
 }
 
-constexpr __device__ tile_x_sizes get_tile_x_sizes_device(ggml_type type) {
+template <int mmq_y>
+static constexpr __device__ tile_x_sizes get_tile_x_sizes_device(ggml_type type) {
     GET_TILE_X_SIZES_BODY;
 }
 
@@ -976,25 +997,26 @@ static constexpr __device__ vec_dot_q_mul_mat_cuda_t get_vec_dot_mmq(ggml_type t
         nullptr;
 }
 
-template <ggml_type type, int mmq_x, int mmq_y, int nwarps, bool need_check>
+template <ggml_type type, int mmq_x, int nwarps, bool need_check>
 #if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
 #if defined(RDNA3) || defined(RDNA2)
 __launch_bounds__(nwarps*WARP_SIZE, 2)
 #endif // defined(RDNA3) || defined(RDNA2)
 #else
-__launch_bounds__(nwarps*WARP_SIZE, (mmq_x*mmq_y <= 64*128) ? 2 : 1)
+__launch_bounds__(nwarps*WARP_SIZE, (mmq_x*get_mmq_y_device(mmq_x) <= 64*128) ? 2 : 1)
 #endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
 static __global__ void mul_mat_q(
     const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst,
     const int ne00, const int ne01, const int stride00, const int ne10, const int ne11, const int ne0) {
 
+    constexpr int  mmq_y    = get_mmq_y_device(mmq_x);
     constexpr int  qk       = ggml_blck_size_device(type);
     constexpr int  qr       = get_qr_device(type);
     constexpr int  qi       = get_qi_device(type);
     constexpr bool need_sum = get_need_sum(type);
     constexpr int  vdr      = get_vdr_mmq(type);
 
-    constexpr tile_x_sizes txs = get_tile_x_sizes_device(type);
+    constexpr tile_x_sizes txs = get_tile_x_sizes_device<mmq_y>(type);
 
     extern __shared__ char data_mul_mat_q[];
     int   * tile_x_ql = (int   *)  data_mul_mat_q;
@@ -1094,34 +1116,37 @@ struct mmq_args {
     int64_t ne0;
 };
 
-template <ggml_type type, int mmq_x, int mmq_y, int nwarps>
+template <ggml_type type, int mmq_x, int nwarps>
 static void launch_mul_mat_q(const mmq_args & args, cudaStream_t stream) {
+    const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
+    const int mmq_y = get_mmq_y_host(cc, mmq_x);
+
     const int block_num_x = (args.ne01 + mmq_y - 1) / mmq_y;
     const int block_num_y = (args.ne11 + mmq_x - 1) / mmq_x;
     const dim3 block_nums(block_num_x, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
-    constexpr tile_x_sizes txs = get_tile_x_sizes_host(type);
-    constexpr int shmem_x = txs.ql*sizeof(int) + txs.dm*sizeof(half2) + txs.qh*sizeof(int) + txs.sc*sizeof(int);
-    constexpr int shmem_y = mmq_x*WARP_SIZE*sizeof(int) + mmq_x*(WARP_SIZE/QI8_1)*sizeof(half2);
-    constexpr int shmem = shmem_x + shmem_y;
+    const tile_x_sizes txs = get_tile_x_sizes_host(type, mmq_y);
+    const int shmem_x = txs.ql*sizeof(int) + txs.dm*sizeof(half2) + txs.qh*sizeof(int) + txs.sc*sizeof(int);
+    const int shmem_y = mmq_x*WARP_SIZE*sizeof(int) + mmq_x*(WARP_SIZE/QI8_1)*sizeof(half2);
+    const int shmem = shmem_x + shmem_y;
 
 #if !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__))
     static bool shmem_limit_raised = false;
     if (!shmem_limit_raised) {
-        CUDA_CHECK(cudaFuncSetAttribute(mul_mat_q<type, mmq_x, mmq_y, nwarps, false>, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem));
-        CUDA_CHECK(cudaFuncSetAttribute(mul_mat_q<type, mmq_x, mmq_y, nwarps, true>,  cudaFuncAttributeMaxDynamicSharedMemorySize, shmem));
+        CUDA_CHECK(cudaFuncSetAttribute(mul_mat_q<type, mmq_x, nwarps, false>, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem));
+        CUDA_CHECK(cudaFuncSetAttribute(mul_mat_q<type, mmq_x, nwarps, true>,  cudaFuncAttributeMaxDynamicSharedMemorySize, shmem));
         shmem_limit_raised = true;
     }
 #endif // !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__))
 
     if (args.ne01 % mmq_y == 0) {
         const bool need_check = false;
-        mul_mat_q<type, mmq_x, mmq_y, nwarps, need_check><<<block_nums, block_dims, shmem, stream>>>
+        mul_mat_q<type, mmq_x, nwarps, need_check><<<block_nums, block_dims, shmem, stream>>>
             (args.x, args.y, args.dst, args.ne00, args.ne01, args.stride00, args.ne10, args.ne11, args.ne0);
     } else {
         const bool need_check = true;
-        mul_mat_q<type, mmq_x, mmq_y, nwarps, need_check><<<block_nums, block_dims, shmem, stream>>>
+        mul_mat_q<type, mmq_x, nwarps, need_check><<<block_nums, block_dims, shmem, stream>>>
             (args.x, args.y, args.dst, args.ne00, args.ne01, args.stride00, args.ne10, args.ne11, args.ne0);
     }
 }
@@ -1131,16 +1156,12 @@ void mul_mat_q_case(const mmq_args & args, cudaStream_t stream) {
     constexpr int mmq_y  = MMQ_Y; // Possibly different choice for tensor cores.
     const int block_num_y = (args.ne01 + mmq_y - 1) / mmq_y;
 
-    const int id  = ggml_cuda_get_device();
-    const int nsm = ggml_cuda_info().devices[id].nsm;
-    const int cc  = ggml_cuda_info().devices[id].cc;
+    const int nsm = ggml_cuda_info().devices[ggml_cuda_get_device()].nsm;
 
     int mmq_x_best  = 0;
     int nwaves_best = INT_MAX;
 
-    const int mmq_x_max = cc >= CC_VOLTA && cc < CC_OFFSET_AMD ? 128 : 64;
-
-    for (int mmq_x = 8; mmq_x <= mmq_x_max && nwaves_best > 1; mmq_x += 8) {
+    for (int mmq_x = 8; mmq_x <= 128 && nwaves_best > 1; mmq_x += 8) {
         const int block_num_x = (args.ne11 + mmq_x - 1) / mmq_x;
         const int nwaves = (block_num_x*block_num_y + nsm - 1) / nsm;
 
@@ -1152,52 +1173,52 @@ void mul_mat_q_case(const mmq_args & args, cudaStream_t stream) {
 
     switch (mmq_x_best) {
         case   8:
-            launch_mul_mat_q<type,   8,    64, 4>(args, stream);
+            launch_mul_mat_q<type,   8, 4>(args, stream);
             break;
         case  16:
-            launch_mul_mat_q<type,  16, mmq_y, 8>(args, stream);
+            launch_mul_mat_q<type,  16, 8>(args, stream);
             break;
         case  24:
-            launch_mul_mat_q<type,  24, mmq_y, 8>(args, stream);
+            launch_mul_mat_q<type,  24, 8>(args, stream);
             break;
         case  32:
-            launch_mul_mat_q<type,  32, mmq_y, 8>(args, stream);
+            launch_mul_mat_q<type,  32, 8>(args, stream);
             break;
         case  40:
-            launch_mul_mat_q<type,  40, mmq_y, 8>(args, stream);
+            launch_mul_mat_q<type,  40, 8>(args, stream);
             break;
         case  48:
-            launch_mul_mat_q<type,  48, mmq_y, 8>(args, stream);
+            launch_mul_mat_q<type,  48, 8>(args, stream);
             break;
         case  56:
-            launch_mul_mat_q<type,  56, mmq_y, 8>(args, stream);
+            launch_mul_mat_q<type,  56, 8>(args, stream);
             break;
         case  64:
-            launch_mul_mat_q<type,  64, mmq_y, 8>(args, stream);
+            launch_mul_mat_q<type,  64, 8>(args, stream);
             break;
         case  72:
-            launch_mul_mat_q<type,  72, mmq_y, 8>(args, stream);
+            launch_mul_mat_q<type,  72, 8>(args, stream);
             break;
         case  80:
-            launch_mul_mat_q<type,  80, mmq_y, 8>(args, stream);
+            launch_mul_mat_q<type,  80, 8>(args, stream);
             break;
         case  88:
-            launch_mul_mat_q<type,  88, mmq_y, 8>(args, stream);
+            launch_mul_mat_q<type,  88, 8>(args, stream);
             break;
         case  96:
-            launch_mul_mat_q<type,  96, mmq_y, 8>(args, stream);
+            launch_mul_mat_q<type,  96, 8>(args, stream);
             break;
         case 104:
-            launch_mul_mat_q<type, 104, mmq_y, 8>(args, stream);
+            launch_mul_mat_q<type, 104, 8>(args, stream);
             break;
         case 112:
-            launch_mul_mat_q<type, 112, mmq_y, 8>(args, stream);
+            launch_mul_mat_q<type, 112, 8>(args, stream);
             break;
         case 120:
-            launch_mul_mat_q<type, 120, mmq_y, 8>(args, stream);
+            launch_mul_mat_q<type, 120, 8>(args, stream);
             break;
         case 128:
-            launch_mul_mat_q<type, 128, mmq_y, 8>(args, stream);
+            launch_mul_mat_q<type, 128, 8>(args, stream);
             break;
         default:
             GGML_ASSERT(false);
