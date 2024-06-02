@@ -502,7 +502,7 @@ static constexpr __device__ int ggml_blck_size_device(ggml_type type) {
         type == GGML_TYPE_IQ3_XXS ? QK_K :
         type == GGML_TYPE_IQ1_S ? QK_K :
         type == GGML_TYPE_IQ1_M ? QK_K :
-        type == GGML_TYPE_IQ4_NL ? QK_K :
+        type == GGML_TYPE_IQ4_NL ? QK4_NL :
         type == GGML_TYPE_IQ4_XS ? QK_K :
         type == GGML_TYPE_IQ3_S ? QK_K :
         0;
