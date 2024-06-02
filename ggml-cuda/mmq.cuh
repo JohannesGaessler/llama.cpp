@@ -1153,15 +1153,19 @@ static void launch_mul_mat_q(const mmq_args & args, cudaStream_t stream) {
 
 template <ggml_type type>
 void mul_mat_q_case(const mmq_args & args, cudaStream_t stream) {
-    constexpr int mmq_y  = MMQ_Y; // Possibly different choice for tensor cores.
-    const int block_num_y = (args.ne01 + mmq_y - 1) / mmq_y;
+    constexpr int mmq_x_max = 128;
 
-    const int nsm = ggml_cuda_info().devices[ggml_cuda_get_device()].nsm;
+    const int id = ggml_cuda_get_device();
+    const int nsm = ggml_cuda_info().devices[id].nsm;
+    const int cc  = ggml_cuda_info().devices[id].cc;
+
+    const int mmq_y = get_mmq_y_host(cc, mmq_x_max); // use
+    const int block_num_y = (args.ne01 + mmq_y - 1) / mmq_y;
 
     int mmq_x_best  = 0;
     int nwaves_best = INT_MAX;
 
-    for (int mmq_x = 8; mmq_x <= 128 && nwaves_best > 1; mmq_x += 8) {
+    for (int mmq_x = 8; mmq_x <= mmq_x_max && nwaves_best > 1; mmq_x += 8) {
         const int block_num_x = (args.ne11 + mmq_x - 1) / mmq_x;
         const int nwaves = (block_num_x*block_num_y + nsm - 1) / nsm;
 
