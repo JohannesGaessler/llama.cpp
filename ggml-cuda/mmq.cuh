@@ -20,87 +20,28 @@ struct tile_x_sizes {
     int sc;
 };
 
-constexpr tile_x_sizes tile_x_sizes_q4_0 {
-    MMQ_Y*WARP_SIZE       + MMQ_Y,
-    MMQ_Y*WARP_SIZE/QI4_0 + MMQ_Y/QI4_0,
-    0,
-    0
-};
-
-constexpr tile_x_sizes tile_x_sizes_q4_1 {
-    MMQ_Y*WARP_SIZE       + MMQ_Y,
-    MMQ_Y*WARP_SIZE/QI4_1 + MMQ_Y/QI4_1,
-    0,
-    0
-};
-
-constexpr tile_x_sizes tile_x_sizes_q5_0 {
-    MMQ_Y*WARP_SIZE*2     + MMQ_Y,
-    MMQ_Y*WARP_SIZE/QI5_0 + MMQ_Y/QI5_0,
-    0,
-    0
-};
-
-constexpr tile_x_sizes tile_x_sizes_q5_1 {
-    MMQ_Y*WARP_SIZE*2     + MMQ_Y,
-    MMQ_Y*WARP_SIZE/QI5_1 + MMQ_Y/QI5_1,
-    0,
-    0
-};
-
-constexpr tile_x_sizes tile_x_sizes_q8_0 {
-    MMQ_Y*WARP_SIZE       + MMQ_Y,
-    MMQ_Y*WARP_SIZE/QI8_0 + MMQ_Y/QI8_0,
-    0,
-    0
-};
-
-constexpr tile_x_sizes tile_x_sizes_q2_K {
-    MMQ_Y*WARP_SIZE       + MMQ_Y,
-    MMQ_Y*WARP_SIZE/QI2_K + MMQ_Y/QI2_K,
-    0,
-    MMQ_Y*WARP_SIZE/4     + MMQ_Y/4
-};
-
-constexpr tile_x_sizes tile_x_sizes_q3_K {
-    MMQ_Y*WARP_SIZE       + MMQ_Y,
-    MMQ_Y*WARP_SIZE/QI3_K + MMQ_Y/QI3_K,
-    MMQ_Y*WARP_SIZE/2     + MMQ_Y/2,
-    MMQ_Y*WARP_SIZE/4     + MMQ_Y/4
-};
-
-constexpr tile_x_sizes tile_x_sizes_q4_K {
-    MMQ_Y*WARP_SIZE       + MMQ_Y,
-    MMQ_Y*WARP_SIZE/QI4_K + MMQ_Y/QI4_K,
-    0,
-    MMQ_Y*WARP_SIZE/8     + MMQ_Y/8
-};
-
-constexpr tile_x_sizes tile_x_sizes_q5_K {
-    MMQ_Y*WARP_SIZE*2     + MMQ_Y,
-    MMQ_Y*WARP_SIZE/QI5_K + MMQ_Y/QI5_K,
-    0,
-    MMQ_Y*WARP_SIZE/8     + MMQ_Y/8
-};
-
-constexpr tile_x_sizes tile_x_sizes_q6_K {
-    MMQ_Y*WARP_SIZE*2     + MMQ_Y,
-    MMQ_Y*WARP_SIZE/QI6_K + MMQ_Y/QI6_K,
-    0,
-    MMQ_Y*WARP_SIZE/8     + MMQ_Y/8
-};
+#define TILE_X_SIZES_Q4_0 tile_x_sizes{MMQ_Y*WARP_SIZE   + MMQ_Y, MMQ_Y*WARP_SIZE/QI4_0 + MMQ_Y/QI4_0, 0,                           0}
+#define TILE_X_SIZES_Q4_1 tile_x_sizes{MMQ_Y*WARP_SIZE   + MMQ_Y, MMQ_Y*WARP_SIZE/QI4_1 + MMQ_Y/QI4_1, 0,                           0}
+#define TILE_X_SIZES_Q5_0 tile_x_sizes{MMQ_Y*WARP_SIZE*2 + MMQ_Y, MMQ_Y*WARP_SIZE/QI5_0 + MMQ_Y/QI5_0, 0,                           0}
+#define TILE_X_SIZES_Q5_1 tile_x_sizes{MMQ_Y*WARP_SIZE*2 + MMQ_Y, MMQ_Y*WARP_SIZE/QI5_1 + MMQ_Y/QI5_1, 0,                           0}
+#define TILE_X_SIZES_Q8_0 tile_x_sizes{MMQ_Y*WARP_SIZE   + MMQ_Y, MMQ_Y*WARP_SIZE/QI8_0 + MMQ_Y/QI8_0, 0,                           0}
+#define TILE_X_SIZES_Q2_K tile_x_sizes{MMQ_Y*WARP_SIZE   + MMQ_Y, MMQ_Y*WARP_SIZE/QI2_K + MMQ_Y/QI2_K, 0,                           MMQ_Y*WARP_SIZE/4 + MMQ_Y/4}
+#define TILE_X_SIZES_Q3_K tile_x_sizes{MMQ_Y*WARP_SIZE   + MMQ_Y, MMQ_Y*WARP_SIZE/QI3_K + MMQ_Y/QI3_K, MMQ_Y*WARP_SIZE/2 + MMQ_Y/2, MMQ_Y*WARP_SIZE/4 + MMQ_Y/4}
+#define TILE_X_SIZES_Q4_K tile_x_sizes{MMQ_Y*WARP_SIZE   + MMQ_Y, MMQ_Y*WARP_SIZE/QI4_K + MMQ_Y/QI4_K, 0,                           MMQ_Y*WARP_SIZE/8 + MMQ_Y/8}
+#define TILE_X_SIZES_Q5_K tile_x_sizes{MMQ_Y*WARP_SIZE*2 + MMQ_Y, MMQ_Y*WARP_SIZE/QI5_K + MMQ_Y/QI5_K, 0,                           MMQ_Y*WARP_SIZE/8 + MMQ_Y/8}
+#define TILE_X_SIZES_Q6_K tile_x_sizes{MMQ_Y*WARP_SIZE*2 + MMQ_Y, MMQ_Y*WARP_SIZE/QI6_K + MMQ_Y/QI6_K, 0,                           MMQ_Y*WARP_SIZE/8 + MMQ_Y/8}
 
 #define GET_TILE_X_SIZES_BODY                           \
-    return type == GGML_TYPE_Q4_0 ? tile_x_sizes_q4_0 : \
-        type == GGML_TYPE_Q4_1 ? tile_x_sizes_q4_1 :    \
-        type == GGML_TYPE_Q5_0 ? tile_x_sizes_q5_0 :    \
-        type == GGML_TYPE_Q5_1 ? tile_x_sizes_q5_1 :    \
-        type == GGML_TYPE_Q8_0 ? tile_x_sizes_q8_0 :    \
-        type == GGML_TYPE_Q2_K ? tile_x_sizes_q2_K :    \
-        type == GGML_TYPE_Q3_K ? tile_x_sizes_q3_K :    \
-        type == GGML_TYPE_Q4_K ? tile_x_sizes_q4_K :    \
-        type == GGML_TYPE_Q5_K ? tile_x_sizes_q5_K :    \
-        type == GGML_TYPE_Q6_K ? tile_x_sizes_q6_K :    \
+    return type == GGML_TYPE_Q4_0 ? TILE_X_SIZES_Q4_0 : \
+        type == GGML_TYPE_Q4_1 ? TILE_X_SIZES_Q4_1 :    \
+        type == GGML_TYPE_Q5_0 ? TILE_X_SIZES_Q5_0 :    \
+        type == GGML_TYPE_Q5_1 ? TILE_X_SIZES_Q5_1 :    \
+        type == GGML_TYPE_Q8_0 ? TILE_X_SIZES_Q8_0 :    \
+        type == GGML_TYPE_Q2_K ? TILE_X_SIZES_Q2_K :    \
+        type == GGML_TYPE_Q3_K ? TILE_X_SIZES_Q3_K :    \
+        type == GGML_TYPE_Q4_K ? TILE_X_SIZES_Q4_K :    \
+        type == GGML_TYPE_Q5_K ? TILE_X_SIZES_Q5_K :    \
+        type == GGML_TYPE_Q6_K ? TILE_X_SIZES_Q6_K :    \
         tile_x_sizes{0, 0, 0, 0}
 
 constexpr tile_x_sizes get_tile_x_sizes_host(ggml_type type) {
