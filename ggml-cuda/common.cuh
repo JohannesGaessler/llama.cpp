@@ -520,15 +520,15 @@ static constexpr __device__ int get_qr_device(ggml_type type) {
         type == GGML_TYPE_Q4_K ? QR4_K :
         type == GGML_TYPE_Q5_K ? QR5_K :
         type == GGML_TYPE_Q6_K ? QR6_K :
-        type == GGML_TYPE_IQ2_XXS ? 1 :
-        type == GGML_TYPE_IQ2_XS ? 1 :
-        type == GGML_TYPE_IQ2_S ? 1 :
-        type == GGML_TYPE_IQ3_XXS ? 1 :
-        type == GGML_TYPE_IQ1_S ? 1 :
-        type == GGML_TYPE_IQ1_M ? 1 :
-        type == GGML_TYPE_IQ4_NL ? 1 :
-        type == GGML_TYPE_IQ4_XS ? 1 :
-        type == GGML_TYPE_IQ3_S ? 1 :
+        type == GGML_TYPE_IQ2_XXS ? QR2_XXS :
+        type == GGML_TYPE_IQ2_XS ? QR2_XS :
+        type == GGML_TYPE_IQ2_S ? QR2_S :
+        type == GGML_TYPE_IQ3_XXS ? QR3_XXS :
+        type == GGML_TYPE_IQ1_S ? QR1_S :
+        type == GGML_TYPE_IQ1_M ? QR1_M :
+        type == GGML_TYPE_IQ4_NL ? QR4_NL :
+        type == GGML_TYPE_IQ4_XS ? QR4_XS :
+        type == GGML_TYPE_IQ3_S ? QR3_S :
         0;
 }
 
