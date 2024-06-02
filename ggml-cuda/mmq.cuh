@@ -1021,6 +1021,7 @@ static __global__ void mul_mat_q(
 
     // Skip unused template specializations for faster compilation:
     if (mmq_x > get_mmq_x_max_device()) {
+        NO_DEVICE_CODE;
         return;
     }
 
