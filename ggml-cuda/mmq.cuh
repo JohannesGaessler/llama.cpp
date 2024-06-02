@@ -913,6 +913,13 @@ static constexpr __device__ vec_dot_q_mul_mat_cuda_t get_vec_dot_mmq(ggml_type t
 }
 
 template <ggml_type type, int mmq_x, int mmq_y, int nwarps, bool need_check>
+#if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
+#if defined(RDNA3) || defined(RDNA2)
+__launch_bounds__(nwarps*WARP_SIZE, 2)
+#endif // defined(RDNA3) || defined(RDNA2)
+#else
+__launch_bounds__(nwarps*WARP_SIZE, (mmq_x*mmq_y <= 64*128) ? 2 : 1)
+#endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
 static __global__ void mul_mat_q(
     const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst,
     const int ne00, const int ne01, const int row_stride_x, const int ne10, const int ne11, const int ne0) {
