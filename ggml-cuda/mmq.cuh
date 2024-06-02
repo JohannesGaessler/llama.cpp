@@ -4,7 +4,8 @@
 #include <climits>
 #include <cstdint>
 
-typedef void (*allocate_tiles_cuda_t)(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc);
+#define MMQ_Y 128
+
 typedef void (*load_tiles_cuda_t)(
     const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
     int * __restrict__ x_sc, const int & i_max, const int & stride);
@@ -13,18 +14,21 @@ typedef float (*vec_dot_q_mul_mat_cuda_t)(
     const int * __restrict__ y_qs, const half2 * __restrict__ y_ms, const int & i, const int & j, const int & k);
 typedef void (*dot_kernel_k_t)(const void * __restrict__ vx, const int ib, const int iqs, const float * __restrict__ y, float & v);
 
+struct tile_x_sizes {
+    int ql;
+    int dm;
+    int qh;
+    int sc;
+};
+
+constexpr tile_x_sizes tile_x_sizes_q8_0 {
+    MMQ_Y*WARP_SIZE + MMQ_Y,
+    MMQ_Y*WARP_SIZE + MMQ_Y/QI8_0,
+    0,
+    0
+};
+
 // ------------------------------------------------------------
-
-template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q4_0(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc) {
-    GGML_UNUSED(x_qh);
-    GGML_UNUSED(x_sc);
-
-    __shared__ int  tile_x_qs[mmq_y * (WARP_SIZE)       + mmq_y];
-    __shared__ float tile_x_d[mmq_y * (WARP_SIZE/QI4_0) + mmq_y/QI4_0];
-
-    *x_ql = tile_x_qs;
-    *x_dm = (half2 *) tile_x_d;
-}
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q4_0(
     const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
@@ -87,16 +91,6 @@ static __device__ __forceinline__ float vec_dot_q4_0_q8_1_mul_mat(
          y_ds[j * (WARP_SIZE/QI8_1) + (2*k/QI8_1) % (WARP_SIZE/QI8_1)]);
 }
 
-template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q4_1(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc) {
-    GGML_UNUSED(x_qh); GGML_UNUSED(x_sc);
-
-    __shared__ int   tile_x_qs[mmq_y * (WARP_SIZE) +     + mmq_y];
-    __shared__ half2 tile_x_dm[mmq_y * (WARP_SIZE/QI4_1) + mmq_y/QI4_1];
-
-    *x_ql = tile_x_qs;
-    *x_dm = tile_x_dm;
-}
-
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q4_1(
     const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
     int * __restrict__ x_sc, const int & i_max, const int & stride) {
@@ -153,16 +147,6 @@ static __device__ __forceinline__ float vec_dot_q4_1_q8_1_mul_mat(
     return vec_dot_q4_1_q8_1_impl<VDR_Q4_1_Q8_1_MMQ>
         (&x_ql[i * (WARP_SIZE + 1) + k], u, x_dm[i * (WARP_SIZE/QI4_1) + i/QI4_1 + k/QI4_1],
          y_ds[j * (WARP_SIZE/QI8_1) + (2*k/QI8_1) % (WARP_SIZE/QI8_1)]);
-}
-
-template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q5_0(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc) {
-    GGML_UNUSED(x_qh); GGML_UNUSED(x_sc);
-
-    __shared__ int  tile_x_ql[mmq_y * (2*WARP_SIZE)     + mmq_y];
-    __shared__ float tile_x_d[mmq_y * (WARP_SIZE/QI5_0) + mmq_y/QI5_0];
-
-    *x_ql = tile_x_ql;
-    *x_dm = (half2 *) tile_x_d;
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q5_0(
@@ -246,16 +230,6 @@ static __device__ __forceinline__ float vec_dot_q5_0_q8_1_mul_mat(
 }
 
 
-template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q5_1(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc) {
-    GGML_UNUSED(x_qh); GGML_UNUSED(x_sc);
-
-    __shared__ int   tile_x_ql[mmq_y * (2*WARP_SIZE)     + mmq_y];
-    __shared__ half2 tile_x_dm[mmq_y * (WARP_SIZE/QI5_1) + mmq_y/QI5_1];
-
-    *x_ql = tile_x_ql;
-    *x_dm = tile_x_dm;
-}
-
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q5_1(
     const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
     int * __restrict__ x_sc, const int & i_max, const int & stride) {
@@ -331,16 +305,6 @@ static __device__ __forceinline__ float vec_dot_q5_1_q8_1_mul_mat(
         (&x_ql[i * (2*WARP_SIZE + 1) + 2 * k], u, x_dm[index_bx], y_ds[j * (WARP_SIZE/QI8_1) + (2*k/QI8_1) % (WARP_SIZE/QI8_1)]);
 }
 
-template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q8_0(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc) {
-    GGML_UNUSED(x_qh); GGML_UNUSED(x_sc);
-
-    __shared__ int  tile_x_qs[mmq_y * (WARP_SIZE)       + mmq_y];
-    __shared__ float tile_x_d[mmq_y * (WARP_SIZE/QI8_0) + mmq_y/QI8_0];
-
-    *x_ql = tile_x_qs;
-    *x_dm = (half2 *) tile_x_d;
-}
-
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q8_0(
     const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
     int * __restrict__ x_sc, const int & i_max, const int & stride) {
@@ -391,18 +355,6 @@ static __device__ __forceinline__ float vec_dot_q8_0_q8_1_mul_mat(
     return vec_dot_q8_0_q8_1_impl<float, VDR_Q8_0_Q8_1_MMQ>
         (&x_ql[i * (WARP_SIZE + 1) + k], &y_qs[j * WARP_SIZE + k], x_dmf[i * (WARP_SIZE/QI8_0) + i/QI8_0 + k/QI8_0],
          y_df[j * (WARP_SIZE/QI8_1) + k/QI8_1]);
-}
-
-template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q2_K(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc) {
-    GGML_UNUSED(x_qh);
-
-    __shared__ int   tile_x_ql[mmq_y * (WARP_SIZE)       + mmq_y];
-    __shared__ half2 tile_x_dm[mmq_y * (WARP_SIZE/QI2_K) + mmq_y/QI2_K];
-    __shared__ int   tile_x_sc[mmq_y * (WARP_SIZE/4)     + mmq_y/4];
-
-    *x_ql = tile_x_ql;
-    *x_dm = tile_x_dm;
-    *x_sc = tile_x_sc;
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q2_K(
@@ -479,19 +431,6 @@ static __device__ __forceinline__ float vec_dot_q2_K_q8_1_mul_mat(
 
     const int index_y = j * WARP_SIZE + (QR2_K*k) % WARP_SIZE;
     return vec_dot_q2_K_q8_1_impl_mmq(v, &y_qs[index_y], scales, x_dm[i * (WARP_SIZE/QI2_K) + i/QI2_K + kbx], y_df[index_y/QI8_1]);
-}
-
-template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q3_K(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc) {
-
-    __shared__ int   tile_x_ql[mmq_y * (WARP_SIZE)       + mmq_y];
-    __shared__ half2 tile_x_dm[mmq_y * (WARP_SIZE/QI3_K) + mmq_y/QI3_K];
-    __shared__ int   tile_x_qh[mmq_y * (WARP_SIZE/2)     + mmq_y/2];
-    __shared__ int   tile_x_sc[mmq_y * (WARP_SIZE/4)     + mmq_y/4];
-
-    *x_ql = tile_x_ql;
-    *x_dm = tile_x_dm;
-    *x_qh = tile_x_qh;
-    *x_sc = tile_x_sc;
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q3_K(
@@ -600,18 +539,6 @@ static __device__ __forceinline__ float vec_dot_q3_K_q8_1_mul_mat(
     return vec_dot_q3_K_q8_1_impl_mmq(v, &y_qs[index_y], scales, x_dmf[i * (WARP_SIZE/QI3_K) + i/QI3_K + kbx], y_df[index_y/QI8_1]);
 }
 
-template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q4_K(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc) {
-    GGML_UNUSED(x_qh);
-
-    __shared__ int   tile_x_ql[mmq_y * (WARP_SIZE)       + mmq_y];
-    __shared__ half2 tile_x_dm[mmq_y * (WARP_SIZE/QI4_K) + mmq_y/QI4_K];
-    __shared__ int   tile_x_sc[mmq_y * (WARP_SIZE/8)     + mmq_y/8];
-
-    *x_ql = tile_x_ql;
-    *x_dm = tile_x_dm;
-    *x_sc = tile_x_sc;
-}
-
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q4_K(
     const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
     int * __restrict__ x_sc, const int & i_max, const int & stride) {
@@ -681,18 +608,6 @@ static __device__ __forceinline__ float vec_dot_q4_K_q8_1_mul_mat(
     const int index_y = j * WARP_SIZE + (QR4_K*k) % WARP_SIZE;
     return vec_dot_q4_K_q8_1_impl_mmq(&x_ql[i * (WARP_SIZE + 1) + k], &y_qs[index_y], sc, sc+8,
                                       x_dm[i * (WARP_SIZE/QI4_K) + i/QI4_K], &y_ds[index_y/QI8_1]);
-}
-
-template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q5_K(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc) {
-    GGML_UNUSED(x_qh);
-
-    __shared__ int   tile_x_ql[mmq_y * (2*WARP_SIZE)     + mmq_y];
-    __shared__ half2 tile_x_dm[mmq_y * (WARP_SIZE/QI5_K) + mmq_y/QI5_K];
-    __shared__ int   tile_x_sc[mmq_y * (WARP_SIZE/8)     + mmq_y/8];
-
-    *x_ql = tile_x_ql;
-    *x_dm = tile_x_dm;
-    *x_sc = tile_x_sc;
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q5_K(
@@ -780,18 +695,6 @@ static __device__ __forceinline__ float vec_dot_q5_K_q8_1_mul_mat(
                                       x_dm[i * (WARP_SIZE/QI5_K) + i/QI5_K], &y_ds[index_y/QI8_1]);
 }
 
-template <int mmq_y> static __device__ __forceinline__ void allocate_tiles_q6_K(int ** x_ql, half2 ** x_dm, int ** x_qh, int ** x_sc) {
-    GGML_UNUSED(x_qh);
-
-    __shared__ int   tile_x_ql[mmq_y * (2*WARP_SIZE)     + mmq_y];
-    __shared__ half2 tile_x_dm[mmq_y * (WARP_SIZE/QI6_K) + mmq_y/QI6_K];
-    __shared__ int   tile_x_sc[mmq_y * (WARP_SIZE/8)     + mmq_y/8];
-
-    *x_ql = tile_x_ql;
-    *x_dm = tile_x_dm;
-    *x_sc = tile_x_sc;
-}
-
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q6_K(
     const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
     int * __restrict__ x_sc, const int & i_max, const int & stride) {
@@ -874,21 +777,6 @@ static __device__ __forceinline__ float vec_dot_q6_K_q8_1_mul_mat(
 
 // -------------------------------------------------------------------------------------------------------------------------------------
 
-template <int mmq_y>
-static constexpr __device__ allocate_tiles_cuda_t get_allocate_tiles(ggml_type type) {
-    return type == GGML_TYPE_Q4_0 ? allocate_tiles_q4_0<mmq_y> :
-        type == GGML_TYPE_Q4_1 ? allocate_tiles_q4_1<mmq_y> :
-        type == GGML_TYPE_Q5_0 ? allocate_tiles_q5_0<mmq_y> :
-        type == GGML_TYPE_Q5_1 ? allocate_tiles_q5_1<mmq_y> :
-        type == GGML_TYPE_Q8_0 ? allocate_tiles_q8_0<mmq_y> :
-        type == GGML_TYPE_Q2_K ? allocate_tiles_q2_K<mmq_y> :
-        type == GGML_TYPE_Q3_K ? allocate_tiles_q3_K<mmq_y> :
-        type == GGML_TYPE_Q4_K ? allocate_tiles_q4_K<mmq_y> :
-        type == GGML_TYPE_Q5_K ? allocate_tiles_q5_K<mmq_y> :
-        type == GGML_TYPE_Q6_K ? allocate_tiles_q6_K<mmq_y> :
-        nullptr;
-}
-
 static constexpr __device__ int get_need_sum(ggml_type type) {
     return type == GGML_TYPE_Q4_0 ||
         type == GGML_TYPE_Q4_1 ||
@@ -952,9 +840,18 @@ static __global__ void mul_mat_q(
     constexpr bool need_sum = get_need_sum(type);
     constexpr int  vdr      = get_vdr_mmq(type);
 
-    constexpr    allocate_tiles_cuda_t allocate_tiles = get_allocate_tiles<mmq_y>(type);
-    constexpr        load_tiles_cuda_t     load_tiles = get_load_tiles<mmq_y, nwarps, need_check>(type);
-    constexpr vec_dot_q_mul_mat_cuda_t        vec_dot = get_vec_dot_mmq(type);
+    constexpr tile_x_sizes txs = tile_x_sizes_q8_0;
+
+    extern __shared__ char data_mul_mat_q[];
+    int   * tile_x_ql = (int   *)  data_mul_mat_q;
+    half2 * tile_x_dm = (half2 *) (tile_x_ql + txs.ql);
+    int   * tile_x_qh = (int   *) (tile_x_dm + txs.dm);
+    int   * tile_x_sc = (int   *) (tile_x_qh + txs.qh);
+    int   * tile_y_qs = (int   *) (tile_x_sc + txs.sc);          // [mmq_x * WARP_SIZE]
+    half2 * tile_y_ds = (half2 *) (tile_y_qs + mmq_x*WARP_SIZE); // [mmq_x * WARP_SIZE/QI8_1];
+
+    constexpr        load_tiles_cuda_t load_tiles = get_load_tiles<mmq_y, nwarps, need_check>(type);
+    constexpr vec_dot_q_mul_mat_cuda_t    vec_dot = get_vec_dot_mmq(type);
 
     const block_q8_1 * y = (const block_q8_1 *) yc;
 
@@ -967,16 +864,6 @@ static __global__ void mul_mat_q(
     x += row_stride_x*ts * blockIdx.x*mmq_y;
 
     const int tile_x_max_i = ne01 - blockIdx.x*mmq_y - 1;
-
-    int   * tile_x_ql = nullptr;
-    half2 * tile_x_dm = nullptr;
-    int   * tile_x_qh = nullptr;
-    int   * tile_x_sc = nullptr;
-
-    allocate_tiles(&tile_x_ql, &tile_x_dm, &tile_x_qh, &tile_x_sc);
-
-    __shared__ int    tile_y_qs[mmq_x * WARP_SIZE];
-    __shared__ half2  tile_y_ds[mmq_x * WARP_SIZE/QI8_1];
 
     float sum[mmq_y/WARP_SIZE][mmq_x/nwarps] = {{0.0f}};
 
@@ -1070,13 +957,18 @@ static void launch_mul_mat_q(const mmq_args & args, cudaStream_t stream) {
     const dim3 block_nums(block_num_x, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
+    const tile_x_sizes txs = tile_x_sizes_q8_0;
+    const int shmem_x = txs.ql*sizeof(int) + txs.dm*sizeof(half2) + txs.qh*sizeof(int) + txs.sc*sizeof(int);
+    const int shmem_y = mmq_x*WARP_SIZE*sizeof(int) + mmq_x*(WARP_SIZE/QI8_1)*sizeof(half2);
+    const int shmem = shmem_x + shmem_y;
+
     if (args.ne01 % mmq_y == 0) {
         const bool need_check = false;
-        mul_mat_q<type, mmq_x, mmq_y, nwarps, need_check><<<block_nums, block_dims, 0, stream>>>
+        mul_mat_q<type, mmq_x, mmq_y, nwarps, need_check><<<block_nums, block_dims, shmem, stream>>>
             (args.x, args.y, args.dst, args.ne00, args.ne01, args.stride00, args.ne10, args.ne11, args.ne0);
     } else {
         const bool need_check = true;
-        mul_mat_q<type, mmq_x, mmq_y, nwarps, need_check><<<block_nums, block_dims, 0, stream>>>
+        mul_mat_q<type, mmq_x, mmq_y, nwarps, need_check><<<block_nums, block_dims, shmem, stream>>>
             (args.x, args.y, args.dst, args.ne00, args.ne01, args.stride00, args.ne10, args.ne11, args.ne0);
     }
 }
@@ -1094,7 +986,8 @@ void mul_mat_q_case(const mmq_args & args, cudaStream_t stream) {
     int mmq_x_best  = 0;
     int nwaves_best = INT_MAX;
 
-    const int mmq_x_max = cc >= CC_VOLTA && cc < CC_OFFSET_AMD ? 120 : 64;
+    // const int mmq_x_max = cc >= CC_VOLTA && cc < CC_OFFSET_AMD ? 128 : 64;
+    const int mmq_x_max = 64;
 
     for (int mmq_x = 8; mmq_x <= mmq_x_max && nwaves_best > 1; mmq_x += 8) {
         const int block_num_x = (args.ne11 + mmq_x - 1) / mmq_x;
