@@ -1188,7 +1188,6 @@ static void launch_mul_mat_q(const mmq_args & args, cudaStream_t stream) {
 template <ggml_type type>
 void mul_mat_q_case(const mmq_args & args, cudaStream_t stream) {
     constexpr int mmq_y  = MMQ_Y; // Possibly different choice for tensor cores.
-    constexpr int nwarps = 8;
     const int block_num_y = (args.ne01 + mmq_y - 1) / mmq_y;
 
     const int id  = ggml_cuda_get_device();
@@ -1212,52 +1211,52 @@ void mul_mat_q_case(const mmq_args & args, cudaStream_t stream) {
 
     switch (mmq_x_best) {
         case   8:
-            launch_mul_mat_q<type,   8, mmq_y, nwarps>(args, stream);
+            launch_mul_mat_q<type,   8, mmq_y, 4>(args, stream);
             break;
         case  16:
-            launch_mul_mat_q<type,  16, mmq_y, nwarps>(args, stream);
+            launch_mul_mat_q<type,  16, mmq_y, 8>(args, stream);
             break;
         case  24:
-            launch_mul_mat_q<type,  24, mmq_y, nwarps>(args, stream);
+            launch_mul_mat_q<type,  24, mmq_y, 8>(args, stream);
             break;
         case  32:
-            launch_mul_mat_q<type,  32, mmq_y, nwarps>(args, stream);
+            launch_mul_mat_q<type,  32, mmq_y, 8>(args, stream);
             break;
         case  40:
-            launch_mul_mat_q<type,  40, mmq_y, nwarps>(args, stream);
+            launch_mul_mat_q<type,  40, mmq_y, 8>(args, stream);
             break;
         case  48:
-            launch_mul_mat_q<type,  48, mmq_y, nwarps>(args, stream);
+            launch_mul_mat_q<type,  48, mmq_y, 8>(args, stream);
             break;
         case  56:
-            launch_mul_mat_q<type,  56, mmq_y, nwarps>(args, stream);
+            launch_mul_mat_q<type,  56, mmq_y, 8>(args, stream);
             break;
         case  64:
-            launch_mul_mat_q<type,  64, mmq_y, nwarps>(args, stream);
+            launch_mul_mat_q<type,  64, mmq_y, 8>(args, stream);
             break;
         case  72:
-            launch_mul_mat_q<type,  72, mmq_y, nwarps>(args, stream);
+            launch_mul_mat_q<type,  72, mmq_y, 8>(args, stream);
             break;
         case  80:
-            launch_mul_mat_q<type,  80, mmq_y, nwarps>(args, stream);
+            launch_mul_mat_q<type,  80, mmq_y, 8>(args, stream);
             break;
         case  88:
-            launch_mul_mat_q<type,  88, mmq_y, nwarps>(args, stream);
+            launch_mul_mat_q<type,  88, mmq_y, 8>(args, stream);
             break;
         case  96:
-            launch_mul_mat_q<type,  96, mmq_y, nwarps>(args, stream);
+            launch_mul_mat_q<type,  96, mmq_y, 8>(args, stream);
             break;
         case 104:
-            launch_mul_mat_q<type, 104, mmq_y, nwarps>(args, stream);
+            launch_mul_mat_q<type, 104, mmq_y, 8>(args, stream);
             break;
         case 112:
-            launch_mul_mat_q<type, 112, mmq_y, nwarps>(args, stream);
+            launch_mul_mat_q<type, 112, mmq_y, 8>(args, stream);
             break;
         case 120:
-            launch_mul_mat_q<type, 120, mmq_y, nwarps>(args, stream);
+            launch_mul_mat_q<type, 120, mmq_y, 8>(args, stream);
             break;
         case 128:
-            launch_mul_mat_q<type, 128, mmq_y, nwarps>(args, stream);
+            launch_mul_mat_q<type, 128, mmq_y, 8>(args, stream);
             break;
         default:
             GGML_ASSERT(false);
