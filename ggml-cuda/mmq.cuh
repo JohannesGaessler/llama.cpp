@@ -21,12 +21,96 @@ struct tile_x_sizes {
     int sc;
 };
 
-constexpr tile_x_sizes tile_x_sizes_q8_0 {
-    MMQ_Y*WARP_SIZE + MMQ_Y,
-    MMQ_Y*WARP_SIZE + MMQ_Y/QI8_0,
+constexpr tile_x_sizes tile_x_sizes_q4_0 {
+    MMQ_Y*WARP_SIZE       + MMQ_Y,
+    MMQ_Y*WARP_SIZE/QI4_0 + MMQ_Y/QI4_0,
     0,
     0
 };
+
+constexpr tile_x_sizes tile_x_sizes_q4_1 {
+    MMQ_Y*WARP_SIZE       + MMQ_Y,
+    MMQ_Y*WARP_SIZE/QI4_1 + MMQ_Y/QI4_1,
+    0,
+    0
+};
+
+constexpr tile_x_sizes tile_x_sizes_q5_0 {
+    MMQ_Y*WARP_SIZE*2     + MMQ_Y,
+    MMQ_Y*WARP_SIZE/QI5_0 + MMQ_Y/QI5_0,
+    0,
+    0
+};
+
+constexpr tile_x_sizes tile_x_sizes_q5_1 {
+    MMQ_Y*WARP_SIZE*2     + MMQ_Y,
+    MMQ_Y*WARP_SIZE/QI5_1 + MMQ_Y/QI5_1,
+    0,
+    0
+};
+
+constexpr tile_x_sizes tile_x_sizes_q8_0 {
+    MMQ_Y*WARP_SIZE       + MMQ_Y,
+    MMQ_Y*WARP_SIZE/QI8_0 + MMQ_Y/QI8_0,
+    0,
+    0
+};
+
+constexpr tile_x_sizes tile_x_sizes_q2_K {
+    MMQ_Y*WARP_SIZE       + MMQ_Y,
+    MMQ_Y*WARP_SIZE/QI2_K + MMQ_Y/QI2_K,
+    0,
+    MMQ_Y*WARP_SIZE/4     + MMQ_Y/4
+};
+
+constexpr tile_x_sizes tile_x_sizes_q3_K {
+    MMQ_Y*WARP_SIZE       + MMQ_Y,
+    MMQ_Y*WARP_SIZE/QI3_K + MMQ_Y/QI3_K,
+    MMQ_Y*WARP_SIZE/2     + MMQ_Y/2,
+    MMQ_Y*WARP_SIZE/4     + MMQ_Y/4
+};
+
+constexpr tile_x_sizes tile_x_sizes_q4_K {
+    MMQ_Y*WARP_SIZE       + MMQ_Y,
+    MMQ_Y*WARP_SIZE/QI4_K + MMQ_Y/QI4_K,
+    0,
+    MMQ_Y*WARP_SIZE/8     + MMQ_Y/8
+};
+
+constexpr tile_x_sizes tile_x_sizes_q5_K {
+    MMQ_Y*WARP_SIZE*2     + MMQ_Y,
+    MMQ_Y*WARP_SIZE/QI5_K + MMQ_Y/QI5_K,
+    0,
+    MMQ_Y*WARP_SIZE/8     + MMQ_Y/8
+};
+
+constexpr tile_x_sizes tile_x_sizes_q6_K {
+    MMQ_Y*WARP_SIZE*2     + MMQ_Y,
+    MMQ_Y*WARP_SIZE/QI6_K + MMQ_Y/QI6_K,
+    0,
+    MMQ_Y*WARP_SIZE/8     + MMQ_Y/8
+};
+
+#define GET_TILE_X_SIZES_BODY                           \
+    return type == GGML_TYPE_Q4_0 ? tile_x_sizes_q4_0 : \
+        type == GGML_TYPE_Q4_1 ? tile_x_sizes_q4_1 :    \
+        type == GGML_TYPE_Q5_0 ? tile_x_sizes_q5_0 :    \
+        type == GGML_TYPE_Q5_1 ? tile_x_sizes_q5_1 :    \
+        type == GGML_TYPE_Q8_0 ? tile_x_sizes_q8_0 :    \
+        type == GGML_TYPE_Q2_K ? tile_x_sizes_q2_K :    \
+        type == GGML_TYPE_Q3_K ? tile_x_sizes_q3_K :    \
+        type == GGML_TYPE_Q4_K ? tile_x_sizes_q4_K :    \
+        type == GGML_TYPE_Q5_K ? tile_x_sizes_q5_K :    \
+        type == GGML_TYPE_Q6_K ? tile_x_sizes_q6_K :    \
+        tile_x_sizes{0, 0, 0, 0}
+
+constexpr tile_x_sizes get_tile_x_sizes_host(ggml_type type) {
+    GET_TILE_X_SIZES_BODY;
+}
+
+constexpr __device__ tile_x_sizes get_tile_x_sizes_device(ggml_type type) {
+    GET_TILE_X_SIZES_BODY;
+}
 
 // ------------------------------------------------------------
 
@@ -840,7 +924,7 @@ static __global__ void mul_mat_q(
     constexpr bool need_sum = get_need_sum(type);
     constexpr int  vdr      = get_vdr_mmq(type);
 
-    constexpr tile_x_sizes txs = tile_x_sizes_q8_0;
+    constexpr tile_x_sizes txs = get_tile_x_sizes_device(type);
 
     extern __shared__ char data_mul_mat_q[];
     int   * tile_x_ql = (int   *)  data_mul_mat_q;
@@ -957,10 +1041,10 @@ static void launch_mul_mat_q(const mmq_args & args, cudaStream_t stream) {
     const dim3 block_nums(block_num_x, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
-    const tile_x_sizes txs = tile_x_sizes_q8_0;
-    const int shmem_x = txs.ql*sizeof(int) + txs.dm*sizeof(half2) + txs.qh*sizeof(int) + txs.sc*sizeof(int);
-    const int shmem_y = mmq_x*WARP_SIZE*sizeof(int) + mmq_x*(WARP_SIZE/QI8_1)*sizeof(half2);
-    const int shmem = shmem_x + shmem_y;
+    constexpr tile_x_sizes txs = get_tile_x_sizes_host(type);
+    constexpr int shmem_x = txs.ql*sizeof(int) + txs.dm*sizeof(half2) + txs.qh*sizeof(int) + txs.sc*sizeof(int);
+    constexpr int shmem_y = mmq_x*WARP_SIZE*sizeof(int) + mmq_x*(WARP_SIZE/QI8_1)*sizeof(half2);
+    constexpr int shmem = shmem_x + shmem_y;
 
     if (args.ne01 % mmq_y == 0) {
         const bool need_check = false;
