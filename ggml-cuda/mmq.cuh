@@ -18,9 +18,7 @@ struct tile_x_sizes {
     int sc;
 };
 
-static int get_mmq_x_max_host(const int cc) {
-    return cc >= CC_VOLTA && cc < CC_OFFSET_AMD ? 128 : 64;
-}
+// get_mmq_x_max_host is in common.cuh so that it can be used to determine the correct way to round for --split-mode row
 
 static constexpr __device__ int get_mmq_x_max_device() {
 #if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
@@ -34,9 +32,7 @@ static constexpr __device__ int get_mmq_x_max_device() {
 #endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
 }
 
-static int get_mmq_y_host(const int cc, const int mmq_x) {
-    return cc >= CC_VOLTA && mmq_x >= 32 ? 128 : 64;
-}
+// get_mmq_y_host is in common.cuh so that it can be used to determine the correct way to round for --split-mode row
 
 #if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
 static constexpr __device__ int get_mmq_y_device(int mmq_x) {

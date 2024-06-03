@@ -536,6 +536,15 @@ static constexpr __device__ int get_qi_device(ggml_type type) {
     return ggml_blck_size_device(type) / (sizeof(int)*get_qr_device(type));
 }
 
+static int get_mmq_x_max_host(const int cc) {
+    return cc >= CC_VOLTA && cc < CC_OFFSET_AMD ? 128 : 64;
+}
+
+// Round rows to this value for --split-mode row:
+static int get_mmq_y_host(const int cc, const int mmq_x) {
+    return cc >= CC_VOLTA && mmq_x >= 32 ? 128 : 64;
+}
+
 //////////////////////
 
 struct ggml_cuda_device_info {
