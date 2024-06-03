@@ -1138,7 +1138,8 @@ struct mmq_args {
 
 template <ggml_type type, int mmq_x, int nwarps>
 static void launch_mul_mat_q(const mmq_args & args, cudaStream_t stream) {
-    const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
+    const int id = ggml_cuda_get_device();
+    const int cc = ggml_cuda_info().devices[id].cc;
     const int mmq_y = get_mmq_y_host(cc, mmq_x);
 
     const int block_num_x = (args.ne01 + mmq_y - 1) / mmq_y;
@@ -1152,11 +1153,11 @@ static void launch_mul_mat_q(const mmq_args & args, cudaStream_t stream) {
     const int shmem = shmem_x + shmem_y;
 
 #if !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__))
-    static bool shmem_limit_raised = false;
-    if (!shmem_limit_raised) {
+    static bool shmem_limit_raised[GGML_CUDA_MAX_DEVICES] = {false};
+    if (!shmem_limit_raised[id]) {
         CUDA_CHECK(cudaFuncSetAttribute(mul_mat_q<type, mmq_x, nwarps, false>, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem));
         CUDA_CHECK(cudaFuncSetAttribute(mul_mat_q<type, mmq_x, nwarps, true>,  cudaFuncAttributeMaxDynamicSharedMemorySize, shmem));
-        shmem_limit_raised = true;
+        shmem_limit_raised[id] = true;
     }
 #endif // !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__))
 
