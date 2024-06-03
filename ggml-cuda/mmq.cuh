@@ -4,8 +4,6 @@
 #include <climits>
 #include <cstdint>
 
-#define MMQ_Y 128
-
 typedef void (*load_tiles_cuda_t)(
     const char * __restrict__ x, int * __restrict__ x_ql, half2 * __restrict__ x_dm, int * __restrict__ x_qh,
     int * __restrict__ x_sc, const int & kbx0, const int & i_max, const int & stride);
@@ -37,12 +35,12 @@ static constexpr __device__ int get_mmq_x_max_device() {
 }
 
 static int get_mmq_y_host(const int cc, const int mmq_x) {
-    return cc >= CC_VOLTA && cc < CC_OFFSET_AMD && mmq_x >= 32 ? 128 : 64;
+    return cc >= CC_VOLTA && mmq_x >= 32 ? 128 : 64;
 }
 
 #if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-static constexpr __device__ int get_mmq_y_device(int /*mmq_x*/) {
-    return 64;
+static constexpr __device__ int get_mmq_y_device(int mmq_x) {
+    return mmq_x >= 32 ? 128 : 64;
 }
 #else
 #if __CUDA_ARCH__ >= CC_VOLTA
