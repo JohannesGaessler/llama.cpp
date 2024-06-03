@@ -159,8 +159,8 @@
 #define CUDA_USE_TENSOR_CORES
 #endif
 
-#define MMVQ_MAX_BATCH_SIZE  8 // max batch size to use MMVQ kernels
-#define  MMQ_MAX_BATCH_SIZE 32 // max batch size to use MMQ kernels when tensor cores are available
+#define MMVQ_MAX_BATCH_SIZE   8 // max batch size to use MMVQ kernels
+#define  MMQ_MAX_BATCH_SIZE 128 // max batch size to use MMQ kernels when tensor cores are available
 
 #define MATRIX_ROW_PADDING 512 // last row of quant. matrices is a multiple of this to avoid out-of-bounds memory accesses
 
