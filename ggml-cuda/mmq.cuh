@@ -55,16 +55,16 @@ static constexpr __device__ int get_mmq_y_device(int /*mmq_x*/) {
 #endif // __CUDA_ARCH__ >= CC_VOLTA
 #endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
 
-#define TILE_X_SIZES_Q4_0 tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI4_0 + mmq_y/QI4_0, 0,                           0}
-#define TILE_X_SIZES_Q4_1 tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI4_1 + mmq_y/QI4_1, 0,                           0}
-#define TILE_X_SIZES_Q5_0 tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI5_0 + mmq_y/QI5_0, 0,                           0}
-#define TILE_X_SIZES_Q5_1 tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI5_1 + mmq_y/QI5_1, 0,                           0}
-#define TILE_X_SIZES_Q8_0 tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI8_0 + mmq_y/QI8_0, 0,                           0}
-#define TILE_X_SIZES_Q2_K tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI2_K + mmq_y/QI2_K, 0,                           mmq_y*WARP_SIZE/4 + mmq_y/4}
-#define TILE_X_SIZES_Q3_K tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI3_K + mmq_y/QI3_K, mmq_y*WARP_SIZE/2 + mmq_y/2, mmq_y*WARP_SIZE/4 + mmq_y/4}
-#define TILE_X_SIZES_Q4_K tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI4_K + mmq_y/QI4_K, 0,                           mmq_y*WARP_SIZE/8 + mmq_y/8}
-#define TILE_X_SIZES_Q5_K tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI5_K + mmq_y/QI5_K, 0,                           mmq_y*WARP_SIZE/8 + mmq_y/8}
-#define TILE_X_SIZES_Q6_K tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI6_K + mmq_y/QI6_K, 0,                           mmq_y*WARP_SIZE/8 + mmq_y/8}
+#define TILE_X_SIZES_Q4_0 tile_x_sizes{mmq_y*WARP_SIZE   + padding_x*mmq_y, mmq_y*WARP_SIZE/QI4_0 + mmq_y/QI4_0, 0,                           0}
+#define TILE_X_SIZES_Q4_1 tile_x_sizes{mmq_y*WARP_SIZE   + padding_x*mmq_y, mmq_y*WARP_SIZE/QI4_1 + mmq_y/QI4_1, 0,                           0}
+#define TILE_X_SIZES_Q5_0 tile_x_sizes{mmq_y*WARP_SIZE*2 + padding_x*mmq_y, mmq_y*WARP_SIZE/QI5_0 + mmq_y/QI5_0, 0,                           0}
+#define TILE_X_SIZES_Q5_1 tile_x_sizes{mmq_y*WARP_SIZE*2 + padding_x*mmq_y, mmq_y*WARP_SIZE/QI5_1 + mmq_y/QI5_1, 0,                           0}
+#define TILE_X_SIZES_Q8_0 tile_x_sizes{mmq_y*WARP_SIZE   + padding_x*mmq_y, mmq_y*WARP_SIZE/QI8_0 + mmq_y/QI8_0, 0,                           0}
+#define TILE_X_SIZES_Q2_K tile_x_sizes{mmq_y*WARP_SIZE   + padding_x*mmq_y, mmq_y*WARP_SIZE/QI2_K + mmq_y/QI2_K, 0,                           mmq_y*WARP_SIZE/4 + mmq_y/4}
+#define TILE_X_SIZES_Q3_K tile_x_sizes{mmq_y*WARP_SIZE   + padding_x*mmq_y, mmq_y*WARP_SIZE/QI3_K + mmq_y/QI3_K, mmq_y*WARP_SIZE/2 + mmq_y/2, mmq_y*WARP_SIZE/4 + mmq_y/4}
+#define TILE_X_SIZES_Q4_K tile_x_sizes{mmq_y*WARP_SIZE   + padding_x*mmq_y, mmq_y*WARP_SIZE/QI4_K + mmq_y/QI4_K, 0,                           mmq_y*WARP_SIZE/8 + mmq_y/8}
+#define TILE_X_SIZES_Q5_K tile_x_sizes{mmq_y*WARP_SIZE*2 + padding_x*mmq_y, mmq_y*WARP_SIZE/QI5_K + mmq_y/QI5_K, 0,                           mmq_y*WARP_SIZE/8 + mmq_y/8}
+#define TILE_X_SIZES_Q6_K tile_x_sizes{mmq_y*WARP_SIZE*2 + padding_x*mmq_y, mmq_y*WARP_SIZE/QI6_K + mmq_y/QI6_K, 0,                           mmq_y*WARP_SIZE/8 + mmq_y/8}
 
 #define GET_TILE_X_SIZES_BODY                           \
     return type == GGML_TYPE_Q4_0 ? TILE_X_SIZES_Q4_0 : \
@@ -79,11 +79,11 @@ static constexpr __device__ int get_mmq_y_device(int /*mmq_x*/) {
         type == GGML_TYPE_Q6_K ? TILE_X_SIZES_Q6_K :    \
         tile_x_sizes{0, 0, 0, 0}
 
-static tile_x_sizes get_tile_x_sizes_host(const ggml_type type, const int mmq_y) {
+static tile_x_sizes get_tile_x_sizes_host(const ggml_type type, const int padding_x, const int mmq_y) {
     GET_TILE_X_SIZES_BODY;
 }
 
-template <int mmq_y>
+template <int padding_x, int mmq_y>
 static constexpr __device__ tile_x_sizes get_tile_x_sizes_device(ggml_type type) {
     GET_TILE_X_SIZES_BODY;
 }
@@ -419,6 +419,12 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
     GGML_UNUSED(x_qh); GGML_UNUSED(x_sc);
 
+#if INT8_MMA_AVAILABLE
+    constexpr int padding_x = 4;
+#else
+    constexpr int padding_x = 1;
+#endif // INT8_MMA_AVAILABLE
+
     const int kbx  = threadIdx.x / QI8_0;
     const int kqsx = threadIdx.x % QI8_0;
     float * x_dmf = (float *) x_dm;
@@ -433,7 +439,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
         const block_q8_0 * bxi = (const block_q8_0 *) x + kbx0 + i*stride + kbx;
 
-        x_ql[i * (WARP_SIZE + 1) + threadIdx.x] = get_int_from_int8(bxi->qs, kqsx);
+        x_ql[i * (WARP_SIZE + padding_x) + threadIdx.x] = get_int_from_int8(bxi->qs, kqsx);
     }
 
     const int blocks_per_tile_x_row = WARP_SIZE / QI8_0;
@@ -485,6 +491,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
 
     GGML_UNUSED(x_qh); GGML_UNUSED(x_sc);
 
+    constexpr int padding_x = 4;
     constexpr int padding_y = 4;
 
     const float * x_df = (const float *) x_dm;
@@ -501,7 +508,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
         const int m = m0 + A.get_m(i);
         const int k = k0 + A.get_k(i);
 
-        A.x[i] = x_ql[m*(WARP_SIZE + 1) + k];
+        A.x[i] = x_ql[m*(WARP_SIZE + padding_x) + k];
     }
 #pragma unroll
     for (int i = 0; i < mma_int_C_M16N8::ne/2; ++i) {
@@ -1138,12 +1145,15 @@ static __global__ void mul_mat_q(
     constexpr load_tiles_mmq_t load_tiles = mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, type>::load_tiles;
     constexpr vec_dot_mmq_t    vec_dot    = mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, type>::vec_dot;
 
-    constexpr tile_x_sizes txs = get_tile_x_sizes_device<mmq_y>(type);
 #if INT8_MMA_AVAILABLE
+    constexpr int padding_x = 4;
     constexpr int padding_y = 4;
 #else
+    constexpr int padding_x = 1;
     constexpr int padding_y = 0;
 #endif // INT8_MMA_AVAILABLE
+
+    constexpr tile_x_sizes txs = get_tile_x_sizes_device<padding_x, mmq_y>(type);
 
     extern __shared__ char data_mul_mat_q[];
     int   * tile_x_ql = (int   *)  data_mul_mat_q;
@@ -1276,9 +1286,12 @@ static void launch_mul_mat_q(const mmq_args & args, cudaStream_t stream) {
     const dim3 block_nums(block_num_x, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
-    const tile_x_sizes txs = get_tile_x_sizes_host(type, mmq_y);
+    const bool int8_mma = int8_mma_available(cc);
+    const int padding_x = int8_mma ? 4 : 1;
+    const int padding_y = int8_mma ? 4 : 0;
+
+    const tile_x_sizes txs = get_tile_x_sizes_host(type, padding_x, mmq_y);
     const int shmem_x = txs.ql*sizeof(int) + txs.dm*sizeof(half2) + txs.qh*sizeof(int) + txs.sc*sizeof(int);
-    const int padding_y = int8_mma_available(cc) ? 4 : 0;
     const int shmem_y = mmq_x*(WARP_SIZE+padding_y)*sizeof(int) + mmq_x*(WARP_SIZE/QI8_1)*sizeof(half2);
     const int shmem = shmem_x + shmem_y;
 
