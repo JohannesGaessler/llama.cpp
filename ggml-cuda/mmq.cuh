@@ -1,5 +1,6 @@
 #include "common.cuh"
 #include "vecdotq.cuh"
+#include "mma.cuh"
 
 #include <climits>
 #include <cstdint>
@@ -453,7 +454,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 }
 
 template <int mmq_x, int mmq_y, int nwarps>
-static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mul_mat(
+static __device__ __forceinline__ void vec_dot_q8_0_q8_1_dp4a(
     const int * __restrict__ x_ql, const half2 * __restrict__ x_dm, const int * __restrict__ x_qh, const int * __restrict__ x_sc,
     const int * __restrict__ y_qs, const half2 * __restrict__ y_ds, float * __restrict__ sum, const int & k0) {
 
@@ -473,6 +474,64 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mul_mat(
             sum[j0/nwarps*mmq_y/WARP_SIZE + i0/WARP_SIZE] += vec_dot_q8_0_q8_1_impl<float, VDR_Q8_0_Q8_1_MMQ>
                 (&x_ql[i * (WARP_SIZE + 1) + k0], &y_qs[j * WARP_SIZE + k0], x_dmf[i * (WARP_SIZE/QI8_0) + i/QI8_0 + k0/QI8_0],
                 y_df[j * (WARP_SIZE/QI8_1) + k0/QI8_1]);
+        }
+    }
+}
+
+template <int mmq_x, int mmq_y, int nwarps>
+static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
+    const int * __restrict__ x_ql, const half2 * __restrict__ x_dm, const int * __restrict__ x_qh, const int * __restrict__ x_sc,
+    const int * __restrict__ y_qs, const half2 * __restrict__ y_ds, float * __restrict__ sum, const int & k0) {
+
+    GGML_UNUSED(x_qh); GGML_UNUSED(x_sc);
+
+    const float * x_df = (const float *) x_dm;
+    const float * y_df = (const float *) y_ds;
+
+    mma_int_A_M16K8 A;
+    float dA[mma_int_C_M16N8::ne/2];
+
+    const int m0 = threadIdx.y*A.M;
+    static_assert(nwarps*A.M == mmq_y, "nwarps*A.M != mmq_y");
+
+#pragma unroll
+    for (int i = 0; i < A.ne; ++i) {
+        const int m = m0 + A.get_m(i);
+        const int k = k0 + A.get_k(i);
+
+        A.x[i] = x_ql[m*(WARP_SIZE + 1) + k];
+    }
+#pragma unroll
+    for (int i = 0; i < mma_int_C_M16N8::ne/2; ++i) {
+        const int m = m0 + mma_int_C_M16N8::get_m(2*i);
+
+        dA[i] = x_df[m*(WARP_SIZE/QI8_0) + m/QI8_0 + k0/QI8_0];
+    }
+
+    for (int n0 = 0; n0 < mmq_x; n0 += mma_int_B_N8K8::N) {
+        mma_int_C_M16N8 C;
+        mma_int_B_N8K8 B;
+        float dB[C.ne/2];
+
+#pragma unroll
+        for (int i = 0; i < B.ne; ++i) {
+            const int n = n0 + B.get_n(i);
+            const int k = k0 + B.get_k(i);
+
+            B.x[i] = y_qs[n*WARP_SIZE + k];
+        }
+#pragma unroll
+        for (int i = 0; i < C.ne/2; ++i) {
+            const int n = n0 + C.get_n(i);
+
+            dB[i] = y_df[n*(WARP_SIZE/QI8_1) + k0/QI8_1];
+        }
+
+        C.mma_K8(A, B);
+
+#pragma unroll
+        for (int i = 0; i < C.ne; ++i) {
+            sum[(n0/B.N)*C.ne + i] += C.x[i]*dA[i/2]*dB[i%2];
         }
     }
 }
@@ -999,7 +1058,11 @@ struct mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, GGML_TYPE_Q8_0> {
     static constexpr bool             need_sum   = false;
     static constexpr int              vdr        = VDR_Q8_0_Q8_1_MMQ;
     static constexpr load_tiles_mmq_t load_tiles = load_tiles_q8_0<mmq_y, nwarps, need_check>;
-    static constexpr vec_dot_mmq_t    vec_dot    = vec_dot_q8_0_q8_1_mul_mat<mmq_x, mmq_y, nwarps>;
+#if INT8_MMA_AVAILABLE
+    static constexpr vec_dot_mmq_t    vec_dot    = vec_dot_q8_0_q8_1_mma<mmq_x, mmq_y, nwarps>;
+#else
+    static constexpr vec_dot_mmq_t    vec_dot    = vec_dot_q8_0_q8_1_dp4a<mmq_x, mmq_y, nwarps>;
+#endif // INT8_MMA_AVAILABLE
 };
 
 template <int mmq_x, int mmq_y, int nwarps, bool need_check>
@@ -1093,7 +1156,7 @@ static __global__ void mul_mat_q(
 
     const int tile_x_max_i = ne01 - blockIdx.x*mmq_y - 1;
 
-    float sum[(mmq_x/nwarps) * (mmq_y/WARP_SIZE)] = {0.0f};
+    float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
 
     for (int kb0 = 0; kb0 < blocks_per_row_x; kb0 += blocks_per_warp) {
 
@@ -1142,6 +1205,30 @@ static __global__ void mul_mat_q(
         }
     }
 
+#if INT8_MMA_AVAILABLE
+    typedef mma_int_C_M16N8 mma_C;
+
+    const int i0 = threadIdx.y*mma_C::M;
+    static_assert(nwarps*mma_C::M == mmq_y, "nwarps*mma_C::M != mmq_y");
+
+#pragma unroll
+    for (int j0 = 0; j0 < mmq_x; j0 += mma_C::N) {
+#pragma unroll
+        for (int l = 0; l < mma_C::ne; ++l) {
+            const int j = blockIdx.y*mmq_x + j0 + mma_C::get_n(l);
+
+            if (j >= ne1) {
+                return;
+            }
+
+            const int i = blockIdx.x*mmq_y + i0 + mma_C::get_m(l);
+
+            dst[j*ne0 + i] = sum[(j0/mma_C::N)*mma_C::ne + l];
+        }
+    }
+
+#else
+
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
         const int j = blockIdx.y*mmq_x + j0 + threadIdx.y;
@@ -1161,6 +1248,7 @@ static __global__ void mul_mat_q(
             dst[j*ne0 + i] = sum[(j0/nwarps) * (mmq_y/WARP_SIZE) + i0/WARP_SIZE];
         }
     }
+#endif // INT8_MMA_AVAILABLE
 }
 
 struct mmq_args {
@@ -1234,10 +1322,10 @@ void mul_mat_q_case(const mmq_args & args, cudaStream_t stream) {
             launch_mul_mat_q<type,   8, 4>(args, stream);
             break;
         case  16:
-            launch_mul_mat_q<type,  16, 8>(args, stream);
+            launch_mul_mat_q<type,  16, 4>(args, stream);
             break;
         case  24:
-            launch_mul_mat_q<type,  24, 8>(args, stream);
+            launch_mul_mat_q<type,  24, 4>(args, stream);
             break;
         case  32:
             launch_mul_mat_q<type,  32, 8>(args, stream);
