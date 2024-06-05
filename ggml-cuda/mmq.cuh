@@ -485,6 +485,8 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
 
     GGML_UNUSED(x_qh); GGML_UNUSED(x_sc);
 
+    constexpr int padding_y = 4;
+
     const float * x_df = (const float *) x_dm;
     const float * y_df = (const float *) y_ds;
 
@@ -518,7 +520,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
             const int n = n0 + B.get_n(i);
             const int k = k0 + B.get_k(i);
 
-            B.x[i] = y_qs[n*WARP_SIZE + k];
+            B.x[i] = y_qs[n*(WARP_SIZE + padding_y) + k];
         }
 #pragma unroll
         for (int i = 0; i < C.ne/2; ++i) {
@@ -1137,14 +1139,19 @@ static __global__ void mul_mat_q(
     constexpr vec_dot_mmq_t    vec_dot    = mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, type>::vec_dot;
 
     constexpr tile_x_sizes txs = get_tile_x_sizes_device<mmq_y>(type);
+#if INT8_MMA_AVAILABLE
+    constexpr int padding_y = 4;
+#else
+    constexpr int padding_y = 0;
+#endif // INT8_MMA_AVAILABLE
 
     extern __shared__ char data_mul_mat_q[];
     int   * tile_x_ql = (int   *)  data_mul_mat_q;
     half2 * tile_x_dm = (half2 *) (tile_x_ql + txs.ql);
     int   * tile_x_qh = (int   *) (tile_x_dm + txs.dm);
     int   * tile_x_sc = (int   *) (tile_x_qh + txs.qh);
-    int   * tile_y_qs = (int   *) (tile_x_sc + txs.sc);          // [mmq_x * WARP_SIZE]
-    half2 * tile_y_ds = (half2 *) (tile_y_qs + mmq_x*WARP_SIZE); // [mmq_x * WARP_SIZE/QI8_1];
+    int   * tile_y_qs = (int   *) (tile_x_sc + txs.sc);                        // [mmq_x * (WARP_SIZE + padding_y)]
+    half2 * tile_y_ds = (half2 *) (tile_y_qs + mmq_x*(WARP_SIZE + padding_y)); // [mmq_x * WARP_SIZE/QI8_1];
 
     const block_q8_1 * y = (const block_q8_1 *) yc;
 
@@ -1173,7 +1180,7 @@ static __global__ void mul_mat_q(
 
                 const block_q8_1 * by0 = &y[i*blocks_per_col_y + kb0 * (qk/QK8_1) + kbxd];
 
-                const int index_y = (i0 + threadIdx.y) * WARP_SIZE + kqs % WARP_SIZE;
+                const int index_y = (i0 + threadIdx.y) * (WARP_SIZE + padding_y) + kqs % WARP_SIZE;
                 tile_y_qs[index_y] = get_int_from_int8_aligned(by0->qs, threadIdx.x % QI8_1);
             }
 
@@ -1271,7 +1278,8 @@ static void launch_mul_mat_q(const mmq_args & args, cudaStream_t stream) {
 
     const tile_x_sizes txs = get_tile_x_sizes_host(type, mmq_y);
     const int shmem_x = txs.ql*sizeof(int) + txs.dm*sizeof(half2) + txs.qh*sizeof(int) + txs.sc*sizeof(int);
-    const int shmem_y = mmq_x*WARP_SIZE*sizeof(int) + mmq_x*(WARP_SIZE/QI8_1)*sizeof(half2);
+    const int padding_y = int8_mma_available(cc) ? 4 : 0;
+    const int shmem_y = mmq_x*(WARP_SIZE+padding_y)*sizeof(int) + mmq_x*(WARP_SIZE/QI8_1)*sizeof(half2);
     const int shmem = shmem_x + shmem_y;
 
 #if !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__))
