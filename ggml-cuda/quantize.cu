@@ -85,8 +85,7 @@ void quantize_row_q8_1_cuda(const float * x, void * vy, const int64_t kx, const 
 void quantize_mmq_q8_1_cuda(const float * x, void * vy, const int64_t kx, const int64_t ky, const int64_t kx_padded, cudaStream_t stream) {
     GGML_ASSERT(kx_padded % (4*QK8_1) == 0);
 
-    static_assert(CUDA_QUANTIZE_MMQ_BLOCK_SIZE == 4*QK8_1, "Block sizes != 4*QK8_1 == 128 not implemented.");
-    const int64_t block_num_x = (kx_padded + CUDA_QUANTIZE_MMQ_BLOCK_SIZE - 1) / CUDA_QUANTIZE_MMQ_BLOCK_SIZE;
+    const int64_t block_num_x = (kx_padded + CUDA_QUANTIZE_BLOCK_SIZE - 1) / CUDA_QUANTIZE_BLOCK_SIZE;
     const dim3 num_blocks(block_num_x, ky, 1);
     const dim3 block_size(CUDA_QUANTIZE_BLOCK_SIZE, 1, 1);
     quantize_mmq_q8_1<<<num_blocks, block_size, 0, stream>>>(x, vy, kx, kx_padded);
