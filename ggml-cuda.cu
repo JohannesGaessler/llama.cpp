@@ -1350,7 +1350,7 @@ static void ggml_cuda_set_peer_access(const int n_tokens, int main_device) {
 static void ggml_cuda_op_mul_mat(
     ggml_backend_cuda_context & ctx,
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, ggml_cuda_op_mul_mat_t op,
-    const bool convert_src1_to_q8_1) {
+    quantize_cuda_t quantize_src1) {
 
     const int64_t ne00 = src0->ne[0];
     const int64_t ne01 = src0->ne[1];
@@ -1476,11 +1476,11 @@ static void ggml_cuda_op_mul_mat(
             dev[id].src1_ddf = dev[id].src1_ddf_alloc.alloc(ctx.pool(id), ggml_nelements(src1));
         }
 
-        if (convert_src1_to_q8_1) {
+        if (quantize_src1) {
             dev[id].src1_ddq = dev[id].src1_ddq_alloc.alloc(ctx.pool(id), nrows1*src1_padded_col_size*q8_1_ts/q8_1_bs);
 
             if (src1_on_device && src1_is_contiguous) {
-                quantize_row_q8_1_cuda(dev[id].src1_ddf, dev[id].src1_ddq, ne10, nrows1, src1_padded_col_size, stream);
+                quantize_src1(dev[id].src1_ddf, dev[id].src1_ddq, ne10, nrows1, src1_padded_col_size, stream);
                 CUDA_CHECK(cudaGetLastError());
             }
         }
@@ -1543,7 +1543,7 @@ static void ggml_cuda_op_mul_mat(
                 // copy src0, src1 to device if necessary
                 if (src1_is_contiguous) {
                     if (id != ctx.device) {
-                        if (convert_src1_to_q8_1) {
+                        if (quantize_src1) {
                             char * src1_ddq_i_source = dev[ctx.device].src1_ddq + src1_ddq_i_offset;
                             CUDA_CHECK(cudaMemcpyPeerAsync(src1_ddq_i, id, src1_ddq_i_source, ctx.device,
                                                             src1_ncols*src1_padded_col_size*q8_1_ts/q8_1_bs, stream));
@@ -1561,7 +1561,7 @@ static void ggml_cuda_op_mul_mat(
                     GGML_ASSERT(false);
                 }
 
-                if (convert_src1_to_q8_1 && !src1_is_contiguous) {
+                if (quantize_src1 && !src1_is_contiguous) {
                     quantize_row_q8_1_cuda(src1_ddf_i, src1_ddq_i, ne10, src1_ncols, src1_padded_col_size, stream);
                     CUDA_CHECK(cudaGetLastError());
                 }
@@ -1941,13 +1941,13 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
         // KQ + KQV multi-batch
         ggml_cuda_mul_mat_batched_cublas(ctx, src0, src1, dst);
     } else if (use_dequantize_mul_mat_vec) {
-        ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_dequantize_mul_mat_vec, false);
+        ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_dequantize_mul_mat_vec, nullptr);
     } else if (use_mul_mat_vec_q) {
-        ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_mul_mat_vec_q, true);
+        ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_mul_mat_vec_q, quantize_row_q8_1_cuda);
     } else if (use_mul_mat_q) {
-        ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_mul_mat_q, true);
+        ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_mul_mat_q, quantize_row_q8_1_cuda);
     } else {
-        ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_mul_mat_cublas, false);
+        ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_mul_mat_cublas, nullptr);
     }
 }
 
