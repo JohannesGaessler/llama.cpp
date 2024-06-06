@@ -1110,9 +1110,7 @@ static __global__ void mul_mat_q(
                     break;
                 }
 
-                const int i = blockIdx.y*mmq_x + l/(WARP_SIZE + WARP_SIZE/QI8_1);
-
-                tile_y_qs[l] = i < ne11 ? by0[l] : 0;
+                tile_y_qs[l] = by0[l];
             }
 
             __syncthreads();
