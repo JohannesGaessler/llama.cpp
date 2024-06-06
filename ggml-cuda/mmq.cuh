@@ -1,4 +1,5 @@
 #include "common.cuh"
+#include "quantize.cuh"
 #include "vecdotq.cuh"
 
 #include <climits>
@@ -1083,10 +1084,10 @@ static __global__ void mul_mat_q(
     int   * tile_y_qs = (int   *) (tile_x_sc + txs.sc);          // [mmq_x * WARP_SIZE]
     half2 * tile_y_ds = (half2 *) (tile_y_qs + mmq_x*WARP_SIZE); // [mmq_x * WARP_SIZE/QI8_1];
 
-    const block_q8_1 * y = (const block_q8_1 *) yc;
+    const block_q8_1_mmq * y = (const block_q8_1_mmq *) yc;
 
     const int blocks_per_row_x = ne00 / qk;
-    const int blocks_per_col_y = ne10 / QK8_1;
+    const int blocks_per_col_y = ne10 / (4*QK8_1);
     const int blocks_per_warp = WARP_SIZE / qi;
 
     const int & ne1 = ne11;
@@ -1101,17 +1102,14 @@ static __global__ void mul_mat_q(
 
 #pragma unroll
         for (int kr = 0; kr < qr; ++kr) {
-            const int kqs = kr*WARP_SIZE + threadIdx.x;
-            const int kbxd = kqs / QI8_1;
-
 #pragma unroll
             for (int i0 = 0; i0 < mmq_x; i0 += nwarps) {
                 const int i = min(blockIdx.y*mmq_x + threadIdx.y + i0, ne11-1); // to prevent out-of-bounds memory accesses
 
-                const block_q8_1 * by0 = &y[i*blocks_per_col_y + kb0 * (qk/QK8_1) + kbxd];
+                const block_q8_1_mmq * by = &y[i*blocks_per_col_y + kb0*qk/(4*QK8_1) + kr];
 
-                const int index_y = (i0 + threadIdx.y) * WARP_SIZE + kqs % WARP_SIZE;
-                tile_y_qs[index_y] = get_int_from_int8_aligned(by0->qs, threadIdx.x % QI8_1);
+                const int index_y = (i0 + threadIdx.y) * WARP_SIZE + threadIdx.x;
+                tile_y_qs[index_y] = get_int_from_int8_aligned(by->qs, threadIdx.x);
             }
 
 #pragma unroll
@@ -1121,7 +1119,7 @@ static __global__ void mul_mat_q(
                 const int i_y_eff = min(blockIdx.y*mmq_x + ids, ne11-1);
 
                 // if the sum is not needed it's faster to transform the scale to f32 ahead of time
-                const half2 * dsi_src = &y[i_y_eff*blocks_per_col_y + kb0 * (qk/QK8_1) + kr*(WARP_SIZE/QI8_1) + kby].ds;
+                const half2 * dsi_src = &y[i_y_eff*blocks_per_col_y + kb0*qk/(4*QK8_1) + kr].ds[kby];
                 half2       * dsi_dst = &tile_y_ds[ids * (WARP_SIZE/QI8_1) + kby];
                 if (need_sum) {
                     *dsi_dst = *dsi_src;
