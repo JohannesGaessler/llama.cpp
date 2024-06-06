@@ -1104,11 +1104,7 @@ static __global__ void mul_mat_q(
             const int * by0 = (const int *) &y[(kb0*qk/(4*QK8_1) + kr)*ne11 + blockIdx.y*mmq_x];
 #pragma unroll
             for (int l0 = 0; l0 < mmq_x*(WARP_SIZE + WARP_SIZE/QI8_1); l0 += nwarps*WARP_SIZE) {
-                const int l = l0 + threadIdx.y*WARP_SIZE + threadIdx.x;
-
-                if (l0 + nwarps*WARP_SIZE > mmq_x*(WARP_SIZE + WARP_SIZE/QI8_1) && l >= mmq_x*(WARP_SIZE + WARP_SIZE/QI8_1)) {
-                    break;
-                }
+                int l = l0 + threadIdx.y*WARP_SIZE + threadIdx.x;
 
                 tile_y_qs[l] = by0[l];
             }
@@ -1166,7 +1162,7 @@ static void launch_mul_mat_q(const mmq_args & args, cudaStream_t stream) {
     const tile_x_sizes txs = get_tile_x_sizes_host(type, mmq_y);
     const int shmem_x = txs.ql*sizeof(int) + txs.dm*sizeof(half2) + txs.qh*sizeof(int) + txs.sc*sizeof(int);
     const int shmem_y = mmq_x*WARP_SIZE*sizeof(int) + mmq_x*(WARP_SIZE/QI8_1)*sizeof(half2);
-    const int shmem = shmem_x + shmem_y;
+    const int shmem = shmem_x + GGML_PAD(shmem_y, nwarps*WARP_SIZE*sizeof(int));
 
 #if !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__))
     static bool shmem_limit_raised[GGML_CUDA_MAX_DEVICES] = {false};
