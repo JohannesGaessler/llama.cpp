@@ -69,8 +69,9 @@ static __global__ void quantize_mmq_q8_1(
         return;
     }
 
-    reinterpret_cast<half&>(y[ib].ds[iqs/QK8_1].x) = d;
-    reinterpret_cast<half&>(y[ib].ds[iqs/QK8_1].y) = sum;
+    ((float *) y[ib].ds)[iqs/QK8_1] = d;
+    // reinterpret_cast<half&>(y[ib].ds[iqs/QK8_1].x) = d;
+    // reinterpret_cast<half&>(y[ib].ds[iqs/QK8_1].y) = sum;
 }
 
 void quantize_row_q8_1_cuda(

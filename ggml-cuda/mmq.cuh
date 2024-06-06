@@ -469,11 +469,11 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mul_mat(
             const int i = i0 + threadIdx.x;
 
             const float * x_dmf = (const float *) x_dm;
-            const float * y_df  = (const float *) y_ds;
+            const float * y_df  = (const float *) y_qs;
 
             sum[j0/nwarps*mmq_y/WARP_SIZE + i0/WARP_SIZE] += vec_dot_q8_0_q8_1_impl<float, VDR_Q8_0_Q8_1_MMQ>
-                (&x_ql[i * (WARP_SIZE + 1) + k0], &y_qs[j * WARP_SIZE + k0], x_dmf[i * (WARP_SIZE/QI8_0) + i/QI8_0 + k0/QI8_0],
-                y_df[j * (WARP_SIZE/QI8_1) + k0/QI8_1]);
+                (&x_ql[i * (WARP_SIZE + 1) + k0], &y_qs[4 + j * (WARP_SIZE + WARP_SIZE/QI8_1) + k0], x_dmf[i * (WARP_SIZE/QI8_0) + i/QI8_0 + k0/QI8_0],
+                y_df[j * (WARP_SIZE + WARP_SIZE/QI8_1) + k0/QI8_1]);
         }
     }
 }
@@ -1081,8 +1081,8 @@ static __global__ void mul_mat_q(
     half2 * tile_x_dm = (half2 *) (tile_x_ql + txs.ql);
     int   * tile_x_qh = (int   *) (tile_x_dm + txs.dm);
     int   * tile_x_sc = (int   *) (tile_x_qh + txs.qh);
-    int   * tile_y_qs = (int   *) (tile_x_sc + txs.sc);          // [mmq_x * WARP_SIZE]
-    half2 * tile_y_ds = (half2 *) (tile_y_qs + mmq_x*WARP_SIZE); // [mmq_x * WARP_SIZE/QI8_1];
+    int   * tile_y_qs = (int   *) (tile_x_sc + txs.sc); // [mmq_x * (WARP_SIZE + WARP_SIZE/QI8_1)]
+    half2 * tile_y_ds = nullptr;
 
     const block_q8_1_mmq * y = (const block_q8_1_mmq *) yc;
 
@@ -1101,22 +1101,18 @@ static __global__ void mul_mat_q(
 
 #pragma unroll
         for (int kr = 0; kr < qr; ++kr) {
+            const int * by0 = (const int *) &y[(kb0*qk/(4*QK8_1) + kr)*ne11 + blockIdx.y*mmq_x];
 #pragma unroll
-            for (int i0 = 0; i0 < mmq_x; i0 += nwarps) {
-                const int i = min(blockIdx.y*mmq_x + threadIdx.y + i0, ne11-1); // to prevent out-of-bounds memory accesses
+            for (int l0 = 0; l0 < mmq_x*(WARP_SIZE + WARP_SIZE/QI8_1); l0 += nwarps*WARP_SIZE) {
+                const int l = l0 + threadIdx.y*WARP_SIZE + threadIdx.x;
 
-                const block_q8_1_mmq * by = &y[(kb0*qk/(4*QK8_1) + kr)*ne11 + i];
-
-                const int index_y = (i0 + threadIdx.y) * WARP_SIZE + threadIdx.x;
-                tile_y_qs[index_y] = get_int_from_int8_aligned(by->qs, threadIdx.x);
-                if (threadIdx.x < 4) {
-                    const half2 * src = &by->ds[threadIdx.x];
-                    if (need_sum) {
-                        tile_y_ds[(i0 + threadIdx.y)*(WARP_SIZE/QI8_1) + threadIdx.x] = *src;
-                    } else {
-                        ((float *)tile_y_ds)[(i0 + threadIdx.y)*(WARP_SIZE/QI8_1) + threadIdx.x] = __low2float(*src);
-                    }
+                if (l0 + nwarps*WARP_SIZE > mmq_x*(WARP_SIZE + WARP_SIZE/QI8_1) && l >= mmq_x*(WARP_SIZE + WARP_SIZE/QI8_1)) {
+                    break;
                 }
+
+                const int i = blockIdx.y*mmq_x + l/(WARP_SIZE + WARP_SIZE/QI8_1);
+
+                tile_y_qs[l] = i < ne11 ? by0[l] : 0;
             }
 
             __syncthreads();
