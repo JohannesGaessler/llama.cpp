@@ -1560,9 +1560,9 @@ static void ggml_cuda_op_mul_mat(
                                 const size_t h = src1_padded_col_size/(4*QK8_1);
                                 cudaMemcpy3DPeerParms p = {};
                                 p.dstDevice = ctx.device;
-                                p.dstPtr = make_cudaPitchedPtr(src1_ddq_i,        pitch, ne11, h);
+                                p.dstPtr = make_cudaPitchedPtr(src1_ddq_i,        pitch, 1, h);
                                 p.srcDevice = id;
-                                p.srcPtr = make_cudaPitchedPtr(src1_ddq_i_source, pitch, ne11, h);
+                                p.srcPtr = make_cudaPitchedPtr(src1_ddq_i_source, pitch, 1, h);
                                 p.extent = make_cudaExtent(w, h, 1);
                                 CUDA_CHECK(cudaMemcpy3DPeerAsync(&p, stream));
                             } else {
