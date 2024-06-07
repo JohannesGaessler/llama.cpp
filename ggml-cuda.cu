@@ -1482,7 +1482,6 @@ static void ggml_cuda_op_mul_mat(
                 src_1_ddq_size += 128*sizeof(block_q8_1_mmq);
             }
             dev[id].src1_ddq = dev[id].src1_ddq_alloc.alloc(ctx.pool(id), src_1_ddq_size);
-            CUDA_CHECK(cudaMemsetAsync(dev[id].src1_ddq, 0, src_1_ddq_size, stream));
 
             if (src1_on_device && src1_is_contiguous) {
                 quantize_src1(dev[id].src1_ddf, dev[id].src1_ddq, ne10, nrows1, src1_padded_col_size, src0->type, stream);
@@ -1564,6 +1563,7 @@ static void ggml_cuda_op_mul_mat(
                                 parms.srcPtr = make_cudaPitchedPtr(src1_ddq_i_source, ne11*sizeof(block_q8_1_mmq), 0, 0);
                                 parms.extent = make_cudaExtent(src1_ncols*sizeof(block_q8_1_mmq), src1_padded_col_size/(4*QK8_1), 1);
                                 CUDA_CHECK(cudaMemcpy3DPeerAsync((const cudaMemcpy3DPeerParms *) &parms, stream));
+                                CUDA_CHECK(cudaMemsetAsync(dev[id].src1_ddq, 0, nrows1*src1_padded_col_size*q8_1_ts/q8_1_bs, stream));
                             } else {
                                 CUDA_CHECK(cudaMemcpyPeerAsync(
                                     src1_ddq_i, id, src1_ddq_i_source, ctx.device, src1_ncols*src1_padded_col_size*q8_1_ts/q8_1_bs, stream));
