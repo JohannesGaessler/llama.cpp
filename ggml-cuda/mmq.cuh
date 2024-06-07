@@ -1084,8 +1084,6 @@ static __global__ void mul_mat_q(
     int   * tile_y_qs = (int   *) (tile_x_sc + txs.sc); // [mmq_x * (WARP_SIZE + WARP_SIZE/QI8_1)]
     half2 * tile_y_ds = nullptr;
 
-    const block_q8_1_mmq * y = (const block_q8_1_mmq *) yc;
-
     const int blocks_per_row_x = ne00 / qk;
     const int blocks_per_warp = WARP_SIZE / qi;
 
@@ -1101,7 +1099,7 @@ static __global__ void mul_mat_q(
 
 #pragma unroll
         for (int kr = 0; kr < qr; ++kr) {
-            const int * by0 = (const int *) &y[(kb0*qk/(4*QK8_1) + kr)*ne11 + blockIdx.y*mmq_x];
+            const int * by0 = ((const int *) yc) + ((kb0*qk/(4*QK8_1) + kr)*ne11 + blockIdx.y*mmq_x) * (sizeof(block_q8_1_mmq)/sizeof(int));
 #pragma unroll
             for (int l0 = 0; l0 < mmq_x*(WARP_SIZE + WARP_SIZE/QI8_1); l0 += nwarps*WARP_SIZE) {
                 int l = l0 + threadIdx.y*WARP_SIZE + threadIdx.x;
