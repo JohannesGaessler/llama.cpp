@@ -1567,7 +1567,8 @@ static void ggml_cuda_op_mul_mat(
                                 // parms.extent = make_cudaExtent(, h, 1);
                                 // CUDA_CHECK(cudaMemcpy3DPeerAsync((const cudaMemcpy3DPeerParms *) &parms, stream));
                                 CUDA_CHECK(cudaGetLastError());
-                                CUDA_CHECK(cudaMemcpy2DAsync(src1_ddq_i, pitch, src1_ddq_i_source, pitch, w, h, cudaMemcpyDeviceToDevice, stream));
+                                cudaError_t err = cudaMemcpy2DAsync(src1_ddq_i, pitch, src1_ddq_i_source, pitch, w, h, cudaMemcpyDeviceToDevice, stream);
+                                CUDA_CHECK(err);
                             } else {
                                 CUDA_CHECK(cudaMemcpyPeerAsync(
                                     src1_ddq_i, id, src1_ddq_i_source, ctx.device, src1_ncols*src1_padded_col_size*q8_1_ts/q8_1_bs, stream));
