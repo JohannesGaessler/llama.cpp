@@ -1347,6 +1347,26 @@ static void ggml_cuda_set_peer_access(const int n_tokens, int main_device) {
     GGML_UNUSED(main_device);
 }
 
+static cudaError_t cudaMemcpy2DPeerAsync(
+    void * dst, int dstDevice, size_t dpitch, void * src, int srcDevice, size_t spitch, size_t width, size_t height, cudaStream_t stream) {
+
+#if !defined(GGML_USE_HIPBLAS)
+    // cudaMemcpy2DAsync may fail with copies between vmm pools of different devices
+    cudaMemcpy3DPeerParms p = {};
+    p.dstDevice = dstDevice;
+    p.dstPtr = make_cudaPitchedPtr(dst, dpitch, dpitch, height);
+    p.srcDevice = srcDevice;
+    p.srcPtr = make_cudaPitchedPtr(src, spitch, spitch, height);
+    p.extent = make_cudaExtent(width, height, 1);
+    return cudaMemcpy3DPeerAsync(&p, stream);
+#else
+    // HIP does not support cudaMemcpy3DPeerAsync or vmm pools
+    GGML_UNUSED(dstDevice);
+    GGML_UNUSED(srcDevice);
+    return cudaMemcpy2DAsync(dst, dpitch, src, spitch, width, height, cudaMemcpyDeviceToDevice, stream);
+#endif // !defined(GGML_USE_HIPBLAS)
+}
+
 static void ggml_cuda_op_mul_mat(
     ggml_backend_cuda_context & ctx,
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, ggml_cuda_op_mul_mat_t op,
@@ -1556,15 +1576,9 @@ static void ggml_cuda_op_mul_mat(
                             char * src1_ddq_i_source = dev[ctx.device].src1_ddq + src1_ddq_i_offset;
                             if (quantize_src1 == quantize_mmq_q8_1_cuda) {
                                 const size_t pitch = ne11*sizeof(block_q8_1_mmq);
-                                const size_t w = src1_ncols*sizeof(block_q8_1_mmq);
-                                const size_t h = src1_padded_col_size/(4*QK8_1);
-                                cudaMemcpy3DPeerParms p = {};
-                                p.dstDevice = id;
-                                p.dstPtr = make_cudaPitchedPtr(src1_ddq_i,        pitch, pitch, h);
-                                p.srcDevice = ctx.device;
-                                p.srcPtr = make_cudaPitchedPtr(src1_ddq_i_source, pitch, pitch, h);
-                                p.extent = make_cudaExtent(w, h, 1);
-                                CUDA_CHECK(cudaMemcpy3DPeerAsync(&p, stream));
+                                const size_t width = src1_ncols*sizeof(block_q8_1_mmq);
+                                const size_t height = src1_padded_col_size/(4*QK8_1);
+                                CUDA_CHECK(cudaMemcpy2DPeerAsync(src1_ddq_i, id, pitch, src1_ddq_i_source, ctx.device, pitch, width, height, stream));
                             } else {
                                 CUDA_CHECK(cudaMemcpyPeerAsync(
                                     src1_ddq_i, id, src1_ddq_i_source, ctx.device, src1_ncols*src1_padded_col_size*q8_1_ts/q8_1_bs, stream));
@@ -1609,22 +1623,8 @@ static void ggml_cuda_op_mul_mat(
                         float * dhf_dst_i = (float *) ((char *) dst_off_device + i02*nb2 + i03*nb3);
                         GGML_ASSERT(dst->nb[1] == ne0*sizeof(float));
                         dhf_dst_i += src1_col_0*ne0 + dev[id].row_low;
-#if !defined(GGML_USE_HIPBLAS)
-                        // cudaMemcpy2DAsync may fail with copies between vmm pools of different devices
-                        cudaMemcpy3DPeerParms p = {};
-                        p.dstDevice = ctx.device;
-                        p.dstPtr = make_cudaPitchedPtr(dhf_dst_i, ne0*sizeof(float), row_diff, src1_ncols);
-                        p.srcDevice = id;
-                        p.srcPtr = make_cudaPitchedPtr(dst_dd_i, row_diff*sizeof(float), row_diff, src1_ncols);
-                        p.extent = make_cudaExtent(row_diff*sizeof(float), src1_ncols, 1);
-                        CUDA_CHECK(cudaMemcpy3DPeerAsync(&p, stream));
-#else
-                        // HIP does not support cudaMemcpy3DPeerAsync or vmm pools
-                        CUDA_CHECK(cudaMemcpy2DAsync(dhf_dst_i, ne0*sizeof(float),
-                                                        dst_dd_i, row_diff*sizeof(float),
-                                                        row_diff*sizeof(float), src1_ncols,
-                                                        cudaMemcpyDeviceToDevice, stream));
-#endif
+                        CUDA_CHECK(cudaMemcpy2DPeerAsync(
+                            dhf_dst_i, ctx.device, ne0*sizeof(float), dst_dd_i, id, row_diff*sizeof(float), row_diff*sizeof(float), src1_ncols, stream));
                     } else {
                         float * dhf_dst_i = (float *) ((char *) dst_off_device + i02*nb2 + i03*nb3);
                         GGML_ASSERT(dst->nb[1] == ne0*sizeof(float));
