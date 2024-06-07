@@ -1556,8 +1556,10 @@ static void ggml_cuda_op_mul_mat(
                             char * src1_ddq_i_source = dev[ctx.device].src1_ddq + src1_ddq_i_offset;
                             if (quantize_src1 == quantize_mmq_q8_1_cuda) {
                                 cudaMemcpy3DPeerParms parms;
+                                parms.dstDevice = id;
                                 parms.dstPtr = make_cudaPitchedPtr(src1_ddq_i, ne11*sizeof(block_q8_1_mmq), 0, 0);
                                 parms.extent = make_cudaExtent(src1_ncols*sizeof(block_q8_1_mmq), src1_padded_col_size/(4*QK8_1), 1);
+                                parms.srcDevice = ctx.device;
                                 parms.srcPtr = make_cudaPitchedPtr(src1_ddq_i_source, ne11*sizeof(block_q8_1_mmq), 0, 0);
                                 CUDA_CHECK(cudaMemcpy3DPeerAsync((const cudaMemcpy3DPeerParms *) &parms, stream));
                             } else {
