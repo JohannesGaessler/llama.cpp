@@ -1555,13 +1555,14 @@ static void ggml_cuda_op_mul_mat(
                         if (quantize_src1) {
                             char * src1_ddq_i_source = dev[ctx.device].src1_ddq + src1_ddq_i_offset;
                             if (quantize_src1 == quantize_mmq_q8_1_cuda) {
+                                const int64_t h = src1_padded_col_size/(4*QK8_1);
                                 cudaMemcpy3DPeerParms parms;
                                 memset(&parms, 0, sizeof(parms));
                                 parms.dstDevice = id;
                                 parms.srcDevice = ctx.device;
-                                parms.dstPtr = make_cudaPitchedPtr(src1_ddq_i,        ne11*sizeof(block_q8_1_mmq), 1, 1);
-                                parms.srcPtr = make_cudaPitchedPtr(src1_ddq_i_source, ne11*sizeof(block_q8_1_mmq), 1, 1);
-                                parms.extent = make_cudaExtent(src1_ncols*sizeof(block_q8_1_mmq), src1_padded_col_size/(4*QK8_1), 1);
+                                parms.dstPtr = make_cudaPitchedPtr(src1_ddq_i,        ne11*sizeof(block_q8_1_mmq), h, 1);
+                                parms.srcPtr = make_cudaPitchedPtr(src1_ddq_i_source, ne11*sizeof(block_q8_1_mmq), h, 1);
+                                parms.extent = make_cudaExtent(src1_ncols*sizeof(block_q8_1_mmq), h, 1);
                                 CUDA_CHECK(cudaMemcpy3DPeerAsync((const cudaMemcpy3DPeerParms *) &parms, stream));
                             } else {
                                 CUDA_CHECK(cudaMemcpyPeerAsync(
