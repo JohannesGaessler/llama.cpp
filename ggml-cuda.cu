@@ -1477,7 +1477,11 @@ static void ggml_cuda_op_mul_mat(
         }
 
         if (quantize_src1) {
-            dev[id].src1_ddq = dev[id].src1_ddq_alloc.alloc(ctx.pool(id), nrows1*src1_padded_col_size*q8_1_ts/q8_1_bs + 128*4*q8_1_ts);
+            size_t src_1_ddq_size = nrows1*src1_padded_col_size*q8_1_ts/q8_1_bs;
+            if (quantize_src1 == quantize_mmq_q8_1_cuda) {
+                src_1_ddq_size += 128*sizeof(block_q8_1_mmq);
+            }
+            dev[id].src1_ddq = dev[id].src1_ddq_alloc.alloc(ctx.pool(id), src_1_ddq_size);
 
             if (src1_on_device && src1_is_contiguous) {
                 quantize_src1(dev[id].src1_ddf, dev[id].src1_ddq, ne10, nrows1, src1_padded_col_size, src0->type, stream);
@@ -1526,7 +1530,12 @@ static void ggml_cuda_op_mul_mat(
                 const int64_t i03 = i0 / ne12;
                 const int64_t i02 = i0 % ne12;
 
-                const size_t src1_ddq_i_offset = (i0*ne11 + src1_col_0) * src1_padded_col_size*q8_1_ts/q8_1_bs;
+                size_t src1_ddq_i_offset = i0*ne11 * src1_padded_col_size*q8_1_ts/q8_1_bs;
+                if (quantize_src1 == quantize_mmq_q8_1_cuda) {
+                    src1_ddq_i_offset += src1_col_0 * sizeof(block_q8_1_mmq);
+                } else {
+                    src1_ddq_i_offset += src1_col_0 * src1_padded_col_size*q8_1_ts/q8_1_bs;
+                }
 
                 // for split tensors the data begins at i0 == i0_offset_low
                 char  *  src0_dd_i =  dev[id].src0_dd + (i0/i02_divisor) * (ne01*ne00*src0_ts)/src0_bs;
@@ -1545,8 +1554,16 @@ static void ggml_cuda_op_mul_mat(
                     if (id != ctx.device) {
                         if (quantize_src1) {
                             char * src1_ddq_i_source = dev[ctx.device].src1_ddq + src1_ddq_i_offset;
-                            CUDA_CHECK(cudaMemcpyPeerAsync(src1_ddq_i, id, src1_ddq_i_source, ctx.device,
-                                                            src1_ncols*src1_padded_col_size*q8_1_ts/q8_1_bs, stream));
+                            if (quantize_src1 == quantize_mmq_q8_1_cuda) {
+                                cudaMemcpy3DPeerParms parms;
+                                parms.dstPtr = make_cudaPitchedPtr(src1_ddq_i, ne11*sizeof(block_q8_1_mmq), 0, 0);
+                                parms.extent = make_cudaExtent(src1_ncols*sizeof(block_q8_1_mmq), src1_padded_col_size/(4*QK8_1), 1);
+                                parms.srcPtr = make_cudaPitchedPtr(src1_ddq_i_source, ne11*sizeof(block_q8_1_mmq), 0, 0);
+                                CUDA_CHECK(cudaMemcpy3DPeerAsync((const cudaMemcpy3DPeerParms *) &parms, stream));
+                            } else {
+                                CUDA_CHECK(cudaMemcpyPeerAsync(
+                                    src1_ddq_i, id, src1_ddq_i_source, ctx.device, src1_ncols*src1_padded_col_size*q8_1_ts/q8_1_bs, stream));
+                            }
                         } else {
                             float * src1_ddf_i_source = (float *) src1->data;
                             src1_ddf_i_source += (i0*ne11 + src1_col_0) * ne10;
