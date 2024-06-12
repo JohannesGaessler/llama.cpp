@@ -1909,6 +1909,19 @@ struct mmq_args {
     int64_t ne0;
 };
 
+constexpr int mmq_get_nwarps(int mmq_x) {
+    return mmq_x >= 32 ? 8 : 4;
+}
+
+static int mmq_get_shmem(const ggml_type type, const int mmq_x, const int mmq_y) {
+    const tile_x_sizes txs = get_tile_x_sizes_host(type, mmq_y);
+    const int nwarps = mmq_get_nwarps(mmq_x);
+
+    const int shmem_x = txs.qs*sizeof(int) + txs.dm*sizeof(half2) + txs.sc*sizeof(int);
+    const int shmem_y = mmq_x*WARP_SIZE*sizeof(int) + mmq_x*(WARP_SIZE/QI8_1)*sizeof(half2);
+    return shmem_x + GGML_PAD(shmem_y, nwarps*WARP_SIZE*sizeof(int));
+}
+
 template <ggml_type type, int mmq_x, int nwarps>
 static void launch_mul_mat_q(const mmq_args & args, cudaStream_t stream) {
     const int id = ggml_cuda_get_device();
@@ -1920,10 +1933,7 @@ static void launch_mul_mat_q(const mmq_args & args, cudaStream_t stream) {
     const dim3 block_nums(block_num_x, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
-    const tile_x_sizes txs = get_tile_x_sizes_host(type, mmq_y);
-    const int shmem_x = txs.qs*sizeof(int) + txs.dm*sizeof(half2) + txs.sc*sizeof(int);
-    const int shmem_y = mmq_x*WARP_SIZE*sizeof(int) + mmq_x*(WARP_SIZE/QI8_1)*sizeof(half2);
-    const int shmem = shmem_x + GGML_PAD(shmem_y, nwarps*WARP_SIZE*sizeof(int));
+    const int shmem = mmq_get_shmem(type, mmq_x, mmq_y);
 
 #if !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__))
     static bool shmem_limit_raised[GGML_CUDA_MAX_DEVICES] = {false};
@@ -1947,9 +1957,10 @@ static void launch_mul_mat_q(const mmq_args & args, cudaStream_t stream) {
 
 template <ggml_type type>
 void mul_mat_q_case(const mmq_args & args, cudaStream_t stream) {
-    const int id = ggml_cuda_get_device();
-    const int nsm = ggml_cuda_info().devices[id].nsm;
-    const int cc  = ggml_cuda_info().devices[id].cc;
+    const int id   = ggml_cuda_get_device();
+    const int nsm  = ggml_cuda_info().devices[id].nsm;
+    const int cc   = ggml_cuda_info().devices[id].cc;
+    const int smpb = ggml_cuda_info().devices[id].smpb;
 
     const int mmq_x_max = get_mmq_x_max_host(cc);
     const int mmq_y = get_mmq_y_host(cc, mmq_x_max);
@@ -1962,7 +1973,7 @@ void mul_mat_q_case(const mmq_args & args, cudaStream_t stream) {
         const int block_num_x = (args.ne11 + mmq_x - 1) / mmq_x;
         const int nwaves = (block_num_x*block_num_y + nsm - 1) / nsm;
 
-        if (nwaves < nwaves_best) {
+        if (nwaves < nwaves_best && mmq_get_shmem(type, mmq_x, mmq_y) <= smpb) {
             mmq_x_best  = mmq_x;
             nwaves_best = nwaves;
         }
@@ -1970,52 +1981,52 @@ void mul_mat_q_case(const mmq_args & args, cudaStream_t stream) {
 
     switch (mmq_x_best) {
         case   8:
-            launch_mul_mat_q<type,   8, 4>(args, stream);
+            launch_mul_mat_q<type,   8, mmq_get_nwarps(  8)>(args, stream);
             break;
         case  16:
-            launch_mul_mat_q<type,  16, 4>(args, stream);
+            launch_mul_mat_q<type,  16, mmq_get_nwarps( 16)>(args, stream);
             break;
         case  24:
-            launch_mul_mat_q<type,  24, 4>(args, stream);
+            launch_mul_mat_q<type,  24, mmq_get_nwarps( 24)>(args, stream);
             break;
         case  32:
-            launch_mul_mat_q<type,  32, 8>(args, stream);
+            launch_mul_mat_q<type,  32, mmq_get_nwarps( 32)>(args, stream);
             break;
         case  40:
-            launch_mul_mat_q<type,  40, 8>(args, stream);
+            launch_mul_mat_q<type,  40, mmq_get_nwarps( 40)>(args, stream);
             break;
         case  48:
-            launch_mul_mat_q<type,  48, 8>(args, stream);
+            launch_mul_mat_q<type,  48, mmq_get_nwarps( 48)>(args, stream);
             break;
         case  56:
-            launch_mul_mat_q<type,  56, 8>(args, stream);
+            launch_mul_mat_q<type,  56, mmq_get_nwarps( 56)>(args, stream);
             break;
         case  64:
-            launch_mul_mat_q<type,  64, 8>(args, stream);
+            launch_mul_mat_q<type,  64, mmq_get_nwarps( 64)>(args, stream);
             break;
         case  72:
-            launch_mul_mat_q<type,  72, 8>(args, stream);
+            launch_mul_mat_q<type,  72, mmq_get_nwarps( 72)>(args, stream);
             break;
         case  80:
-            launch_mul_mat_q<type,  80, 8>(args, stream);
+            launch_mul_mat_q<type,  80, mmq_get_nwarps( 80)>(args, stream);
             break;
         case  88:
-            launch_mul_mat_q<type,  88, 8>(args, stream);
+            launch_mul_mat_q<type,  88, mmq_get_nwarps( 88)>(args, stream);
             break;
         case  96:
-            launch_mul_mat_q<type,  96, 8>(args, stream);
+            launch_mul_mat_q<type,  96, mmq_get_nwarps( 96)>(args, stream);
             break;
         case 104:
-            launch_mul_mat_q<type, 104, 8>(args, stream);
+            launch_mul_mat_q<type, 104, mmq_get_nwarps(104)>(args, stream);
             break;
         case 112:
-            launch_mul_mat_q<type, 112, 8>(args, stream);
+            launch_mul_mat_q<type, 112, mmq_get_nwarps(112)>(args, stream);
             break;
         case 120:
-            launch_mul_mat_q<type, 120, 8>(args, stream);
+            launch_mul_mat_q<type, 120, mmq_get_nwarps(120)>(args, stream);
             break;
         case 128:
-            launch_mul_mat_q<type, 128, 8>(args, stream);
+            launch_mul_mat_q<type, 128, mmq_get_nwarps(128)>(args, stream);
             break;
         default:
             GGML_ASSERT(false);

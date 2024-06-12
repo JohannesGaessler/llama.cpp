@@ -193,7 +193,7 @@ static ggml_cuda_device_info ggml_cuda_init() {
 #else
         info.devices[id].cc = 100*prop.major + 10*prop.minor;
 #endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-        info.devices[id].smpb = prop.sharedMemPerBlock;
+        info.devices[id].smpb = prop.sharedMemPerBlockOptin;
         info.devices[id].nsm  = prop.multiProcessorCount;
     }
 
