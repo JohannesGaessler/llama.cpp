@@ -1,7 +1,6 @@
 #include "quantize.cuh"
 #include <cmath>
 #include <cstdint>
-#include <cuda_fp8.h>
 
 static __global__ void quantize_q8_1(const float * __restrict__ x, void * __restrict__ vy, const int64_t kx, const int64_t kx0_padded) {
     const int64_t ix0 = (int64_t)blockDim.x*blockIdx.x + threadIdx.x;

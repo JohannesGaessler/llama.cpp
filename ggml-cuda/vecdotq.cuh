@@ -1,5 +1,4 @@
 #include "common.cuh"
-#include <cuda_fp8.h>
 
 static __device__ __forceinline__ int get_int_from_int8(const int8_t * x8, const int & i32) {
     const uint16_t * x16 = (const uint16_t *) (x8 + sizeof(int) * i32); // assume at least 2 byte alignment
