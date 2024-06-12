@@ -2029,6 +2029,7 @@ void mul_mat_q_case(const mmq_args & args, cudaStream_t stream) {
             launch_mul_mat_q<type, 128, mmq_get_nwarps(128)>(args, stream);
             break;
         default:
+            fprintf(stderr, "mmq_x_best=%d\n", mmq_x_best);
             GGML_ASSERT(false);
             break;
     }
