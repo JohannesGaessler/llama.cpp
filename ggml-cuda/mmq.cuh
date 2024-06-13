@@ -970,7 +970,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
             const int x_ql_k =  (x_ql_0 >> (2*l))       & 0x03030303;
             const int x_qh_k = ((x_qh_0 >>    l)  << 2) & 0x04040404;
-            x_qs[i*(QR3_K*WARP_SIZE + 1) + k] = __vsubss4(x_ql_k | x_qh_k, 0x04040404);
+            x_qs[i*(QR3_K*WARP_SIZE + 1) + k] = x_ql_k | x_qh_k;
         }
     }
 
@@ -1071,8 +1071,8 @@ static __device__ __forceinline__ void vec_dot_q3_K_q8_1_mma(
         const int i = i0 + mma_A::get_i(l);
         const int k = QR3_K*k0 + mma_A::get_k(l);
 
-        A[0].x[l] = x_qs[i*(QR3_K*WARP_SIZE + 1) + k + 0];
-        A[1].x[l] = x_qs[i*(QR3_K*WARP_SIZE + 1) + k + mma_A::K];
+        A[0].x[l] = __vsubss4(x_qs[i*(QR3_K*WARP_SIZE + 1) + k + 0],        0x04040404);
+        A[1].x[l] = __vsubss4(x_qs[i*(QR3_K*WARP_SIZE + 1) + k + mma_A::K], 0x04040404);
     }
 
 #pragma unroll
