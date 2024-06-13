@@ -860,7 +860,7 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_dp4a(
             const int i = i0 + threadIdx.x;
 
             sum[j0/nwarps*mmq_y/WARP_SIZE + i0/WARP_SIZE] += vec_dot_q2_K_q8_1_impl_mmq(
-                &x_qs[i*(QR3_K*WARP_SIZE + 1) + k0*QR2_K], &y_qs[j*MMQ_TILE_Y_K + (QR2_K*k0) % WARP_SIZE],
+                &x_qs[i*(WARP_SIZE + 1) + k0], &y_qs[j*MMQ_TILE_Y_K + (QR2_K*k0) % WARP_SIZE],
                 &x_dm[i*(WARP_SIZE + 1) + k0], y_ds[j*MMQ_TILE_Y_K + ((QR2_K*k0) % WARP_SIZE)/QI8_1]);
         }
     }

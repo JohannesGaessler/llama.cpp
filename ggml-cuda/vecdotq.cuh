@@ -279,9 +279,11 @@ static __device__ __forceinline__ float vec_dot_q2_K_q8_1_impl_mmq(
         const float2 dm2f = __half22float2(dm2[i0/(QI8_1/2)]);
         int sumi_d = 0;
 
+        const int vi0 = v[i0/(QI8_1/2)];
 #pragma unroll
         for (int i = i0; i < i0 + QI8_1/2; ++i) {
-            sumi_d = __dp4a(v[i], u[i], sumi_d); // SIMD dot product
+            const int vi = (vi0 >> (2*(i % (QI8_1/2)))) & 0x03030303;
+            sumi_d = __dp4a(vi, u[i], sumi_d); // SIMD dot product
         }
 
         sumf_d += dm2f.x * sumi_d;
