@@ -835,9 +835,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             x_qs_k |= __shfl_xor_sync(0xFFFFFFFF, x_qs_k, 1, WARP_SIZE);
             x_qs_k |= __shfl_xor_sync(0xFFFFFFFF, x_qs_k, 2, WARP_SIZE);
 
-            if (kqsx % 4 == 0) {
-                x_qs[i*(WARP_SIZE + 1) + k] = x_qs_k;
-            }
+            x_qs[i*(WARP_SIZE + 1) + k] = x_qs_k;
         }
 
         const int sc_m = bxi->scales[kqsx];
