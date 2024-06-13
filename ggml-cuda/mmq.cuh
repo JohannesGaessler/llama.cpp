@@ -831,17 +831,21 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
         for (int l = 0; l < QR3_K; ++l) {
             const int k = kbx*(QR2_K*QI2_K) + (kqsx/8)*32 + l*8 + kqsx % 8;
 
+            int x_qs_k = ((x_ql_0 >> (2*l)) & 0x03030303) << (2*(k % 4));
+            // x_qs_k |= __shfl_xor_sync(0xFFFFFFFF, x_qs_k, 1, WARP_SIZE);
+            // x_qs_k |= __shfl_xor_sync(0xFFFFFFFF, x_qs_k, 2, WARP_SIZE);
+
             if (k % 4 == 0) {
-                x_qs[i*(WARP_SIZE + 1) + k/4] |= ((x_ql_0 >> (2*l)) & 0x03030303) << (2*(k % 4));
+                x_qs[i*(WARP_SIZE + 1) + k/4] |= x_qs_k;
             }
             if (k % 4 == 1) {
-                x_qs[i*(WARP_SIZE + 1) + k/4] |= ((x_ql_0 >> (2*l)) & 0x03030303) << (2*(k % 4));
+                x_qs[i*(WARP_SIZE + 1) + k/4] |= x_qs_k;
             }
             if (k % 4 == 2) {
-                x_qs[i*(WARP_SIZE + 1) + k/4] |= ((x_ql_0 >> (2*l)) & 0x03030303) << (2*(k % 4));
+                x_qs[i*(WARP_SIZE + 1) + k/4] |= x_qs_k;
             }
             if (k % 4 == 3) {
-                x_qs[i*(WARP_SIZE + 1) + k/4] |= ((x_ql_0 >> (2*l)) & 0x03030303) << (2*(k % 4));
+                x_qs[i*(WARP_SIZE + 1) + k/4] |= x_qs_k;
             }
         }
 
