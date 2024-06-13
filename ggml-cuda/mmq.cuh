@@ -71,7 +71,7 @@ static constexpr __device__ int get_mmq_y_device(int /*mmq_x*/) {
 #define TILE_X_SIZES_Q5_0 tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI5_0 + mmq_y/QI5_0, 0}
 #define TILE_X_SIZES_Q5_1 tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI5_1 + mmq_y/QI5_1, 0}
 #define TILE_X_SIZES_Q8_0 tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI8_0 + mmq_y/QI8_0, 0}
-#define TILE_X_SIZES_Q2_K tile_x_sizes{mmq_y*WARP_SIZE*4 + mmq_y, mmq_y*WARP_SIZE       + mmq_y,       0}
+#define TILE_X_SIZES_Q2_K tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE       + mmq_y,       0}
 #define TILE_X_SIZES_Q3_K tile_x_sizes{mmq_y*WARP_SIZE*4 + mmq_y, mmq_y*WARP_SIZE/QI3_K + mmq_y/QI3_K, mmq_y*WARP_SIZE/4 + mmq_y/4}
 #define TILE_X_SIZES_Q4_K tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI4_K + mmq_y/QI4_K, mmq_y*WARP_SIZE/8 + mmq_y/8}
 #define TILE_X_SIZES_Q5_K tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI5_K + mmq_y/QI5_K, mmq_y*WARP_SIZE/8 + mmq_y/8}
@@ -825,11 +825,24 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
         const int x_ql_0 = get_int_from_uint8(bxi->qs, kqsx);
 
+        x_qs[i*(WARP_SIZE + 1) + threadIdx.x] = 0;
+
 #pragma unroll
         for (int l = 0; l < QR3_K; ++l) {
             const int k = kbx*(QR2_K*QI2_K) + (kqsx/8)*32 + l*8 + kqsx % 8;
 
-            x_qs[i*(QR3_K*WARP_SIZE + 1) + k] = (x_ql_0 >> (2*l)) & 0x03030303;
+            if (k % 4 == 0) {
+                x_qs[i*(WARP_SIZE + 1) + k/4] |= ((x_ql_0 >> (2*l)) & 0x03030303) << (2*(k % 4));
+            }
+            if (k % 4 == 1) {
+                x_qs[i*(WARP_SIZE + 1) + k/4] |= ((x_ql_0 >> (2*l)) & 0x03030303) << (2*(k % 4));
+            }
+            if (k % 4 == 2) {
+                x_qs[i*(WARP_SIZE + 1) + k/4] |= ((x_ql_0 >> (2*l)) & 0x03030303) << (2*(k % 4));
+            }
+            if (k % 4 == 3) {
+                x_qs[i*(WARP_SIZE + 1) + k/4] |= ((x_ql_0 >> (2*l)) & 0x03030303) << (2*(k % 4));
+            }
         }
 
         const int sc_m = bxi->scales[kqsx];
@@ -882,10 +895,10 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
 #pragma unroll
     for (int l = 0; l < mma_A::ne; ++l) {
         const int i = i0 + mma_A::get_i(l);
-        const int k = QR2_K*k0 + mma_A::get_k(l);
+        const int shift = 2*mma_A::get_k(l);
 
-        A[0].x[l] = x_qs[i*(QR2_K*WARP_SIZE + 1) + k + 0];
-        A[1].x[l] = x_qs[i*(QR2_K*WARP_SIZE + 1) + k + mma_A::K];
+        A[0].x[l] = (x_qs[i*(WARP_SIZE + 1) + k0 + 0] >> shift) & 0x03030303;
+        A[1].x[l] = (x_qs[i*(WARP_SIZE + 1) + k0 + 1] >> shift) & 0x03030303;
     }
 
 #pragma unroll
