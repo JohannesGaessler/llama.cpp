@@ -961,8 +961,8 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
         const block_q3_K * bxi = (const block_q3_K *) x + kbx0 + i*stride + kbx;
 
-        const int x_ql_0 =  get_int_from_uint8(bxi->qs,    kqsx);
-        const int x_qh_0 = ~get_int_from_uint8(bxi->hmask, kqsx % (QI3_K/2)) >> (4 * (kqsx / (QI3_K/2)));
+        const int x_ql_0 = get_int_from_uint8(bxi->qs,    kqsx);
+        const int x_qh_0 = get_int_from_uint8(bxi->hmask, kqsx % (QI3_K/2)) >> (4 * (kqsx / (QI3_K/2)));
 
 #pragma unroll
         for (int l = 0; l < QR3_K; ++l) {
@@ -970,7 +970,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
             const int x_ql_k =  (x_ql_0 >> (2*l))       & 0x03030303;
             const int x_qh_k = ((x_qh_0 >>    l)  << 2) & 0x04040404;
-            x_qs[i*(QR3_K*WARP_SIZE + 1) + k] = __vsubss4(x_ql_k, x_qh_k);
+            x_qs[i*(QR3_K*WARP_SIZE + 1) + k] = __vsubss4(x_ql_k | x_qh_k, 0x04040404);
         }
     }
 
