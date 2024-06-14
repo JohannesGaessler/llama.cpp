@@ -154,11 +154,11 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q4_0_q8_1_dp4a(
-    const int * __restrict__ x_qs, const half2 * __restrict__ x_dm, const int * __restrict__ x_sc,
+    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
     const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
-    GGML_UNUSED(x_sc);
 
-    const float * x_df = (const float *) x_dm;
+    const int   * x_qs = (const int   *) x;
+    const float * x_df = (const float *) x + WARP_SIZE;
     const int   * y_qs = (const int   *) y + 4;
     const half2 * y_ds = (const half2 *) y;
 
@@ -181,7 +181,7 @@ static __device__ __forceinline__ void vec_dot_q4_0_q8_1_dp4a(
             }
 
             sum[j0/nwarps*mmq_y/WARP_SIZE + i0/WARP_SIZE] += vec_dot_q4_0_q8_1_impl<VDR_Q4_0_Q8_1_MMQ>
-                (&x_qs[i*(WARP_SIZE + 1) + k0], u, x_df[i*(WARP_SIZE/QI4_0) + i/QI4_0 + k0/QI4_0],
+                (&x_qs[i*MMQ_TILE_X_K_Q4_0 + k0], u, x_df[i*MMQ_TILE_X_K_Q4_0 + k0/QI4_0],
                 y_ds[j*MMQ_TILE_Y_K + (2*k0/QI8_1) % (WARP_SIZE/QI8_1)]);
         }
     }
@@ -297,10 +297,11 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q4_1_q8_1_dp4a(
-    const int * __restrict__ x_qs, const half2 * __restrict__ x_dm, const int * __restrict__ x_sc,
+    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
     const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
-    GGML_UNUSED(x_sc);
 
+    const int   * x_qs = (const int   *) x;
+    const half2 * x_dm = (const half2 *) x + WARP_SIZE;
     const int   * y_qs = (const int   *) y + 4;
     const half2 * y_ds = (const half2 *) y;
 
@@ -323,7 +324,7 @@ static __device__ __forceinline__ void vec_dot_q4_1_q8_1_dp4a(
             }
 
             sum[j0/nwarps*mmq_y/WARP_SIZE + i0/WARP_SIZE] += vec_dot_q4_1_q8_1_impl<VDR_Q4_1_Q8_1_MMQ>
-                (&x_qs[i*(WARP_SIZE + 1) + k0], u, x_dm[i*(WARP_SIZE/QI4_1) + i/QI4_1 + k0/QI4_1],
+                (&x_qs[i*MMQ_TILE_X_K_Q4_1 + k0], u, x_dm[i*MMQ_TILE_X_K_Q4_1 + k0/QI4_1],
                 y_ds[j*MMQ_TILE_Y_K + (2*k0/QI8_1) % (WARP_SIZE/QI8_1)]);
         }
     }
@@ -459,13 +460,13 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q5_0_q8_1_dp4a(
-    const int * __restrict__ x_qs, const half2 * __restrict__ x_dm, const int * __restrict__ x_sc,
+    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
     const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
-    GGML_UNUSED(x_sc);
 
-    const float * x_dmf = (const float *) x_dm;
-    const int   * y_qs  = (const int   *) y + 4;
-    const float * y_df  = (const float *) y;
+    const int   * x_qs = (const int   *) x;
+    const float * x_df = (const float *) x + 2*WARP_SIZE;
+    const int   * y_qs = (const int   *) y + 4;
+    const float * y_df = (const float *) y;
 
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
@@ -476,7 +477,7 @@ static __device__ __forceinline__ void vec_dot_q5_0_q8_1_dp4a(
             const int i = i0 + threadIdx.x;
 
             const int kyqs = k0 % (QI8_1/2) + QI8_1 * (k0 / (QI8_1/2));
-            const int index_bx = i*(WARP_SIZE/QI5_0) + i/QI5_0 + k0/QI5_0;
+            const int index_bx = i*MMQ_TILE_X_K_Q5_0 + k0/QI5_0;
 
             int u[2*VDR_Q5_0_Q8_1_MMQ];
 
@@ -487,7 +488,7 @@ static __device__ __forceinline__ void vec_dot_q5_0_q8_1_dp4a(
             }
 
             sum[j0/nwarps*mmq_y/WARP_SIZE + i0/WARP_SIZE] += vec_dot_q8_0_q8_1_impl<float, QR5_0*VDR_Q5_0_Q8_1_MMQ>
-                (&x_qs[i*(2*WARP_SIZE + 1) + 2*k0], u, x_dmf[index_bx], y_df[j*MMQ_TILE_Y_K + (2*k0/QI8_1) % (WARP_SIZE/QI8_1)]);
+                (&x_qs[i*MMQ_TILE_X_K_Q5_0 + 2*k0], u, x_df[index_bx], y_df[j*MMQ_TILE_Y_K + (2*k0/QI8_1) % (WARP_SIZE/QI8_1)]);
         }
     }
 }
