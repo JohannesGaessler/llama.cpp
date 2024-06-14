@@ -7,8 +7,6 @@
 #include <climits>
 #include <cstdint>
 
-#define MMQ_TILE_Y_K (WARP_SIZE + WARP_SIZE/QI8_1)
-
 typedef void (*load_tiles_mmq_t)(
     const char * __restrict__ x, int * __restrict__ x_qs, half2 * __restrict__ x_dm,
     int * __restrict__ x_sc, const int & kbx0, const int & i_max, const int & stride);
@@ -66,38 +64,51 @@ static constexpr __device__ int get_mmq_y_device(int /*mmq_x*/) {
 #endif // __CUDA_ARCH__ >= CC_VOLTA
 #endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
 
-#define TILE_X_SIZES_Q4_0 tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI4_0 + mmq_y/QI4_0, 0}
-#define TILE_X_SIZES_Q4_1 tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI4_1 + mmq_y/QI4_1, 0}
-#define TILE_X_SIZES_Q5_0 tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI5_0 + mmq_y/QI5_0, 0}
-#define TILE_X_SIZES_Q5_1 tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI5_1 + mmq_y/QI5_1, 0}
-#define TILE_X_SIZES_Q8_0 tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI8_0 + mmq_y/QI8_0, 0}
-#define TILE_X_SIZES_Q2_K tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE       + mmq_y,       0}
-#define TILE_X_SIZES_Q3_K tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI3_K + mmq_y/QI3_K, mmq_y*WARP_SIZE/4 + mmq_y/4}
-#define TILE_X_SIZES_Q4_K tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI4_K + mmq_y/QI4_K, mmq_y*WARP_SIZE/8 + mmq_y/8}
-#define TILE_X_SIZES_Q5_K tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI5_K + mmq_y/QI5_K, mmq_y*WARP_SIZE/8 + mmq_y/8}
-#define TILE_X_SIZES_Q6_K tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI6_K + mmq_y/QI6_K, mmq_y*WARP_SIZE/8 + mmq_y/8}
+#define MMQ_TILE_X_K_Q4_0 (1*WARP_SIZE + WARP_SIZE/QI4_0               + 4)
+#define MMQ_TILE_X_K_Q4_1 (1*WARP_SIZE + WARP_SIZE/QI4_1               + 4)
+#define MMQ_TILE_X_K_Q5_0 (2*WARP_SIZE + WARP_SIZE/QI5_0               + 4)
+#define MMQ_TILE_X_K_Q5_1 (2*WARP_SIZE + WARP_SIZE/QI5_1               + 4)
+#define MMQ_TILE_X_K_Q8_0 (1*WARP_SIZE + WARP_SIZE/QI8_0               + 0)
+#define MMQ_TILE_X_K_Q2_K (1*WARP_SIZE + WARP_SIZE                     + 4)
+#define MMQ_TILE_X_K_Q3_K (2*WARP_SIZE + WARP_SIZE/QI3_K + WARP_SIZE/4 + 2)
+#define MMQ_TILE_X_K_Q4_K (1*WARP_SIZE + WARP_SIZE/QI4_K + WARP_SIZE/8 + 7)
+#define MMQ_TILE_X_K_Q5_K (2*WARP_SIZE + WARP_SIZE/QI5_K + WARP_SIZE/8 + 7)
+#define MMQ_TILE_X_K_Q6_K (2*WARP_SIZE + WARP_SIZE/QI6_K + WARP_SIZE/8 + 7)
 
-#define GET_TILE_X_SIZES_BODY                           \
-    return type == GGML_TYPE_Q4_0 ? TILE_X_SIZES_Q4_0 : \
-        type == GGML_TYPE_Q4_1 ? TILE_X_SIZES_Q4_1 :    \
-        type == GGML_TYPE_Q5_0 ? TILE_X_SIZES_Q5_0 :    \
-        type == GGML_TYPE_Q5_1 ? TILE_X_SIZES_Q5_1 :    \
-        type == GGML_TYPE_Q8_0 ? TILE_X_SIZES_Q8_0 :    \
-        type == GGML_TYPE_Q2_K ? TILE_X_SIZES_Q2_K :    \
-        type == GGML_TYPE_Q3_K ? TILE_X_SIZES_Q3_K :    \
-        type == GGML_TYPE_Q4_K ? TILE_X_SIZES_Q4_K :    \
-        type == GGML_TYPE_Q5_K ? TILE_X_SIZES_Q5_K :    \
-        type == GGML_TYPE_Q6_K ? TILE_X_SIZES_Q6_K :    \
-        tile_x_sizes{0, 0, 0}
+static_assert(MMQ_TILE_X_K_Q4_0 % 8 == 4, "Wrong padding.");
+static_assert(MMQ_TILE_X_K_Q4_1 % 8 == 4, "Wrong padding.");
+static_assert(MMQ_TILE_X_K_Q5_0 % 8 == 4, "Wrong padding.");
+static_assert(MMQ_TILE_X_K_Q5_1 % 8 == 4, "Wrong padding.");
+static_assert(MMQ_TILE_X_K_Q8_0 % 8 == 4, "Wrong padding.");
+static_assert(MMQ_TILE_X_K_Q2_K % 8 == 4, "Wrong padding.");
+static_assert(MMQ_TILE_X_K_Q3_K % 8 == 4, "Wrong padding.");
+static_assert(MMQ_TILE_X_K_Q4_K % 8 == 4, "Wrong padding.");
+static_assert(MMQ_TILE_X_K_Q5_K % 8 == 4, "Wrong padding.");
+static_assert(MMQ_TILE_X_K_Q6_K % 8 == 4, "Wrong padding.");
 
-static tile_x_sizes get_tile_x_sizes_host(const ggml_type type, const int mmq_y) {
-    GET_TILE_X_SIZES_BODY;
+
+#define GET_TILE_X_K_BODY                               \
+    return type == GGML_TYPE_Q4_0 ? MMQ_TILE_X_K_Q4_0 : \
+        type == GGML_TYPE_Q4_1 ? MMQ_TILE_X_K_Q4_1 :    \
+        type == GGML_TYPE_Q5_0 ? MMQ_TILE_X_K_Q5_0 :    \
+        type == GGML_TYPE_Q5_1 ? MMQ_TILE_X_K_Q5_1 :    \
+        type == GGML_TYPE_Q8_0 ? MMQ_TILE_X_K_Q8_0 :    \
+        type == GGML_TYPE_Q2_K ? MMQ_TILE_X_K_Q2_K :    \
+        type == GGML_TYPE_Q3_K ? MMQ_TILE_X_K_Q3_K :    \
+        type == GGML_TYPE_Q4_K ? MMQ_TILE_X_K_Q4_K :    \
+        type == GGML_TYPE_Q5_K ? MMQ_TILE_X_K_Q5_K :    \
+        type == GGML_TYPE_Q6_K ? MMQ_TILE_X_K_Q6_K :    \
+        0
+
+static int mmq_get_tile_x_k_host(const ggml_type type) {
+    GET_TILE_X_K_BODY;
 }
 
-template <int mmq_y>
-static constexpr __device__ tile_x_sizes get_tile_x_sizes_device(ggml_type type) {
-    GET_TILE_X_SIZES_BODY;
+static constexpr __device__ int mmq_get_tile_x_k_device(ggml_type type) {
+    GET_TILE_X_K_BODY;
 }
+
+#define MMQ_TILE_Y_K (WARP_SIZE + WARP_SIZE/QI8_1)
 
 // ------------------------------------------------------------
 
@@ -701,13 +712,14 @@ static __device__ __forceinline__ void vec_dot_q5_1_q8_1_mma(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q8_0(
-    const char * __restrict__ x, int * __restrict__ x_qs, half2 * __restrict__ x_dm,
-    int * __restrict__ x_sc, const int & kbx0, const int & i_max, const int & stride) {
-    GGML_UNUSED(x_sc);
+    const char * __restrict__ x, int * __restrict__ x_tile, half2 * __restrict__,
+    int * __restrict__, const int & kbx0, const int & i_max, const int & stride) {
 
     const int kbx  = threadIdx.x / QI8_0;
     const int kqsx = threadIdx.x % QI8_0;
-    float * x_dmf = (float *) x_dm;
+
+    int   * x_qs = (int   *) x_tile;
+    float * x_df = (float *) x_tile + WARP_SIZE;
 
 #pragma unroll
     for (int i0 = 0; i0 < mmq_y; i0 += nwarps) {
@@ -719,7 +731,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
         const block_q8_0 * bxi = (const block_q8_0 *) x + kbx0 + i*stride + kbx;
 
-        x_qs[i * (WARP_SIZE + 1) + threadIdx.x] = get_int_from_int8(bxi->qs, kqsx);
+        x_qs[i*MMQ_TILE_X_K_Q8_0 + threadIdx.x] = get_int_from_int8(bxi->qs, kqsx);
     }
 
     const int blocks_per_tile_x_row = WARP_SIZE / QI8_0;
@@ -735,7 +747,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
         const block_q8_0 * bxi = (const block_q8_0 *) x + kbx0 + i*stride + kbxd;
 
-        x_dmf[i * (WARP_SIZE/QI8_0) + i / QI8_0 + kbxd] = bxi->d;
+        x_df[i*MMQ_TILE_X_K_Q8_0 + kbxd] = bxi->d;
     }
 }
 
@@ -766,16 +778,16 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_dp4a(
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
-    const int * __restrict__ x_qs, const half2 * __restrict__ x_dm, const int * __restrict__ x_sc,
+    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
     const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
 #ifdef INT8_MMA_AVAILABLE
-    GGML_UNUSED(x_sc);
 
     typedef mma_int_A_I16K8 mma_A;
     typedef mma_int_B_J8K8  mma_B;
     typedef mma_int_C_I16J8 mma_C;
 
-    const float * x_df = (const float *) x_dm;
+    const int   * x_qs = (const int   *) x;
+    const float * x_df = (const float *) x + WARP_SIZE;
     const int   * y_qs = (const int   *) y + 4;
     const float * y_df = (const float *) y;
 
@@ -790,13 +802,13 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
         const int i = i0 + mma_A::get_i(l);
         const int k = k0 + mma_A::get_k(l);
 
-        A.x[l] = x_qs[i*(WARP_SIZE + 1) + k];
+        A.x[l] = x_qs[i*MMQ_TILE_X_K_Q8_0 + k];
     }
 #pragma unroll
     for (int l = 0; l < mma_C::ne/2; ++l) {
         const int i = i0 + mma_C::get_i(2*l);
 
-        dA[l] = x_df[i*(WARP_SIZE/QI8_0) + i/QI8_0 + k0/QI8_0];
+        dA[l] = x_df[i*MMQ_TILE_X_K_Q8_0 + k0/QI8_0];
     }
 
     for (int j0 = 0; j0 < mmq_x; j0 += mma_int_B_J8K8::J) {
@@ -826,7 +838,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
         }
     }
 #else
-    GGML_UNUSED(x_qs); GGML_UNUSED(x_dm); GGML_UNUSED(x_sc); GGML_UNUSED(y); GGML_UNUSED(sum); GGML_UNUSED(k0);
+    GGML_UNUSED(x); GGML_UNUSED(y); GGML_UNUSED(sum); GGML_UNUSED(k0);
     NO_DEVICE_CODE;
 #endif // INT8_MMA_AVAILABLE
 }
@@ -1933,13 +1945,12 @@ static __global__ void mul_mat_q(
     constexpr mmq_write_back_t write_back = mmq_write_back_dp4a<mmq_x, mmq_y, nwarps, need_check>;
 #endif // INT8_MMA_AVAILABLE
 
-    constexpr tile_x_sizes txs = get_tile_x_sizes_device<mmq_y>(type);
-
     extern __shared__ char data_mul_mat_q[];
-    int   * tile_x_qs = (int   *)  data_mul_mat_q;
-    half2 * tile_x_dm = (half2 *) (tile_x_qs + txs.qs);
-    int   * tile_x_sc = (int   *) (tile_x_dm + txs.dm);
-    int   * tile_y    = (int   *) (tile_x_sc + txs.sc); // [mmq_x * (WARP_SIZE + WARP_SIZE/QI8_1)]
+    int   * tile_x_qs = (int *) data_mul_mat_q;
+    int   * tile_y    = (int *) data_mul_mat_q + mmq_y*mmq_get_tile_x_k_device(type);
+
+    half2 * tile_x_dm = (half2 *) nullptr;
+    int   * tile_x_sc = (int   *) nullptr;
 
     const int blocks_per_row_x = ne00 / qk;
     const int blocks_per_warp = WARP_SIZE / qi;
@@ -1992,11 +2003,10 @@ constexpr int mmq_get_nwarps(int mmq_x) {
 }
 
 static int mmq_get_shmem(const ggml_type type, const int mmq_x, const int mmq_y) {
-    const tile_x_sizes txs = get_tile_x_sizes_host(type, mmq_y);
     const int nwarps = mmq_get_nwarps(mmq_x);
 
-    const int shmem_x = txs.qs*sizeof(int) + txs.dm*sizeof(half2) + txs.sc*sizeof(int);
-    const int shmem_y = mmq_x*WARP_SIZE*sizeof(int) + mmq_x*(WARP_SIZE/QI8_1)*sizeof(half2);
+    const int shmem_x = mmq_y*mmq_get_tile_x_k_host(type)*sizeof(int);
+    const int shmem_y = mmq_x*WARP_SIZE*sizeof(int) + mmq_x*(WARP_SIZE/QI8_1)*sizeof(half2); // TODO adapt
     return shmem_x + GGML_PAD(shmem_y, nwarps*WARP_SIZE*sizeof(int));
 }
 
