@@ -1117,8 +1117,8 @@ static __device__ __forceinline__ void vec_dot_q3_K_q8_1_dp4a(
             const int8_t * scales = ((const int8_t *) (x_sc + i*MMQ_TILE_X_K_Q3_K + kbx*4)) + ky/4;
 
             sum[j0/nwarps*mmq_y/WARP_SIZE + i0/WARP_SIZE] += vec_dot_q3_K_q8_1_impl_mmq(
-                &x_qs[i*(2*WARP_SIZE + 1) + 2*k0], &y_qs[j*MMQ_TILE_Y_K + (k0*QR3_K) % WARP_SIZE], scales,
-                x_df[i*(WARP_SIZE/QI3_K) + i/QI3_K + kbx], y_df[j*MMQ_TILE_Y_K + ((k0*QR3_K) % WARP_SIZE)/QI8_1]);
+                &x_qs[i*MMQ_TILE_X_K_Q3_K + 2*k0], &y_qs[j*MMQ_TILE_Y_K + (k0*QR3_K) % WARP_SIZE], scales,
+                x_df[i*MMQ_TILE_X_K_Q3_K + kbx], y_df[j*MMQ_TILE_Y_K + ((k0*QR3_K) % WARP_SIZE)/QI8_1]);
         }
     }
 }
