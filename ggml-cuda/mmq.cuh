@@ -1472,9 +1472,12 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q5_K_q8_1_dp4a(
-    const int * __restrict__ x_qs, const half2 * __restrict__ x_dm, const int * __restrict__ x_sc,
+    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
     const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
 
+    const int   * x_qs = (const int   *) x;
+    const half2 * x_dm = (const half2 *) x + 2*WARP_SIZE;
+    const int   * x_sc = (const int   *) x + 2*WARP_SIZE + WARP_SIZE/QI5_K;
     const int   * y_qs  = (const int   *) y + 4;
     const half2 * y_ds  = (const half2 *) y;
 
@@ -1486,11 +1489,11 @@ static __device__ __forceinline__ void vec_dot_q5_K_q8_1_dp4a(
         for (int i0 = 0; i0 < mmq_y; i0 += WARP_SIZE) {
             const int i = i0 + threadIdx.x;
 
-            const uint8_t * sc = ((const uint8_t *) &x_sc[i * (WARP_SIZE/8) + i/8 + k0/16]) + 2 * ((k0 % 16) / 8);
+            const uint8_t * sc = ((const uint8_t *) &x_sc[i*MMQ_TILE_X_K_Q5_K + k0/16]) + 2 * ((k0 % 16) / 8);
 
             sum[j0/nwarps*mmq_y/WARP_SIZE + i0/WARP_SIZE] += vec_dot_q5_K_q8_1_impl_mmq(
-                &x_qs[i*(QR5_K*WARP_SIZE + 1) + QR5_K*k0], &y_qs[j*MMQ_TILE_Y_K + (QR5_K*k0) % WARP_SIZE], sc, sc+8,
-                x_dm[i*(WARP_SIZE/QI5_K) + i/QI5_K], &y_ds[j*MMQ_TILE_Y_K + ((QR5_K*k0) % WARP_SIZE)/QI8_1]);
+                &x_qs[i*MMQ_TILE_X_K_Q5_K + QR5_K*k0], &y_qs[j*MMQ_TILE_Y_K + (QR5_K*k0) % WARP_SIZE], sc, sc+8,
+                x_dm[i*MMQ_TILE_X_K_Q5_K + k0/QI5_K], &y_ds[j*MMQ_TILE_Y_K + ((QR5_K*k0) % WARP_SIZE)/QI8_1]);
         }
     }
 }
