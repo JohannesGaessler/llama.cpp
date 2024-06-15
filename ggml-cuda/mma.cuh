@@ -170,12 +170,17 @@ struct mma_int_C_I16J8 {
     __device__ __forceinline__ mma_float_C_I16J8 get_scaled(const float * dA, const float & dB) {
         mma_float_C_I16J8 scaled;
 
-        const half2 dA0 = make_half2(dA[0], 0.0f);
-        const half2 dA1 = make_half2(dA[1], 0.0f);
-        const half2 dB0 = make_half2(dB,    0.0f);
-        asm("mma.sync.aligned.m16n8k8.row.col.f32.f16.f16.f32 {%0, %1, %2, %3}, {%4, %5}, {%6}, {%0, %1, %2, %3};"
+        asm("{\n\t"
+            ".reg.b32 dA0;\n\t"
+            ".reg.b32 dA1;\n\t"
+            ".reg.b32 dB;\n\t"
+            "cvt.rna.tf32.f32 dA0, %4;\n\t"
+            "cvt.rna.tf32.f32 dA1, %5;\n\t"
+            "cvt.rna.tf32.f32 dB,  %6;\n\t"
+            "mma.sync.aligned.m16n8k4.row.col.f32.tf32.tf32.f32 {%0, %1, %2, %3}, {dA0, dA1}, {dB}, {%0, %1, %2, %3};\n\t"
+            "}"
             : "+f"(scaled.x[0]), "+f"(scaled.x[1]), "+f"(scaled.x[2]), "+f"(scaled.x[3])
-            : "r"(*((const int *)&dA0)), "r"(*((const int *)&dA1)), "r"(*((const int *)&dB0)));
+            : "f"(dA[0]), "f"(dA[1]), "f"(dB));
 
 #pragma unroll
         for (int l = 0; l < ne; ++l) {
