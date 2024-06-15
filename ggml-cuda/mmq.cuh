@@ -714,8 +714,8 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
     float * x_df = (float *) x_tile + WARP_SIZE;
 
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nwarps) {
-        int i = i0 + threadIdx.y;
+    for (int i0 = 0; i0 < mmq_y/nwarps; ++i0) {
+        int i = i0 + threadIdx.y*(mmq_y/nwarps);
 
         if (need_check) {
             i = min(i, i_max);
