@@ -730,8 +730,8 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
     const int kbxd = threadIdx.x % blocks_per_tile_x_row;
 
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nwarps * QI8_0) {
-        int i = i0 + threadIdx.y * QI8_0 + threadIdx.x / blocks_per_tile_x_row;
+    for (int i0 = 0; i0 < mmq_y/nwarps; i0 += QI8_0) {
+        int i = i0 + threadIdx.y*(mmq_y/nwarps) + threadIdx.x / blocks_per_tile_x_row;
 
         if (need_check) {
             i = min(i, i_max);
