@@ -1993,11 +1993,10 @@ static __global__ void mul_mat_q(
             pipeline.producer_acquire();
 
 #pragma unroll
-            for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += nwarps*WARP_SIZE) {
-                int l = l0 + threadIdx.y*WARP_SIZE + threadIdx.x;
+            for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += 4*nwarps*WARP_SIZE) {
+                int l = l0 + threadIdx.y*(4*WARP_SIZE) + threadIdx.x*4;
 
-                tile_y[l] = by0[l];
-                // cuda::memcpy_async(block, &tile_y[l], &by0[l], 4, pipeline);
+                cuda::memcpy_async(&tile_y[l], &by0[l], cuda::aligned_size_t<16>(16), pipeline);
             }
 
             pipeline.producer_commit();
@@ -2032,7 +2031,7 @@ static int mmq_get_shmem(const ggml_type type, const int mmq_x, const int mmq_y)
 
     const int shmem_x = mmq_y*mmq_get_tile_x_k_host(type)*sizeof(int);
     const int shmem_y = mmq_x*WARP_SIZE*sizeof(int) + mmq_x*(WARP_SIZE/QI8_1)*sizeof(half2); // TODO adapt
-    return 128 + shmem_x + GGML_PAD(shmem_y, nwarps*WARP_SIZE*sizeof(int));
+    return 128 + shmem_x + GGML_PAD(shmem_y, nwarps*WARP_SIZE*(4*sizeof(int)));
 }
 
 template <ggml_type type, int mmq_x, int nwarps>
