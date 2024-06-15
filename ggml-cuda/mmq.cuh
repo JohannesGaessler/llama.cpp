@@ -8,8 +8,7 @@
 #include <cstdint>
 
 typedef void (*load_tiles_mmq_t)(
-    const char * __restrict__ x, int * __restrict__ x_qs, half2 * __restrict__ x_dm,
-    int * __restrict__ x_sc, const int & kbx0, const int & i_max, const int & stride);
+    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride);
 typedef void (*vec_dot_mmq_t)(
     const int * __restrict__ x_qs, const half2 * __restrict__ x_dm, const int * __restrict__ x_sc,
     const int * __restrict__ y, float * __restrict__ sum, const int & k0);
@@ -113,8 +112,7 @@ static constexpr __device__ int mmq_get_tile_x_k_device(ggml_type type) {
 // ------------------------------------------------------------
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q4_0(
-    const char * __restrict__ x, int * __restrict__ x_tile, half2 * __restrict__,
-    int * __restrict__, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
 
     const int kbx  = threadIdx.x / QI4_0;
     const int kqsx = threadIdx.x % QI4_0;
@@ -256,8 +254,7 @@ static __device__ __forceinline__ void vec_dot_q4_0_q8_1_mma(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q4_1(
-    const char * __restrict__ x, int * __restrict__ x_tile, half2 * __restrict__,
-    int * __restrict__, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
 
     int   * x_qs = (int   *) x_tile;
     half2 * x_dm = (half2 *) x_tile + WARP_SIZE;
@@ -400,8 +397,7 @@ static __device__ __forceinline__ void vec_dot_q4_1_q8_1_mma(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q5_0(
-    const char * __restrict__ x, int * __restrict__ x_tile, half2 * __restrict__,
-    int * __restrict__, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
 
     int   * x_qs = (int   *) x_tile;
     float * x_df = (float *) x_tile + 2*WARP_SIZE;
@@ -561,8 +557,7 @@ static __device__ __forceinline__ void vec_dot_q5_0_q8_1_mma(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q5_1(
-    const char * __restrict__ x, int * __restrict__ x_tile, half2 * __restrict__,
-    int * __restrict__, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
 
     int   * x_qs = (int   *) x_tile;
     half2 * x_dm = (half2 *) x_tile + 2*WARP_SIZE;
@@ -721,8 +716,7 @@ static __device__ __forceinline__ void vec_dot_q5_1_q8_1_mma(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q8_0(
-    const char * __restrict__ x, int * __restrict__ x_tile, half2 * __restrict__,
-    int * __restrict__, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
 
     const int kbx  = threadIdx.x / QI8_0;
     const int kqsx = threadIdx.x % QI8_0;
@@ -853,8 +847,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q2_K(
-    const char * __restrict__ x, int * __restrict__ x_tile, half2 * __restrict__,
-    int * __restrict__, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
 
     int   * x_qs = (int   *) x_tile;
     half2 * x_dm = (half2 *) x_tile + WARP_SIZE;
@@ -1013,8 +1006,7 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q3_K(
-    const char * __restrict__ x, int * __restrict__ x_tile, half2 * __restrict__,
-    int * __restrict__, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
 
     int   * x_qs = (int   *) x_tile;
     float * x_df = (float *) x_tile + 2*WARP_SIZE;
@@ -1216,8 +1208,7 @@ static __device__ __forceinline__ void vec_dot_q3_K_q8_1_mma(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q4_K(
-    const char * __restrict__ x, int * __restrict__ x_tile, half2 * __restrict__,
-    int * __restrict__, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
 
     int   * x_qs = (int   *) x_tile;
     half2 * x_dm = (half2 *) x_tile + WARP_SIZE;
@@ -1403,8 +1394,7 @@ static __device__ __forceinline__ void vec_dot_q4_K_q8_1_mma(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q5_K(
-    const char * __restrict__ x, int * __restrict__ x_tile, half2 * __restrict__,
-    int * __restrict__, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
 
     int   * x_qs = (int   *) x_tile;
     half2 * x_dm = (half2 *) x_tile + 2*WARP_SIZE;
@@ -1603,8 +1593,7 @@ static __device__ __forceinline__ void vec_dot_q5_K_q8_1_mma(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q6_K(
-    const char * __restrict__ x, int * __restrict__ x_tile, half2 * __restrict__,
-    int * __restrict__, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
 
     int   * x_qs = (int   *) x_tile;
     float * x_df = (float *) x_tile + 2*WARP_SIZE;
@@ -2013,7 +2002,7 @@ static __global__ void mul_mat_q(
 
     for (int kb0 = 0; kb0 < blocks_per_row_x; kb0 += blocks_per_warp) {
 
-        load_tiles(x, tile_x_qs, tile_x_dm, tile_x_sc, stride01*blockIdx.x*mmq_y + kb0, tile_x_max_i, stride01);
+        load_tiles(x, tile_x_qs, stride01*blockIdx.x*mmq_y + kb0, tile_x_max_i, stride01);
 
 #pragma unroll
         for (int kr = 0; kr < qr; ++kr) {
