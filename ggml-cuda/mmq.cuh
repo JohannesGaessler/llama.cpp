@@ -1960,8 +1960,8 @@ static __global__ void mul_mat_q(
 #endif // INT8_MMA_AVAILABLE
 
     extern __shared__ char data_mul_mat_q[];
-    int   * tile_x_qs = (int *) data_mul_mat_q;
-    int   * tile_y    = (int *) data_mul_mat_q + mmq_y*mmq_get_tile_x_k_device(type);
+    int   * tile_x = (int *) data_mul_mat_q;
+    int   * tile_y = (int *) data_mul_mat_q + mmq_y*mmq_get_tile_x_k_device(type);
 
     const int blocks_per_row_x = ne00 / qk;
     const int blocks_per_warp = WARP_SIZE / qi;
@@ -1976,7 +1976,7 @@ static __global__ void mul_mat_q(
 
     for (int kb0 = 0; kb0 < blocks_per_row_x; kb0 += blocks_per_warp) {
 
-        load_tiles(x, tile_x_qs, stride01*blockIdx.x*mmq_y + kb0, tile_x_max_i, stride01);
+        load_tiles(x, tile_x, stride01*blockIdx.x*mmq_y + kb0, tile_x_max_i, stride01);
 
 #pragma unroll
         for (int kr = 0; kr < qr; ++kr) {
@@ -1992,7 +1992,7 @@ static __global__ void mul_mat_q(
 
 // #pragma unroll // unrolling this loop causes too much register pressure
             for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
-                vec_dot(tile_x_qs, tile_y, sum, k0);
+                vec_dot(tile_x, tile_y, sum, k0);
             }
 
             __syncthreads();
