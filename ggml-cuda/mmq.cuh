@@ -2004,7 +2004,7 @@ static __global__ void mul_mat_q(
 
             pipeline.consumer_wait();
 
-// #pragma unroll // unrolling this loop causes too much register pressure
+#pragma unroll // unrolling this loop causes too much register pressure
             for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
                 vec_dot(tile_x, tile_y, sum, k0);
             }
