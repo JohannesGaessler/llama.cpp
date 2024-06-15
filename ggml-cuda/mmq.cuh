@@ -7,11 +7,8 @@
 #include <climits>
 #include <cstdint>
 
-typedef void (*load_tiles_mmq_t)(
-    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride);
-typedef void (*vec_dot_mmq_t)(
-    const int * __restrict__ x_qs, const half2 * __restrict__ x_dm, const int * __restrict__ x_sc,
-    const int * __restrict__ y, float * __restrict__ sum, const int & k0);
+typedef void (*load_tiles_mmq_t)(const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride);
+typedef void (*vec_dot_mmq_t)(const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0);
 typedef void (*mmq_write_back_t)(const float * __restrict__ sum, float * __restrict__ dst, const int & ne0, const int & ne1);
 
 struct block_q8_1_mmq {
@@ -152,8 +149,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q4_0_q8_1_dp4a(
-    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
-    const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
 
     const int   * x_qs = (const int   *) x;
     const float * x_df = (const float *) x + WARP_SIZE;
@@ -187,8 +183,7 @@ static __device__ __forceinline__ void vec_dot_q4_0_q8_1_dp4a(
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q4_0_q8_1_mma(
-    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
-    const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
 #ifdef INT8_MMA_AVAILABLE
 
     typedef mma_int_A_I16K8 mma_A;
@@ -294,8 +289,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q4_1_q8_1_dp4a(
-    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
-    const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
 
     const int   * x_qs = (const int   *) x;
     const half2 * x_dm = (const half2 *) x + WARP_SIZE;
@@ -329,8 +323,7 @@ static __device__ __forceinline__ void vec_dot_q4_1_q8_1_dp4a(
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q4_1_q8_1_mma(
-    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
-    const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
 #ifdef INT8_MMA_AVAILABLE
 
     typedef mma_int_A_I16K8 mma_A;
@@ -456,8 +449,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q5_0_q8_1_dp4a(
-    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
-    const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
 
     const int   * x_qs = (const int   *) x;
     const float * x_df = (const float *) x + 2*WARP_SIZE;
@@ -491,8 +483,7 @@ static __device__ __forceinline__ void vec_dot_q5_0_q8_1_dp4a(
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q5_0_q8_1_mma(
-    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
-    const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
 #ifdef INT8_MMA_AVAILABLE
 
     typedef mma_int_A_I16K8 mma_A;
@@ -614,8 +605,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q5_1_q8_1_dp4a(
-    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
-    const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
 
     const int   * x_qs = (const int   *) x;
     const half2 * x_dm = (const half2 *) x + 2*WARP_SIZE;
@@ -649,8 +639,7 @@ static __device__ __forceinline__ void vec_dot_q5_1_q8_1_dp4a(
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q5_1_q8_1_mma(
-    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
-    const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
 #ifdef INT8_MMA_AVAILABLE
 
     typedef mma_int_A_I16K8 mma_A;
@@ -756,8 +745,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q8_0_q8_1_dp4a(
-    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
-    const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
 
     const int   * x_qs = (const int   *) x;
     const float * x_df = (const float *) x + WARP_SIZE;
@@ -781,8 +769,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_dp4a(
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
-    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
-    const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
 #ifdef INT8_MMA_AVAILABLE
 
     typedef mma_int_A_I16K8 mma_A;
@@ -896,8 +883,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q2_K_q8_1_dp4a(
-    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
-    const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
 
     const int   * x_qs = (const int   *) x;
     const half2 * x_dm = (const half2 *) x + WARP_SIZE;
@@ -921,8 +907,7 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_dp4a(
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
-    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
-    const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
 #ifdef INT8_MMA_AVAILABLE
 
     typedef mma_int_A_I16K4 mma_A;
@@ -1090,8 +1075,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q3_K_q8_1_dp4a(
-    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
-    const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
 
     const int   * x_qs = (const int   *) x;
     const float * x_df = (const float *) x + 2*WARP_SIZE;
@@ -1121,8 +1105,7 @@ static __device__ __forceinline__ void vec_dot_q3_K_q8_1_dp4a(
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q3_K_q8_1_mma(
-    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
-    const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
 #ifdef INT8_MMA_AVAILABLE
 
     typedef mma_int_A_I16K4 mma_A;
@@ -1270,8 +1253,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q4_K_q8_1_dp4a(
-    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
-    const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
 
     const int   * x_qs = (const int   *) x;
     const half2 * x_dm = (const half2 *) x + WARP_SIZE;
@@ -1298,8 +1280,7 @@ static __device__ __forceinline__ void vec_dot_q4_K_q8_1_dp4a(
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q4_K_q8_1_mma(
-    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
-    const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
 #ifdef INT8_MMA_AVAILABLE
 
     typedef mma_int_A_I16K8 mma_A;
@@ -1469,8 +1450,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q5_K_q8_1_dp4a(
-    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
-    const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
 
     const int   * x_qs = (const int   *) x;
     const half2 * x_dm = (const half2 *) x + 2*WARP_SIZE;
@@ -1497,8 +1477,7 @@ static __device__ __forceinline__ void vec_dot_q5_K_q8_1_dp4a(
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q5_K_q8_1_mma(
-    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
-    const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
 #ifdef INT8_MMA_AVAILABLE
 
     typedef mma_int_A_I16K8 mma_A;
@@ -1660,8 +1639,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q6_K_q8_1_dp4a(
-    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
-    const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
 
     const int   * x_qs = (const int   *) x;
     const float * x_df = (const float *) x + 2*WARP_SIZE;
@@ -1688,8 +1666,7 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_dp4a(
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q6_K_q8_1_mma(
-    const int * __restrict__ x, const half2 * __restrict__, const int * __restrict__,
-    const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
 #ifdef INT8_MMA_AVAILABLE
 
     typedef mma_int_A_I16K4 mma_A;
@@ -1986,9 +1963,6 @@ static __global__ void mul_mat_q(
     int   * tile_x_qs = (int *) data_mul_mat_q;
     int   * tile_y    = (int *) data_mul_mat_q + mmq_y*mmq_get_tile_x_k_device(type);
 
-    half2 * tile_x_dm = (half2 *) nullptr;
-    int   * tile_x_sc = (int   *) nullptr;
-
     const int blocks_per_row_x = ne00 / qk;
     const int blocks_per_warp = WARP_SIZE / qi;
 
@@ -2018,7 +1992,7 @@ static __global__ void mul_mat_q(
 
 // #pragma unroll // unrolling this loop causes too much register pressure
             for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
-                vec_dot(tile_x_qs, tile_x_dm, tile_x_sc, tile_y, sum, k0);
+                vec_dot(tile_x_qs, tile_y, sum, k0);
             }
 
             __syncthreads();
