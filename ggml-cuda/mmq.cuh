@@ -1997,7 +1997,8 @@ static __global__ void mul_mat_q(
 
     constexpr int ney = GGML_PAD((mmq_x*MMQ_TILE_Y_K), nwarps*WARP_SIZE*4);
 
-    for (int kb0 = 0; kb0 < blocks_per_row_x - blocks_per_warp; kb0 += blocks_per_warp) {
+    int kb0 = 0;
+    for (; kb0 < blocks_per_row_x - blocks_per_warp; kb0 += blocks_per_warp) {
 #pragma unroll
         for (int kr = 0; kr < qr; ++kr) {
             const int iy_now = ((kb0/blocks_per_warp)*qr + kr) % 2;
@@ -2026,14 +2027,36 @@ static __global__ void mul_mat_q(
         }
     }
 
-    const int iy_now = ((blocks_per_row_x/blocks_per_warp - 1)*qr + (qr-1)) % 2;
-
-    pipeline.consumer_wait();
+    {
 #pragma unroll
-    for (int k0 = (qr-1)*WARP_SIZE/qr; k0 < WARP_SIZE; k0 += vdr) {
-        vec_dot(tile_x, tile_y + iy_now*ney, sum, k0);
+        for (int kr = 0; kr < qr; ++kr) {
+            const int iy_now = ((kb0/blocks_per_warp)*qr + kr) % 2;
+            const int iy_next = (iy_now + 1) % 2;
+            const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + (kr+1)*sizeof(block_q8_1_mmq)/sizeof(int));
+
+            if (kr < qr - 1) {
+                pipeline.producer_acquire();
+#pragma unroll
+                for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += 4*nwarps*WARP_SIZE) {
+                    int l = l0 + threadIdx.y*(4*WARP_SIZE) + threadIdx.x*4;
+
+                    cuda::memcpy_async(tile_y + iy_next*ney + l, by0 + l, cuda::aligned_size_t<16>(16), pipeline);
+                }
+                pipeline.producer_commit();
+            }
+
+            if (kr == 0) {
+                load_tiles(x, tile_x, stride01*blockIdx.x*mmq_y + kb0, tile_x_max_i, stride01);
+            }
+
+            pipeline.consumer_wait();
+#pragma unroll
+            for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
+                vec_dot(tile_x, tile_y + iy_now*ney, sum, k0);
+            }
+            pipeline.consumer_release();
+        }
     }
-    pipeline.consumer_release();
 
     write_back(sum, dst, ne0, ne1);
 }
