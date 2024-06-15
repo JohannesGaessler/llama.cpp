@@ -7,6 +7,9 @@
 #include <climits>
 #include <cstdint>
 
+#include <cooperative_groups/memcpy_async.h>
+#include <cuda/pipeline>
+
 typedef void (*load_tiles_mmq_t)(const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride);
 typedef void (*vec_dot_mmq_t)(const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0);
 typedef void (*mmq_write_back_t)(const float * __restrict__ sum, float * __restrict__ dst, const int & ne0, const int & ne1);
@@ -1959,9 +1962,14 @@ static __global__ void mul_mat_q(
     constexpr mmq_write_back_t write_back = mmq_write_back_dp4a<mmq_x, mmq_y, nwarps, need_check>;
 #endif // INT8_MMA_AVAILABLE
 
+    auto block = cooperative_groups::this_thread_block();
+    typedef cuda::pipeline_shared_state<cuda::thread_scope::thread_scope_block, 1> pipeline_state;
+
     extern __shared__ char data_mul_mat_q[];
-    int   * tile_x = (int *) data_mul_mat_q;
-    int   * tile_y = (int *) data_mul_mat_q + mmq_y*mmq_get_tile_x_k_device(type);
+    auto pipeline = cuda::make_pipeline(block, (pipeline_state *) data_mul_mat_q);
+    block.sync();
+    int * tile_x = (int *) (data_mul_mat_q + 128);
+    int * tile_y = (int *) (data_mul_mat_q + 128) + mmq_y*mmq_get_tile_x_k_device(type);
 
     const int blocks_per_row_x = ne00 / qk;
     const int blocks_per_warp = WARP_SIZE / qi;
@@ -1981,21 +1989,27 @@ static __global__ void mul_mat_q(
 #pragma unroll
         for (int kr = 0; kr < qr; ++kr) {
             const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + kr*sizeof(block_q8_1_mmq)/sizeof(int));
+
+            pipeline.producer_acquire();
+
 #pragma unroll
             for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += nwarps*WARP_SIZE) {
                 int l = l0 + threadIdx.y*WARP_SIZE + threadIdx.x;
 
                 tile_y[l] = by0[l];
+                // cuda::memcpy_async(block, &tile_y[l], &by0[l], 4, pipeline);
             }
 
-            __syncthreads();
+            pipeline.producer_commit();
+
+            pipeline.consumer_wait();
 
 // #pragma unroll // unrolling this loop causes too much register pressure
             for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
                 vec_dot(tile_x, tile_y, sum, k0);
             }
 
-            __syncthreads();
+            pipeline.consumer_release();
         }
     }
 
@@ -2018,7 +2032,7 @@ static int mmq_get_shmem(const ggml_type type, const int mmq_x, const int mmq_y)
 
     const int shmem_x = mmq_y*mmq_get_tile_x_k_host(type)*sizeof(int);
     const int shmem_y = mmq_x*WARP_SIZE*sizeof(int) + mmq_x*(WARP_SIZE/QI8_1)*sizeof(half2); // TODO adapt
-    return shmem_x + GGML_PAD(shmem_y, nwarps*WARP_SIZE*sizeof(int));
+    return 128 + shmem_x + GGML_PAD(shmem_y, nwarps*WARP_SIZE*sizeof(int));
 }
 
 template <ggml_type type, int mmq_x, int nwarps>

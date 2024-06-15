@@ -343,6 +343,10 @@ static __device__ __forceinline__ half2 __shfl_xor(half2 var, int laneMask, int 
 #define INT8_MMA_AVAILABLE
 #endif // !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) && __CUDA_ARCH__ >= CC_TURING
 
+#if !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) && __CUDA_ARCH__ >= CC_AMPERE
+#define MEMCPY_ASYNC_AVAILABLE
+#endif // !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) && __CUDA_ARCH__ >= CC_AMPERE
+
 static bool fast_fp16_available(const int cc) {
     return cc >= CC_PASCAL && cc != 610;
 }
