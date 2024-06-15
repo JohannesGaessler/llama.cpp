@@ -1963,7 +1963,7 @@ static __global__ void mul_mat_q(
 #endif // INT8_MMA_AVAILABLE
 
     auto block = cooperative_groups::this_thread_block();
-    typedef cuda::pipeline_shared_state<cuda::thread_scope::thread_scope_block, 1> pipeline_state;
+    typedef cuda::pipeline_shared_state<cuda::thread_scope::thread_scope_block, 2> pipeline_state;
 
     extern __shared__ char data_mul_mat_q[];
     auto pipeline = cuda::make_pipeline(block, (pipeline_state *) data_mul_mat_q);
@@ -1982,20 +1982,35 @@ static __global__ void mul_mat_q(
 
     float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
 
-    for (int kb0 = 0; kb0 < blocks_per_row_x; kb0 += blocks_per_warp) {
+    {
+        const int * by0 = y;
+
+        pipeline.producer_acquire();
+#pragma unroll
+        for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += 4*nwarps*WARP_SIZE) {
+            int l = l0 + threadIdx.y*(4*WARP_SIZE) + threadIdx.x*4;
+
+            cuda::memcpy_async(&tile_y[l], &by0[l], cuda::aligned_size_t<16>(16), pipeline);
+        }
+        pipeline.producer_commit();
+    }
+
+    constexpr int ney = GGML_PAD((mmq_x*MMQ_TILE_Y_K), nwarps*WARP_SIZE*4);
+
+    for (int kb0 = 0; kb0 < blocks_per_row_x - blocks_per_warp; kb0 += blocks_per_warp) {
 #pragma unroll
         for (int kr = 0; kr < qr; ++kr) {
-            const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + kr*sizeof(block_q8_1_mmq)/sizeof(int));
+            const int iy_now = ((kb0/blocks_per_warp)*qr + kr) % 2;
+            const int iy_next = (iy_now + 1) % 2;
+            const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + (kr+1)*sizeof(block_q8_1_mmq)/sizeof(int));
 
             pipeline.producer_acquire();
-
 #pragma unroll
             for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += 4*nwarps*WARP_SIZE) {
                 int l = l0 + threadIdx.y*(4*WARP_SIZE) + threadIdx.x*4;
 
-                cuda::memcpy_async(&tile_y[l], &by0[l], cuda::aligned_size_t<16>(16), pipeline);
+                cuda::memcpy_async(tile_y + iy_next*ney + l, by0 + l, cuda::aligned_size_t<16>(16), pipeline);
             }
-
             pipeline.producer_commit();
 
             if (kr == 0) {
@@ -2003,15 +2018,22 @@ static __global__ void mul_mat_q(
             }
 
             pipeline.consumer_wait();
-
-#pragma unroll // unrolling this loop causes too much register pressure
+#pragma unroll
             for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
-                vec_dot(tile_x, tile_y, sum, k0);
+                vec_dot(tile_x, tile_y + iy_now*ney, sum, k0);
             }
-
             pipeline.consumer_release();
         }
     }
+
+    const int iy_now = ((blocks_per_row_x/blocks_per_warp - 1)*qr + (qr-1)) % 2;
+
+    pipeline.consumer_wait();
+#pragma unroll
+    for (int k0 = (qr-1)*WARP_SIZE/qr; k0 < WARP_SIZE; k0 += vdr) {
+        vec_dot(tile_x, tile_y + iy_now*ney, sum, k0);
+    }
+    pipeline.consumer_release();
 
     write_back(sum, dst, ne0, ne1);
 }
@@ -2032,7 +2054,7 @@ static int mmq_get_shmem(const ggml_type type, const int mmq_x, const int mmq_y)
 
     const int shmem_x = mmq_y*mmq_get_tile_x_k_host(type)*sizeof(int);
     const int shmem_y = mmq_x*WARP_SIZE*sizeof(int) + mmq_x*(WARP_SIZE/QI8_1)*sizeof(half2); // TODO adapt
-    return 128 + shmem_x + GGML_PAD(shmem_y, nwarps*WARP_SIZE*(4*sizeof(int)));
+    return 128 + shmem_x + 2*GGML_PAD(shmem_y, nwarps*WARP_SIZE*(4*sizeof(int)));
 }
 
 template <ggml_type type, int mmq_x, int nwarps>
