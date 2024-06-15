@@ -1,5 +1,13 @@
 #include "common.cuh"
 
+struct mma_float_C_I16J8 {
+    static constexpr int I  = 16;
+    static constexpr int J  = 8;
+    static constexpr int ne = 4;
+
+    float x[ne] = {0.0f};
+};
+
 struct mma_int_A_I16K4 {
     static constexpr int I  = 16;
     static constexpr int K  = 4;
@@ -157,5 +165,23 @@ struct mma_int_C_I16J8 {
         GGML_UNUSED(mma_B);
         NO_DEVICE_CODE;
 #endif // INT8_MMA_AVAILABLE
+    }
+
+    __device__ __forceinline__ mma_float_C_I16J8 get_scaled(const float * dA, const float & dB) {
+        mma_float_C_I16J8 scaled;
+
+        const half2 dA0 = make_half2(dA[0], 0.0f);
+        const half2 dA1 = make_half2(dA[1], 0.0f);
+        const half2 dB0 = make_half2(dB,    0.0f);
+        asm("mma.sync.aligned.m16n8k8.row.col.f32.f16.f16.f32 {%0, %1, %2, %3}, {%4, %5}, {%6}, {%0, %1, %2, %3};"
+            : "+f"(scaled.x[0]), "+f"(scaled.x[1]), "+f"(scaled.x[2]), "+f"(scaled.x[3])
+            : "r"(*((const int *)&dA0)), "r"(*((const int *)&dA1)), "r"(*((const int *)&dB0)));
+
+#pragma unroll
+        for (int l = 0; l < ne; ++l) {
+            scaled.x[l] *= x[l];
+        }
+
+        return scaled;
     }
 };

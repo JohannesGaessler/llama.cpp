@@ -782,7 +782,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
     const float * y_df = (const float *) y;
 
     mma_A A;
-    float dA[mma_C::ne/2];
+    float dA[2];
 
     const int i0 = threadIdx.y*mma_A::I;
     static_assert(nwarps*mma_A::I == mmq_y, "nwarps*mma_A::I != mmq_y");
@@ -795,16 +795,15 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
         A.x[l] = x_qs[i*MMQ_TILE_X_K_Q8_0 + k];
     }
 #pragma unroll
-    for (int l = 0; l < mma_C::ne/2; ++l) {
-        const int i = i0 + mma_C::get_i(2*l);
+    for (int l = 0; l < 2; ++l) {
+        const int i = i0 + mma_A::get_i(l);
 
-        dA[l] = x_df[i*MMQ_TILE_X_K_Q8_0 + k0/QI8_0];
+        dA[l] = x_df[i*MMQ_TILE_X_K_Q8_0 + k0/QI8_0] * (threadIdx.x % 4 == 0);
     }
 
     for (int j0 = 0; j0 < mmq_x; j0 += mma_int_B_J8K8::J) {
         mma_C C;
         mma_B B;
-        float dB[mma_C::ne/2];
 
 #pragma unroll
         for (int l = 0; l < mma_B::ne; ++l) {
@@ -813,18 +812,16 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
 
             B.x[l] = y_qs[j*MMQ_TILE_Y_K + k];
         }
-#pragma unroll
-        for (int l = 0; l < mma_C::ne/2; ++l) {
-            const int j = j0 + mma_C::get_j(l);
 
-            dB[l] = y_df[j*MMQ_TILE_Y_K + k0/QI8_1];
-        }
+        const int jdB = j0 + (threadIdx.x / 4);
+        const float dB = y_df[jdB*MMQ_TILE_Y_K + k0/QI8_1] * (threadIdx.x % 4 == 0);
 
         C.mma_K8(A, B);
+        const mma_float_C_I16J8 Cf = C.get_scaled(dA, dB);
 
 #pragma unroll
         for (int l = 0; l < mma_C::ne; ++l) {
-            sum[(j0/B.J)*C.ne + l] += C.x[l]*dA[l/2]*dB[l%2];
+            sum[(j0/B.J)*C.ne + l] += Cf.x[l];
         }
     }
 #else
