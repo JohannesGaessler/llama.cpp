@@ -1983,9 +1983,6 @@ static __global__ void mul_mat_q(
     float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
 
     for (int kb0 = 0; kb0 < blocks_per_row_x; kb0 += blocks_per_warp) {
-
-        load_tiles(x, tile_x, stride01*blockIdx.x*mmq_y + kb0, tile_x_max_i, stride01);
-
 #pragma unroll
         for (int kr = 0; kr < qr; ++kr) {
             const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + kr*sizeof(block_q8_1_mmq)/sizeof(int));
@@ -2000,6 +1997,10 @@ static __global__ void mul_mat_q(
             }
 
             pipeline.producer_commit();
+
+            if (kr == 0) {
+                load_tiles(x, tile_x, stride01*blockIdx.x*mmq_y + kb0, tile_x_max_i, stride01);
+            }
 
             pipeline.consumer_wait();
 
