@@ -809,16 +809,11 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
 
 #pragma unroll
         for (int l = 0; l < mma_C::ne/2; ++l) {
-            const int j = j0 + mma_C::get_j(l);
-
-            dB[l] = y_df[j*MMQ_TILE_Y_K + k0/QI8_1];
+            dB[l] = y_df[(j0*MMQ_TILE_Y_K + k0/QI8_1) + mma_C::get_j(l)*MMQ_TILE_Y_K];
         }
 #pragma unroll
         for (int l = 0; l < mma_B::ne; ++l) {
-            const int j = j0 + mma_B::get_j(l);
-            const int k = k0 + mma_B::get_k(l);
-
-            B.x[l] = y_qs[j*MMQ_TILE_Y_K + k];
+            B.x[l] = y_qs[(j0*MMQ_TILE_Y_K + k0) + mma_B::get_j(l)*MMQ_TILE_Y_K + mma_B::get_k(l)];
         }
 
         C.mma_K8(A, B);
