@@ -343,15 +343,19 @@ static __device__ __forceinline__ half2 __shfl_xor(half2 var, int laneMask, int 
 #define INT8_MMA_AVAILABLE
 #endif // !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) && __CUDA_ARCH__ >= CC_TURING
 
+#define CUDA_PIPELINE_STAGES 2
+#define CUDA_PIPELINE_STATE_SIZE 64
+
 #if !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) && __CUDA_ARCH__ >= CC_AMPERE
 #define MEMCPY_ASYNC_AVAILABLE
 
 #include <cuda/pipeline>
 #include <cooperative_groups/memcpy_async.h>
 
-#define CUDA_PIPELINE_STAGES 2
 typedef cuda::pipeline<cuda::thread_scope::thread_scope_block> cuda_pipeline_t;
 typedef cuda::pipeline_shared_state<cuda::thread_scope::thread_scope_block, CUDA_PIPELINE_STAGES> cuda_pipeline_state_t;
+
+static_assert(sizeof(cuda_pipeline_state_t) <= CUDA_PIPELINE_STATE_SIZE, "CUDA pipeline state too large.");
 #endif // !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) && __CUDA_ARCH__ >= CC_AMPERE
 
 static bool fast_fp16_available(const int cc) {
@@ -364,6 +368,10 @@ static bool fp16_mma_available(const int cc) {
 
 static bool int8_mma_available(const int cc) {
     return cc < CC_OFFSET_AMD && cc >= CC_TURING;
+}
+
+static bool memcpy_async_available(const int cc) {
+    return cc < CC_OFFSET_AMD && cc >= CC_AMPERE;
 }
 
 [[noreturn]]

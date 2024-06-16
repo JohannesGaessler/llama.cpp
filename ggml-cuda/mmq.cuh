@@ -2094,12 +2094,17 @@ constexpr int mmq_get_nwarps(int mmq_x) {
     return mmq_x >= 32 ? 8 : 4;
 }
 
-static int mmq_get_shmem(const ggml_type type, const int mmq_x, const int mmq_y) {
+static int mmq_get_shmem(const ggml_type type, const int mmq_x, const int mmq_y, const int cc) {
     const int nwarps = mmq_get_nwarps(mmq_x);
 
     const int shmem_x = mmq_y*mmq_get_tile_x_k_host(type)*sizeof(int);
-    const int shmem_y = mmq_x*WARP_SIZE*sizeof(int) + mmq_x*(WARP_SIZE/QI8_1)*sizeof(half2); // TODO adapt
-    return 128 + shmem_x + 2*GGML_PAD(shmem_y, nwarps*WARP_SIZE*(4*sizeof(int)));
+    const int shmem_y = mmq_x*MMQ_TILE_Y_K               *sizeof(int);
+
+    if (!memcpy_async_available(cc)) {
+        return shmem_x + GGML_PAD(shmem_y, nwarps*WARP_SIZE*(sizeof(int)));
+    }
+
+    return shmem_x + 2*GGML_PAD(shmem_y, nwarps*WARP_SIZE*(4*sizeof(int))) + CUDA_PIPELINE_STATE_SIZE;
 }
 
 template <ggml_type type, int mmq_x, int nwarps>
@@ -2113,7 +2118,7 @@ static void launch_mul_mat_q(const mmq_args & args, cudaStream_t stream) {
     const dim3 block_nums(block_num_x, block_num_y, 1);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
-    const int shmem = mmq_get_shmem(type, mmq_x, mmq_y);
+    const int shmem = mmq_get_shmem(type, mmq_x, mmq_y, cc);
 
 #if !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__))
     static bool shmem_limit_raised[GGML_CUDA_MAX_DEVICES] = {false};
@@ -2153,7 +2158,7 @@ void mul_mat_q_case(const mmq_args & args, cudaStream_t stream) {
         const int block_num_x = (args.ne11 + mmq_x - 1) / mmq_x;
         const int nwaves = (block_num_x*block_num_y + nsm - 1) / nsm;
 
-        if (nwaves < nwaves_best && mmq_get_shmem(type, mmq_x, mmq_y) <= smpbo) {
+        if (nwaves < nwaves_best && mmq_get_shmem(type, mmq_x, mmq_y, cc) <= smpbo) {
             mmq_x_best  = mmq_x;
             nwaves_best = nwaves;
         }
