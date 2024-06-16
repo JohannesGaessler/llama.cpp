@@ -1924,6 +1924,8 @@ static bool mmq_need_sum(const ggml_type type_x) {
 
 #ifdef MEMCPY_ASYNC_AVAILABLE
 
+// Helper functions for MMQ with memcpy_async:
+
 template <int mmq_x, int nwarps>
 static __device__ __forceinline__ void preload_tile_y(const int * __restrict__ y, int * __restrict__ tile_y, cuda_pipeline_t & pipeline) {
     pipeline.producer_acquire();
@@ -2011,18 +2013,11 @@ static __global__ void mul_mat_q(
     for (; kb0 < blocks_per_row_x - blocks_per_warp; kb0 += blocks_per_warp) {
 #pragma unroll
         for (int kr = 0; kr < qr; ++kr) {
-            const int iy_now = ((kb0/blocks_per_warp)*qr + kr) % 2;
-            const int iy_next = (iy_now + 1) % 2;
+            const int iy_now = ((kb0/blocks_per_warp)*qr + kr) % CUDA_PIPELINE_STAGES;
+            const int iy_next = (iy_now + 1) % CUDA_PIPELINE_STAGES;
             const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + (kr+1)*sizeof(block_q8_1_mmq)/sizeof(int));
 
-            pipeline.producer_acquire();
-#pragma unroll
-            for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += 4*nwarps*WARP_SIZE) {
-                int l = l0 + threadIdx.y*(4*WARP_SIZE) + threadIdx.x*4;
-
-                cuda::memcpy_async(tile_y + iy_next*ney + l, by0 + l, cuda::aligned_size_t<16>(16), pipeline);
-            }
-            pipeline.producer_commit();
+            preload_tile_y<mmq_x, nwarps>(by0, tile_y + iy_next*ney, pipeline);
 
             if (kr == 0) {
                 load_tiles(x, tile_x, stride01*blockIdx.x*mmq_y + kb0, tile_x_max_i, stride01);
