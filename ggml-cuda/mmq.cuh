@@ -1940,7 +1940,7 @@ static __device__ __forceinline__ void mmq_preload_tile_y(const int * __restrict
     pipeline.producer_commit();
 }
 
-template <int qk, int qi, int qr, int vdr, int mmq_x, int mmq_y, int nwarps, load_tiles_mmq_t load_tiles, vec_dot_mmq_t vec_dot, bool last_iter>
+template <int qk, int qi, int qr, int vdr, int mmq_x, int mmq_y, int nwarps, load_tiles_mmq_t load_tiles, vec_dot_mmq_t vec_dot, bool unroll, bool last_iter>
 static __device__ __forceinline__ void mmq_k_iter(
     const char * __restrict__ x, int * __restrict__ tile_x, const int * __restrict__ y, int * __restrict__ tile_y, float * __restrict__ sum,
     const int & kb0, const int & tile_x_max_i, const int & stride01, const int & stride11, cuda_pipeline_t & pipeline) {
@@ -1964,9 +1964,15 @@ static __device__ __forceinline__ void mmq_k_iter(
 
         pipeline.consumer_wait();
 
+        if (unroll) {
 #pragma unroll
-        for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
-            vec_dot(tile_x, tile_y + iy_now*ney, sum, k0);
+            for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
+                vec_dot(tile_x, tile_y + iy_now*ney, sum, k0);
+            }
+        } else {
+            for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
+                vec_dot(tile_x, tile_y + iy_now*ney, sum, k0);
+            }
         }
 
         pipeline.consumer_release();
@@ -2033,6 +2039,7 @@ static __global__ void mul_mat_q(
 
 #ifdef MEMCPY_ASYNC_AVAILABLE
     constexpr int ney = GGML_PAD((mmq_x*MMQ_TILE_Y_K), nwarps*WARP_SIZE*4); // Number of tile_y elements
+    constexpr bool unroll = type != GGML_TYPE_Q2_K && type != GGML_TYPE_Q3_K;
 
     auto block = cooperative_groups::this_thread_block();
     cuda_pipeline_t pipeline = cuda::make_pipeline(block, (cuda_pipeline_state_t *) (tile_y + CUDA_PIPELINE_STAGES*ney));
@@ -2044,12 +2051,12 @@ static __global__ void mul_mat_q(
     // Iterate over k, except for last iter:
     int kb0 = 0;
     for (; kb0 < blocks_per_row_x - blocks_per_warp; kb0 += blocks_per_warp) {
-        mmq_k_iter<qk, qi, qr, vdr, mmq_x, mmq_y, nwarps, load_tiles, vec_dot, false>
+        mmq_k_iter<qk, qi, qr, vdr, mmq_x, mmq_y, nwarps, load_tiles, vec_dot, unroll, false>
             (x, tile_x, y, tile_y, sum, kb0, tile_x_max_i, stride01, stride11, pipeline);
     }
 
     // Last k iter, don't preload y data if it's not going to be used:
-    mmq_k_iter<qk, qi, qr, vdr, mmq_x, mmq_y, nwarps, load_tiles, vec_dot, true>
+    mmq_k_iter<qk, qi, qr, vdr, mmq_x, mmq_y, nwarps, load_tiles, vec_dot, unroll, true>
         (x, tile_x, y, tile_y, sum, kb0, tile_x_max_i, stride01, stride11, pipeline);
 
 #else // MEMCPY_ASYNC_AVAILABLE
