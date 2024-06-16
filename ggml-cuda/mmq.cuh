@@ -2043,7 +2043,6 @@ static __global__ void mul_mat_q(
 
     auto block = cooperative_groups::this_thread_block();
     cuda_pipeline_t pipeline = cuda::make_pipeline(block, (cuda_pipeline_state_t *) (tile_y + CUDA_PIPELINE_STAGES*ney));
-    block.sync();
 
     // Preload first y data:
     mmq_preload_tile_y<mmq_x, nwarps>(y, tile_y, pipeline);
