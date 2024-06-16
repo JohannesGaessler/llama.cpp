@@ -7,9 +7,6 @@
 #include <climits>
 #include <cstdint>
 
-#include <cooperative_groups/memcpy_async.h>
-#include <cuda/pipeline>
-
 typedef void (*load_tiles_mmq_t)(const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride);
 typedef void (*vec_dot_mmq_t)(const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0);
 typedef void (*mmq_write_back_t)(const float * __restrict__ sum, float * __restrict__ dst, const int & ne0, const int & ne1);
@@ -1925,6 +1922,24 @@ static bool mmq_need_sum(const ggml_type type_x) {
     return false;
 }
 
+#ifdef MEMCPY_ASYNC_AVAILABLE
+
+template <int mmq_x, int nwarps>
+static __device__ __forceinline__ void preload_tile_y(const int * __restrict__ y, int * __restrict__ tile_y, cuda_pipeline_t & pipeline) {
+    pipeline.producer_acquire();
+
+#pragma unroll
+    for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += 4*nwarps*WARP_SIZE) {
+        int l = l0 + threadIdx.y*(4*WARP_SIZE) + threadIdx.x*4;
+
+        cuda::memcpy_async(tile_y + l, y + l, cuda::aligned_size_t<16>(16), pipeline);
+    }
+
+    pipeline.producer_commit();
+}
+
+#endif //MEMCPY_ASYNC_AVAILABLE
+
 template <ggml_type type, int mmq_x, int nwarps, bool need_check>
 #if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
 #if defined(RDNA3) || defined(RDNA2)
@@ -1983,28 +1998,13 @@ static __global__ void mul_mat_q(
 
 #ifdef MEMCPY_ASYNC_AVAILABLE
     constexpr int ney = GGML_PAD((mmq_x*MMQ_TILE_Y_K), nwarps*WARP_SIZE*4); // Number of tile_y elements
-    constexpr int nstages = 2; // Number of pipeline stages
 
     auto block = cooperative_groups::this_thread_block();
-    typedef cuda::pipeline_shared_state<cuda::thread_scope::thread_scope_block, nstages> pipeline_state;
-
-    auto pipeline = cuda::make_pipeline(block, (pipeline_state *) (tile_y + nstages*ney));
+    cuda_pipeline_t pipeline = cuda::make_pipeline(block, (cuda_pipeline_state_t *) (tile_y + CUDA_PIPELINE_STAGES*ney));
     block.sync();
 
     // Preload first y data:
-    {
-        const int * by0 = y;
-
-        pipeline.producer_acquire();
-#pragma unroll
-        for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += 4*nwarps*WARP_SIZE) {
-            int l = l0 + threadIdx.y*(4*WARP_SIZE) + threadIdx.x*4;
-
-            cuda::memcpy_async(&tile_y[l], &by0[l], cuda::aligned_size_t<16>(16), pipeline);
-        }
-        pipeline.producer_commit();
-    }
-
+    preload_tile_y<mmq_x, nwarps>(y, tile_y, pipeline);
 
     // Iterate over k, except for last iter:
     int kb0 = 0;

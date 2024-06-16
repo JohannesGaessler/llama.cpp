@@ -345,6 +345,13 @@ static __device__ __forceinline__ half2 __shfl_xor(half2 var, int laneMask, int 
 
 #if !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) && __CUDA_ARCH__ >= CC_AMPERE
 #define MEMCPY_ASYNC_AVAILABLE
+
+#include <cuda/pipeline>
+#include <cooperative_groups/memcpy_async.h>
+
+#define CUDA_PIPELINE_STAGES 2
+typedef cuda::pipeline<cuda::thread_scope::thread_scope_block> cuda_pipeline_t;
+typedef cuda::pipeline_shared_state<cuda::thread_scope::thread_scope_block, CUDA_PIPELINE_STAGES> cuda_pipeline_state_t;
 #endif // !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) && __CUDA_ARCH__ >= CC_AMPERE
 
 static bool fast_fp16_available(const int cc) {
