@@ -216,6 +216,7 @@ static __device__ __forceinline__ void vec_dot_q4_0_q8_1_mma(
         dA[l] = x_df[i*MMQ_TILE_X_K_Q4_0 + k0/QI4_0];
     }
 
+#pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += mma_int_B_J8K8::J) {
         mma_C C;
         mma_B B;
@@ -356,6 +357,7 @@ static __device__ __forceinline__ void vec_dot_q4_1_q8_1_mma(
         dmA[l] = x_dm[i*MMQ_TILE_X_K_Q4_1 + k0/QI4_0];
     }
 
+#pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += mma_int_B_J8K8::J) {
         mma_C C;
         mma_B B;
