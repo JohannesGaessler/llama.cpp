@@ -1941,6 +1941,10 @@ static __global__ void mul_mat_q(
     const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst,
     const int ne00, const int ne01, const int stride01, const int ne10, const int ne11, const int stride11, const int ne0) {
 
+#if defined(MEMCPY_ASYNC_AVAILABLE) && !defined(INT8_MMA_AVAILABLE)
+    static_assert(false, "MMQ with mempcy_async needs int8 MMA.")
+#endif // defined(MEMCPY_ASYNC_AVAILABLE) && !defined(INT8_MMA_AVAILABLE)
+
     // Skip unused template specializations for faster compilation:
     if (mmq_x > get_mmq_x_max_device()) {
         NO_DEVICE_CODE;
@@ -1962,15 +1966,6 @@ static __global__ void mul_mat_q(
     constexpr mmq_write_back_t write_back = mmq_write_back_dp4a<mmq_x, mmq_y, nwarps, need_check>;
 #endif // INT8_MMA_AVAILABLE
 
-    auto block = cooperative_groups::this_thread_block();
-    typedef cuda::pipeline_shared_state<cuda::thread_scope::thread_scope_block, 2> pipeline_state;
-
-    extern __shared__ char data_mul_mat_q[];
-    auto pipeline = cuda::make_pipeline(block, (pipeline_state *) data_mul_mat_q);
-    block.sync();
-    int * tile_x = (int *) (data_mul_mat_q + 128);
-    int * tile_y = (int *) (data_mul_mat_q + 128) + mmq_y*mmq_get_tile_x_k_device(type);
-
     const int blocks_per_row_x = ne00 / qk;
     const int blocks_per_warp = WARP_SIZE / qi;
 
@@ -1982,6 +1977,21 @@ static __global__ void mul_mat_q(
 
     float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
 
+    extern __shared__ char data_mul_mat_q[];
+    int * tile_x = (int *) data_mul_mat_q;
+    int * tile_y = (int *) data_mul_mat_q + mmq_y*mmq_get_tile_x_k_device(type);
+
+#ifdef MEMCPY_ASYNC_AVAILABLE
+    constexpr int ney = GGML_PAD((mmq_x*MMQ_TILE_Y_K), nwarps*WARP_SIZE*4); // Number of tile_y elements
+    constexpr int nstages = 2; // Number of pipeline stages
+
+    auto block = cooperative_groups::this_thread_block();
+    typedef cuda::pipeline_shared_state<cuda::thread_scope::thread_scope_block, nstages> pipeline_state;
+
+    auto pipeline = cuda::make_pipeline(block, (pipeline_state *) (tile_y + nstages*ney));
+    block.sync();
+
+    // Preload first y data:
     {
         const int * by0 = y;
 
@@ -1995,8 +2005,8 @@ static __global__ void mul_mat_q(
         pipeline.producer_commit();
     }
 
-    constexpr int ney = GGML_PAD((mmq_x*MMQ_TILE_Y_K), nwarps*WARP_SIZE*4);
 
+    // Iterate over k, except for last iter:
     int kb0 = 0;
     for (; kb0 < blocks_per_row_x - blocks_per_warp; kb0 += blocks_per_warp) {
 #pragma unroll
@@ -2027,6 +2037,7 @@ static __global__ void mul_mat_q(
         }
     }
 
+    // Last k iter, don't preload y data if it's not going to be used:
     {
 #pragma unroll
         for (int kr = 0; kr < qr; ++kr) {
@@ -2057,6 +2068,34 @@ static __global__ void mul_mat_q(
             pipeline.consumer_release();
         }
     }
+
+#else // MEMCPY_ASYNC_AVAILABLE
+
+    for (int kb0 = 0; kb0 < blocks_per_row_x; kb0 += blocks_per_warp) {
+
+        load_tiles(x, tile_x, stride01*blockIdx.x*mmq_y + kb0, tile_x_max_i, stride01);
+
+#pragma unroll
+        for (int kr = 0; kr < qr; ++kr) {
+            const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + kr*sizeof(block_q8_1_mmq)/sizeof(int));
+#pragma unroll
+            for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += nwarps*WARP_SIZE) {
+                int l = l0 + threadIdx.y*WARP_SIZE + threadIdx.x;
+
+                tile_y[l] = by0[l];
+            }
+
+            __syncthreads();
+
+// #pragma unroll // unrolling this loop causes too much register pressure
+            for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
+                vec_dot(tile_x, tile_y, sum, k0);
+            }
+
+            __syncthreads();
+        }
+    }
+#endif // MEMCPY_ASYNC_AVAILABLE
 
     write_back(sum, dst, ne0, ne1);
 }
