@@ -801,23 +801,24 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
         dA[l] = x_df[i*MMQ_TILE_X_K_Q8_0 + k0/QI8_0];
     }
 
+#pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += mma_int_B_J8K8::J) {
         mma_C C;
         mma_B B;
         float dB[mma_C::ne/2];
 
 #pragma unroll
+        for (int l = 0; l < mma_C::ne/2; ++l) {
+            const int j = j0 + mma_C::get_j(l);
+
+            dB[l] = y_df[j*MMQ_TILE_Y_K + k0/QI8_1];
+        }
+#pragma unroll
         for (int l = 0; l < mma_B::ne; ++l) {
             const int j = j0 + mma_B::get_j(l);
             const int k = k0 + mma_B::get_k(l);
 
             B.x[l] = y_qs[j*MMQ_TILE_Y_K + k];
-        }
-#pragma unroll
-        for (int l = 0; l < mma_C::ne/2; ++l) {
-            const int j = j0 + mma_C::get_j(l);
-
-            dB[l] = y_df[j*MMQ_TILE_Y_K + k0/QI8_1];
         }
 
         C.mma_K8(A, B);
@@ -1934,7 +1935,7 @@ static __device__ __forceinline__ void mmq_preload_tile_y(const int * __restrict
     for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += 4*nwarps*WARP_SIZE) {
         int l = l0 + threadIdx.y*(4*WARP_SIZE) + threadIdx.x*4;
 
-        cuda::memcpy_async(tile_y + l, y + l, cuda::aligned_size_t<16>(16), pipeline);
+        cuda::memcpy_async(tile_y + l, y + l, cuda::aligned_size_t<4*sizeof(int)>(4*sizeof(int)), pipeline);
     }
 
     pipeline.producer_commit();
