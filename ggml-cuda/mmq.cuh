@@ -1927,7 +1927,7 @@ static bool mmq_need_sum(const ggml_type type_x) {
 // Helper functions for MMQ with memcpy_async:
 
 template <int mmq_x, int nwarps>
-static __device__ __forceinline__ void preload_tile_y(const int * __restrict__ y, int * __restrict__ tile_y, cuda_pipeline_t & pipeline) {
+static __device__ __forceinline__ void mmq_preload_tile_y(const int * __restrict__ y, int * __restrict__ tile_y, cuda_pipeline_t & pipeline) {
     pipeline.producer_acquire();
 
 #pragma unroll
@@ -1938,6 +1938,37 @@ static __device__ __forceinline__ void preload_tile_y(const int * __restrict__ y
     }
 
     pipeline.producer_commit();
+}
+
+template <int qk, int qi, int qr, int vdr, int mmq_x, int mmq_y, int nwarps, load_tiles_mmq_t load_tiles, vec_dot_mmq_t vec_dot, bool last_iter>
+static __device__ __forceinline__ void mmq_k_iter(
+    const char * __restrict__ x, int * __restrict__ tile_x, const int * __restrict__ y, int * __restrict__ tile_y, float * __restrict__ sum,
+    const int & kb0, const int & tile_x_max_i, const int & stride01, const int & stride11, cuda_pipeline_t & pipeline) {
+
+    constexpr int ney = GGML_PAD((mmq_x*MMQ_TILE_Y_K), nwarps*WARP_SIZE*4); // Number of tile_y elements
+    constexpr int blocks_per_warp = WARP_SIZE / qi;
+
+#pragma unroll
+    for (int kr = 0; kr < qr; ++kr) {
+        const int iy_now = ((kb0/blocks_per_warp)*qr + kr) % CUDA_PIPELINE_STAGES;
+        const int iy_next = (iy_now + 1) % CUDA_PIPELINE_STAGES;
+        const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + (kr+1)*sizeof(block_q8_1_mmq)/sizeof(int));
+
+        if (!last_iter || kr < qr-1) {
+            mmq_preload_tile_y<mmq_x, nwarps>(by0, tile_y + iy_next*ney, pipeline);
+        }
+
+        if (kr == 0) {
+            load_tiles(x, tile_x, stride01*blockIdx.x*mmq_y + kb0, tile_x_max_i, stride01);
+        }
+
+        pipeline.consumer_wait();
+#pragma unroll
+        for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
+            vec_dot(tile_x, tile_y + iy_now*ney, sum, k0);
+        }
+        pipeline.consumer_release();
+    }
 }
 
 #endif //MEMCPY_ASYNC_AVAILABLE
@@ -1983,8 +2014,8 @@ static __global__ void mul_mat_q(
     constexpr mmq_write_back_t write_back = mmq_write_back_dp4a<mmq_x, mmq_y, nwarps, need_check>;
 #endif // INT8_MMA_AVAILABLE
 
-    const int blocks_per_row_x = ne00 / qk;
-    const int blocks_per_warp = WARP_SIZE / qi;
+    const     int blocks_per_row_x = ne00 / qk;
+    constexpr int blocks_per_warp = WARP_SIZE / qi;
 
     const int & ne1 = ne11;
 
@@ -2006,63 +2037,18 @@ static __global__ void mul_mat_q(
     block.sync();
 
     // Preload first y data:
-    preload_tile_y<mmq_x, nwarps>(y, tile_y, pipeline);
+    mmq_preload_tile_y<mmq_x, nwarps>(y, tile_y, pipeline);
 
     // Iterate over k, except for last iter:
     int kb0 = 0;
     for (; kb0 < blocks_per_row_x - blocks_per_warp; kb0 += blocks_per_warp) {
-#pragma unroll
-        for (int kr = 0; kr < qr; ++kr) {
-            const int iy_now = ((kb0/blocks_per_warp)*qr + kr) % CUDA_PIPELINE_STAGES;
-            const int iy_next = (iy_now + 1) % CUDA_PIPELINE_STAGES;
-            const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + (kr+1)*sizeof(block_q8_1_mmq)/sizeof(int));
-
-            preload_tile_y<mmq_x, nwarps>(by0, tile_y + iy_next*ney, pipeline);
-
-            if (kr == 0) {
-                load_tiles(x, tile_x, stride01*blockIdx.x*mmq_y + kb0, tile_x_max_i, stride01);
-            }
-
-            pipeline.consumer_wait();
-#pragma unroll
-            for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
-                vec_dot(tile_x, tile_y + iy_now*ney, sum, k0);
-            }
-            pipeline.consumer_release();
-        }
+        mmq_k_iter<qk, qi, qr, vdr, mmq_x, mmq_y, nwarps, load_tiles, vec_dot, false>
+            (x, tile_x, y, tile_y, sum, kb0, tile_x_max_i, stride01, stride11, pipeline);
     }
 
     // Last k iter, don't preload y data if it's not going to be used:
-    {
-#pragma unroll
-        for (int kr = 0; kr < qr; ++kr) {
-            const int iy_now = ((kb0/blocks_per_warp)*qr + kr) % 2;
-            const int iy_next = (iy_now + 1) % 2;
-            const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + (kr+1)*sizeof(block_q8_1_mmq)/sizeof(int));
-
-            if (kr < qr - 1) {
-                pipeline.producer_acquire();
-#pragma unroll
-                for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += 4*nwarps*WARP_SIZE) {
-                    int l = l0 + threadIdx.y*(4*WARP_SIZE) + threadIdx.x*4;
-
-                    cuda::memcpy_async(tile_y + iy_next*ney + l, by0 + l, cuda::aligned_size_t<16>(16), pipeline);
-                }
-                pipeline.producer_commit();
-            }
-
-            if (kr == 0) {
-                load_tiles(x, tile_x, stride01*blockIdx.x*mmq_y + kb0, tile_x_max_i, stride01);
-            }
-
-            pipeline.consumer_wait();
-#pragma unroll
-            for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
-                vec_dot(tile_x, tile_y + iy_now*ney, sum, k0);
-            }
-            pipeline.consumer_release();
-        }
-    }
+    mmq_k_iter<qk, qi, qr, vdr, mmq_x, mmq_y, nwarps, load_tiles, vec_dot, true>
+        (x, tile_x, y, tile_y, sum, kb0, tile_x_max_i, stride01, stride11, pipeline);
 
 #else // MEMCPY_ASYNC_AVAILABLE
 
