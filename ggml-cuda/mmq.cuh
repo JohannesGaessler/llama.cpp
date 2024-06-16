@@ -418,7 +418,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
         qs0    |= (qh << 25)   & 0x10000000;  // 3 -> 28
         qs0     = __vsubss4(qs0, 0x10101010); // subtract 16
 
-        x_qs[i*MMQ_TILE_X_K_Q5_0 + 2*threadIdx.x+0] = qs0;
+        x_qs[i*MMQ_TILE_X_K_Q5_0 + kbx*(2*QI5_1) + kqsx + 0]     = qs0;
 
         int qs1 = (ql >>  4)   & 0x0F0F0F0F;
         qs1    |= (qh >> 12)   & 0x00000010;  // 16 ->  4
@@ -427,7 +427,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
         qs1    |= (qh <<  9)   & 0x10000000;  // 19 -> 28
         qs1     = __vsubss4(qs1, 0x10101010); // subtract 16
 
-        x_qs[i*MMQ_TILE_X_K_Q5_0 + 2*threadIdx.x+1] = qs1;
+        x_qs[i*MMQ_TILE_X_K_Q5_0 + kbx*(2*QI5_1) + kqsx + QI5_0] = qs1;
     }
 
     const int blocks_per_tile_x_row = WARP_SIZE / QI5_0;
@@ -464,19 +464,9 @@ static __device__ __forceinline__ void vec_dot_q5_0_q8_1_dp4a(
         for (int i0 = 0; i0 < mmq_y; i0 += WARP_SIZE) {
             const int i = i0 + threadIdx.x;
 
-            const int kyqs = k0 % (QI8_1/2) + QI8_1 * (k0 / (QI8_1/2));
-            const int index_bx = i*MMQ_TILE_X_K_Q5_0 + k0/QI5_0;
-
-            int u[2*VDR_Q5_0_Q8_1_MMQ];
-
-#pragma unroll
-            for (int l = 0; l < VDR_Q5_0_Q8_1_MMQ; ++l) {
-                u[2*l+0] = y_qs[j*MMQ_TILE_Y_K + (kyqs + l)         % WARP_SIZE];
-                u[2*l+1] = y_qs[j*MMQ_TILE_Y_K + (kyqs + l + QI5_0) % WARP_SIZE];
-            }
-
             sum[j0/nwarps*mmq_y/WARP_SIZE + i0/WARP_SIZE] += vec_dot_q8_0_q8_1_impl<float, QR5_0*VDR_Q5_0_Q8_1_MMQ>
-                (&x_qs[i*MMQ_TILE_X_K_Q5_0 + 2*k0], u, x_df[index_bx], y_df[j*MMQ_TILE_Y_K + (2*k0/QI8_1) % (WARP_SIZE/QI8_1)]);
+                (&x_qs[i*MMQ_TILE_X_K_Q5_0 + 2*k0], &y_qs[j*MMQ_TILE_Y_K + (2*k0) % WARP_SIZE],
+                 x_df[i*MMQ_TILE_X_K_Q5_0 + k0/QI5_0], y_df[j*MMQ_TILE_Y_K + (2*k0/QI8_1) % (WARP_SIZE/QI8_1)]);
         }
     }
 }
@@ -503,8 +493,8 @@ static __device__ __forceinline__ void vec_dot_q5_0_q8_1_mma(
 
 #pragma unroll
     for (int l = 0; l < mma_A::ne; ++l) {
-        const int i     =    i0 + mma_A::get_i(l);
-        const int k     = 2*(k0 + mma_A::get_k(l) % QI5_0) + mma_A::get_k(l) / QI5_0;
+        const int i =   i0 + mma_A::get_i(l);
+        const int k = 2*k0 + mma_A::get_k(l);
 
         A.x[l] = x_qs[i*MMQ_TILE_X_K_Q5_0 + k];
     }
