@@ -1001,8 +1001,8 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
     const int kqsx = threadIdx.x % QI3_K;
 
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nwarps) {
-        int i = i0 + threadIdx.y;
+    for (int i0 = 0; i0 < mmq_y/nwarps; ++i0) {
+        int i = i0 + threadIdx.y*(mmq_y/nwarps);
 
         if (need_check) {
             i = min(i, i_max);
@@ -1035,8 +1035,8 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
     const int kbxd = threadIdx.x % blocks_per_tile_x_row;
 
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nwarps * QI3_K) {
-        int i = (i0 + threadIdx.y * QI3_K + threadIdx.x / blocks_per_tile_x_row) % mmq_y;
+    for (int i0 = 0; i0 < mmq_y/nwarps; i0 += QI3_K) {
+        int i = (i0 + threadIdx.y*(mmq_y/nwarps) + threadIdx.x / blocks_per_tile_x_row) % mmq_y;
 
         if (need_check) {
             i = min(i, i_max);
@@ -1048,8 +1048,8 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
     }
 
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nwarps * 4) {
-        int i = i0 + threadIdx.y * 4 + threadIdx.x / (WARP_SIZE/4);
+    for (int i0 = 0; i0 < mmq_y/nwarps; i0 += 4) {
+        int i = i0 + threadIdx.y*(mmq_y/nwarps) + threadIdx.x / (WARP_SIZE/4);
 
         if (need_check) {
             i = min(i, i_max);
