@@ -1582,8 +1582,8 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
     const int kqsx = threadIdx.x; // threadIdx.x % QI6_K
 
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nwarps) {
-        int i = i0 + threadIdx.y;
+    for (int i0 = 0; i0 < (mmq_y/nwarps); ++i0) {
+        int i = i0 + threadIdx.y*(mmq_y/nwarps);
 
         if (need_check) {
             i = min(i, i_max);
@@ -1611,8 +1611,8 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
     const int kbxd = threadIdx.x % blocks_per_tile_x_row; // == 0 if QK_K == 256
 
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nwarps * QI6_K) {
-        int i = (i0 + threadIdx.y * QI6_K + threadIdx.x / blocks_per_tile_x_row) % mmq_y;
+    for (int i0 = 0; i0 < mmq_y/nwarps; i0 += QI6_K) {
+        int i = (i0 + threadIdx.y*(mmq_y/nwarps) + threadIdx.x / blocks_per_tile_x_row) % mmq_y;
 
         if (need_check) {
             i = min(i, i_max);
@@ -1624,8 +1624,8 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
     }
 
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nwarps * 8) {
-        int i = (i0 + threadIdx.y * 8 + threadIdx.x / (WARP_SIZE/8)) % mmq_y;
+    for (int i0 = 0; i0 < mmq_y/nwarps; i0 += 8) {
+        int i = (i0 + threadIdx.y*(mmq_y/nwarps) + threadIdx.x / (WARP_SIZE/8)) % mmq_y;
 
         if (need_check) {
             i = min(i, i_max);
@@ -1963,10 +1963,12 @@ static __device__ __forceinline__ void mmq_k_iter(
         }
 
         pipeline.consumer_wait();
+
 #pragma unroll
         for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
             vec_dot(tile_x, tile_y + iy_now*ney, sum, k0);
         }
+
         pipeline.consumer_release();
     }
 }
