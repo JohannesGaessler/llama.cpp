@@ -736,17 +736,43 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_dp4a(
     const int   * y_qs = (const int   *) y + 4;
     const float * y_df = (const float *) y;
 
+    constexpr int rows_per_warp = mmq_y/nwarps;
+    const int i0 = threadIdx.y*rows_per_warp;
+
+    static_assert(VDR_Q8_0_Q8_1_MMQ == QI8_0, "assert");
+    static_assert(rows_per_warp == 16, "assert");
+    int xA[2][QI8_0];
 #pragma unroll
-    for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
-        const int j = j0 + threadIdx.y;
+    for (int kk = 0; kk < QI8_0; ++kk) {
+        xA[0][kk] = x_qs[(i0 + 0 + threadIdx.x/4)*MMQ_TILE_X_K_Q8_0 + k0 + kk];
+        xA[1][kk] = x_qs[(i0 + 8 + threadIdx.x/4)*MMQ_TILE_X_K_Q8_0 + k0 + kk];
+    }
+
+    float dA[2];
+    dA[0] = x_df[(i0 + 0 + threadIdx.x/4)*MMQ_TILE_X_K_Q8_0 + k0/QI8_0];
+    dA[1] = x_df[(i0 + 8 + threadIdx.x/4)*MMQ_TILE_X_K_Q8_0 + k0/QI8_0];
 
 #pragma unroll
-        for (int i0 = 0; i0 < mmq_y; i0 += WARP_SIZE) {
-            const int i = i0 + threadIdx.x;
+    for (int j0 = 0; j0 < mmq_x; j0 += 8) {
+        int xB[2][QI8_0];
+#pragma unroll
+        for (int kk = 0; kk < QI8_0; ++kk) {
+            xB[0][kk] = y_qs[(j0 + 2*(threadIdx.x%4) + 0)*MMQ_TILE_Y_K + k0 + kk];
+            xB[1][kk] = y_qs[(j0 + 2*(threadIdx.x%4) + 1)*MMQ_TILE_Y_K + k0 + kk];
+        }
+        float dB[2];
+        dB[0] = y_df[(j0 + 2*(threadIdx.x%4) + 0)*MMQ_TILE_Y_K + k0/QI8_0];
+        dB[1] = y_df[(j0 + 2*(threadIdx.x%4) + 1)*MMQ_TILE_Y_K + k0/QI8_0];
 
-            sum[j0/nwarps*mmq_y/WARP_SIZE + i0/WARP_SIZE] += vec_dot_q8_0_q8_1_impl<float, VDR_Q8_0_Q8_1_MMQ>
-                (&x_qs[i*MMQ_TILE_X_K_Q8_0 + k0], &y_qs[j*MMQ_TILE_Y_K + k0], x_df[i*MMQ_TILE_X_K_Q8_0 + k0/QI8_0],
-                y_df[j*MMQ_TILE_Y_K + k0/QI8_1]);
+#pragma unroll
+        for (int l = 0; l < 4; ++l) {
+            int sumi = 0;
+#pragma unroll
+            for (int kk = 0; kk < QI8_0; ++kk) {
+                sumi = __dp4a(xA[l/2][kk], xB[l%2][kk], sumi);
+            }
+
+            sum[(j0/8)*4 + l] += sumi*dA[l/2]*dB[l%2];
         }
     }
 }
@@ -1989,13 +2015,13 @@ static __global__ void mul_mat_q(
     constexpr int              vdr        = mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, type>::vdr;
     constexpr load_tiles_mmq_t load_tiles = mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, type>::load_tiles;
 
-#ifdef INT8_MMA_AVAILABLE
-    constexpr vec_dot_mmq_t    vec_dot    = mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, type>::vec_dot_mma;
+// #ifdef INT8_MMA_AVAILABLE
+    // constexpr vec_dot_mmq_t    vec_dot    = mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, type>::vec_dot_mma;
     constexpr mmq_write_back_t write_back = mmq_write_back_mma<mmq_x, mmq_y, nwarps, need_check>;
-#else
+// #else
     constexpr vec_dot_mmq_t    vec_dot    = mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, type>::vec_dot_dp4a;
-    constexpr mmq_write_back_t write_back = mmq_write_back_dp4a<mmq_x, mmq_y, nwarps, need_check>;
-#endif // INT8_MMA_AVAILABLE
+    // constexpr mmq_write_back_t write_back = mmq_write_back_dp4a<mmq_x, mmq_y, nwarps, need_check>;
+// #endif // INT8_MMA_AVAILABLE
 
     const     int blocks_per_row_x = ne00 / qk;
     constexpr int blocks_per_warp = WARP_SIZE / qi;
