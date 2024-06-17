@@ -740,17 +740,14 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_dp4a(
     const int i0 = threadIdx.y*rows_per_warp;
 
     static_assert(VDR_Q8_0_Q8_1_MMQ == QI8_0, "assert");
-    static_assert(rows_per_warp == 16, "assert");
-    int xA[2][QI8_0];
+    int xA[QI8_0];
 #pragma unroll
     for (int kk = 0; kk < QI8_0; ++kk) {
-        xA[0][kk] = x_qs[(i0 + 0 + threadIdx.x/4)*MMQ_TILE_X_K_Q8_0 + k0 + kk];
-        xA[1][kk] = x_qs[(i0 + 8 + threadIdx.x/4)*MMQ_TILE_X_K_Q8_0 + k0 + kk];
+        xA[kk] = x_qs[(i0 + threadIdx.x/4)*MMQ_TILE_X_K_Q8_0 + k0 + kk];
     }
 
-    float dA[2];
-    dA[0] = x_df[(i0 + 0 + threadIdx.x/4)*MMQ_TILE_X_K_Q8_0 + k0/QI8_0];
-    dA[1] = x_df[(i0 + 8 + threadIdx.x/4)*MMQ_TILE_X_K_Q8_0 + k0/QI8_0];
+    float dA;
+    dA = x_df[(i0 + threadIdx.x/4)*MMQ_TILE_X_K_Q8_0 + k0/QI8_0];
 
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += 8) {
@@ -765,14 +762,14 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_dp4a(
         dB[1] = y_df[(j0 + 2*(threadIdx.x%4) + 1)*MMQ_TILE_Y_K + k0/QI8_0];
 
 #pragma unroll
-        for (int l = 0; l < 4; ++l) {
+        for (int l = 0; l < 2; ++l) {
             int sumi = 0;
 #pragma unroll
             for (int kk = 0; kk < QI8_0; ++kk) {
-                sumi = __dp4a(xA[l/2][kk], xB[l%2][kk], sumi);
+                sumi = __dp4a(xA[kk], xB[l%2][kk], sumi);
             }
 
-            sum[(j0/8)*4 + l] += sumi*dA[l/2]*dB[l%2];
+            sum[(j0/8)*2 + l] += sumi*dA*dB[l%2];
         }
     }
 }
@@ -2015,13 +2012,13 @@ static __global__ void mul_mat_q(
     constexpr int              vdr        = mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, type>::vdr;
     constexpr load_tiles_mmq_t load_tiles = mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, type>::load_tiles;
 
-// #ifdef INT8_MMA_AVAILABLE
-    // constexpr vec_dot_mmq_t    vec_dot    = mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, type>::vec_dot_mma;
+#ifdef INT8_MMA_AVAILABLE
+    constexpr vec_dot_mmq_t    vec_dot    = mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, type>::vec_dot_mma;
     constexpr mmq_write_back_t write_back = mmq_write_back_mma<mmq_x, mmq_y, nwarps, need_check>;
-// #else
+#else
     constexpr vec_dot_mmq_t    vec_dot    = mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, type>::vec_dot_dp4a;
-    // constexpr mmq_write_back_t write_back = mmq_write_back_dp4a<mmq_x, mmq_y, nwarps, need_check>;
-// #endif // INT8_MMA_AVAILABLE
+    constexpr mmq_write_back_t write_back = mmq_write_back_dp4a<mmq_x, mmq_y, nwarps, need_check>;
+#endif // INT8_MMA_AVAILABLE
 
     const     int blocks_per_row_x = ne00 / qk;
     constexpr int blocks_per_warp = WARP_SIZE / qi;
