@@ -768,19 +768,22 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
     const int i0 = threadIdx.y*mma_A::I;
     static_assert(nwarps*mma_A::I == mmq_y, "nwarps*mma_A::I != mmq_y");
 
+    mma_A A[WARP_SIZE/QI8_0];
+    float dA[mma_C::ne/2][WARP_SIZE/QI8_0];
 #pragma unroll
     for (int k0 = 0; k0 < WARP_SIZE; k0 += QI8_0) {
-        mma_A A;
-        float dA[mma_C::ne/2];
 
-        A.load(x_qs + (i0*MMQ_TILE_X_K_Q8_0 + k0), MMQ_TILE_X_K_Q8_0);
+        A[k0/QI8_0].load(x_qs + (i0*MMQ_TILE_X_K_Q8_0 + k0), MMQ_TILE_X_K_Q8_0);
 #pragma unroll
         for (int l = 0; l < mma_C::ne/2; ++l) {
-            dA[l] = x_df[(i0*MMQ_TILE_X_K_Q8_0 + k0/QI8_0) + mma_C::get_i(2*l)*MMQ_TILE_X_K_Q8_0];
+            dA[l][k0/QI8_0] = x_df[(i0*MMQ_TILE_X_K_Q8_0 + k0/QI8_0) + mma_C::get_i(2*l)*MMQ_TILE_X_K_Q8_0];
         }
+    }
 
 #pragma unroll
-        for (int j0 = 0; j0 < mmq_x; j0 += mma_int_B_J8K8::J) {
+    for (int j0 = 0; j0 < mmq_x; j0 += mma_int_B_J8K8::J) {
+#pragma unroll
+        for (int k0 = 0; k0 < WARP_SIZE; k0 += QI8_0) {
             mma_C C;
             mma_B B;
             float dB[mma_C::ne/2];
@@ -791,11 +794,11 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
             }
             B.load(y_qs + (j0*MMQ_TILE_Y_K + k0), MMQ_TILE_Y_K);
 
-            C.mma_K8(A, B);
+            C.mma_K8(A[k0/QI8_0], B);
 
 #pragma unroll
             for (int l = 0; l < mma_C::ne; ++l) {
-                sum[(j0/B.J)*C.ne + l] += C.x[l]*dA[l/2]*dB[l%2];
+                sum[(j0/B.J)*C.ne + l] += C.x[l]*dA[l/2][k0/QI8_0]*dB[l%2];
             }
         }
     }
