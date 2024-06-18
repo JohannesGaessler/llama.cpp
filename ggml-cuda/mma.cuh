@@ -78,6 +78,13 @@ struct mma_int_B_J8K4 {
         GGML_CUDA_ASSUME(ret <  K);
         return ret;
     }
+
+    __device__ __forceinline__ void load(const int * __restrict__ xs0, const int & stride) {
+#pragma unroll
+        for (int l = 0; l < ne; ++l) {
+            x[l] = xs0[get_j(l)*stride + get_k(l)];
+        }
+    }
 };
 
 struct mma_int_B_J8K8 {
@@ -99,10 +106,36 @@ struct mma_int_B_J8K8 {
     }
 
     __device__ __forceinline__ void load(const int * __restrict__ xs0, const int & stride) {
+#pragma unroll
+        for (int l = 0; l < ne; ++l) {
+            x[l] = xs0[get_j(l)*stride + get_k(l)];
+        }
+    }
+};
+
+struct mma_int_B_J8K16 {
+    static constexpr int J  = 8;
+    static constexpr int K  = 16;
+    static constexpr int ne = 4;
+
+    int x[ne] = {0};
+
+    static __device__ __forceinline__ int get_j(const int /* l */) {
+        return mma_int_B_J8K4::get_j(-1);
+    }
+
+    static __device__ __forceinline__ int get_k(const int l) {
+        const int ret = l*4 + mma_int_B_J8K4::get_k(-1);
+        GGML_CUDA_ASSUME(ret >= 0);
+        GGML_CUDA_ASSUME(ret <  K);
+        return ret;
+    }
+
+    __device__ __forceinline__ void load(const int * __restrict__ xs0, const int & stride) {
 #if defined(INT8_MMA_AVAILABLE) && false
-        const int * xs = xs0 + (threadIdx.x%J)*stride + ((threadIdx.x/J)*(K/2)) % K;
-        asm("ldmatrix.sync.aligned.m8n8.x2.b16 {%0, %1}, [%2];"
-            : "+r"(x[0]), "+r"(x[1])
+        const int * xs = xs0 + (threadIdx.x%J)*stride + (threadIdx.x/J)*4;
+        asm("ldmatrix.sync.aligned.m8n8.x4.b16 {%0, %1, %2, %3}, [%4];"
+            : "+r"(x[0]), "+r"(x[1]), "+r"(x[2]), "+r"(x[3])
             : "l"(xs));
 #else
 #pragma unroll
@@ -110,6 +143,35 @@ struct mma_int_B_J8K8 {
             x[l] = xs0[get_j(l)*stride + get_k(l)];
         }
 #endif // defined(INT8_MMA_AVAILABLE)
+    }
+};
+
+struct mma_int_B_J8K32 {
+    static constexpr int J  = 8;
+    static constexpr int K  = 32;
+    static constexpr int ne = 8;
+
+    int x[ne] = {0};
+
+    static __device__ __forceinline__ int get_j(const int /* l */) {
+        return mma_int_B_J8K4::get_j(-1);
+    }
+
+    static __device__ __forceinline__ int get_k(const int l) {
+        const int ret = l*4 + mma_int_B_J8K4::get_k(-1);
+        GGML_CUDA_ASSUME(ret >= 0);
+        GGML_CUDA_ASSUME(ret <  K);
+        return ret;
+    }
+
+    __device__ __forceinline__ void load(const int * __restrict__ xs0, const int & stride) {
+        mma_int_B_J8K16 * x16 = (mma_int_B_J8K16 *) x;
+        x16[0].load(xs0 +  0, stride);
+        x16[1].load(xs0 + 16, stride);
+    }
+
+    __device__ __forceinline__ mma_int_B_J8K8 get_K8(const int k) {
+        return ((mma_int_B_J8K8 *) x)[k];
     }
 };
 

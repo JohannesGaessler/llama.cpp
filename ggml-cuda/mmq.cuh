@@ -757,7 +757,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
 #ifdef INT8_MMA_AVAILABLE
 
     typedef mma_int_A_I16K8 mma_A;
-    typedef mma_int_B_J8K8  mma_B;
+    typedef mma_int_B_J8K32 mma_B;
     typedef mma_int_C_I16J8 mma_C;
 
     const int   * x_qs = (const int   *) x;
@@ -782,19 +782,20 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
 
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += mma_int_B_J8K8::J) {
+        mma_B B;
+        B.load(y_qs + j0*MMQ_TILE_Y_K, MMQ_TILE_Y_K);
+
 #pragma unroll
         for (int k0 = 0; k0 < WARP_SIZE; k0 += QI8_0) {
             mma_C C;
-            mma_B B;
             float dB[mma_C::ne/2];
 
 #pragma unroll
             for (int l = 0; l < mma_C::ne/2; ++l) {
                 dB[l] = y_df[(j0*MMQ_TILE_Y_K + k0/QI8_1) + mma_C::get_j(l)*MMQ_TILE_Y_K];
             }
-            B.load(y_qs + (j0*MMQ_TILE_Y_K + k0), MMQ_TILE_Y_K);
 
-            C.mma_K8(A[k0/QI8_0], B);
+            C.mma_K8(A[k0/QI8_0], B.get_K8(k0/QI8_0));
 
 #pragma unroll
             for (int l = 0; l < mma_C::ne; ++l) {
