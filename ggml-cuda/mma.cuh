@@ -66,14 +66,14 @@ struct mma_int_B_J8K4 {
     int x[ne] = {0};
 
     static __device__ __forceinline__ int get_j(const int /* l */) {
-        const int ret = threadIdx.x / K;
+        const int ret = threadIdx.x / 4;
         GGML_CUDA_ASSUME(ret >= 0);
         GGML_CUDA_ASSUME(ret <  J);
         return ret;
     }
 
     static __device__ __forceinline__ int get_k(const int /* l */) {
-        const int ret = threadIdx.x % K;
+        const int ret = threadIdx.x % 4;
         GGML_CUDA_ASSUME(ret >= 0);
         GGML_CUDA_ASSUME(ret <  K);
         return ret;
@@ -88,14 +88,11 @@ struct mma_int_B_J8K8 {
     int x[ne] = {0};
 
     static __device__ __forceinline__ int get_j(const int /* l */) {
-        const int ret = threadIdx.x / (K/2);
-        GGML_CUDA_ASSUME(ret >= 0);
-        GGML_CUDA_ASSUME(ret <  J);
-        return ret;
+        return mma_int_B_J8K4::get_j(-1);
     }
 
     static __device__ __forceinline__ int get_k(const int l) {
-        const int ret = l * (K/2) + threadIdx.x % (K/2);
+        const int ret = l*4 + mma_int_B_J8K4::get_k(-1);
         GGML_CUDA_ASSUME(ret >= 0);
         GGML_CUDA_ASSUME(ret <  K);
         return ret;
