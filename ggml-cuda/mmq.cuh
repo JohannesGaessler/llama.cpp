@@ -771,10 +771,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
     const int i0 = threadIdx.y*mma_A::I;
     static_assert(nwarps*mma_A::I == mmq_y, "nwarps*mma_A::I != mmq_y");
 
-#pragma unroll
-    for (int l = 0; l < mma_A::ne; ++l) {
-        A.x[l] = x_qs[(i0*MMQ_TILE_X_K_Q8_0 + k0) + mma_A::get_i(l)*MMQ_TILE_X_K_Q8_0 + mma_A::get_k(l)];
-    }
+    A.load(x_qs + (i0*MMQ_TILE_X_K_Q8_0 + k0), MMQ_TILE_X_K_Q8_0);
 #pragma unroll
     for (int l = 0; l < mma_C::ne/2; ++l) {
         dA[l] = x_df[(i0*MMQ_TILE_X_K_Q8_0 + k0/QI8_0) + mma_C::get_i(2*l)*MMQ_TILE_X_K_Q8_0];
