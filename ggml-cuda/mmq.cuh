@@ -790,10 +790,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
         for (int l = 0; l < mma_C::ne/2; ++l) {
             dB[l] = y_df[(j0*MMQ_TILE_Y_K + k0/QI8_1) + mma_C::get_j(l)*MMQ_TILE_Y_K];
         }
-#pragma unroll
-        for (int l = 0; l < mma_B::ne; ++l) {
-            B.x[l] = y_qs[(j0*MMQ_TILE_Y_K + k0) + mma_B::get_j(l)*MMQ_TILE_Y_K + mma_B::get_k(l)];
-        }
+        B.load(y_qs + (j0*MMQ_TILE_Y_K + k0), MMQ_TILE_Y_K);
 
         C.mma_K8(A, B);
 
