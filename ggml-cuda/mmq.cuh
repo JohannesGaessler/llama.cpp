@@ -753,7 +753,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_dp4a(
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int &) {
 #ifdef INT8_MMA_AVAILABLE
 
     typedef mma_int_A_I16K8 mma_A;
@@ -765,39 +765,42 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
     const int   * y_qs = (const int   *) y + 4;
     const float * y_df = (const float *) y;
 
-    mma_A A;
-    float dA[mma_C::ne/2];
-
     const int i0 = threadIdx.y*mma_A::I;
     static_assert(nwarps*mma_A::I == mmq_y, "nwarps*mma_A::I != mmq_y");
 
-    A.load(x_qs + (i0*MMQ_TILE_X_K_Q8_0 + k0), MMQ_TILE_X_K_Q8_0);
 #pragma unroll
-    for (int l = 0; l < mma_C::ne/2; ++l) {
-        dA[l] = x_df[(i0*MMQ_TILE_X_K_Q8_0 + k0/QI8_0) + mma_C::get_i(2*l)*MMQ_TILE_X_K_Q8_0];
-    }
+    for (int k0 = 0; k0 < WARP_SIZE; k0 += QI8_0) {
+        mma_A A;
+        float dA[mma_C::ne/2];
 
-#pragma unroll
-    for (int j0 = 0; j0 < mmq_x; j0 += mma_int_B_J8K8::J) {
-        mma_C C;
-        mma_B B;
-        float dB[mma_C::ne/2];
-
+        A.load(x_qs + (i0*MMQ_TILE_X_K_Q8_0 + k0), MMQ_TILE_X_K_Q8_0);
 #pragma unroll
         for (int l = 0; l < mma_C::ne/2; ++l) {
-            dB[l] = y_df[(j0*MMQ_TILE_Y_K + k0/QI8_1) + mma_C::get_j(l)*MMQ_TILE_Y_K];
+            dA[l] = x_df[(i0*MMQ_TILE_X_K_Q8_0 + k0/QI8_0) + mma_C::get_i(2*l)*MMQ_TILE_X_K_Q8_0];
         }
-        B.load(y_qs + (j0*MMQ_TILE_Y_K + k0), MMQ_TILE_Y_K);
-
-        C.mma_K8(A, B);
 
 #pragma unroll
-        for (int l = 0; l < mma_C::ne; ++l) {
-            sum[(j0/B.J)*C.ne + l] += C.x[l]*dA[l/2]*dB[l%2];
+        for (int j0 = 0; j0 < mmq_x; j0 += mma_int_B_J8K8::J) {
+            mma_C C;
+            mma_B B;
+            float dB[mma_C::ne/2];
+
+#pragma unroll
+            for (int l = 0; l < mma_C::ne/2; ++l) {
+                dB[l] = y_df[(j0*MMQ_TILE_Y_K + k0/QI8_1) + mma_C::get_j(l)*MMQ_TILE_Y_K];
+            }
+            B.load(y_qs + (j0*MMQ_TILE_Y_K + k0), MMQ_TILE_Y_K);
+
+            C.mma_K8(A, B);
+
+#pragma unroll
+            for (int l = 0; l < mma_C::ne; ++l) {
+                sum[(j0/B.J)*C.ne + l] += C.x[l]*dA[l/2]*dB[l%2];
+            }
         }
     }
 #else
-    GGML_UNUSED(x); GGML_UNUSED(y); GGML_UNUSED(sum); GGML_UNUSED(k0);
+    GGML_UNUSED(x); GGML_UNUSED(y); GGML_UNUSED(sum);
     NO_DEVICE_CODE;
 #endif // INT8_MMA_AVAILABLE
 }
@@ -1933,16 +1936,7 @@ static __device__ __forceinline__ void mmq_k_iter(
 
         pipeline.consumer_wait();
 
-        if (unroll) {
-#pragma unroll
-            for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
-                vec_dot(tile_x, tile_y + iy_now*ney, sum, k0);
-            }
-        } else {
-            for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
-                vec_dot(tile_x, tile_y + iy_now*ney, sum, k0);
-            }
-        }
+        vec_dot(tile_x, tile_y + iy_now*ney, sum, 0);
 
         pipeline.consumer_release();
     }
