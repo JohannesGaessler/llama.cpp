@@ -1951,10 +1951,8 @@ static __global__ void mul_mat_q(
     const int ntx = (ne11 + mmq_x - 1) / mmq_x;
     const int nty = (ne01 + mmq_y - 1) / mmq_y;
 
-    // const int k_start = GGML_PAD((ntx*nty*ne00) *  blockIdx.x    / gridDim.x, blocks_per_warp*qk);
-    // const int k_stop  = GGML_PAD((ntx*nty*ne00) * (blockIdx.x+1) / gridDim.x, blocks_per_warp*qk);
-    const int64_t k_start = (int64_t) blockIdx.x     *ne00*ntx*nty / gridDim.x;
-    const int64_t k_stop  = (int64_t)(blockIdx.x + 1)*ne00*ntx*nty / gridDim.x;
+    const int64_t k_start = GGML_PAD((int64_t) blockIdx.x     *ne00*ntx*nty / gridDim.x, blocks_per_warp*qk);
+    const int64_t k_stop  = GGML_PAD((int64_t)(blockIdx.x + 1)*ne00*ntx*nty / gridDim.x, blocks_per_warp*qk);
 
     const int jt_start = k_start / (ne00*nty);
     const int jt_stop  = k_stop  / (ne00*nty);
