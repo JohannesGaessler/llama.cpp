@@ -1929,8 +1929,7 @@ static __device__ void mul_mat_q_process_tile(
     int   * tile_x_sc = (int   *) (tile_x_dm + txs.dm);
     int   * tile_y    = (int   *) (tile_x_sc + txs.sc); // [mmq_x * (WARP_SIZE + WARP_SIZE/QI8_1)]
 
-    const     int64_t blocks_per_ne00 = ne00 / qk;
-    constexpr int     blocks_per_warp = WARP_SIZE / qi;
+    constexpr int blocks_per_warp = WARP_SIZE / qi;
 
     float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
 
@@ -2032,7 +2031,7 @@ static __global__ void mul_mat_q(
     const int it = (kb - jt*(blocks_per_ne00*nty)) / blocks_per_ne00;
 
     constexpr bool fixup = true;
-    mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, true>
+    mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
         (x, yc, dst, tmp_last_tile, ne00, ne01, stride01, ne10, ne11, stride11, ne0,
             it, jt, kb0_start, kb0_stop);
 }
