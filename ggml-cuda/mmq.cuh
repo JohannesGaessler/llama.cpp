@@ -2006,7 +2006,7 @@ static __global__ void mul_mat_q(
 
 template <ggml_type type, int mmq_x, int nwarps, bool need_check>
 static __global__ void mul_mat_q_stream_k_fixup(
-    float * __restrict__ dst, const float * __restrict__ tmp_last_tile, const int ne00, const int ne01, const int ne11, const int ne0) {
+    float * __restrict__ dst, const float * __restrict__ tmp_last_tile, const int ne00, const int ne01, const int ne11, const int ne0, const int block_num_mmq) {
 
     constexpr int     mmq_y           = get_mmq_y_device(mmq_x);
     constexpr int     qk              = ggml_cuda_type_traits<type>::qk;
@@ -2014,23 +2014,51 @@ static __global__ void mul_mat_q_stream_k_fixup(
     constexpr int     blocks_per_warp = WARP_SIZE / qi;
     const     int64_t blocks_per_ne00 = ne00 / qk;
 
+    float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
+
     const int ntx = (ne11 + mmq_x - 1) / mmq_x;
     const int nty = (ne01 + mmq_y - 1) / mmq_y;
 
-    const int64_t kb_stop = GGML_PAD((int64_t)(blockIdx.x + 1)*blocks_per_ne00*ntx*nty / gridDim.x, blocks_per_warp);
+    bool any_fixup = false;
+
+    for (int bidx = 0; bidx < block_num_mmq; ++bidx) {
+
+    const int64_t kb_stop = GGML_PAD((int64_t)(bidx + 1)*blocks_per_ne00*ntx*nty / block_num_mmq, blocks_per_warp);
 
     if (kb_stop % blocks_per_ne00 == 0) {
-        return;
+        continue;
     }
 
     const int jt =  kb_stop /    (blocks_per_ne00*nty);
     const int it = (kb_stop - jt*(blocks_per_ne00*nty)) / blocks_per_ne00;
 
-    tmp_last_tile += blockIdx.x*(mmq_x*mmq_y);
-    dst += jt*mmq_x*ne0 + it*mmq_y;
+    if (it != blockIdx.x || jt != blockIdx.y) {
+        continue;
+    }
 
-    const int i_max = ne01 - it*mmq_y - 1;
-    const int j_max = ne11 - jt*mmq_x - 1;
+    any_fixup = true;
+
+#pragma unroll
+    for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
+        const int j = j0 + threadIdx.y;
+
+#pragma unroll
+        for (int i0 = 0; i0 < mmq_y; i0 += WARP_SIZE) {
+            const int i = i0 + threadIdx.x;
+
+            sum[(j0/nwarps) * (mmq_y/WARP_SIZE) + i0/WARP_SIZE] += tmp_last_tile[bidx*(mmq_x*mmq_y) + j*mmq_y + i];
+        }
+    }
+    }
+
+    if (!any_fixup) {
+        return;
+    }
+
+    dst += blockIdx.y*mmq_x*ne0 + blockIdx.x*mmq_y;
+
+    const int i_max = ne01 - blockIdx.x*mmq_y - 1;
+    const int j_max = ne11 - blockIdx.y*mmq_x - 1;
 
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
@@ -2048,7 +2076,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
                 continue;
             }
 
-            dst[j*ne0 + i] += tmp_last_tile[j*mmq_y + i];
+            dst[j*ne0 + i] += sum[(j0/nwarps) * (mmq_y/WARP_SIZE) + i0/WARP_SIZE];
         }
     }
 }
@@ -2082,9 +2110,9 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
 
     const int block_num_x = (args.ne01 + mmq_y - 1) / mmq_y;
     const int block_num_y = (args.ne11 + mmq_x - 1) / mmq_x;
-    GGML_ASSERT(block_num_x*block_num_y >= nsm/4);
-    const dim3 block_nums(nsm/4, 1, 1);
-    // const dim3 block_nums(block_num_x*block_num_y, 1, 1);
+    const dim3 block_nums_fixup(block_num_x, block_num_y, 1);
+    const dim3 block_nums_mmq(nsm/4, 1, 1);
+
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
     const int shmem = mmq_get_shmem(type, mmq_x, mmq_y);
@@ -2101,20 +2129,20 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
 #endif // !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__))
 
     ggml_cuda_pool & pool = ctx.pool();
-    ggml_cuda_pool_alloc<float> tmp_last_tile(pool, block_nums.x * mmq_x*mmq_y);
+    ggml_cuda_pool_alloc<float> tmp_last_tile(pool, block_nums_mmq.x * mmq_x*mmq_y);
 
     if (args.ne01 % mmq_y == 0) {
         const bool need_check = false;
-        mul_mat_q<type, mmq_x, nwarps, need_check><<<block_nums, block_dims, shmem, stream>>>
+        mul_mat_q<type, mmq_x, nwarps, need_check><<<block_nums_mmq, block_dims, shmem, stream>>>
             (args.x, args.y, args.dst, tmp_last_tile.ptr, args.ne00, args.ne01, args.stride01, args.ne10, args.ne11, args.stride11, args.ne0);
-        mul_mat_q_stream_k_fixup<type, mmq_x, nwarps, need_check><<<block_nums, block_dims, 0, stream>>>
-            (args.dst, tmp_last_tile.ptr, args.ne00, args.ne01, args.ne11, args.ne0);
+        mul_mat_q_stream_k_fixup<type, mmq_x, nwarps, need_check><<<block_nums_fixup, block_dims, 0, stream>>>
+            (args.dst, tmp_last_tile.ptr, args.ne00, args.ne01, args.ne11, args.ne0, block_nums_mmq.x);
     } else {
         const bool need_check = true;
-        mul_mat_q<type, mmq_x, nwarps, need_check><<<block_nums, block_dims, shmem, stream>>>
+        mul_mat_q<type, mmq_x, nwarps, need_check><<<block_nums_mmq, block_dims, shmem, stream>>>
             (args.x, args.y, args.dst, tmp_last_tile.ptr, args.ne00, args.ne01, args.stride01, args.ne10, args.ne11, args.stride11, args.ne0);
-        mul_mat_q_stream_k_fixup<type, mmq_x, nwarps, need_check><<<block_nums, block_dims, 0, stream>>>
-            (args.dst, tmp_last_tile.ptr, args.ne00, args.ne01, args.ne11, args.ne0);
+        mul_mat_q_stream_k_fixup<type, mmq_x, nwarps, need_check><<<block_nums_fixup, block_dims, 0, stream>>>
+            (args.dst, tmp_last_tile.ptr, args.ne00, args.ne01, args.ne11, args.ne0, block_nums_mmq.x);
     }
 }
 
