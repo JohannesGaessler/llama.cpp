@@ -1970,6 +1970,9 @@ static __device__ void mul_mat_q_process_tile(
     }
 }
 
+
+// The mul_mat_q kernel implements "stream-k" work partitioning as described in https://arxiv.org/abs/2301.03598
+
 template <ggml_type type, int mmq_x, int nwarps, bool need_check>
 #if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
 #if defined(RDNA3) || defined(RDNA2)
@@ -1999,38 +2002,40 @@ static __global__ void mul_mat_q(
     const     int64_t blocks_per_ne00 = ne00 / qk;
     constexpr int     blocks_per_warp = WARP_SIZE / qi;
 
-    const int ntx = (ne11 + mmq_x - 1) / mmq_x;
-    const int nty = (ne01 + mmq_y - 1) / mmq_y;
+    const int ntx = (ne11 + mmq_x - 1) / mmq_x; // Number of tiles x
+    const int nty = (ne01 + mmq_y - 1) / mmq_y; // Number of tiles y
 
-    int64_t       kb       = GGML_PAD((int64_t) blockIdx.x     *blocks_per_ne00*ntx*nty / gridDim.x, blocks_per_warp);
-    const int64_t kb_stop  = GGML_PAD((int64_t)(blockIdx.x + 1)*blocks_per_ne00*ntx*nty / gridDim.x, blocks_per_warp);
+    // kbc == k block continuous, current index in continuous ijk space.
+    int64_t       kbc      = GGML_PAD((int64_t) blockIdx.x     *blocks_per_ne00*ntx*nty / gridDim.x, blocks_per_warp);
+    const int64_t kbc_stop = GGML_PAD((int64_t)(blockIdx.x + 1)*blocks_per_ne00*ntx*nty / gridDim.x, blocks_per_warp);
 
-    int kb0_start = kb % blocks_per_ne00;
-    int kb0_stop  = min(blocks_per_ne00, kb0_start + kb_stop - kb);
-    while (kb < kb_stop && kb0_stop == blocks_per_ne00) {
-        const int jt =  kb /    (blocks_per_ne00*nty);
-        const int it = (kb - jt*(blocks_per_ne00*nty)) / blocks_per_ne00;
+    // kb0 == k index when doing the matrix multiplication for an output tile.
+    int kb0_start = kbc % blocks_per_ne00;
+    int kb0_stop  = min(blocks_per_ne00, kb0_start + kbc_stop - kbc);
+    while (kbc < kbc_stop && kb0_stop == blocks_per_ne00) {
+        const int jt =  kbc /    (blocks_per_ne00*nty);                    // j index of current tile.
+        const int it = (kbc - jt*(blocks_per_ne00*nty)) / blocks_per_ne00; // i index of current tile.
 
-        constexpr bool fixup = false;
+        constexpr bool fixup = false; // All but (potentially) the last iterations write their data to dst rather than the fixup buffer.
         mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
             (x, yc, dst, tmp_last_tile, ne00, ne01, stride01, ne10, ne11, stride11, ne0,
              it, jt, kb0_start, kb0_stop);
 
-        kb += blocks_per_ne00;
-        kb -= kb % blocks_per_ne00;
+        kbc += blocks_per_ne00;
+        kbc -= kbc % blocks_per_ne00;
 
         kb0_start = 0;
-        kb0_stop  = min(blocks_per_ne00, kb_stop - kb);
+        kb0_stop  = min(blocks_per_ne00, kbc_stop - kbc);
     }
 
-    if (kb >= kb_stop) {
+    if (kbc >= kbc_stop) {
         return;
     }
 
-    const int jt =  kb /    (blocks_per_ne00*nty);
-    const int it = (kb - jt*(blocks_per_ne00*nty)) / blocks_per_ne00;
+    const int jt =  kbc /    (blocks_per_ne00*nty);
+    const int it = (kbc - jt*(blocks_per_ne00*nty)) / blocks_per_ne00;
 
-    constexpr bool fixup = true;
+    constexpr bool fixup = true; // Last index writes it data to fixup buffer to avoid data races with other blocks.
     mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
         (x, yc, dst, tmp_last_tile, ne00, ne01, stride01, ne10, ne11, stride11, ne0,
             it, jt, kb0_start, kb0_stop);
