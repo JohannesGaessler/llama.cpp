@@ -1964,16 +1964,11 @@ static __device__ void mul_mat_q_process_tile(
         }
     }
 
-    if (kb0_stop == blocks_per_ne00) {
-        write_back(sum, dst + jt*mmq_x*ne0 + it*mmq_y, ne0, tile_x_max_i, tile_y_max_j);
-    } else {
+    if (fixup) {
         write_back(sum, tmp_last_tile + blockIdx.x*(mmq_x*mmq_y), mmq_y, mmq_y, mmq_x);
+    } else {
+        write_back(sum, dst + jt*mmq_x*ne0 + it*mmq_y, ne0, tile_x_max_i, tile_y_max_j);
     }
-    // if (fixup) {
-    //     write_back(sum, tmp_last_tile + blockIdx.x*(mmq_x*mmq_y), mmq_y, mmq_y, mmq_x);
-    // } else {
-    //     write_back(sum, dst + jt*mmq_x*ne0 + it*mmq_y, ne0, tile_x_max_i, tile_y_max_j);
-    // }
 }
 
 template <ggml_type type, int mmq_x, int nwarps, bool need_check>
@@ -2011,12 +2006,11 @@ static __global__ void mul_mat_q(
     int64_t       kb       = GGML_PAD((int64_t) blockIdx.x     *blocks_per_ne00*ntx*nty / gridDim.x, blocks_per_warp);
     const int64_t kb_stop  = GGML_PAD((int64_t)(blockIdx.x + 1)*blocks_per_ne00*ntx*nty / gridDim.x, blocks_per_warp);
 
-    while (kb < kb_stop && kb/blocks_per_ne00 < (kb_stop-1)/blocks_per_ne00) {
+    int kb0_start = kb % blocks_per_ne00;
+    int kb0_stop  = min(blocks_per_ne00, kb0_start + kb_stop - kb);
+    while (kb < kb_stop && kb0_stop == blocks_per_ne00) {
         const int jt =  kb /    (blocks_per_ne00*nty);
         const int it = (kb - jt*(blocks_per_ne00*nty)) / blocks_per_ne00;
-
-        const int kb0_start = kb % blocks_per_ne00;
-        const int kb0_stop  = min(blocks_per_ne00, kb0_start + kb_stop - kb);
 
         mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, false>
             (x, yc, dst, tmp_last_tile, ne00, ne01, stride01, ne10, ne11, stride11, ne0,
@@ -2024,13 +2018,13 @@ static __global__ void mul_mat_q(
 
         kb += blocks_per_ne00;
         kb -= kb % blocks_per_ne00;
+
+        kb0_start = kb % blocks_per_ne00;
+        kb0_stop  = min(blocks_per_ne00, kb0_start + kb_stop - kb);
     }
 
     const int jt =  kb /    (blocks_per_ne00*nty);
     const int it = (kb - jt*(blocks_per_ne00*nty)) / blocks_per_ne00;
-
-    const int kb0_start = kb % blocks_per_ne00;
-    const int kb0_stop  = min(blocks_per_ne00, kb0_start + kb_stop - kb);
 
     mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, true>
         (x, yc, dst, tmp_last_tile, ne00, ne01, stride01, ne10, ne11, stride11, ne0,
