@@ -1901,26 +1901,10 @@ static bool mmq_need_sum(const ggml_type type_x) {
 }
 
 template <ggml_type type, int mmq_x, int nwarps, bool need_check>
-#if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-#if defined(RDNA3) || defined(RDNA2)
-    __launch_bounds__(WARP_SIZE*nwarps, 2)
-#endif // defined(RDNA3) || defined(RDNA2)
-#else
-#if __CUDA_ARCH__ >= CC_VOLTA
-    __launch_bounds__(WARP_SIZE*nwarps, 1)
-#else
-    __launch_bounds__(WARP_SIZE*nwarps, 2)
-#endif // __CUDA_ARCH__ >= CC_VOLTA
-#endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-static __global__ void mul_mat_q(
+static __device__ void mul_mat_q_process_tile(
     const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst, float * __restrict__ tmp_last_tile,
-    const int ne00, const int ne01, const int stride01, const int ne10, const int ne11, const int stride11, const int ne0) {
-
-    // Skip unused template specializations for faster compilation:
-    if (mmq_x > get_mmq_x_max_device()) {
-        NO_DEVICE_CODE;
-        return;
-    }
+    const int & ne00, const int & ne01, const int & stride01, const int & ne10, const int & ne11, const int & stride11, const int & ne0,
+    const int64_t & kb, const int64_t & kb_stop) {
 
     constexpr int              qk         = ggml_cuda_type_traits<type>::qk;
     constexpr int              qr         = ggml_cuda_type_traits<type>::qr;
@@ -1948,6 +1932,81 @@ static __global__ void mul_mat_q(
     const     int64_t blocks_per_ne00 = ne00 / qk;
     constexpr int     blocks_per_warp = WARP_SIZE / qi;
 
+    const int nty = (ne01 + mmq_y - 1) / mmq_y;
+
+    const int jt =  kb /    (blocks_per_ne00*nty);
+    const int it = (kb - jt*(blocks_per_ne00*nty)) / blocks_per_ne00;
+
+    float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
+
+    const int tile_x_max_i = ne01 - it*mmq_y - 1;
+    const int tile_y_max_j = ne11 - jt*mmq_x - 1;
+
+    const int * y = (const int *) yc + jt*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
+
+    const int kb0_start = kb % blocks_per_ne00;
+    const int kb0_stop  = min(blocks_per_ne00, kb0_start + kb_stop - kb);
+    for (int kb0 = kb0_start; kb0 < kb0_stop; kb0 += blocks_per_warp) {
+
+        load_tiles(x, tile_x_qs, tile_x_dm, tile_x_sc, stride01*it*mmq_y + kb0, tile_x_max_i, stride01);
+
+#pragma unroll
+        for (int kr = 0; kr < qr; ++kr) {
+            const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + kr*sizeof(block_q8_1_mmq)/sizeof(int));
+#pragma unroll
+            for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += nwarps*WARP_SIZE) {
+                int l = l0 + threadIdx.y*WARP_SIZE + threadIdx.x;
+
+                tile_y[l] = by0[l];
+            }
+
+            __syncthreads();
+
+// #pragma unroll // unrolling this loop causes too much register pressure
+            for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
+                vec_dot(tile_x_qs, tile_x_dm, tile_x_sc, tile_y, sum, k0);
+            }
+
+            __syncthreads();
+        }
+    }
+
+    if (kb0_stop == blocks_per_ne00) {
+        write_back(sum, dst + jt*mmq_x*ne0 + it*mmq_y, ne0, tile_x_max_i, tile_y_max_j);
+    } else {
+        write_back(sum, tmp_last_tile + blockIdx.x*(mmq_x*mmq_y), mmq_y, mmq_y, mmq_x);
+    }
+}
+
+template <ggml_type type, int mmq_x, int nwarps, bool need_check>
+#if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
+#if defined(RDNA3) || defined(RDNA2)
+    __launch_bounds__(WARP_SIZE*nwarps, 2)
+#endif // defined(RDNA3) || defined(RDNA2)
+#else
+#if __CUDA_ARCH__ >= CC_VOLTA
+    __launch_bounds__(WARP_SIZE*nwarps, 1)
+#else
+    __launch_bounds__(WARP_SIZE*nwarps, 2)
+#endif // __CUDA_ARCH__ >= CC_VOLTA
+#endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
+static __global__ void mul_mat_q(
+    const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst, float * __restrict__ tmp_last_tile,
+    const int ne00, const int ne01, const int stride01, const int ne10, const int ne11, const int stride11, const int ne0) {
+
+    // Skip unused template specializations for faster compilation:
+    if (mmq_x > get_mmq_x_max_device()) {
+        NO_DEVICE_CODE;
+        return;
+    }
+
+    constexpr int              qk         = ggml_cuda_type_traits<type>::qk;
+    constexpr int              qi         = ggml_cuda_type_traits<type>::qi;
+    constexpr int              mmq_y      = get_mmq_y_device(mmq_x);
+
+    const     int64_t blocks_per_ne00 = ne00 / qk;
+    constexpr int     blocks_per_warp = WARP_SIZE / qi;
+
     const int ntx = (ne11 + mmq_x - 1) / mmq_x;
     const int nty = (ne01 + mmq_y - 1) / mmq_y;
 
@@ -1955,51 +2014,13 @@ static __global__ void mul_mat_q(
     const int64_t kb_stop  = GGML_PAD((int64_t)(blockIdx.x + 1)*blocks_per_ne00*ntx*nty / gridDim.x, blocks_per_warp);
 
     while (kb < kb_stop) {
-        const int jt =  kb /    (blocks_per_ne00*nty);
-        const int it = (kb - jt*(blocks_per_ne00*nty)) / blocks_per_ne00;
-
-        float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
-
-        const int tile_x_max_i = ne01 - it*mmq_y - 1;
-        const int tile_y_max_j = ne11 - jt*mmq_x - 1;
-
-        const int * y = (const int *) yc + jt*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
-
-        const int kb0_start = kb % blocks_per_ne00;
-        const int kb0_stop  = min(blocks_per_ne00, kb0_start + kb_stop - kb);
-        for (int kb0 = kb0_start; kb0 < kb0_stop; kb0 += blocks_per_warp) {
-
-            load_tiles(x, tile_x_qs, tile_x_dm, tile_x_sc, stride01*it*mmq_y + kb0, tile_x_max_i, stride01);
-
-#pragma unroll
-            for (int kr = 0; kr < qr; ++kr) {
-                const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + kr*sizeof(block_q8_1_mmq)/sizeof(int));
-#pragma unroll
-                for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += nwarps*WARP_SIZE) {
-                    int l = l0 + threadIdx.y*WARP_SIZE + threadIdx.x;
-
-                    tile_y[l] = by0[l];
-                }
-
-                __syncthreads();
-
-// #pragma unroll // unrolling this loop causes too much register pressure
-                for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
-                    vec_dot(tile_x_qs, tile_x_dm, tile_x_sc, tile_y, sum, k0);
-                }
-
-                __syncthreads();
-            }
-        }
+        mul_mat_q_process_tile<type, mmq_x, nwarps, need_check>
+            (x, yc, dst, tmp_last_tile, ne00, ne01, stride01, ne10, ne11, stride11, ne0,
+             kb, kb_stop);
 
         kb += blocks_per_ne00;
         kb -= kb % blocks_per_ne00;
 
-        if (kb0_stop == blocks_per_ne00) {
-            write_back(sum, dst + jt*mmq_x*ne0 + it*mmq_y, ne0, tile_x_max_i, tile_y_max_j);
-        } else {
-            write_back(sum, tmp_last_tile + blockIdx.x*(mmq_x*mmq_y), mmq_y, mmq_y, mmq_x);
-        }
     }
 }
 
