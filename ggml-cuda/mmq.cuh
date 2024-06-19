@@ -1902,7 +1902,7 @@ static bool mmq_need_sum(const ggml_type type_x) {
 
 template <ggml_type type, int mmq_x, int nwarps, bool need_check, bool fixup>
 static __device__ void mul_mat_q_process_tile(
-    const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst, float * __restrict__ tmp_last_tile,
+    const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst, float * __restrict__ tmp_fixup,
     const int & ne00, const int & ne01, const int & stride01, const int & ne10, const int & ne11, const int & stride11, const int & ne0,
     const int & it, const int & jt, const int & kb0_start, const int & kb0_stop) {
 
@@ -1964,7 +1964,7 @@ static __device__ void mul_mat_q_process_tile(
     }
 
     if (fixup) {
-        write_back(sum, tmp_last_tile + blockIdx.x*(mmq_x*mmq_y), mmq_y, mmq_y, mmq_x);
+        write_back(sum, tmp_fixup + blockIdx.x*(mmq_x*mmq_y), mmq_y, mmq_y, mmq_x);
     } else {
         write_back(sum, dst + jt*mmq_x*ne0 + it*mmq_y, ne0, tile_x_max_i, tile_y_max_j);
     }
@@ -1986,7 +1986,7 @@ template <ggml_type type, int mmq_x, int nwarps, bool need_check>
 #endif // __CUDA_ARCH__ >= CC_VOLTA
 #endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
 static __global__ void mul_mat_q(
-    const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst, float * __restrict__ tmp_last_tile,
+    const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst, float * __restrict__ tmp_fixup,
     const int ne00, const int ne01, const int stride01, const int ne10, const int ne11, const int stride11, const int ne0) {
 
     // Skip unused template specializations for faster compilation:
@@ -2018,7 +2018,7 @@ static __global__ void mul_mat_q(
 
         constexpr bool fixup = false; // All but (potentially) the last iterations write their data to dst rather than the fixup buffer.
         mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
-            (x, yc, dst, tmp_last_tile, ne00, ne01, stride01, ne10, ne11, stride11, ne0,
+            (x, yc, dst, tmp_fixup, ne00, ne01, stride01, ne10, ne11, stride11, ne0,
              it, jt, kb0_start, kb0_stop);
 
         kbc += blocks_per_ne00;
@@ -2037,7 +2037,7 @@ static __global__ void mul_mat_q(
 
     constexpr bool fixup = true; // Last index writes it data to fixup buffer to avoid data races with other blocks.
     mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
-        (x, yc, dst, tmp_last_tile, ne00, ne01, stride01, ne10, ne11, stride11, ne0,
+        (x, yc, dst, tmp_fixup, ne00, ne01, stride01, ne10, ne11, stride11, ne0,
             it, jt, kb0_start, kb0_stop);
 }
 
@@ -2169,20 +2169,24 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
 #endif // !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__))
 
     ggml_cuda_pool & pool = ctx.pool();
-    ggml_cuda_pool_alloc<float> tmp_last_tile(pool, block_nums_mmq.x * mmq_x*mmq_y);
+    ggml_cuda_pool_alloc<float> tmp_fixup(pool, block_nums_mmq.x * mmq_x*mmq_y);
 
     if (args.ne01 % mmq_y == 0) {
         const bool need_check = false;
+
         mul_mat_q<type, mmq_x, nwarps, need_check><<<block_nums_mmq, block_dims, shmem, stream>>>
-            (args.x, args.y, args.dst, tmp_last_tile.ptr, args.ne00, args.ne01, args.stride01, args.ne10, args.ne11, args.stride11, args.ne0);
+            (args.x, args.y, args.dst, tmp_fixup.ptr, args.ne00, args.ne01, args.stride01, args.ne10, args.ne11, args.stride11, args.ne0);
+
         mul_mat_q_stream_k_fixup<type, mmq_x, nwarps, need_check><<<block_nums_fixup, block_dims, 0, stream>>>
-            (args.dst, tmp_last_tile.ptr, args.ne00, args.ne01, args.ne11, args.ne0, block_nums_mmq.x);
+            (args.dst, tmp_fixup.ptr, args.ne00, args.ne01, args.ne11, args.ne0, block_nums_mmq.x);
     } else {
         const bool need_check = true;
+
         mul_mat_q<type, mmq_x, nwarps, need_check><<<block_nums_mmq, block_dims, shmem, stream>>>
-            (args.x, args.y, args.dst, tmp_last_tile.ptr, args.ne00, args.ne01, args.stride01, args.ne10, args.ne11, args.stride11, args.ne0);
+            (args.x, args.y, args.dst, tmp_fixup.ptr, args.ne00, args.ne01, args.stride01, args.ne10, args.ne11, args.stride11, args.ne0);
+
         mul_mat_q_stream_k_fixup<type, mmq_x, nwarps, need_check><<<block_nums_fixup, block_dims, 0, stream>>>
-            (args.dst, tmp_last_tile.ptr, args.ne00, args.ne01, args.ne11, args.ne0, block_nums_mmq.x);
+            (args.dst, tmp_fixup.ptr, args.ne00, args.ne01, args.ne11, args.ne0, block_nums_mmq.x);
     }
 }
 
