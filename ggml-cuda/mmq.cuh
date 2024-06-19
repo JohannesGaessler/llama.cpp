@@ -1966,7 +1966,7 @@ static __global__ void mul_mat_q(
         const int * y = (const int *) yc + jt*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
 
         const int kb0_start = kb % blocks_per_ne00;
-        const int kb0_stop  = min(blocks_per_ne00, kb_stop - kb);
+        const int kb0_stop  = min(blocks_per_ne00, kb0_start + kb_stop - kb);
         for (int kb0 = kb0_start; kb0 < kb0_stop; kb0 += blocks_per_warp) {
 
             load_tiles(x, tile_x_qs, tile_x_dm, tile_x_sc, stride01*it*mmq_y + kb0, tile_x_max_i, stride01);
@@ -2110,7 +2110,7 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     const int block_num_x = (args.ne01 + mmq_y - 1) / mmq_y;
     const int block_num_y = (args.ne11 + mmq_x - 1) / mmq_x;
     const dim3 block_nums_fixup(block_num_x, block_num_y, 1);
-    const dim3 block_nums_mmq(nsm/4, 1, 1);
+    const dim3 block_nums_mmq(nsm, 1, 1);
 
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
