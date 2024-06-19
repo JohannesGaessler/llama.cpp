@@ -2026,9 +2026,7 @@ static void launch_mul_mat_q(const mmq_args & args, cudaStream_t stream) {
     const int nsm = ggml_cuda_info().devices[id].nsm;
     const int mmq_y = get_mmq_y_host(cc, mmq_x);
 
-    const int block_num_x = (args.ne01 + mmq_y - 1) / mmq_y;
-    const int block_num_y = (args.ne11 + mmq_x - 1) / mmq_x;
-    const dim3 block_nums(block_num_x*block_num_y, 1, 1);
+    const dim3 block_nums(2*nsm, 1, 1);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
     const int shmem = mmq_get_shmem(type, mmq_x, mmq_y);
@@ -2064,14 +2062,12 @@ void mul_mat_q_case(const mmq_args & args, cudaStream_t stream) {
 
     const int mmq_x_max = get_mmq_x_max_host(cc);
     const int mmq_y = get_mmq_y_host(cc, mmq_x_max);
-    const int block_num_y = (args.ne01 + mmq_y - 1) / mmq_y;
 
     int mmq_x_best  = 0;
     int nwaves_best = INT_MAX;
 
     for (int mmq_x = 8; mmq_x <= mmq_x_max && nwaves_best > 1; mmq_x += 8) {
-        const int block_num_x = (args.ne11 + mmq_x - 1) / mmq_x;
-        const int nwaves = (block_num_x*block_num_y + nsm - 1) / nsm;
+        const int nwaves = (args.ne11 + mmq_x - 1) / mmq_x;
 
         if (nwaves < nwaves_best && mmq_get_shmem(type, mmq_x, mmq_y) <= smpbo) {
             mmq_x_best  = mmq_x;
