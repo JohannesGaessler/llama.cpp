@@ -8,6 +8,7 @@
 #include <cstdint>
 
 #define MMQ_TILE_Y_K (WARP_SIZE + WARP_SIZE/QI8_1)
+#define MMQ_STREAM_K_GRANULARITY 256
 
 typedef void (*load_tiles_mmq_t)(
     const char * __restrict__ x, int * __restrict__ x_qs, half2 * __restrict__ x_dm,
@@ -1945,12 +1946,17 @@ static __global__ void mul_mat_q(
     int   * tile_x_sc = (int   *) (tile_x_dm + txs.dm);
     int   * tile_y    = (int   *) (tile_x_sc + txs.sc); // [mmq_x * (WARP_SIZE + WARP_SIZE/QI8_1)]
 
-    const int blocks_per_row_x = ne00 / qk;
-    const int blocks_per_warp = WARP_SIZE / qi;
-
-    const int nty = (ne01 + mmq_y - 1) / mmq_y;
+    // const int ntx    = (ne11 + mmq_x - 1) / mmq_x;
+    const int nty    = (ne01 + mmq_y - 1) / mmq_y;
+    // const int ntz    = ne00/MMQ_STREAM_K_GRANULARITY;
+    // const int it_start = (ntx*nty*ntz) *  blockIdx.x    / gridDim.x;
+    // const int it_stop  = (ntx*nty*ntz) * (blockIdx.x+1) / gridDim.x;
     const int itx = blockIdx.x / nty;
     const int ity = blockIdx.x - itx*nty;
+
+    const     int blocks_per_ne00 = ne00 / qk;
+    constexpr int blocks_per_task = MMQ_STREAM_K_GRANULARITY / qk;
+    constexpr int blocks_per_warp = WARP_SIZE / qi;
 
     const int tile_x_max_i = ne01 - ity*mmq_y - 1;
     const int tile_y_max_j = ne11 - itx*mmq_x - 1;
@@ -1959,32 +1965,39 @@ static __global__ void mul_mat_q(
 
     float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
 
-    for (int kb0 = 0; kb0 < blocks_per_row_x; kb0 += blocks_per_warp) {
+    for (int kt = 0; kt < blocks_per_ne00; kt += blocks_per_task) {
+#pragma unroll
+        for (int kb0 = 0; kb0 < blocks_per_task; kb0 += blocks_per_warp) {
 
-        load_tiles(x, tile_x_qs, tile_x_dm, tile_x_sc, stride01*ity*mmq_y + kb0, tile_x_max_i, stride01);
+            load_tiles(x, tile_x_qs, tile_x_dm, tile_x_sc, stride01*ity*mmq_y + kt + kb0, tile_x_max_i, stride01);
 
 #pragma unroll
-        for (int kr = 0; kr < qr; ++kr) {
-            const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + kr*sizeof(block_q8_1_mmq)/sizeof(int));
+            for (int kr = 0; kr < qr; ++kr) {
+                const int * by0 = y + stride11*((kt + kb0)*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + kr*sizeof(block_q8_1_mmq)/sizeof(int));
 #pragma unroll
-            for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += nwarps*WARP_SIZE) {
-                int l = l0 + threadIdx.y*WARP_SIZE + threadIdx.x;
+                for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += nwarps*WARP_SIZE) {
+                    int l = l0 + threadIdx.y*WARP_SIZE + threadIdx.x;
 
-                tile_y[l] = by0[l];
-            }
+                    tile_y[l] = by0[l];
+                }
 
-            __syncthreads();
+                __syncthreads();
 
 // #pragma unroll // unrolling this loop causes too much register pressure
-            for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
-                vec_dot(tile_x_qs, tile_x_dm, tile_x_sc, tile_y, sum, k0);
+                for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
+                    vec_dot(tile_x_qs, tile_x_dm, tile_x_sc, tile_y, sum, k0);
+                }
+
+                __syncthreads();
             }
-
-            __syncthreads();
         }
-    }
 
-    write_back(sum, dst + itx*mmq_x*ne0 + ity*mmq_y, ne0, tile_x_max_i, tile_y_max_j);
+        if (kt + blocks_per_task < blocks_per_ne00) {
+            continue;
+        }
+
+        write_back(sum, dst + itx*mmq_x*ne0 + ity*mmq_y, ne0, tile_x_max_i, tile_y_max_j);
+    }
 }
 
 struct mmq_args {
@@ -2011,6 +2024,7 @@ template <ggml_type type, int mmq_x, int nwarps>
 static void launch_mul_mat_q(const mmq_args & args, cudaStream_t stream) {
     const int id = ggml_cuda_get_device();
     const int cc = ggml_cuda_info().devices[id].cc;
+    const int nsm = ggml_cuda_info().devices[id].nsm;
     const int mmq_y = get_mmq_y_host(cc, mmq_x);
 
     const int block_num_x = (args.ne01 + mmq_y - 1) / mmq_y;
