@@ -1993,9 +1993,9 @@ static __global__ void mul_mat_q(
         return;
     }
 
-    constexpr int              qk         = ggml_cuda_type_traits<type>::qk;
-    constexpr int              qi         = ggml_cuda_type_traits<type>::qi;
-    constexpr int              mmq_y      = get_mmq_y_device(mmq_x);
+    constexpr int qk    = ggml_cuda_type_traits<type>::qk;
+    constexpr int qi    = ggml_cuda_type_traits<type>::qi;
+    constexpr int mmq_y = get_mmq_y_device(mmq_x);
 
     const     int64_t blocks_per_ne00 = ne00 / qk;
     constexpr int     blocks_per_warp = WARP_SIZE / qi;
