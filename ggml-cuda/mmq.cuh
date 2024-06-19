@@ -1904,7 +1904,7 @@ template <ggml_type type, int mmq_x, int nwarps, bool need_check>
 static __device__ void mul_mat_q_process_tile(
     const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst, float * __restrict__ tmp_last_tile,
     const int & ne00, const int & ne01, const int & stride01, const int & ne10, const int & ne11, const int & stride11, const int & ne0,
-    const int & it, const int & jt, const int64_t & kb, const int64_t & kb_stop) {
+    const int & it, const int & jt, const int & kb0_start, const int & kb0_stop) {
 
     constexpr int              qk         = ggml_cuda_type_traits<type>::qk;
     constexpr int              qr         = ggml_cuda_type_traits<type>::qr;
@@ -1939,8 +1939,6 @@ static __device__ void mul_mat_q_process_tile(
 
     const int * y = (const int *) yc + jt*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
 
-    const int kb0_start = kb % blocks_per_ne00;
-    const int kb0_stop  = min(blocks_per_ne00, kb0_start + kb_stop - kb);
     for (int kb0 = kb0_start; kb0 < kb0_stop; kb0 += blocks_per_warp) {
 
         load_tiles(x, tile_x_qs, tile_x_dm, tile_x_sc, stride01*it*mmq_y + kb0, tile_x_max_i, stride01);
@@ -2012,9 +2010,12 @@ static __global__ void mul_mat_q(
         const int jt =  kb /    (blocks_per_ne00*nty);
         const int it = (kb - jt*(blocks_per_ne00*nty)) / blocks_per_ne00;
 
+        const int kb0_start = kb % blocks_per_ne00;
+        const int kb0_stop  = min(blocks_per_ne00, kb0_start + kb_stop - kb);
+
         mul_mat_q_process_tile<type, mmq_x, nwarps, need_check>
             (x, yc, dst, tmp_last_tile, ne00, ne01, stride01, ne10, ne11, stride11, ne0,
-             it, jt, kb, kb_stop);
+             it, jt, kb0_start, kb0_stop);
 
         kb += blocks_per_ne00;
         kb -= kb % blocks_per_ne00;
