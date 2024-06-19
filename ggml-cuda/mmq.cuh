@@ -1971,7 +1971,8 @@ static __global__ void mul_mat_q(
 
         const int * y = (const int *) yc + jt*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
 
-        for (int kb0 = 0; kb0 < blocks_per_ne00; kb0 += blocks_per_warp) {
+        const int first_iter = it == it_start && jt == jt_start;
+        for (int kb0 = first_iter*(k_start % blocks_per_ne00); kb0 < blocks_per_ne00; kb0 += blocks_per_warp) {
 
             load_tiles(x, tile_x_qs, tile_x_dm, tile_x_sc, stride01*it*mmq_y + kb0, tile_x_max_i, stride01);
 
