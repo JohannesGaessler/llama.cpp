@@ -1952,14 +1952,12 @@ static __global__ void mul_mat_q(
     const int nty = (ne01 + mmq_y - 1) / mmq_y;
 
     const int64_t kb_start = GGML_PAD((int64_t) blockIdx.x     *blocks_per_ne00*ntx*nty / gridDim.x, blocks_per_warp);
+    int64_t       kb_done  = 0;
+
+    int jt =  kb_start /    (blocks_per_ne00*nty);
+    int it = (kb_start - jt*(blocks_per_ne00*nty)) / blocks_per_ne00;
+
     const int64_t kb_stop  = GGML_PAD((int64_t)(blockIdx.x + 1)*blocks_per_ne00*ntx*nty / gridDim.x, blocks_per_warp);
-
-    const int jt_start = kb_start / (blocks_per_ne00*nty);
-    const int it_start = (kb_start - jt_start*(blocks_per_ne00*nty)) / blocks_per_ne00;
-
-    int     it      = it_start;
-    int     jt      = jt_start;
-    int64_t kb_done = 0;
 
     while (kb_done < kb_stop - kb_start) {
         float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
