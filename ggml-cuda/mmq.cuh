@@ -2021,9 +2021,10 @@ static __global__ void mul_mat_q_stream_k_fixup(
 
     bool any_fixup = false;
 
-    const int bidx_start = (blockIdx.y*nty + blockIdx.x) * block_num_mmq / (gridDim.y*gridDim.x);
+    const int bidx_start = (blockIdx.y*nty + blockIdx.x)     * block_num_mmq / (gridDim.y*gridDim.x);
+    const int bidx_stop  = (blockIdx.y*nty + blockIdx.x + 1) * block_num_mmq / (gridDim.y*gridDim.x) + 1;
 
-    for (int bidx = bidx_start; bidx < block_num_mmq; ++bidx) {
+    for (int bidx = bidx_start; bidx < bidx_stop; ++bidx) {
         const int64_t kb_stop = GGML_PAD((int64_t)(bidx + 1)*blocks_per_ne00*ntx*nty / block_num_mmq, blocks_per_warp);
 
         if (kb_stop % blocks_per_ne00 == 0) {
