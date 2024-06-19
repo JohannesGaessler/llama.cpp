@@ -1954,20 +1954,20 @@ static __global__ void mul_mat_q(
     // const int k_start = GGML_PAD((ntx*nty*ne00) *  blockIdx.x    / gridDim.x, blocks_per_warp*qk);
     // const int k_stop  = GGML_PAD((ntx*nty*ne00) * (blockIdx.x+1) / gridDim.x, blocks_per_warp*qk);
     const int k_start =  blockIdx.x     *ne00;
-    // const int k_stop  = (blockIdx.x + 1)*ne00;
+    const int k_stop  = (blockIdx.x + 1)*ne00;
 
     const int jt_start = k_start / (ne00*nty);
-    // const int jt_stop  = k_stop  / (ne00*nty);
+    const int jt_stop  = k_stop  / (ne00*nty);
 
     const int it_start = (k_start - jt_start*(ne00*nty)) / ne00;
-    // const int it_stop  = (k_stop  - jt_stop *(ne00*nty)) / ne00;
+    const int it_stop  = (k_stop  - jt_stop *(ne00*nty)) / ne00;
 
     float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
 
     int it = it_start;
     int jt = jt_start;
 
-    // while (it < it_stop && jt < jt_stop) {
+    while (it < it_stop || jt < jt_stop) {
     const int tile_x_max_i = ne01 - it*mmq_y - 1;
     const int tile_y_max_j = ne11 - jt*mmq_x - 1;
 
@@ -1999,10 +1999,10 @@ static __global__ void mul_mat_q(
     }
     write_back(sum, dst + jt*mmq_x*ne0 + it*mmq_y, ne0, tile_x_max_i, tile_y_max_j);
 
-    // it++;
-    // jt += it / nty;
-    // it = it % nty;
-    // }
+    it++;
+    jt += it / nty;
+    it = it % nty;
+    }
 }
 
 struct mmq_args {
