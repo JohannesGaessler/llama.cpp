@@ -15,7 +15,7 @@ typedef void (*load_tiles_mmq_t)(
 typedef void (*vec_dot_mmq_t)(
     const int * __restrict__ x_qs, const half2 * __restrict__ x_dm, const int * __restrict__ x_sc,
     const int * __restrict__ y, float * __restrict__ sum, const int & k0);
-typedef void (*mmq_write_back_t)(const float * __restrict__ sum, float * __restrict__ dst, const int & ne0, const int & ne1, const int & itx, const int & ity);
+typedef void (*mmq_write_back_t)(const float * __restrict__ sum, float * __restrict__ dst, const int & stride, const int & i_max, const int & j_max);
 
 struct block_q8_1_mmq {
     half2  ds[4];
@@ -1735,32 +1735,32 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_mma(
 
 template<int mmq_x, int mmq_y, int nwarps, bool need_check>
 static __device__ __forceinline__ void mmq_write_back_dp4a(
-    const float * __restrict__ sum, float * __restrict__ dst, const int & ne0, const int & ne1, const int & itx, const int & ity) {
+    const float * __restrict__ sum, float * __restrict__ dst, const int & stride, const int & i_max, const int & j_max) {
 
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
-        const int j = itx*mmq_x + j0 + threadIdx.y;
+        const int j = j0 + threadIdx.y;
 
-        if (j >= ne1) {
+        if (j > j_max) {
             return;
         }
 
 #pragma unroll
         for (int i0 = 0; i0 < mmq_y; i0 += WARP_SIZE) {
-            const int i = ity*mmq_y + i0 + threadIdx.x;
+            const int i = i0 + threadIdx.x;
 
-            if (need_check && i >= ne0) {
+            if (need_check && i > i_max) {
                 continue;
             }
 
-            dst[j*ne0 + i] = sum[(j0/nwarps) * (mmq_y/WARP_SIZE) + i0/WARP_SIZE];
+            dst[j*stride + i] = sum[(j0/nwarps) * (mmq_y/WARP_SIZE) + i0/WARP_SIZE];
         }
     }
 }
 
 template<int mmq_x, int mmq_y, int nwarps, bool need_check>
 static __device__ __forceinline__ void mmq_write_back_mma(
-    const float * __restrict__ sum, float * __restrict__ dst, const int & ne0, const int & ne1, const int & itx, const int & ity) {
+    const float * __restrict__ sum, float * __restrict__ dst, const int & stride, const int & i_max, const int & j_max) {
 
     typedef mma_int_C_I16J8 mma_C;
 
@@ -1773,19 +1773,19 @@ static __device__ __forceinline__ void mmq_write_back_mma(
     for (int j0 = 0; j0 < mmq_x; j0 += mma_C::J) {
 #pragma unroll
         for (int l = 0; l < mma_C::ne; ++l) {
-            const int j = itx*mmq_x + j0 + mma_C::get_j(l);
+            const int j = j0 + mma_C::get_j(l);
 
-            if (j >= ne1) {
+            if (j > j_max) {
                 continue;
             }
 
-            const int i = ity*mmq_y + i0 + mma_C::get_i(l);
+            const int i = i0 + mma_C::get_i(l);
 
-            if (need_check && i >= ne0) {
+            if (need_check && i > i_max) {
                 continue;
             }
 
-            dst[j*ne0 + i] = sum[(j0/mma_C::J)*mma_C::ne + l];
+            dst[j*stride + i] = sum[(j0/mma_C::J)*mma_C::ne + l];
         }
     }
 }
@@ -1948,13 +1948,12 @@ static __global__ void mul_mat_q(
     const int blocks_per_row_x = ne00 / qk;
     const int blocks_per_warp = WARP_SIZE / qi;
 
-    const int & ne1 = ne11;
-
-    const int nty = (ne0 + mmq_y - 1) / mmq_y;
+    const int nty = (ne01 + mmq_y - 1) / mmq_y;
     const int itx = blockIdx.x / nty;
     const int ity = blockIdx.x - itx*nty;
 
-    const int tile_x_max_i = ne01 - itx*mmq_y - 1;
+    const int tile_x_max_i = ne01 - ity*mmq_y - 1;
+    const int tile_y_max_j = ne11 - itx*mmq_x - 1;
 
     const int * y = (const int *) yc + itx*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
 
@@ -1985,7 +1984,7 @@ static __global__ void mul_mat_q(
         }
     }
 
-    write_back(sum, dst, ne0, ne1, itx, ity);
+    write_back(sum, dst + itx*mmq_x*ne0 + ity*mmq_y, ne0, tile_x_max_i, tile_y_max_j);
 }
 
 struct mmq_args {
