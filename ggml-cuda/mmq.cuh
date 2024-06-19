@@ -15,7 +15,7 @@ typedef void (*load_tiles_mmq_t)(
 typedef void (*vec_dot_mmq_t)(
     const int * __restrict__ x_qs, const half2 * __restrict__ x_dm, const int * __restrict__ x_sc,
     const int * __restrict__ y, float * __restrict__ sum, const int & k0);
-typedef void (*mmq_write_back_t)(const float * __restrict__ sum, float * __restrict__ dst, const int & ne0, const int & ne1);
+typedef void (*mmq_write_back_t)(const float * __restrict__ sum, float * __restrict__ dst, const int & ne0, const int & ne1, const int & itx, const int & ity);
 
 struct block_q8_1_mmq {
     half2  ds[4];
@@ -1734,10 +1734,12 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_mma(
 }
 
 template<int mmq_x, int mmq_y, int nwarps, bool need_check>
-static __device__ __forceinline__ void mmq_write_back_dp4a(const float * __restrict__ sum, float * __restrict__ dst, const int & ne0, const int & ne1) {
+static __device__ __forceinline__ void mmq_write_back_dp4a(
+    const float * __restrict__ sum, float * __restrict__ dst, const int & ne0, const int & ne1, const int & itx, const int & ity) {
+
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
-        const int j = blockIdx.y*mmq_x + j0 + threadIdx.y;
+        const int j = itx*mmq_x + j0 + threadIdx.y;
 
         if (j >= ne1) {
             return;
@@ -1745,7 +1747,7 @@ static __device__ __forceinline__ void mmq_write_back_dp4a(const float * __restr
 
 #pragma unroll
         for (int i0 = 0; i0 < mmq_y; i0 += WARP_SIZE) {
-            const int i = blockIdx.x*mmq_y + i0 + threadIdx.x;
+            const int i = ity*mmq_y + i0 + threadIdx.x;
 
             if (need_check && i >= ne0) {
                 continue;
@@ -1757,7 +1759,9 @@ static __device__ __forceinline__ void mmq_write_back_dp4a(const float * __restr
 }
 
 template<int mmq_x, int mmq_y, int nwarps, bool need_check>
-static __device__ __forceinline__ void mmq_write_back_mma(const float * __restrict__ sum, float * __restrict__ dst, const int & ne0, const int & ne1) {
+static __device__ __forceinline__ void mmq_write_back_mma(
+    const float * __restrict__ sum, float * __restrict__ dst, const int & ne0, const int & ne1, const int & itx, const int & ity) {
+
     typedef mma_int_C_I16J8 mma_C;
 
     const int i0 = threadIdx.y*mma_C::I;
@@ -1769,13 +1773,13 @@ static __device__ __forceinline__ void mmq_write_back_mma(const float * __restri
     for (int j0 = 0; j0 < mmq_x; j0 += mma_C::J) {
 #pragma unroll
         for (int l = 0; l < mma_C::ne; ++l) {
-            const int j = blockIdx.y*mmq_x + j0 + mma_C::get_j(l);
+            const int j = itx*mmq_x + j0 + mma_C::get_j(l);
 
             if (j >= ne1) {
                 continue;
             }
 
-            const int i = blockIdx.x*mmq_y + i0 + mma_C::get_i(l);
+            const int i = ity*mmq_y + i0 + mma_C::get_i(l);
 
             if (need_check && i >= ne0) {
                 continue;
@@ -1946,15 +1950,19 @@ static __global__ void mul_mat_q(
 
     const int & ne1 = ne11;
 
-    const int tile_x_max_i = ne01 - blockIdx.x*mmq_y - 1;
+    const int nty = (ne0 + mmq_y - 1) / mmq_y;
+    const int itx = blockIdx.x / nty;
+    const int ity = blockIdx.x - itx*nty;
 
-    const int * y = (const int *) yc + blockIdx.y*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
+    const int tile_x_max_i = ne01 - itx*mmq_y - 1;
+
+    const int * y = (const int *) yc + itx*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
 
     float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
 
     for (int kb0 = 0; kb0 < blocks_per_row_x; kb0 += blocks_per_warp) {
 
-        load_tiles(x, tile_x_qs, tile_x_dm, tile_x_sc, stride01*blockIdx.x*mmq_y + kb0, tile_x_max_i, stride01);
+        load_tiles(x, tile_x_qs, tile_x_dm, tile_x_sc, stride01*ity*mmq_y + kb0, tile_x_max_i, stride01);
 
 #pragma unroll
         for (int kr = 0; kr < qr; ++kr) {
@@ -1977,7 +1985,7 @@ static __global__ void mul_mat_q(
         }
     }
 
-    write_back(sum, dst, ne0, ne1);
+    write_back(sum, dst, ne0, ne1, itx, ity);
 }
 
 struct mmq_args {
@@ -2008,7 +2016,7 @@ static void launch_mul_mat_q(const mmq_args & args, cudaStream_t stream) {
 
     const int block_num_x = (args.ne01 + mmq_y - 1) / mmq_y;
     const int block_num_y = (args.ne11 + mmq_x - 1) / mmq_x;
-    const dim3 block_nums(block_num_x, block_num_y, 1);
+    const dim3 block_nums(block_num_x*block_num_y, 1, 1);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
     const int shmem = mmq_get_shmem(type, mmq_x, mmq_y);
