@@ -2012,7 +2012,8 @@ static __global__ void mul_mat_q(
         const int jt =  kb /    (blocks_per_ne00*nty);
         const int it = (kb - jt*(blocks_per_ne00*nty)) / blocks_per_ne00;
 
-        mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, false>
+        constexpr bool fixup = false;
+        mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
             (x, yc, dst, tmp_last_tile, ne00, ne01, stride01, ne10, ne11, stride11, ne0,
              it, jt, kb0_start, kb0_stop);
 
@@ -2023,9 +2024,14 @@ static __global__ void mul_mat_q(
         kb0_stop  = min(blocks_per_ne00, kb0_start + kb_stop - kb);
     }
 
+    if (kb >= kb_stop) {
+        return;
+    }
+
     const int jt =  kb /    (blocks_per_ne00*nty);
     const int it = (kb - jt*(blocks_per_ne00*nty)) / blocks_per_ne00;
 
+    constexpr bool fixup = true;
     mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, true>
         (x, yc, dst, tmp_last_tile, ne00, ne01, stride01, ne10, ne11, stride11, ne0,
             it, jt, kb0_start, kb0_stop);
