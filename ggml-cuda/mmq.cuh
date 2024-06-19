@@ -2019,8 +2019,8 @@ static __global__ void mul_mat_q(
         kb += blocks_per_ne00;
         kb -= kb % blocks_per_ne00;
 
-        kb0_start = kb % blocks_per_ne00;
-        kb0_stop  = min(blocks_per_ne00, kb0_start + kb_stop - kb);
+        kb0_start = 0;
+        kb0_stop  = min(blocks_per_ne00, kb_stop - kb);
     }
 
     if (kb >= kb_stop) {
