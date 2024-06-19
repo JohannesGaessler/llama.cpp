@@ -1945,25 +1945,23 @@ static __global__ void mul_mat_q(
     int   * tile_x_sc = (int   *) (tile_x_dm + txs.dm);
     int   * tile_y    = (int   *) (tile_x_sc + txs.sc); // [mmq_x * (WARP_SIZE + WARP_SIZE/QI8_1)]
 
-    const int blocks_per_ne00 = ne00 / qk;
-    constexpr int blocks_per_warp = WARP_SIZE / qi;
+    const     int64_t blocks_per_ne00 = ne00 / qk;
+    constexpr int     blocks_per_warp = WARP_SIZE / qi;
 
     const int ntx = (ne11 + mmq_x - 1) / mmq_x;
     const int nty = (ne01 + mmq_y - 1) / mmq_y;
 
-    const int64_t k_start = GGML_PAD((int64_t) blockIdx.x     *blocks_per_ne00*ntx*nty / gridDim.x, blocks_per_warp);
-    const int64_t k_stop  = GGML_PAD((int64_t)(blockIdx.x + 1)*blocks_per_ne00*ntx*nty / gridDim.x, blocks_per_warp);
+    const int64_t kb_start = GGML_PAD((int64_t) blockIdx.x     *blocks_per_ne00*ntx*nty / gridDim.x, blocks_per_warp);
+    const int64_t kb_stop  = GGML_PAD((int64_t)(blockIdx.x + 1)*blocks_per_ne00*ntx*nty / gridDim.x, blocks_per_warp);
 
-    const int jt_start = k_start / (blocks_per_ne00*nty);
-    const int jt_stop  = k_stop  / (blocks_per_ne00*nty);
+    const int jt_start = kb_start / (blocks_per_ne00*nty);
+    const int it_start = (kb_start - jt_start*(blocks_per_ne00*nty)) / blocks_per_ne00;
 
-    const int it_start = (k_start - jt_start*(blocks_per_ne00*nty)) / blocks_per_ne00;
-    const int it_stop  = (k_stop  - jt_stop *(blocks_per_ne00*nty)) / blocks_per_ne00;
+    int     it      = it_start;
+    int     jt      = jt_start;
+    int64_t kb_done = 0;
 
-    int it = it_start;
-    int jt = jt_start;
-
-    while (it < it_stop || jt < jt_stop) {
+    while (kb_done < kb_stop - kb_start) {
         float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
 
         const int tile_x_max_i = ne01 - it*mmq_y - 1;
@@ -1971,8 +1969,9 @@ static __global__ void mul_mat_q(
 
         const int * y = (const int *) yc + jt*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
 
-        const int first_iter = it == it_start && jt == jt_start;
-        for (int kb0 = first_iter*(k_start % blocks_per_ne00); kb0 < blocks_per_ne00; kb0 += blocks_per_warp) {
+        const int kb0_start = (kb_done == 0) * (kb_start % blocks_per_ne00);
+        const int kb0_stop  = min(blocks_per_ne00, kb_stop - kb_done);
+        for (int kb0 = kb0_start; kb0 < kb0_stop; kb0 += blocks_per_warp) {
 
             load_tiles(x, tile_x_qs, tile_x_dm, tile_x_sc, stride01*it*mmq_y + kb0, tile_x_max_i, stride01);
 
@@ -1998,6 +1997,7 @@ static __global__ void mul_mat_q(
         }
         write_back(sum, dst + jt*mmq_x*ne0 + it*mmq_y, ne0, tile_x_max_i, tile_y_max_j);
 
+        kb_done += kb0_stop - kb0_start;
         it++;
         jt += it / nty;
         it = it % nty;
