@@ -1948,13 +1948,13 @@ static __global__ void mul_mat_q(
     const int blocks_per_ne00 = ne00 / qk;
     constexpr int blocks_per_warp = WARP_SIZE / qi;
 
-    // const int ntx = (ne11 + mmq_x - 1) / mmq_x;
+    const int ntx = (ne11 + mmq_x - 1) / mmq_x;
     const int nty = (ne01 + mmq_y - 1) / mmq_y;
 
     // const int k_start = GGML_PAD((ntx*nty*ne00) *  blockIdx.x    / gridDim.x, blocks_per_warp*qk);
     // const int k_stop  = GGML_PAD((ntx*nty*ne00) * (blockIdx.x+1) / gridDim.x, blocks_per_warp*qk);
-    const int k_start =  blockIdx.x     *ne00;
-    const int k_stop  = (blockIdx.x + 1)*ne00;
+    const int k_start =  blockIdx.x     *ne00 * (ntx*nty/gridDim.x);
+    const int k_stop  = (blockIdx.x + 1)*ne00 * (ntx*nty/gridDim.x);
 
     const int jt_start = k_start / (ne00*nty);
     const int jt_stop  = k_stop  / (ne00*nty);
@@ -2038,6 +2038,8 @@ static void launch_mul_mat_q(const mmq_args & args, cudaStream_t stream) {
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
     const int shmem = mmq_get_shmem(type, mmq_x, mmq_y);
+
+    GGML_ASSERT(args.ne00 % 256 == 0);
 
 #if !(defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__))
     static bool shmem_limit_raised[GGML_CUDA_MAX_DEVICES] = {false};
