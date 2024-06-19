@@ -2022,33 +2022,32 @@ static __global__ void mul_mat_q_stream_k_fixup(
     bool any_fixup = false;
 
     for (int bidx = 0; bidx < block_num_mmq; ++bidx) {
+        const int64_t kb_stop = GGML_PAD((int64_t)(bidx + 1)*blocks_per_ne00*ntx*nty / block_num_mmq, blocks_per_warp);
 
-    const int64_t kb_stop = GGML_PAD((int64_t)(bidx + 1)*blocks_per_ne00*ntx*nty / block_num_mmq, blocks_per_warp);
-
-    if (kb_stop % blocks_per_ne00 == 0) {
-        continue;
-    }
-
-    const int jt =  kb_stop /    (blocks_per_ne00*nty);
-    const int it = (kb_stop - jt*(blocks_per_ne00*nty)) / blocks_per_ne00;
-
-    if (it != blockIdx.x || jt != blockIdx.y) {
-        continue;
-    }
-
-    any_fixup = true;
-
-#pragma unroll
-    for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
-        const int j = j0 + threadIdx.y;
-
-#pragma unroll
-        for (int i0 = 0; i0 < mmq_y; i0 += WARP_SIZE) {
-            const int i = i0 + threadIdx.x;
-
-            sum[(j0/nwarps) * (mmq_y/WARP_SIZE) + i0/WARP_SIZE] += tmp_last_tile[bidx*(mmq_x*mmq_y) + j*mmq_y + i];
+        if (kb_stop % blocks_per_ne00 == 0) {
+            continue;
         }
-    }
+
+        const int jt =  kb_stop /    (blocks_per_ne00*nty);
+        const int it = (kb_stop - jt*(blocks_per_ne00*nty)) / blocks_per_ne00;
+
+        if (it != blockIdx.x || jt != blockIdx.y) {
+            continue;
+        }
+
+        any_fixup = true;
+
+#pragma unroll
+        for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
+            const int j = j0 + threadIdx.y;
+
+#pragma unroll
+            for (int i0 = 0; i0 < mmq_y; i0 += WARP_SIZE) {
+                const int i = i0 + threadIdx.x;
+
+                sum[(j0/nwarps) * (mmq_y/WARP_SIZE) + i0/WARP_SIZE] += tmp_last_tile[bidx*(mmq_x*mmq_y) + j*mmq_y + i];
+            }
+        }
     }
 
     if (!any_fixup) {
