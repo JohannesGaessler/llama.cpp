@@ -1945,27 +1945,37 @@ static __global__ void mul_mat_q(
     int   * tile_x_sc = (int   *) (tile_x_dm + txs.dm);
     int   * tile_y    = (int   *) (tile_x_sc + txs.sc); // [mmq_x * (WARP_SIZE + WARP_SIZE/QI8_1)]
 
-    // const int ntx    = (ne11 + mmq_x - 1) / mmq_x;
-    const int nty    = (ne01 + mmq_y - 1) / mmq_y;
-    // const int ntz    = ne00/MMQ_STREAM_K_GRANULARITY;
-    // const int it_start = (ntx*nty*ntz) *  blockIdx.x    / gridDim.x;
-    // const int it_stop  = (ntx*nty*ntz) * (blockIdx.x+1) / gridDim.x;
-    const int itx = blockIdx.x / nty;
-    const int ity = blockIdx.x - itx*nty;
-
-    const     int blocks_per_ne00 = ne00 / qk;
+    const int blocks_per_ne00 = ne00 / qk;
     constexpr int blocks_per_warp = WARP_SIZE / qi;
 
-    const int tile_x_max_i = ne01 - ity*mmq_y - 1;
-    const int tile_y_max_j = ne11 - itx*mmq_x - 1;
+    // const int ntx = (ne11 + mmq_x - 1) / mmq_x;
+    const int nty = (ne01 + mmq_y - 1) / mmq_y;
 
-    const int * y = (const int *) yc + itx*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
+    // const int k_start = GGML_PAD((ntx*nty*ne00) *  blockIdx.x    / gridDim.x, blocks_per_warp*qk);
+    // const int k_stop  = GGML_PAD((ntx*nty*ne00) * (blockIdx.x+1) / gridDim.x, blocks_per_warp*qk);
+    const int k_start =  blockIdx.x     *ne00;
+    // const int k_stop  = (blockIdx.x + 1)*ne00;
+
+    const int jt_start = k_start / (ne00*nty);
+    // const int jt_stop  = k_stop  / (ne00*nty);
+
+    const int it_start = (k_start - jt_start*(ne00*nty)) / ne00;
+    // const int it_stop  = (k_stop  - jt_stop *(ne00*nty)) / ne00;
 
     float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
 
+    int it = it_start;
+    int jt = jt_start;
+
+    // while (it < it_stop && jt < jt_stop) {
+    const int tile_x_max_i = ne01 - it*mmq_y - 1;
+    const int tile_y_max_j = ne11 - jt*mmq_x - 1;
+
+    const int * y = (const int *) yc + jt*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
+
     for (int kb0 = 0; kb0 < blocks_per_ne00; kb0 += blocks_per_warp) {
 
-        load_tiles(x, tile_x_qs, tile_x_dm, tile_x_sc, stride01*ity*mmq_y + kb0, tile_x_max_i, stride01);
+        load_tiles(x, tile_x_qs, tile_x_dm, tile_x_sc, stride01*it*mmq_y + kb0, tile_x_max_i, stride01);
 
 #pragma unroll
         for (int kr = 0; kr < qr; ++kr) {
@@ -1987,7 +1997,12 @@ static __global__ void mul_mat_q(
             __syncthreads();
         }
     }
-    write_back(sum, dst + itx*mmq_x*ne0 + ity*mmq_y, ne0, tile_x_max_i, tile_y_max_j);
+    write_back(sum, dst + jt*mmq_x*ne0 + it*mmq_y, ne0, tile_x_max_i, tile_y_max_j);
+
+    // it++;
+    // jt += it / nty;
+    // it = it % nty;
+    // }
 }
 
 struct mmq_args {
