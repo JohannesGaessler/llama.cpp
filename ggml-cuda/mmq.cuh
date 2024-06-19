@@ -1951,14 +1951,14 @@ static __global__ void mul_mat_q(
     const int ntx = (ne11 + mmq_x - 1) / mmq_x;
     const int nty = (ne01 + mmq_y - 1) / mmq_y;
 
-    const int64_t k_start = GGML_PAD((int64_t) blockIdx.x     *ne00*ntx*nty / gridDim.x, blocks_per_warp*qk);
-    const int64_t k_stop  = GGML_PAD((int64_t)(blockIdx.x + 1)*ne00*ntx*nty / gridDim.x, blocks_per_warp*qk);
+    const int64_t k_start = GGML_PAD((int64_t) blockIdx.x     *blocks_per_ne00*ntx*nty / gridDim.x, blocks_per_warp);
+    const int64_t k_stop  = GGML_PAD((int64_t)(blockIdx.x + 1)*blocks_per_ne00*ntx*nty / gridDim.x, blocks_per_warp);
 
-    const int jt_start = k_start / (ne00*nty);
-    const int jt_stop  = k_stop  / (ne00*nty);
+    const int jt_start = k_start / (blocks_per_ne00*nty);
+    const int jt_stop  = k_stop  / (blocks_per_ne00*nty);
 
-    const int it_start = (k_start - jt_start*(ne00*nty)) / ne00;
-    const int it_stop  = (k_stop  - jt_stop *(ne00*nty)) / ne00;
+    const int it_start = (k_start - jt_start*(blocks_per_ne00*nty)) / blocks_per_ne00;
+    const int it_stop  = (k_stop  - jt_stop *(blocks_per_ne00*nty)) / blocks_per_ne00;
 
     int it = it_start;
     int jt = jt_start;
