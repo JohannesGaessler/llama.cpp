@@ -1998,7 +1998,7 @@ static __global__ void mul_mat_q(
         if (kb0_stop == blocks_per_ne00) {
             write_back(sum, dst + jt*mmq_x*ne0 + it*mmq_y, ne0, tile_x_max_i, tile_y_max_j);
         } else {
-            write_back(sum, tmp_last_tile + blockIdx.x*(mmq_x*mmq_y), mmq_y, mmq_x, mmq_y);
+            write_back(sum, tmp_last_tile + blockIdx.x*(mmq_x*mmq_y), mmq_y, mmq_y, mmq_x);
         }
     }
 }
@@ -2048,7 +2048,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
                 continue;
             }
 
-            dst[j*ne0 + i] = tmp_last_tile[j*mmq_y + i];
+            dst[j*ne0 + i] += tmp_last_tile[j*mmq_y + i];
         }
     }
 }
@@ -2083,8 +2083,8 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     const int block_num_x = (args.ne01 + mmq_y - 1) / mmq_y;
     const int block_num_y = (args.ne11 + mmq_x - 1) / mmq_x;
     GGML_ASSERT(block_num_x*block_num_y >= nsm/4);
-    // const dim3 block_nums(nsm/4, 1, 1);
-    const dim3 block_nums(block_num_x*block_num_y, 1, 1);
+    const dim3 block_nums(nsm/4, 1, 1);
+    // const dim3 block_nums(block_num_x*block_num_y, 1, 1);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);
 
     const int shmem = mmq_get_shmem(type, mmq_x, mmq_y);
