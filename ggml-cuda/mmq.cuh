@@ -1960,12 +1960,12 @@ static __global__ void mul_mat_q(
     const int it_start = (k_start - jt_start*(ne00*nty)) / ne00;
     const int it_stop  = (k_stop  - jt_stop *(ne00*nty)) / ne00;
 
-    float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
-
     int it = it_start;
     int jt = jt_start;
 
     while (it < it_stop || jt < jt_stop) {
+        float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
+
         const int tile_x_max_i = ne01 - it*mmq_y - 1;
         const int tile_y_max_j = ne11 - jt*mmq_x - 1;
 
