@@ -100,13 +100,15 @@ static int mmq_get_granularity_host(const int mmq_x, const int cc) {
     return int8_mma_available(cc) && mmq_x >= 48 ? 16 : 8;
 }
 
-static constexpr __device__ int mmq_get_granularity_device(const int mmq_x) {
 #ifdef INT8_MMA_AVAILABLE
-    return 8;
-#else
+static constexpr __device__ int mmq_get_granularity_device(const int mmq_x) {
     return mmq_x >= 48 ? 16 : 8;
-#endif // INT8_MMA_AVAILABLE
 }
+#else
+static constexpr __device__ int mmq_get_granularity_device(const int /* mmq_x */) {
+    return 8;
+}
+#endif // INT8_MMA_AVAILABLE
 
 // ------------------------------------------------------------
 
