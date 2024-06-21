@@ -234,7 +234,7 @@ static __device__ __forceinline__ void vec_dot_q4_0_q8_1_mma(
     }
 
 #pragma unroll
-    for (int j0 = 0; j0 < mmq_x; j0 += ntx*mma_int_B_J8K8::J) {
+    for (int j0 = 0; j0 < mmq_x; j0 += ntx*mma_C::J) {
         mma_B  B;
         float dB[mma_C::ne/2];
 
@@ -259,7 +259,7 @@ static __device__ __forceinline__ void vec_dot_q4_0_q8_1_mma(
 
 #pragma unroll
             for (int l = 0; l < mma_C::ne; ++l) {
-                sum[(j0/mma_B::J + n)*mma_C::ne + l] += dA[n][l/2]*dB[l%2]*C.x[l];
+                sum[(j0/mma_C::J + n)*mma_C::ne + l] += dA[n][l/2]*dB[l%2]*C.x[l];
             }
         }
     }
@@ -352,32 +352,41 @@ static __device__ __forceinline__ void vec_dot_q4_1_q8_1_mma(
     typedef mma_int_B_J8K8  mma_B;
     typedef mma_int_C_I16J8 mma_C;
 
+    constexpr int granularity = mmq_get_granularity_device(mmq_x);
+    constexpr int rows_per_warp = 2 * granularity;
+    constexpr int ntx = rows_per_warp/mma_C::I; // Number of x minitiles per warp.
+
+    y += (threadIdx.y % ntx) * (mma_B::J*MMQ_TILE_Y_K);
+
     const int   * y_qs = (const int   *) y + 4;
     const half2 * y_ds = (const half2 *) y;
 
-    mma_A A;
-    half2 dmA[mma_C::ne/2];
+    mma_A A[ntx];
+    half2 dmA[ntx][mma_C::ne/2];
 
-    const int i0 = threadIdx.y*mma_A::I;
-    static_assert(nwarps*mma_A::I == mmq_y, "nwarps*mma_A::I != mmq_y");
+    const int i0 = (threadIdx.y / ntx) * (ntx*mma_A::I);
 
 #pragma unroll
-    for (int l = 0; l < mma_A::ne; ++l) {
-        const int i     = i0 + mma_A::get_i(l);
-        const int k     = k0 + mma_A::get_k(l) % QI4_0;
-        const int shift =   4*(mma_A::get_k(l) / QI4_0);
-
-        A.x[l] = (x_qs[i*(WARP_SIZE + 1) + k] >> shift) & 0x0F0F0F0F;
-    }
+    for (int n = 0; n < ntx; ++n) {
 #pragma unroll
-    for (int l = 0; l < mma_C::ne/2; ++l) {
-        const int i = i0 + mma_C::get_i(2*l);
+        for (int l = 0; l < mma_A::ne; ++l) {
+            const int i     = i0 + n*mma_A::I + mma_A::get_i(l);
+            const int k     = k0              + mma_A::get_k(l) % QI4_1;
+            const int shift =                4*(mma_A::get_k(l) / QI4_1);
 
-        dmA[l] = x_dm[i*(WARP_SIZE/QI4_0) + i/QI4_0 + k0/QI4_0];
+            A[n].x[l] = (x_qs[i*(WARP_SIZE + 1) + k] >> shift) & 0x0F0F0F0F;
+        }
+
+#pragma unroll
+        for (int l = 0; l < mma_C::ne/2; ++l) {
+            const int i = i0 + n*mma_A::I + mma_C::get_i(2*l);
+
+            dmA[n][l] = x_dm[i*(WARP_SIZE/QI4_0) + i/QI4_1 + k0/QI4_1];
+        }
     }
 
-    for (int j0 = 0; j0 < mmq_x; j0 += mma_int_B_J8K8::J) {
-        mma_C C;
+#pragma unroll
+    for (int j0 = 0; j0 < mmq_x; j0 += ntx*mma_C::J) {
         mma_B B;
         half2 dsB[mma_C::ne/2];
 
@@ -395,12 +404,16 @@ static __device__ __forceinline__ void vec_dot_q4_1_q8_1_mma(
             dsB[l] = y_ds[j*MMQ_TILE_Y_K + (2*k0/QI8_1) % (WARP_SIZE/QI8_1)];
         }
 
-        C.mma_K8(A, B);
+#pragma unroll
+        for (int n = 0; n < ntx; ++n) {
+            mma_C C;
+            C.mma_K8(A[n], B);
 
 #pragma unroll
-        for (int l = 0; l < mma_C::ne; ++l) {
-            const half2 dmA_dsB = dmA[l/2]*dsB[l%2];
-            sum[(j0/B.J)*C.ne + l] += __low2float(dmA_dsB)*C.x[l] + __high2float(dmA_dsB);
+            for (int l = 0; l < mma_C::ne; ++l) {
+                const half2 dmA_dsB = dmA[n][l/2]*dsB[l%2];
+                sum[(j0/mma_C::J + n)*mma_C::ne + l] += __low2float(dmA_dsB)*C.x[l] + __high2float(dmA_dsB);
+            }
         }
     }
 #else
@@ -834,7 +847,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
     }
 
 #pragma unroll
-    for (int j0 = 0; j0 < mmq_x; j0 += ntx*mma_B::J) {
+    for (int j0 = 0; j0 < mmq_x; j0 += ntx*mma_C::J) {
         mma_B B;
         float dB[mma_C::ne/2];
 
@@ -859,7 +872,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
 
 #pragma unroll
             for (int l = 0; l < mma_C::ne; ++l) {
-                sum[(j0/mma_B::J + n)*mma_C::ne + l] += C.x[l]*dA[n][l/2]*dB[l%2];
+                sum[(j0/mma_C::J + n)*mma_C::ne + l] += C.x[l]*dA[n][l/2]*dB[l%2];
             }
         }
     }
@@ -1734,7 +1747,7 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_mma(
     }
 
 #pragma unroll
-    for (int j0 = 0; j0 < mmq_x; j0 += ntx*mma_int_B_J8K8::J) {
+    for (int j0 = 0; j0 < mmq_x; j0 += ntx*mma_C::J) {
         float tmp[ntx][mma_C::ne] = {{0.0f}};
 
 #pragma unroll
@@ -1774,7 +1787,7 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_mma(
         for (int n = 0; n < ntx; ++n) {
 #pragma unroll
             for (int l = 0; l < mma_C::ne; ++l) {
-                sum[(j0/mma_B::J + n)*mma_C::ne + l] += tmp[n][l]*dA[n][l/2];
+                sum[(j0/mma_C::J + n)*mma_C::ne + l] += tmp[n][l]*dA[n][l/2];
             }
         }
     }
