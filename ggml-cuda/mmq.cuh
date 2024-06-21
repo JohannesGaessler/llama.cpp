@@ -237,13 +237,8 @@ static __device__ __forceinline__ void vec_dot_q4_0_q8_1_mma(
         mma_B  B;
         float dB[mma_C::ne/2];
 
-#pragma unroll
-        for (int l = 0; l < mma_B::ne; ++l) {
-            const int j =    j0 + mma_B::get_j(l);
-            const int k = (2*k0 + mma_B::get_k(l)) % WARP_SIZE;
+        B.load(y_qs + j0*MMQ_TILE_Y_K + (2*k0) % WARP_SIZE, MMQ_TILE_Y_K);
 
-            B.x[l] = y_qs[j*MMQ_TILE_Y_K + k];
-        }
 #pragma unroll
         for (int l = 0; l < mma_C::ne/2; ++l) {
             const int j = j0 + mma_C::get_j(l);
@@ -389,13 +384,8 @@ static __device__ __forceinline__ void vec_dot_q4_1_q8_1_mma(
         mma_B B;
         half2 dsB[mma_C::ne/2];
 
-#pragma unroll
-        for (int l = 0; l < mma_B::ne; ++l) {
-            const int j =    j0 + mma_B::get_j(l);
-            const int k = (2*k0 + mma_B::get_k(l)) % WARP_SIZE;
+        B.load(y_qs + j0*MMQ_TILE_Y_K + (2*k0) % WARP_SIZE, MMQ_TILE_Y_K);
 
-            B.x[l] = y_qs[j*MMQ_TILE_Y_K + k];
-        }
 #pragma unroll
         for (int l = 0; l < mma_C::ne/2; ++l) {
             const int j = j0 + mma_C::get_j(l);
@@ -562,13 +552,8 @@ static __device__ __forceinline__ void vec_dot_q5_0_q8_1_mma(
         mma_B B;
         float dB[mma_C::ne/2];
 
-#pragma unroll
-        for (int l = 0; l < mma_B::ne; ++l) {
-            const int j =    j0 + mma_B::get_j(l);
-            const int k = (2*k0 + mma_B::get_k(l)) % WARP_SIZE;
+        B.load(y_qs + j0*MMQ_TILE_Y_K + (2*k0) % WARP_SIZE, MMQ_TILE_Y_K);
 
-            B.x[l] = y_qs[j*MMQ_TILE_Y_K + k];
-        }
 #pragma unroll
         for (int l = 0; l < mma_C::ne/2; ++l) {
             const int j = j0 + mma_C::get_j(l);
@@ -730,13 +715,8 @@ static __device__ __forceinline__ void vec_dot_q5_1_q8_1_mma(
         mma_B B;
         half2 dsB[mma_C::ne/2];
 
-#pragma unroll
-        for (int l = 0; l < mma_B::ne; ++l) {
-            const int j =    j0 + mma_B::get_j(l);
-            const int k = (2*k0 + mma_B::get_k(l)) % WARP_SIZE;
+        B.load(y_qs + j0*MMQ_TILE_Y_K + (2*k0) % WARP_SIZE, MMQ_TILE_Y_K);
 
-            B.x[l] = y_qs[j*MMQ_TILE_Y_K + k];
-        }
 #pragma unroll
         for (int l = 0; l < mma_C::ne/2; ++l) {
             const int j = j0 + mma_C::get_j(l);
@@ -875,13 +855,8 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
         mma_B B;
         float dB[mma_C::ne/2];
 
-#pragma unroll
-        for (int l = 0; l < mma_B::ne; ++l) {
-            const int j = j0 + mma_B::get_j(l);
-            const int k = k0 + mma_B::get_k(l);
+        B.load(y_qs + j0*MMQ_TILE_Y_K + k0, MMQ_TILE_Y_K);
 
-            B.x[l] = y_qs[j*MMQ_TILE_Y_K + k];
-        }
 #pragma unroll
         for (int l = 0; l < mma_C::ne/2; ++l) {
             const int j = j0 + mma_C::get_j(l);
@@ -1030,14 +1005,9 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
         mma_B B[2];
         float dB[mma_C::ne/2];
 
-#pragma unroll
-        for (int l = 0; l < mma_B::ne; ++l) {
-            const int j = j0 + mma_B::get_j(l);
-            const int k = (4*k0 + mma_B::get_k(l)) % WARP_SIZE;
+        B[0].load(y_qs + j0*MMQ_TILE_Y_K + (QR2_K*k0 + 0)        % WARP_SIZE, MMQ_TILE_Y_K);
+        B[1].load(y_qs + j0*MMQ_TILE_Y_K + (QR2_K*k0 + mma_B::K) % WARP_SIZE, MMQ_TILE_Y_K);
 
-            B[0].x[l] = y_qs[j*MMQ_TILE_Y_K + k + 0];
-            B[1].x[l] = y_qs[j*MMQ_TILE_Y_K + k + mma_B::K];
-        }
 #pragma unroll
         for (int l = 0; l < mma_C::ne/2; ++l) {
             const int j = j0 + mma_C::get_j(l);
@@ -1246,14 +1216,8 @@ static __device__ __forceinline__ void vec_dot_q3_K_q8_1_mma(
         mma_B B[2];
         float dB[mma_C::ne/2];
 
-#pragma unroll
-        for (int l = 0; l < mma_B::ne; ++l) {
-            const int j = j0 + mma_B::get_j(l);
-            const int k = (4*k0 + mma_B::get_k(l)) % WARP_SIZE;
-
-            B[0].x[l] = y_qs[j*MMQ_TILE_Y_K + k + 0];
-            B[1].x[l] = y_qs[j*MMQ_TILE_Y_K + k + mma_B::K];
-        }
+        B[0].load(y_qs + j0*MMQ_TILE_Y_K + (QR3_K*k0 + 0)        % WARP_SIZE, MMQ_TILE_Y_K);
+        B[1].load(y_qs + j0*MMQ_TILE_Y_K + (QR3_K*k0 + mma_B::K) % WARP_SIZE, MMQ_TILE_Y_K);
 
 #pragma unroll
         for (int l = 0; l < mma_C::ne/2; ++l) {
@@ -1431,13 +1395,8 @@ static __device__ __forceinline__ void vec_dot_q4_K_q8_1_mma(
             mma_B   B;
             half2 dsB[mma_C::ne/2];
 
-#pragma unroll
-            for (int l = 0; l < mma_B::ne; ++l) {
-                const int j = j0 + mma_B::get_j(l);
-                const int k = (2*k0 + 2*kvdr + mma_B::get_k(l)) % WARP_SIZE;
+            B.load(y_qs + j0*MMQ_TILE_Y_K + (2*k0 + 2*kvdr) % WARP_SIZE, MMQ_TILE_Y_K);
 
-                B.x[l] = y_qs[j*MMQ_TILE_Y_K + k];
-            }
 #pragma unroll
             for (int l = 0; l < mma_C::ne/2; ++l) {
                 const int j = j0 + mma_C::get_j(l);
@@ -1636,13 +1595,8 @@ static __device__ __forceinline__ void vec_dot_q5_K_q8_1_mma(
             mma_B   B;
             half2 dsB[mma_C::ne/2];
 
-#pragma unroll
-            for (int l = 0; l < mma_B::ne; ++l) {
-                const int j = j0 + mma_B::get_j(l);
-                const int k = (2*k0 + 2*kvdr + mma_B::get_k(l)) % WARP_SIZE;
+            B.load(y_qs + j0*MMQ_TILE_Y_K + (2*k0 + 2*kvdr) % WARP_SIZE, MMQ_TILE_Y_K);
 
-                B.x[l] = y_qs[j*MMQ_TILE_Y_K + k];
-            }
 #pragma unroll
             for (int l = 0; l < mma_C::ne/2; ++l) {
                 const int j = j0 + mma_C::get_j(l);
@@ -1834,14 +1788,10 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_mma(
             mma_B B[2];
             float dB[mma_C::ne/2];
 
-#pragma unroll
-            for (int l = 0; l < mma_B::ne; ++l) {
-                const int j = j0 + mma_B::get_j(l);
-                const int k = (2*k0 + 2*kvdr + mma_B::get_k(l)) % WARP_SIZE;
+            const int k0B = (2*k0 + 2*kvdr) % WARP_SIZE;
+            B[0].load(y_qs + j0*MMQ_TILE_Y_K + 0        + k0B, MMQ_TILE_Y_K);
+            B[1].load(y_qs + j0*MMQ_TILE_Y_K + mma_B::K + k0B, MMQ_TILE_Y_K);
 
-                B[0].x[l] = y_qs[j*MMQ_TILE_Y_K + k + 0];
-                B[1].x[l] = y_qs[j*MMQ_TILE_Y_K + k + mma_B::K];
-            }
 #pragma unroll
             for (int l = 0; l < mma_C::ne/2; ++l) {
                 const int j = j0 + mma_C::get_j(l);
