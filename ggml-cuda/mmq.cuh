@@ -1845,11 +1845,8 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_mma(
         for (int kvdr = 0; kvdr < VDR_Q6_K_Q8_1_MMQ; kvdr += 4) {
 #pragma unroll
             for (int l = 0; l < mma_A::ne; ++l) {
-                const int i = i0 + n*mma_A::I + mma_A::get_i(l);
-                const int k = QR6_K*k0 + QR6_K*kvdr + mma_A::get_k(l);
-
-                A[n][kvdr/2 + 0].x[l] = x_qs[i*MMQ_MMA_TILE_X_K_Q6_K + k + 0];
-                A[n][kvdr/2 + 1].x[l] = x_qs[i*MMQ_MMA_TILE_X_K_Q6_K + k + mma_A::K];
+                A[n][kvdr/2 + 0].load(x_qs + (i0 + n*mma_A::I)*MMQ_MMA_TILE_X_K_Q6_K + (QR6_K*k0 + QR6_K*kvdr + 0),        MMQ_MMA_TILE_X_K_Q6_K);
+                A[n][kvdr/2 + 1].load(x_qs + (i0 + n*mma_A::I)*MMQ_MMA_TILE_X_K_Q6_K + (QR6_K*k0 + QR6_K*kvdr + mma_A::K), MMQ_MMA_TILE_X_K_Q6_K);
             }
 
 #pragma unroll
