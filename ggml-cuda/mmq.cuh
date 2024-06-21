@@ -772,32 +772,42 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
     typedef mma_int_B_J8K8  mma_B;
     typedef mma_int_C_I16J8 mma_C;
 
+    constexpr int rows_per_warp = mmq_x >= 48 ? 32 : 16;
+    constexpr int ntx = rows_per_warp/mma_C::I; // Number of x minitiles per warp.
+
+    y += (threadIdx.y % ntx) * (mma_B::J*MMQ_TILE_Y_K);
+
     const float * x_df = (const float *) x_dm;
     const int   * y_qs = (const int   *) y + 4;
     const float * y_df = (const float *) y;
 
-    mma_A A;
-    float dA[mma_C::ne/2];
+    mma_A A[ntx];
+    float dA[ntx][mma_C::ne/2];
 
-    const int i0 = threadIdx.y*mma_A::I;
-    static_assert(nwarps*mma_A::I == mmq_y, "nwarps*mma_A::I != mmq_y");
+    const int i0 = (threadIdx.y/ntx)*rows_per_warp;
 
 #pragma unroll
-    for (int l = 0; l < mma_A::ne; ++l) {
-        const int i = i0 + mma_A::get_i(l);
-        const int k = k0 + mma_A::get_k(l);
-
-        A.x[l] = x_qs[i*(WARP_SIZE + 1) + k];
-    }
+    for (int n = 0; n < ntx; ++n) {
 #pragma unroll
-    for (int l = 0; l < mma_C::ne/2; ++l) {
-        const int i = i0 + mma_C::get_i(2*l);
+        for (int l = 0; l < mma_A::ne; ++l) {
+            const int i = i0 + n*mma_A::I + mma_A::get_i(l);
+            const int k = k0              + mma_A::get_k(l);
 
-        dA[l] = x_df[i*(WARP_SIZE/QI8_0) + i/QI8_0 + k0/QI8_0];
+            A[n].x[l] = x_qs[i*(WARP_SIZE + 1) + k];
+        }
     }
 
-    for (int j0 = 0; j0 < mmq_x; j0 += mma_int_B_J8K8::J) {
-        mma_C C;
+#pragma unroll
+    for (int n = 0; n < ntx; ++n) {
+#pragma unroll
+        for (int l = 0; l < mma_C::ne/2; ++l) {
+            const int i = i0 + n*mma_A::I + mma_C::get_i(2*l);
+
+            dA[n][l] = x_df[i*(WARP_SIZE/QI8_0) + i/QI8_0 + k0/QI8_0];
+        }
+    }
+
+    for (int j0 = 0; j0 < mmq_x; j0 += ntx*mma_B::J) {
         mma_B B;
         float dB[mma_C::ne/2];
 
@@ -815,11 +825,15 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
             dB[l] = y_df[j*MMQ_TILE_Y_K + k0/QI8_1];
         }
 
-        C.mma_K8(A, B);
+#pragma unroll
+        for (int n = 0; n < ntx; ++n) {
+            mma_C C;
+            C.mma_K8(A[n], B);
 
 #pragma unroll
-        for (int l = 0; l < mma_C::ne; ++l) {
-            sum[(j0/B.J)*C.ne + l] += C.x[l]*dA[l/2]*dB[l%2];
+            for (int l = 0; l < mma_C::ne; ++l) {
+                sum[(j0/mma_B::J + n)*mma_C::ne + l] += C.x[l]*dA[n][l/2]*dB[l%2];
+            }
         }
     }
 #else
@@ -1760,29 +1774,36 @@ static __device__ __forceinline__ void mmq_write_back_mma(
     const float * __restrict__ sum, float * __restrict__ dst, const int & stride, const int & i_max, const int & j_max) {
 
     typedef mma_int_C_I16J8 mma_C;
+    constexpr int rows_per_warp = mmq_x >= 48 ? 32 : 16;
+    constexpr int ntx = rows_per_warp/mma_C::I; // Number of x minitiles per warp.
 
-    const int i0 = threadIdx.y*mma_C::I;
+    const int i0 = (threadIdx.y / ntx) * (ntx*mma_C::I);
 #ifdef INT8_MMA_AVAILABLE
     static_assert(nwarps*mma_C::I == mmq_y, "nwarps*mma_C::I != mmq_y");
 #endif // INT8_MMA_AVAILABLE
 
+    dst += (threadIdx.y % ntx) * mma_C::J*stride;
+
 #pragma unroll
-    for (int j0 = 0; j0 < mmq_x; j0 += mma_C::J) {
+    for (int j0 = 0; j0 < mmq_x; j0 += ntx*mma_C::J) {
 #pragma unroll
-        for (int l = 0; l < mma_C::ne; ++l) {
-            const int j = j0 + mma_C::get_j(l);
+        for (int n = 0; n < ntx; ++n) {
+#pragma unroll
+            for (int l = 0; l < mma_C::ne; ++l) {
+                const int j = j0 + mma_C::get_j(l);
 
-            if (j > j_max) {
-                continue;
+                if (j > j_max) {
+                    continue;
+                }
+
+                const int i = i0 + n*mma_C::I + mma_C::get_i(l);
+
+                if (need_check && i > i_max) {
+                    continue;
+                }
+
+                dst[j*stride + i] = sum[(j0/mma_C::J + n)*mma_C::ne + l];
             }
-
-            const int i = i0 + mma_C::get_i(l);
-
-            if (need_check && i > i_max) {
-                continue;
-            }
-
-            dst[j*stride + i] = sum[(j0/mma_C::J)*mma_C::ne + l];
         }
     }
 }
@@ -2255,32 +2276,17 @@ void mul_mat_q_case(ggml_backend_cuda_context & ctx, const mmq_args & args, cuda
         case  48:
             launch_mul_mat_q<type,  48>(ctx, args, stream);
             break;
-        case  56:
-            launch_mul_mat_q<type,  56>(ctx, args, stream);
-            break;
         case  64:
             launch_mul_mat_q<type,  64>(ctx, args, stream);
-            break;
-        case  72:
-            launch_mul_mat_q<type,  72>(ctx, args, stream);
             break;
         case  80:
             launch_mul_mat_q<type,  80>(ctx, args, stream);
             break;
-        case  88:
-            launch_mul_mat_q<type,  88>(ctx, args, stream);
-            break;
         case  96:
             launch_mul_mat_q<type,  96>(ctx, args, stream);
             break;
-        case 104:
-            launch_mul_mat_q<type, 104>(ctx, args, stream);
-            break;
         case 112:
             launch_mul_mat_q<type, 112>(ctx, args, stream);
-            break;
-        case 120:
-            launch_mul_mat_q<type, 120>(ctx, args, stream);
             break;
         case 128:
             launch_mul_mat_q<type, 128>(ctx, args, stream);
