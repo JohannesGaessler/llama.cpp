@@ -7,9 +7,6 @@
 #include <climits>
 #include <cstdint>
 
-#define MMQ_TILE_Y_K (WARP_SIZE + WARP_SIZE/QI8_1)
-#define MMQ_NWARPS 8
-
 typedef void (*load_tiles_mmq_t)(
     const char * __restrict__ x, int * __restrict__ x_qs, half2 * __restrict__ x_dm,
     int * __restrict__ x_sc, const int & kbx0, const int & i_max, const int & stride);
@@ -95,6 +92,52 @@ template <int mmq_y>
 static constexpr __device__ tile_x_sizes mmq_get_dp4a_tile_x_sizes_device(ggml_type type) {
     GET_MMQ_DP4A_TXS_BODY;
 }
+
+#define MMQ_MMA_TILE_X_K_Q4_0 (1*WARP_SIZE + WARP_SIZE/QI4_0               + 4)
+#define MMQ_MMA_TILE_X_K_Q4_1 (1*WARP_SIZE + WARP_SIZE/QI4_1               + 4)
+#define MMQ_MMA_TILE_X_K_Q5_0 (2*WARP_SIZE + WARP_SIZE/QI5_0               + 4)
+#define MMQ_MMA_TILE_X_K_Q5_1 (2*WARP_SIZE + WARP_SIZE/QI5_1               + 4)
+#define MMQ_MMA_TILE_X_K_Q8_0 (1*WARP_SIZE + WARP_SIZE/QI8_0               + 0)
+#define MMQ_MMA_TILE_X_K_Q2_K (1*WARP_SIZE + WARP_SIZE                     + 4)
+#define MMQ_MMA_TILE_X_K_Q3_K (2*WARP_SIZE + WARP_SIZE/QI3_K + WARP_SIZE/4 + 2)
+#define MMQ_MMA_TILE_X_K_Q4_K (1*WARP_SIZE + WARP_SIZE/QI4_K + WARP_SIZE/8 + 7)
+#define MMQ_MMA_TILE_X_K_Q5_K (2*WARP_SIZE + WARP_SIZE/QI5_K + WARP_SIZE/8 + 7)
+#define MMQ_MMA_TILE_X_K_Q6_K (2*WARP_SIZE + WARP_SIZE/QI6_K + WARP_SIZE/8 + 7)
+
+static_assert(MMQ_MMA_TILE_X_K_Q4_0 % 8 == 4, "Wrong padding.");
+static_assert(MMQ_MMA_TILE_X_K_Q4_1 % 8 == 4, "Wrong padding.");
+static_assert(MMQ_MMA_TILE_X_K_Q5_0 % 8 == 4, "Wrong padding.");
+static_assert(MMQ_MMA_TILE_X_K_Q5_1 % 8 == 4, "Wrong padding.");
+static_assert(MMQ_MMA_TILE_X_K_Q8_0 % 8 == 4, "Wrong padding.");
+static_assert(MMQ_MMA_TILE_X_K_Q2_K % 8 == 4, "Wrong padding.");
+static_assert(MMQ_MMA_TILE_X_K_Q3_K % 8 == 4, "Wrong padding.");
+static_assert(MMQ_MMA_TILE_X_K_Q4_K % 8 == 4, "Wrong padding.");
+static_assert(MMQ_MMA_TILE_X_K_Q5_K % 8 == 4, "Wrong padding.");
+static_assert(MMQ_MMA_TILE_X_K_Q6_K % 8 == 4, "Wrong padding.");
+
+#define MMQ_MMA_GET_TILE_X_K_BODY                           \
+    return type == GGML_TYPE_Q4_0 ? MMQ_MMA_TILE_X_K_Q4_0 : \
+        type == GGML_TYPE_Q4_1 ? MMQ_MMA_TILE_X_K_Q4_1 :    \
+        type == GGML_TYPE_Q5_0 ? MMQ_MMA_TILE_X_K_Q5_0 :    \
+        type == GGML_TYPE_Q5_1 ? MMQ_MMA_TILE_X_K_Q5_1 :    \
+        type == GGML_TYPE_Q8_0 ? MMQ_MMA_TILE_X_K_Q8_0 :    \
+        type == GGML_TYPE_Q2_K ? MMQ_MMA_TILE_X_K_Q2_K :    \
+        type == GGML_TYPE_Q3_K ? MMQ_MMA_TILE_X_K_Q3_K :    \
+        type == GGML_TYPE_Q4_K ? MMQ_MMA_TILE_X_K_Q4_K :    \
+        type == GGML_TYPE_Q5_K ? MMQ_MMA_TILE_X_K_Q5_K :    \
+        type == GGML_TYPE_Q6_K ? MMQ_MMA_TILE_X_K_Q6_K :    \
+        0
+
+static int mmq_get_mma_tile_x_k_host(const ggml_type type) {
+    MMQ_MMA_GET_TILE_X_K_BODY;
+}
+
+static constexpr __device__ int mmq_get_mma_tile_x_k_device(ggml_type type) {
+    MMQ_MMA_GET_TILE_X_K_BODY;
+}
+
+#define MMQ_TILE_Y_K (WARP_SIZE + WARP_SIZE/QI8_1)
+#define MMQ_NWARPS 8
 
 static int mmq_get_granularity_host(const int mmq_x, const int cc) {
     return int8_mma_available(cc) && mmq_x >= 48 ? 16 : 8;
