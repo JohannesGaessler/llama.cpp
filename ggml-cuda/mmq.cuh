@@ -63,37 +63,37 @@ static constexpr __device__ int get_mmq_y_device() {
 #endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
 }
 
-#define TILE_X_SIZES_Q4_0 tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI4_0 + mmq_y/QI4_0, 0}
-#define TILE_X_SIZES_Q4_1 tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI4_1 + mmq_y/QI4_1, 0}
-#define TILE_X_SIZES_Q5_0 tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI5_0 + mmq_y/QI5_0, 0}
-#define TILE_X_SIZES_Q5_1 tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI5_1 + mmq_y/QI5_1, 0}
-#define TILE_X_SIZES_Q8_0 tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI8_0 + mmq_y/QI8_0, 0}
-#define TILE_X_SIZES_Q2_K tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE       + mmq_y,       0}
-#define TILE_X_SIZES_Q3_K tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI3_K + mmq_y/QI3_K, mmq_y*WARP_SIZE/4 + mmq_y/4}
-#define TILE_X_SIZES_Q4_K tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI4_K + mmq_y/QI4_K, mmq_y*WARP_SIZE/8 + mmq_y/8}
-#define TILE_X_SIZES_Q5_K tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI5_K + mmq_y/QI5_K, mmq_y*WARP_SIZE/8 + mmq_y/8}
-#define TILE_X_SIZES_Q6_K tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI6_K + mmq_y/QI6_K, mmq_y*WARP_SIZE/8 + mmq_y/8}
+#define MMQ_DP4A_TXS_Q4_0 tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI4_0 + mmq_y/QI4_0, 0}
+#define MMQ_DP4A_TXS_Q4_1 tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI4_1 + mmq_y/QI4_1, 0}
+#define MMQ_DP4A_TXS_Q5_0 tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI5_0 + mmq_y/QI5_0, 0}
+#define MMQ_DP4A_TXS_Q5_1 tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI5_1 + mmq_y/QI5_1, 0}
+#define MMQ_DP4A_TXS_Q8_0 tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI8_0 + mmq_y/QI8_0, 0}
+#define MMQ_DP4A_TXS_Q2_K tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE       + mmq_y,       0}
+#define MMQ_DP4A_TXS_Q3_K tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI3_K + mmq_y/QI3_K, mmq_y*WARP_SIZE/4 + mmq_y/4}
+#define MMQ_DP4A_TXS_Q4_K tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI4_K + mmq_y/QI4_K, mmq_y*WARP_SIZE/8 + mmq_y/8}
+#define MMQ_DP4A_TXS_Q5_K tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI5_K + mmq_y/QI5_K, mmq_y*WARP_SIZE/8 + mmq_y/8}
+#define MMQ_DP4A_TXS_Q6_K tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI6_K + mmq_y/QI6_K, mmq_y*WARP_SIZE/8 + mmq_y/8}
 
-#define GET_TILE_X_SIZES_BODY                           \
-    return type == GGML_TYPE_Q4_0 ? TILE_X_SIZES_Q4_0 : \
-        type == GGML_TYPE_Q4_1 ? TILE_X_SIZES_Q4_1 :    \
-        type == GGML_TYPE_Q5_0 ? TILE_X_SIZES_Q5_0 :    \
-        type == GGML_TYPE_Q5_1 ? TILE_X_SIZES_Q5_1 :    \
-        type == GGML_TYPE_Q8_0 ? TILE_X_SIZES_Q8_0 :    \
-        type == GGML_TYPE_Q2_K ? TILE_X_SIZES_Q2_K :    \
-        type == GGML_TYPE_Q3_K ? TILE_X_SIZES_Q3_K :    \
-        type == GGML_TYPE_Q4_K ? TILE_X_SIZES_Q4_K :    \
-        type == GGML_TYPE_Q5_K ? TILE_X_SIZES_Q5_K :    \
-        type == GGML_TYPE_Q6_K ? TILE_X_SIZES_Q6_K :    \
+#define GET_MMQ_DP4A_TXS_BODY                           \
+    return type == GGML_TYPE_Q4_0 ? MMQ_DP4A_TXS_Q4_0 : \
+        type == GGML_TYPE_Q4_1 ? MMQ_DP4A_TXS_Q4_1 :    \
+        type == GGML_TYPE_Q5_0 ? MMQ_DP4A_TXS_Q5_0 :    \
+        type == GGML_TYPE_Q5_1 ? MMQ_DP4A_TXS_Q5_1 :    \
+        type == GGML_TYPE_Q8_0 ? MMQ_DP4A_TXS_Q8_0 :    \
+        type == GGML_TYPE_Q2_K ? MMQ_DP4A_TXS_Q2_K :    \
+        type == GGML_TYPE_Q3_K ? MMQ_DP4A_TXS_Q3_K :    \
+        type == GGML_TYPE_Q4_K ? MMQ_DP4A_TXS_Q4_K :    \
+        type == GGML_TYPE_Q5_K ? MMQ_DP4A_TXS_Q5_K :    \
+        type == GGML_TYPE_Q6_K ? MMQ_DP4A_TXS_Q6_K :    \
         tile_x_sizes{0, 0, 0}
 
 static tile_x_sizes get_tile_x_sizes_host(const ggml_type type, const int mmq_y) {
-    GET_TILE_X_SIZES_BODY;
+    GET_MMQ_DP4A_TXS_BODY;
 }
 
 template <int mmq_y>
 static constexpr __device__ tile_x_sizes get_tile_x_sizes_device(ggml_type type) {
-    GET_TILE_X_SIZES_BODY;
+    GET_MMQ_DP4A_TXS_BODY;
 }
 
 static int mmq_get_granularity_host(const int mmq_x, const int cc) {
