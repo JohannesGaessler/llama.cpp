@@ -822,6 +822,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
         }
     }
 
+#pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += ntx*mma_B::J) {
         mma_B B;
         float dB[mma_C::ne/2];
