@@ -96,6 +96,18 @@ static constexpr __device__ tile_x_sizes get_tile_x_sizes_device(ggml_type type)
     GET_TILE_X_SIZES_BODY;
 }
 
+static int mmq_get_granularity_host(const int mmq_x, const int cc) {
+    return int8_mma_available(cc) && mmq_x >= 48 ? 16 : 8;
+}
+
+static constexpr __device__ int mmq_get_granularity_device(const int mmq_x) {
+#ifdef INT8_MMA_AVAILABLE
+    return 8;
+#else
+    return mmq_x >= 48 ? 16 : 8;
+#endif // INT8_MMA_AVAILABLE
+}
+
 // ------------------------------------------------------------
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q4_0(
@@ -772,7 +784,8 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
     typedef mma_int_B_J8K8  mma_B;
     typedef mma_int_C_I16J8 mma_C;
 
-    constexpr int rows_per_warp = mmq_x >= 48 ? 32 : 16;
+    constexpr int granularity = mmq_get_granularity_device(mmq_x);
+    constexpr int rows_per_warp = 2 * granularity;
     constexpr int ntx = rows_per_warp/mma_C::I; // Number of x minitiles per warp.
 
     y += (threadIdx.y % ntx) * (mma_B::J*MMQ_TILE_Y_K);
@@ -1774,7 +1787,9 @@ static __device__ __forceinline__ void mmq_write_back_mma(
     const float * __restrict__ sum, float * __restrict__ dst, const int & stride, const int & i_max, const int & j_max) {
 
     typedef mma_int_C_I16J8 mma_C;
-    constexpr int rows_per_warp = mmq_x >= 48 ? 32 : 16;
+
+    constexpr int granularity = mmq_get_granularity_device(mmq_x);
+    constexpr int rows_per_warp = 2 * granularity;
     constexpr int ntx = rows_per_warp/mma_C::I; // Number of x minitiles per warp.
 
     const int i0 = (threadIdx.y / ntx) * (ntx*mma_C::I);
@@ -2008,7 +2023,7 @@ static __global__ void mul_mat_q(
     const int ne00, const int ne01, const int stride01, const int ne10, const int ne11, const int stride11, const int ne0) {
 
     // Skip unused template specializations for faster compilation:
-    if (mmq_x > get_mmq_x_max_device()) {
+    if (mmq_x > get_mmq_x_max_device() || mmq_x % mmq_get_granularity_device(mmq_x) != 0) {
         NO_DEVICE_CODE;
         return;
     }
@@ -2246,12 +2261,13 @@ void mul_mat_q_case(ggml_backend_cuda_context & ctx, const mmq_args & args, cuda
     int nparts_best = INT_MAX;
 
     for (int mmq_x = 8; mmq_x <= mmq_x_max && nparts_best > 1; mmq_x += 8) {
+        const int granularity = mmq_get_granularity_host(mmq_x, cc);
         const int ntiles_x = (args.ne11 + mmq_x - 1) / mmq_x;
         const int nwaves_xy_tiling = ntiles_x*block_num_y;
 
         const int nparts = use_stream_k ? ntiles_x : nwaves_xy_tiling;
 
-        if (nparts < nparts_best && mmq_get_shmem(type, mmq_x, mmq_y) <= smpbo) {
+        if (nparts < nparts_best && mmq_x % granularity == 0 && mmq_get_shmem(type, mmq_x, mmq_y) <= smpbo) {
             mmq_x_best  = mmq_x;
             nparts_best = nparts;
         }
@@ -2276,17 +2292,32 @@ void mul_mat_q_case(ggml_backend_cuda_context & ctx, const mmq_args & args, cuda
         case  48:
             launch_mul_mat_q<type,  48>(ctx, args, stream);
             break;
+        case  56:
+            launch_mul_mat_q<type,  56>(ctx, args, stream);
+            break;
         case  64:
             launch_mul_mat_q<type,  64>(ctx, args, stream);
+            break;
+        case  72:
+            launch_mul_mat_q<type,  72>(ctx, args, stream);
             break;
         case  80:
             launch_mul_mat_q<type,  80>(ctx, args, stream);
             break;
+        case  88:
+            launch_mul_mat_q<type,  88>(ctx, args, stream);
+            break;
         case  96:
             launch_mul_mat_q<type,  96>(ctx, args, stream);
             break;
+        case 104:
+            launch_mul_mat_q<type, 104>(ctx, args, stream);
+            break;
         case 112:
             launch_mul_mat_q<type, 112>(ctx, args, stream);
+            break;
+        case 120:
+            launch_mul_mat_q<type, 120>(ctx, args, stream);
             break;
         case 128:
             launch_mul_mat_q<type, 128>(ctx, args, stream);
