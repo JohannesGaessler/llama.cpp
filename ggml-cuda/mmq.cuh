@@ -87,12 +87,12 @@ static constexpr __device__ int get_mmq_y_device() {
         type == GGML_TYPE_Q6_K ? MMQ_DP4A_TXS_Q6_K :    \
         tile_x_sizes{0, 0, 0}
 
-static tile_x_sizes get_tile_x_sizes_host(const ggml_type type, const int mmq_y) {
+static tile_x_sizes mmq_get_dp4a_tile_x_sizes_host(const ggml_type type, const int mmq_y) {
     GET_MMQ_DP4A_TXS_BODY;
 }
 
 template <int mmq_y>
-static constexpr __device__ tile_x_sizes get_tile_x_sizes_device(ggml_type type) {
+static constexpr __device__ tile_x_sizes mmq_get_dp4a_tile_x_sizes_device(ggml_type type) {
     GET_MMQ_DP4A_TXS_BODY;
 }
 
@@ -2023,7 +2023,7 @@ static __device__ void mul_mat_q_process_tile(
     constexpr mmq_write_back_t write_back = mmq_write_back_dp4a<mmq_x, mmq_y, nwarps, need_check>;
 #endif // INT8_MMA_AVAILABLE
 
-    constexpr tile_x_sizes txs = get_tile_x_sizes_device<mmq_y>(type);
+    constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes_device<mmq_y>(type);
 
     extern __shared__ char data_mul_mat_q[];
     int   * tile_x_qs = (int   *)  data_mul_mat_q;
@@ -2245,7 +2245,7 @@ struct mmq_args {
 };
 
 static int mmq_get_shmem(const ggml_type type, const int mmq_x, const int mmq_y) {
-    const tile_x_sizes txs = get_tile_x_sizes_host(type, mmq_y);
+    const tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes_host(type, mmq_y);
 
     const int shmem_x = txs.qs*sizeof(int) + txs.dm*sizeof(half2) + txs.sc*sizeof(int);
     const int shmem_y = mmq_x*WARP_SIZE*sizeof(int) + mmq_x*(WARP_SIZE/QI8_1)*sizeof(half2);
