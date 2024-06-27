@@ -847,24 +847,20 @@ static __device__ __forceinline__ float vec_dot_iq2_xxs_q8_1(
     int sumi = 0;
 #pragma unroll
     for (int k0 = 0; k0 < 8; k0 += 2) {
-        const int2 grid_pos = ((const int2 *) iq2xxs_grid)[aux8[k0/2]];
-        const int2 grid_neg = make_int2(__vneg4(grid_pos.x), __vneg4(grid_pos.y));
+        const int * grid_pos = (const int *) (iq2xxs_grid + aux8[k0/2]);
+        const int2 grid_neg = make_int2(__vneg4(grid_pos[0]), __vneg4(grid_pos[1]));
 
         const int signs_packed = ksigns_iq2xs[(aux32 >> (7*k0/2)) & 127];
 
         int2 grid;
 
-        const int8_t * grid_pos8 = (const int8_t *) &grid_pos;
-        const int8_t * grid_neg8 = (const int8_t *) &grid_neg;
-        int8_t * grid8 = (int8_t *) &grid;
-
         const int signs0 = ((signs_packed & 0x03) << 7) | ((signs_packed & 0x0C) << 21);
         const int mask0 = __vcmpeq4(signs0, 0x00000000);
-        grid.x = (grid_pos.x & mask0) | (grid_neg.x & (~mask0));
+        grid.x = (grid_pos[0] & mask0) | (grid_neg.x & (~mask0));
 
         const int signs1 = ((signs_packed & 0x30) << 3) | ((signs_packed & 0xC0) << 17);
         const int mask1 = __vcmpeq4(signs1, 0x00000000);
-        grid.y = (grid_pos.y & mask1) | (grid_neg.y & (~mask1));
+        grid.y = (grid_pos[1] & mask1) | (grid_neg.y & (~mask1));
 
         const int u0 = get_int_from_int8_aligned(q8, k0 + 0);
         sumi = __dp4a(grid.x, u0, sumi);
