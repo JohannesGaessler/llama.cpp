@@ -28,6 +28,14 @@ static __device__ __forceinline__ int get_int_from_uint8_aligned(const uint8_t *
     return *((const int *) (x8 + sizeof(int) * i32)); // assume at least 4 byte alignment
 }
 
+static __device__ __forceinline__ int get_int_b2(const void * x, const int & i32) {
+    const uint16_t * x16 = (const uint16_t *) x;
+
+    int x32  = x16[2*i32 + 0] <<  0;
+    x32     |= x16[2*i32 + 1] << 16;
+
+    return x32;
+}
 
 // VDR = vec dot ratio, how many contiguous integers each thread processes when the vec dot kernel is called
 // MMVQ = mul_mat_vec_q, MMQ = mul_mat_q
@@ -830,10 +838,11 @@ static __device__ __forceinline__ float vec_dot_iq2_xxs_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
     const block_iq2_xxs * bq2 = (const block_iq2_xxs *) vbq + kbx;
 
-    const uint16_t * q2 = bq2->qs + 2*iqs;
-    const uint8_t  * aux8 = (const uint8_t *)q2;
-    const int8_t   * q8 = bq8_1[iqs/2].qs;
-    uint32_t aux32 = q2[2] | (q2[3] << 16);
+    const int q2 = get_int_b2(bq2->qs, iqs);
+    const uint8_t * aux8 = (const uint8_t *) &q2;
+    const int8_t  * q8   = bq8_1[iqs/2].qs;
+
+    uint aux32 = get_int_b2(bq2->qs, iqs + 1);
     int sumi = 0;
 #pragma unroll
     for (int l = 0; l < 4; ++l) {
