@@ -858,8 +858,7 @@ static __device__ __forceinline__ float vec_dot_iq2_xxs_q8_1(
         const int8_t * grid_neg8 = (const int8_t *) &grid_neg;
         int8_t * grid8 = (int8_t *) &grid;
 
-        int signs0  = ((signs_packed & 0x01) <<  0);
-        signs0     |= ((signs_packed & 0x02) <<  8);
+        int signs0  = ((signs_packed & 0x03) <<  7);
         signs0     |= ((signs_packed & 0x04) << 16);
         signs0     |= ((signs_packed & 0x08) << 24);
 
