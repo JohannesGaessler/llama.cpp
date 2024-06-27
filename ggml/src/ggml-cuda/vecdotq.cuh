@@ -846,11 +846,11 @@ static __device__ __forceinline__ float vec_dot_iq2_xxs_q8_1(
     const uint aux32 = get_int_b2(bq2->qs, iqs + 1);
     int sumi = 0;
 #pragma unroll
-    for (int l = 0; l < 4; ++l) {
-        const int2 grid_pos = ((const int2 *) iq2xxs_grid)[aux8[l]];
+    for (int k0 = 0; k0 < 8; k0 += 2) {
+        const int2 grid_pos = ((const int2 *) iq2xxs_grid)[aux8[k0/2]];
         const int2 grid_neg = make_int2(__vneg4(grid_pos.x), __vneg4(grid_pos.y));
 
-        const int signs_packed = ksigns_iq2xs[(aux32 >> (7*l)) & 127];
+        const int signs_packed = ksigns_iq2xs[(aux32 >> (7*k0/2)) & 127];
 
         int2 grid;
 
@@ -866,10 +866,10 @@ static __device__ __forceinline__ float vec_dot_iq2_xxs_q8_1(
         const int mask1 = __vcmpeq4(signs1, 0x00000000);
         grid.y = (grid_pos.y & mask1) | (grid_neg.y & (~mask1));
 
-        const int u0 = get_int_from_int8_aligned(q8, 2*l + 0);
+        const int u0 = get_int_from_int8_aligned(q8, k0 + 0);
         sumi = __dp4a(grid.x, u0, sumi);
 
-        const int u1 = get_int_from_int8_aligned(q8, 2*l + 1);
+        const int u1 = get_int_from_int8_aligned(q8, k0 + 1);
         sumi = __dp4a(grid.y, u1, sumi);
     }
     const float d = (float)bq2->d * (0.5f + (aux32 >> 28)) * __low2float(bq8_1[iqs/2].ds) * 0.25f;
