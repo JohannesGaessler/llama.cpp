@@ -859,18 +859,12 @@ static __device__ __forceinline__ float vec_dot_iq2_xxs_q8_1(
         int8_t * grid8 = (int8_t *) &grid;
 
         const int signs0 = ((signs_packed & 0x03) << 7) | ((signs_packed & 0x0C) << 21);
-
         const int mask0 = __vcmpeq4(signs0, 0x00000000);
         grid.x = (grid_pos.x & mask0) | (grid_neg.x & (~mask0));
 
-#pragma unroll
-        for (int j = 4; j < 8; ++j) {
-            grid8[j] = (signs_packed >> j) & 0x01 ? grid_neg8[j] : grid_pos8[j];
-        }
-
-        // const int signs1 = ((signs_packed & 0x30) << 3) | ((signs_packed & 0xC0) << 18);
-        // const int mask1  = __vcmpeq4(signs1, 0x00000000);
-        // const int grid1  = (grid_pos.y & mask1) | (grid_neg.y & (~mask1));
+        const int signs1 = ((signs_packed & 0x30) << 3) | ((signs_packed & 0xC0) << 17);
+        const int mask1 = __vcmpeq4(signs1, 0x00000000);
+        grid.y = (grid_pos.y & mask1) | (grid_neg.y & (~mask1));
 
         const int u0 = get_int_from_int8_aligned(q8, 2*l + 0);
         sumi = __dp4a(grid.x, u0, sumi);
