@@ -1,4 +1,5 @@
 #include "common.cuh"
+#include <cstdint>
 
 static __device__ __forceinline__ int get_int_from_int8(const int8_t * x8, const int & i32) {
     const uint16_t * x16 = (const uint16_t *) (x8 + sizeof(int) * i32); // assume at least 2 byte alignment
@@ -28,6 +29,18 @@ static __device__ __forceinline__ int get_int_from_uint8_aligned(const uint8_t *
     return *((const int *) (x8 + sizeof(int) * i32)); // assume at least 4 byte alignment
 }
 
+static __device__ __forceinline__ int get_int_b2(const void * x, const int & i32) {
+    const uint16_t * x16 = (const uint16_t *) x;
+
+    int x32  = x16[2*i32 + 0] <<  0;
+    x32     |= x16[2*i32 + 1] << 16;
+
+    return x32;
+}
+
+static __device__ __forceinline__ int get_int_b4(const void * x, const int & i32) {
+    return ((const int *) x)[i32]; // assume at least 4 byte alignment
+}
 
 // VDR = vec dot ratio, how many contiguous integers each thread processes when the vec dot kernel is called
 // MMVQ = mul_mat_vec_q, MMQ = mul_mat_q
@@ -824,180 +837,220 @@ static __device__ __forceinline__ float vec_dot_q6_K_q8_1(
     return vec_dot_q6_K_q8_1_impl_mmvq(vl, vh, u, scales, bq6_K->d, d8);
 }
 
+#define VDR_IQ2_XXS_Q8_1_MMVQ 2
+
 static __device__ __forceinline__ float vec_dot_iq2_xxs_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
+#if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
     const block_iq2_xxs * bq2 = (const block_iq2_xxs *) vbq + kbx;
 
-#if QR2_XXS == 8
-    const int ib32 = iqs;
-    const uint16_t * q2 = bq2->qs + 4*ib32;
-    const uint8_t  * aux8 = (const uint8_t *)q2;
-    const int8_t   * q8 = bq8_1[ib32].qs;
-    uint32_t aux32 = q2[2] | (q2[3] << 16);
+    const int q2 = get_int_b2(bq2->qs, iqs);
+    const uint8_t * aux8 = (const uint8_t *) &q2;
+    const uint aux32 = get_int_b2(bq2->qs, iqs + 1);
+
     int sumi = 0;
-    for (int l = 0; l < 4; ++l) {
-        const uint8_t * grid = (const uint8_t *)(iq2xxs_grid + aux8[l]);
-        const uint8_t  signs = ksigns_iq2xs[aux32 & 127];
-        for (int j = 0; j < 8; ++j) {
-            sumi += q8[j] * grid[j] * (signs & kmask_iq2xs[j] ? -1 : 1);
-        }
-        q8 += 8;
-        aux32 >>= 7;
+#pragma unroll
+    for (int k0 = 0; k0 < 8; k0 += 2) {
+        const int * grid_pos = (const int *) (iq2xxs_grid + aux8[k0/2]);
+        const int2 grid_neg = make_int2(__vneg4(grid_pos[0]), __vneg4(grid_pos[1]));
+
+        const int signs_packed = ksigns_iq2xs[(aux32 >> (7*k0/2)) & 127];
+
+        const int signs0 = ((signs_packed & 0x03) << 7) | ((signs_packed & 0x0C) << 21);
+        const int mask0 = __vcmpeq4(signs0, 0x00000000);
+        const int grid0 = (grid_pos[0] & mask0) | (grid_neg.x & (~mask0));
+        const int u0 = get_int_b4(bq8_1[iqs/2].qs, k0 + 0);
+        sumi = __dp4a(grid0, u0, sumi);
+
+        const int signs1 = ((signs_packed & 0x30) << 3) | ((signs_packed & 0xC0) << 17);
+        const int mask1 = __vcmpeq4(signs1, 0x00000000);
+        const int grid1 = (grid_pos[1] & mask1) | (grid_neg.y & (~mask1));
+        const int u1 = get_int_b4(bq8_1[iqs/2].qs, k0 + 1);
+        sumi = __dp4a(grid1, u1, sumi);
     }
-    const float d = (float)bq2->d * (0.5f + aux32) * __low2float(bq8_1[ib32].ds) * 0.25f;
+
+    const int ls = aux32 >> 28;
+    sumi = (ls*sumi + sumi/2)/4;
+    const float d = __half2float(bq2->d) * __low2float(bq8_1[iqs/2].ds);
     return d * sumi;
 #else
-    // iqs is 0...15
-    const int ib32 = iqs/2;
-    const int il = iqs%2;
-    const uint16_t * q2 = bq2->qs + 4*ib32;
-    const uint8_t  * aux8 = (const uint8_t *)q2;
-    const uint8_t  * grid1 = (const uint8_t *)(iq2xxs_grid + aux8[2*il+0]);
-    const uint8_t  * grid2 = (const uint8_t *)(iq2xxs_grid + aux8[2*il+1]);
-    const uint32_t aux32 = q2[2] | (q2[3] << 16);
-    const float d = (float)bq2->d * (0.5f + (aux32 >> 28)) * __low2float(bq8_1[ib32].ds) * 0.25f;
-    const uint8_t signs1 = ksigns_iq2xs[(aux32 >> 14*il) & 127];
-    const uint8_t signs2 = ksigns_iq2xs[(aux32 >> (14*il + 7)) & 127];
-    const int8_t * q8 = bq8_1[ib32].qs + 16*il;
-    int sumi1 = 0, sumi2 = 0;
-    for (int j = 0; j < 8; ++j) {
-        sumi1 += q8[j+0] * grid1[j] * (signs1 & kmask_iq2xs[j] ? -1 : 1);
-        sumi2 += q8[j+8] * grid2[j] * (signs2 & kmask_iq2xs[j] ? -1 : 1);
-    }
-    return d * (sumi1 + sumi2);
+    NO_DEVICE_CODE;
 #endif
 }
+
+#define VDR_IQ2_XS_Q8_1_MMVQ 2
 
 static __device__ __forceinline__ float vec_dot_iq2_xs_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
     const block_iq2_xs * bq2 = (const block_iq2_xs *) vbq + kbx;
 
-    const int ib32 = iqs;
-    const uint16_t * q2 = bq2->qs + 4*ib32;
-    const int8_t   * q8 = bq8_1[ib32].qs;
-    const uint8_t ls1 = bq2->scales[ib32] & 0xf;
-    const uint8_t ls2 = bq2->scales[ib32] >>  4;
-    int sumi1 = 0;
-    for (int l = 0; l < 2; ++l) {
-        const uint32_t * grid = (const uint32_t *)(iq2xs_grid + (q2[l] & 511));
-        const uint32_t * signs = (const uint32_t *)(ksigns64 + (q2[l] >> 9));
+    const uint16_t * q2 = bq2->qs + 2*iqs;
+    const int ls1 = bq2->scales[iqs/2] & 0x0F;
+    const int ls2 = bq2->scales[iqs/2] >> 4;
+
+    int sumi      = 0;
+    int sumi_part = 0;
+#pragma unroll
+    for (int l0 = 0; l0 < 8; l0 += 2) {
+        const uint32_t * grid  = (const uint32_t *)(iq2xs_grid + (q2[l0/2] & 0x000001FF));
+        const uint32_t * signs = (const uint32_t *)(ksigns64   + (q2[l0/2] >> 9));
+
         const int grid_l = __vsub4(grid[0] ^ signs[0], signs[0]);
         const int grid_h = __vsub4(grid[1] ^ signs[1], signs[1]);
-        sumi1 = __dp4a(grid_l, *((const int *)q8 + 0), sumi1);
-        sumi1 = __dp4a(grid_h, *((const int *)q8 + 1), sumi1);
-        q8 += 8;
+
+        const int u0 = get_int_b4(bq8_1[iqs/2].qs, l0 + 0);
+        const int u1 = get_int_b4(bq8_1[iqs/2].qs, l0 + 1);
+
+        sumi_part = __dp4a(grid_l, u0, sumi_part);
+        sumi_part = __dp4a(grid_h, u1, sumi_part);
+
+        if (l0 == 2) {
+            sumi      = ls1*sumi_part + sumi_part/2;
+            sumi_part = 0;
+        }
+        if (l0 == 6) {
+            sumi     += ls2*sumi_part + sumi_part/2;
+        }
     }
-    int sumi2 = 0;
-    for (int l = 2; l < 4; ++l) {
-        const uint32_t * grid = (const uint32_t *)(iq2xs_grid + (q2[l] & 511));
-        const uint32_t * signs = (const uint32_t *)(ksigns64 + (q2[l] >> 9));
-        const int grid_l = __vsub4(grid[0] ^ signs[0], signs[0]);
-        const int grid_h = __vsub4(grid[1] ^ signs[1], signs[1]);
-        sumi2 = __dp4a(grid_l, *((const int *)q8 + 0), sumi2);
-        sumi2 = __dp4a(grid_h, *((const int *)q8 + 1), sumi2);
-        q8 += 8;
-    }
-    const float d = (float)bq2->d * __low2float(bq8_1[ib32].ds) * 0.25f;
-    return d * ((0.5f + ls1) * sumi1 + (0.5f + ls2) * sumi2);
+    const float d = __half2float(bq2->d) * __low2float(bq8_1[iqs/2].ds);
+    return d * (sumi/4);
 #else
     GGML_UNUSED(ksigns64);
     NO_DEVICE_CODE;
 #endif
 }
 
-// TODO
+#define VDR_IQ2_S_Q8_1_MMVQ 2
+
 static __device__ __forceinline__ float vec_dot_iq2_s_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
     const block_iq2_s * bq2 = (const block_iq2_s *) vbq + kbx;
 
-    const int ib32 = iqs;
-    const int8_t  * q8 = bq8_1[ib32].qs;
-    const uint8_t * signs = bq2->qs + QK_K/8 + 4*ib32;
-    const uint8_t ls1 = bq2->scales[ib32] & 0xf;
-    const uint8_t ls2 = bq2->scales[ib32] >>  4;
-    int sumi1 = 0;
-    for (int l = 0; l < 2; ++l) {
-        const uint32_t * grid = (const uint32_t *)(iq2s_grid + (bq2->qs[4*ib32+l] | ((bq2->qh[ib32] << (8-2*l)) & 0x300)));
-        const uint32_t signs0 = __vcmpeq4(((signs[l] & 0xf) * 0x01010101) & 0x08040201, 0x08040201);
-        const uint32_t signs1 = __vcmpeq4(((signs[l] >>  4) * 0x01010101) & 0x08040201, 0x08040201);
-        const int grid_l = __vsub4(grid[0] ^ signs0, signs0);
-        const int grid_h = __vsub4(grid[1] ^ signs1, signs1);
-        sumi1 = __dp4a(grid_l, *((const int *)q8 + 0), sumi1);
-        sumi1 = __dp4a(grid_h, *((const int *)q8 + 1), sumi1);
-        q8 += 8;
+    const uint8_t * signs = bq2->qs + QK_K/8 + 4*iqs/2;
+    const int ls1 = bq2->scales[iqs/2] & 0x0F;
+    const int ls2 = bq2->scales[iqs/2] >> 4;
+
+    int sumi      = 0;
+    int sumi_part = 0;
+#pragma unroll
+    for (int l0 = 0; l0 < 8; l0 += 2) {
+        const int * grid_pos = (const int *)(iq2s_grid + (bq2->qs[2*iqs + l0/2] | ((bq2->qh[iqs/2] << (8-l0)) & 0x300)));
+        const int2  grid_neg = make_int2(__vneg4(grid_pos[0]), __vneg4(grid_pos[1]));
+
+        const int signs_packed = signs[l0/2];
+
+        const int signs0 = ((signs_packed & 0x03) << 7) | ((signs_packed & 0x0C) << 21);
+        const int signs1 = ((signs_packed & 0x30) << 3) | ((signs_packed & 0xC0) << 17);
+
+        const int mask0 = __vcmpeq4(signs0, 0x00000000);
+        const int mask1 = __vcmpeq4(signs1, 0x00000000);
+
+        const int grid_l = (grid_pos[0] & mask0) | (grid_neg.x & ~mask0);
+        const int grid_h = (grid_pos[1] & mask1) | (grid_neg.y & ~mask1);
+
+        const int u0 = get_int_b4(bq8_1[iqs/2].qs, l0 + 0);
+        const int u1 = get_int_b4(bq8_1[iqs/2].qs, l0 + 1);
+
+        sumi_part = __dp4a(grid_l, u0, sumi_part);
+        sumi_part = __dp4a(grid_h, u1, sumi_part);
+
+        if (l0 == 2) {
+            sumi      = ls1*sumi_part + sumi_part/2;
+            sumi_part = 0;
+        }
+        if (l0 == 6) {
+            sumi     += ls2*sumi_part + sumi_part/2;
+        }
     }
-    int sumi2 = 0;
-    for (int l = 2; l < 4; ++l) {
-        const uint32_t * grid = (const uint32_t *)(iq2s_grid + (bq2->qs[4*ib32+l] | ((bq2->qh[ib32] << (8-2*l)) & 0x300)));
-        const uint32_t signs0 = __vcmpeq4(((signs[l] & 0xf) * 0x01010101) & 0x08040201, 0x08040201);
-        const uint32_t signs1 = __vcmpeq4(((signs[l] >>  4) * 0x01010101) & 0x08040201, 0x08040201);
-        const int grid_l = __vsub4(grid[0] ^ signs0, signs0);
-        const int grid_h = __vsub4(grid[1] ^ signs1, signs1);
-        sumi2 = __dp4a(grid_l, *((const int *)q8 + 0), sumi2);
-        sumi2 = __dp4a(grid_h, *((const int *)q8 + 1), sumi2);
-        q8 += 8;
-    }
-    const float d = (float)bq2->d * __low2float(bq8_1[ib32].ds) * 0.25f;
-    return d * ((0.5f + ls1) * sumi1 + (0.5f + ls2) * sumi2);
+
+    const float d = __half2float(bq2->d) * __low2float(bq8_1[iqs/2].ds);
+    return d * (sumi/4);
 #else
     GGML_UNUSED(ksigns64);
     NO_DEVICE_CODE;
 #endif
 }
+
+#define VDR_IQ3_XXS_Q8_1_MMVQ 2
 
 static __device__ __forceinline__ float vec_dot_iq3_xxs_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
     const block_iq3_xxs * bq2 = (const block_iq3_xxs *) vbq + kbx;
 
-    const int ib32 = iqs;
-    const uint8_t  * q3 = bq2->qs + 8*ib32;
-    const uint16_t * gas = (const uint16_t *)(bq2->qs + QK_K/4) + 2*ib32;
-    const int8_t   * q8 = bq8_1[ib32].qs;
-    uint32_t aux32 = gas[0] | (gas[1] << 16);
+    const uint8_t * q3 = bq2->qs + 4*iqs;
+    const uint aux32 = get_int_b2(bq2->qs, QK_K/16 + iqs/2);
+
     int sumi = 0;
-    for (int l = 0; l < 4; ++l) {
-        const uint32_t * grid1 = iq3xxs_grid + q3[2*l+0];
-        const uint32_t * grid2 = iq3xxs_grid + q3[2*l+1];
-        const uint32_t * signs = (const uint32_t *)(ksigns64 + (aux32 & 127));
-        const int grid_l = __vsub4(grid1[0] ^ signs[0], signs[0]);
-        const int grid_h = __vsub4(grid2[0] ^ signs[1], signs[1]);
-        sumi = __dp4a(grid_l, *((int *)q8+0), sumi);
-        sumi = __dp4a(grid_h, *((int *)q8+1), sumi);
-        q8 += 8;
-        aux32 >>= 7;
+#pragma unroll
+    for (int l0 = 0; l0 < 8; l0 += 2) {
+        const int2 grid_pos = make_int2(iq3xxs_grid[q3[l0 + 0]], iq3xxs_grid[q3[l0 + 1]]);
+        const int2 grid_neg = make_int2(__vneg4(grid_pos.x), __vneg4(grid_pos.y));
+
+        const int * mask = (const int *)(ksigns64 + ((aux32 >> (7*l0/2)) & 0x7F));
+
+        const int grid_l = (grid_pos.x & ~mask[0]) | (grid_neg.x & mask[0]);
+        const int grid_h = (grid_pos.y & ~mask[1]) | (grid_neg.y & mask[1]);
+
+        const int u0 = get_int_b4(bq8_1[iqs/2].qs, l0 + 0);
+        const int u1 = get_int_b4(bq8_1[iqs/2].qs, l0 + 1);
+
+        sumi = __dp4a(grid_l, u0, sumi);
+        sumi = __dp4a(grid_h, u1, sumi);
     }
-    const float d = (float)bq2->d * (0.5f + aux32) * __low2float(bq8_1[ib32].ds) * 0.5f;
+
+    const int ls = aux32 >> 28;
+    sumi = (ls*sumi + sumi/2)/2;
+    const float d = __half2float(bq2->d) * __low2float(bq8_1[iqs/2].ds);
     return d * sumi;
 #else
     NO_DEVICE_CODE;
 #endif
 }
 
+#define VDR_IQ3_S_Q8_1_MMVQ 2
+
 // TODO: don't use lookup table for signs
 static __device__ __forceinline__ float vec_dot_iq3_s_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
-    const block_iq3_s * bq2 = (const block_iq3_s *) vbq + kbx;
+    const block_iq3_s * bq3 = (const block_iq3_s *) vbq + kbx;
 
-    const int ib32 = iqs;
-    const uint8_t  * qs = bq2->qs + 8*ib32;
-    const int8_t   * q8 = bq8_1[ib32].qs;
+    const int2 qs_packed = make_int2(get_int_b2(bq3->qs, iqs + 0), get_int_b2(bq3->qs, iqs + 1));
+    const uint8_t * qs = (const uint8_t *) &qs_packed;
+    const int qh = bq3->qh[iqs/2];
+
     int sumi = 0;
-    for (int l = 0; l < 4; ++l) {
-        const uint32_t * grid1 = iq3s_grid + (qs[2*l+0] | ((bq2->qh[ib32] << (8 - 2*l)) & 256));
-        const uint32_t * grid2 = iq3s_grid + (qs[2*l+1] | ((bq2->qh[ib32] << (7 - 2*l)) & 256));
-        uint32_t signs0 = __vcmpeq4(((bq2->signs[4*ib32+l] & 0xf) * 0x01010101) & 0x08040201, 0x08040201);
-        uint32_t signs1 = __vcmpeq4(((bq2->signs[4*ib32+l] >>  4) * 0x01010101) & 0x08040201, 0x08040201);
-        const int grid_l = __vsub4(grid1[0] ^ signs0, signs0);
-        const int grid_h = __vsub4(grid2[0] ^ signs1, signs1);
-        sumi = __dp4a(grid_l, *((int *)q8+0), sumi);
-        sumi = __dp4a(grid_h, *((int *)q8+1), sumi);
-        q8 += 8;
+#pragma unroll
+    for (int l0 = 0; l0 < 8; l0 += 2) {
+        const int2 grid_pos = make_int2(
+            iq3s_grid[qs[l0 + 0] | ((qh << (8 - l0)) & 0x100)],
+            iq3s_grid[qs[l0 + 1] | ((qh << (7 - l0)) & 0x100)]);
+        const int2 grid_neg = make_int2(__vneg4(grid_pos.x), __vneg4(grid_pos.y));
+
+        const int signs_packed = bq3->signs[2*iqs + l0/2];
+
+        const int signs0 = ((signs_packed & 0x03) << 7) | ((signs_packed & 0x0C) << 21);
+        const int signs1 = ((signs_packed & 0x30) << 3) | ((signs_packed & 0xC0) << 17);
+
+        const int mask0 = __vcmpeq4(signs0, 0x00000000);
+        const int mask1 = __vcmpeq4(signs1, 0x00000000);
+
+        const int grid_l = (grid_pos.x & mask0) | (grid_neg.x & ~mask0);
+        const int grid_h = (grid_pos.y & mask1) | (grid_neg.y & ~mask1);
+
+        const int u0 = get_int_b4(bq8_1[iqs/2].qs, l0 + 0);
+        const int u1 = get_int_b4(bq8_1[iqs/2].qs, l0 + 1);
+
+        sumi = __dp4a(grid_l, u0, sumi);
+        sumi = __dp4a(grid_h, u1, sumi);
     }
-    const float d = (float)bq2->d * (1 + 2*((bq2->scales[ib32/2] >> 4*(ib32%2)) & 0xf)) * __low2float(bq8_1[ib32].ds);
+
+    sumi *= 1 + 2*((bq3->scales[iqs/4] >> ((iqs << 1) & 0x04)) & 0x0F);
+
+    const float d = __half2float(bq3->d) * __low2float(bq8_1[iqs/2].ds);
     return d * sumi;
 #else
     NO_DEVICE_CODE;
@@ -1007,71 +1060,84 @@ static __device__ __forceinline__ float vec_dot_iq3_s_q8_1(
 static __device__ __forceinline__ float vec_dot_iq1_s_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
     const block_iq1_s * bq1 = (const block_iq1_s *) vbq + kbx;
-
-    const int ib32 = iqs;
-    int sumi = 0;
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
-    const int * q8 = (const int *)bq8_1[ib32].qs;
-    for (int l = 0; l < 4; ++l) {
-        const int * grid = (const int *)(iq1s_grid_gpu + (bq1->qs[4*ib32+l] | (((bq1->qh[ib32] >> 3*l) & 7) << 8)));
-        int grid0 = grid[0] & 0x0f0f0f0f;
-        int grid1 = (grid[0] >> 4) & 0x0f0f0f0f;
-        sumi = __dp4a(q8[2*l+1], grid1, __dp4a(q8[2*l+0], grid0, sumi));
+    const int qs_packed = get_int_b2(bq1->qs, iqs);
+    const uint8_t * qs = (const uint8_t *) &qs_packed;
+    const int qh = bq1->qh[iqs];
+
+    int sumi = 0;
+#pragma unroll
+    for (int l0 = 0; l0 < 8; l0 += 2) {
+        const int grid = iq1s_grid_gpu[qs[l0/2] | (((qh >> 3*(l0/2)) & 0x07) << 8)];
+
+        const int grid0 = (grid >> 0) & 0x0F0F0F0F;
+        const int grid1 = (grid >> 4) & 0x0F0F0F0F;
+
+        const int u0 = get_int_b4(bq8_1[iqs].qs, l0 + 0);
+        const int u1 = get_int_b4(bq8_1[iqs].qs, l0 + 1);
+
+        sumi = __dp4a(grid0, u0, sumi);
+        sumi = __dp4a(grid1, u1, sumi);
     }
+
+    const float  d1q   = __half2float(bq1->d) * (((bq1->qh[iqs] >> 11) & 0x0E) + 1);
+    const float  delta = -1.0f + IQ1S_DELTA - (bq1->qh[iqs] & 0x8000) * (2.0f*IQ1S_DELTA/0x8000);
+    const float2 ds    = __half22float2(bq8_1[iqs].ds);
+    return d1q * (ds.x*sumi + ds.y*delta);
 #else
-    const int8_t * q8 = bq8_1[ib32].qs;
-    for (int l = 0; l < 4; ++l) {
-        const uint8_t * grid = (const uint8_t *)(iq1s_grid_gpu + (bq1->qs[4*ib32+l] | (((bq1->qh[ib32] >> 3*l) & 7) << 8)));
-        for (int j = 0; j < 4; ++j) {
-            sumi += q8[j] * (grid[j] & 0xf) + q8[j+4] * (grid[j] >> 4);
-        }
-        q8 += 8;
-    }
-#endif
-    const float delta = bq1->qh[ib32] & 0x8000 ? -1-IQ1S_DELTA : -1+IQ1S_DELTA;
-    const float d1q = (float)bq1->d * (2*((bq1->qh[ib32] >> 12) & 7) + 1);
-    const float d = d1q * __low2float (bq8_1[ib32].ds);
-    const float m = d1q * __high2float(bq8_1[ib32].ds);
-    return d * sumi + m * delta;
+    NO_DEVICE_CODE;
+#endif // __CUDA_ARCH__ >= MIN_CC_DP4A
 }
 
 static __device__ __forceinline__ float vec_dot_iq1_m_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
+#if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
     const block_iq1_m * bq1 = (const block_iq1_m *) vbq + kbx;
 
-    const int ib32 = iqs;
-    int   sumi[2] = {0, 0};
-    float sumf[2] = {0.f, 0.f};
-#if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
-    const int * q8 = (const int *)bq8_1[ib32].qs;
-    for (int l = 0; l < 4; ++l) {
-        const int * grid = (const int *)(iq1s_grid_gpu + (bq1->qs[4*ib32+l] | (((bq1->qh[2*ib32+l/2] >> 4*(l%2)) & 7) << 8)));
-        int grid0 = grid[0] & 0x0f0f0f0f;
-        int grid1 = (grid[0] >> 4) & 0x0f0f0f0f;
-        sumi[l/2] = __dp4a(q8[2*l+1], grid1, __dp4a(q8[2*l+0], grid0, sumi[l/2]));
-        const float delta = (bq1->qh[2*ib32+l/2] >> 4*(l%2)) & 0x08 ? -1-IQ1M_DELTA : -1+IQ1M_DELTA;
-        const int sumy = __dp4a(q8[2*l+1], 0x01010101, __dp4a(q8[2*l+0], 0x01010101, 0));
-        sumf[l/2] += delta*sumy;
-    }
-#else
-    const int8_t * q8 = bq8_1[ib32].qs;
-    for (int l = 0; l < 4; ++l) {
-        const uint8_t * grid = (const uint8_t *)(iq1s_grid_gpu + (bq1->qs[4*ib32+l] | (((bq1->qh[ib32] >> 3*l) & 7) << 8)));
+    const int qs_packed = get_int_b4(bq1->qs, iqs);
+    const int qh_packed = ((const uint16_t *) bq1->qh)[iqs];
+
+    const uint8_t * qs = (const uint8_t *) &qs_packed;
+    const uint8_t * qh = (const uint8_t *) &qh_packed;
+
+    int   sumi[2] = {0};
+    float sumf[2] = {0.0f};
+#pragma unroll
+    for (int l0 = 0; l0 < 8; l0 += 2) {
+        const int qhl = qh[l0/4] >> (4 * ((l0/2) % 2));
+
+        const int grid = iq1s_grid_gpu[qs[l0/2] | ((qhl & 0x07) << 8)];
+
+        const int grid0 = (grid >> 0) & 0x0F0F0F0F;
+        const int grid1 = (grid >> 4) & 0x0F0F0F0F;
+
+        const int u0 = get_int_b4(bq8_1[iqs].qs, l0 + 0);
+        const int u1 = get_int_b4(bq8_1[iqs].qs, l0 + 1);
+
+        sumi[l0/4] = __dp4a(grid0, u0, sumi[l0/4]);
+        sumi[l0/4] = __dp4a(grid1, u1, sumi[l0/4]);
+
+        const float delta = -1.0f + IQ1M_DELTA - (qhl & 0x08) * (2.0f*IQ1M_DELTA/0x08);
         int sumy = 0;
-        for (int j = 0; j < 4; ++j) {
-            sumi[l/2] += q8[j] * (grid[j] & 0xf) + q8[j+4] * (grid[j] >> 4);
-            sumy += q8[j] + q8[j+4];
-        }
-        const float delta = (bq1->qh[2*ib32+l/2] >> 4*(l%2)) & 0x08 ? -1-IQ1M_DELTA : -1+IQ1M_DELTA;
-        sumf[l/2] += delta*sumy;
-        q8 += 8;
+        sumy = __dp4a(u0, 0x01010101, sumy);
+        sumy = __dp4a(u1, 0x01010101, sumy);
+        sumf[l0/4] += delta*sumy;
     }
-#endif
+
+    const int2 sc_packed = *((const int2 *) bq1->scales);
+    const uint16_t * sc = (const uint16_t *) &sc_packed;
+
     iq1m_scale_t scale;
-    const uint16_t * sc = (const uint16_t *)bq1->scales;
-    scale.u16 = (sc[0] >> 12) | ((sc[1] >> 8) & 0x00f0) | ((sc[2] >> 4) & 0x0f00) | (sc[3] & 0xf000);
-    const float d = (float)scale.f16 * __low2float (bq8_1[ib32].ds);
-    return d * ((sumi[0] + sumf[0]) * (2*((sc[ib32/2] >> 6*(ib32%2)) & 0x7) + 1) + (sumi[1] + sumf[1]) * (2*((sc[ib32/2] >> (6*(ib32%2)+3)) & 0x7) + 1));
+    scale.u16 = (sc[0] >> 12) | ((sc[1] >> 8) & 0x00F0) | ((sc[2] >> 4) & 0x0F00) | (sc[3] & 0xF000);
+    const float d = __half2float(scale.f16) * __low2float(bq8_1[iqs].ds);
+
+    const int tmp = sc[iqs/2] >> (6*(iqs%2));
+    const int sc0 = 2*((tmp >> 0) & 0x07) + 1;
+    const int sc1 = 2*((tmp >> 3) & 0x07) + 1;
+    return d * ((sumi[0] + sumf[0]) * sc0 + (sumi[1] + sumf[1]) * sc1);
+#else
+    NO_DEVICE_CODE;
+#endif // __CUDA_ARCH__ >= MIN_CC_DP4A
 }
 
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
