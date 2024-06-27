@@ -858,9 +858,7 @@ static __device__ __forceinline__ float vec_dot_iq2_xxs_q8_1(
         const int8_t * grid_neg8 = (const int8_t *) &grid_neg;
         int8_t * grid8 = (int8_t *) &grid;
 
-        int signs0  = ((signs_packed & 0x03) <<  7);
-        signs0     |= ((signs_packed & 0x04) << 16);
-        signs0     |= ((signs_packed & 0x08) << 24);
+        const int signs0 = ((signs_packed & 0x03) << 7) | ((signs_packed & 0x0C) << 21);
 
         const int mask0 = __vcmpeq4(signs0, 0x00000000);
         grid.x = (grid_pos.x & mask0) | (grid_neg.x & (~mask0));
