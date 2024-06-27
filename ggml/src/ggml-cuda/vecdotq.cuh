@@ -830,10 +830,9 @@ static __device__ __forceinline__ float vec_dot_iq2_xxs_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
     const block_iq2_xxs * bq2 = (const block_iq2_xxs *) vbq + kbx;
 
-    const int ib32 = iqs/2;
-    const uint16_t * q2 = bq2->qs + 4*ib32;
+    const uint16_t * q2 = bq2->qs + 2*iqs;
     const uint8_t  * aux8 = (const uint8_t *)q2;
-    const int8_t   * q8 = bq8_1[ib32].qs;
+    const int8_t   * q8 = bq8_1[iqs/2].qs;
     uint32_t aux32 = q2[2] | (q2[3] << 16);
     int sumi = 0;
 #pragma unroll
@@ -847,7 +846,7 @@ static __device__ __forceinline__ float vec_dot_iq2_xxs_q8_1(
         q8 += 8;
         aux32 >>= 7;
     }
-    const float d = (float)bq2->d * (0.5f + aux32) * __low2float(bq8_1[ib32].ds) * 0.25f;
+    const float d = (float)bq2->d * (0.5f + aux32) * __low2float(bq8_1[iqs/2].ds) * 0.25f;
     return d * sumi;
 }
 
