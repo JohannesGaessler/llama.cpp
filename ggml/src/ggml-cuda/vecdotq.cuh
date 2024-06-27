@@ -847,7 +847,7 @@ static __device__ __forceinline__ float vec_dot_iq2_xxs_q8_1(
 #pragma unroll
     for (int l = 0; l < 4; ++l) {
         const uint8_t * grid = (const uint8_t *)(iq2xxs_grid + aux8[l]);
-        const uint8_t  signs = ksigns_iq2xs[(aux32 >> (7*l)) & 127];
+        const int      signs = ksigns_iq2xs[(aux32 >> (7*l)) & 127];
 #pragma unroll
         for (int j = 0; j < 8; ++j) {
             sumi += q8[j] * grid[j] * (signs & kmask_iq2xs[j] ? -1 : 1);
