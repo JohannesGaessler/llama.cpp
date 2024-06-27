@@ -38,6 +38,10 @@ static __device__ __forceinline__ int get_int_b2(const void * x, const int & i32
     return x32;
 }
 
+static __device__ __forceinline__ int get_int_b4(const void * x, const int & i32) {
+    return ((const int *) x)[i32]; // assume at least 4 byte alignment
+}
+
 // VDR = vec dot ratio, how many contiguous integers each thread processes when the vec dot kernel is called
 // MMVQ = mul_mat_vec_q, MMQ = mul_mat_q
 
@@ -854,13 +858,13 @@ static __device__ __forceinline__ float vec_dot_iq2_xxs_q8_1(
         const int signs0 = ((signs_packed & 0x03) << 7) | ((signs_packed & 0x0C) << 21);
         const int mask0 = __vcmpeq4(signs0, 0x00000000);
         const int grid0 = (grid_pos[0] & mask0) | (grid_neg.x & (~mask0));
-        const int u0 = get_int_from_int8_aligned(bq8_1[iqs/2].qs, k0 + 0);
+        const int u0 = get_int_b4(bq8_1[iqs/2].qs, k0 + 0);
         sumi = __dp4a(grid0, u0, sumi);
 
         const int signs1 = ((signs_packed & 0x30) << 3) | ((signs_packed & 0xC0) << 17);
         const int mask1 = __vcmpeq4(signs1, 0x00000000);
         const int grid1 = (grid_pos[1] & mask1) | (grid_neg.y & (~mask1));
-        const int u1 = get_int_from_int8_aligned(bq8_1[iqs/2].qs, k0 + 1);
+        const int u1 = get_int_b4(bq8_1[iqs/2].qs, k0 + 1);
         sumi = __dp4a(grid1, u1, sumi);
     }
     const float d = __half2float(bq2->d) * (0.5f + (aux32 >> 28)) * __low2float(bq8_1[iqs/2].ds) / 4;
