@@ -1,4 +1,5 @@
 #include "common.cuh"
+#include <cstdint>
 
 static __device__ __forceinline__ int get_int_from_int8(const int8_t * x8, const int & i32) {
     const uint16_t * x16 = (const uint16_t *) (x8 + sizeof(int) * i32); // assume at least 2 byte alignment
@@ -846,13 +847,19 @@ static __device__ __forceinline__ float vec_dot_iq2_xxs_q8_1(
     int sumi = 0;
 #pragma unroll
     for (int l = 0; l < 4; ++l) {
-        const uint8_t * grid = (const uint8_t *)(iq2xxs_grid + aux8[l]);
-        const int      signs = ksigns_iq2xs[(aux32 >> (7*l)) & 127];
+        int2 grid = ((const int2 *) iq2xxs_grid)[aux8[l]];
+        int8_t * grid8 = (int8_t *) &grid;
+        const int signs = ksigns_iq2xs[(aux32 >> (7*l)) & 127];
 #pragma unroll
         for (int j = 0; j < 8; ++j) {
-            sumi += q8[j] * grid[j] * (1 - 2*((signs >> j) & 0x01));
+            grid8[j] *= (1 - 2*((signs >> j) & 0x01));
         }
-        q8 += 8;
+
+        const int u0 = get_int_from_int8_aligned(q8, 2*l + 0);
+        sumi = __dp4a(grid.x, u0, sumi);
+
+        const int u1 = get_int_from_int8_aligned(q8, 2*l + 1);
+        sumi = __dp4a(grid.y, u1, sumi);
     }
     const float d = (float)bq2->d * (0.5f + (aux32 >> 28)) * __low2float(bq8_1[iqs/2].ds) * 0.25f;
     return d * sumi;
