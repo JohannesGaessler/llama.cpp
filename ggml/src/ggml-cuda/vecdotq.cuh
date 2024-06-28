@@ -854,7 +854,7 @@ static __device__ __forceinline__ float vec_dot_iq2_xxs_q8_1(
         const int * grid_pos = (const int *) (iq2xxs_grid + aux8[k0/2]);
         const int2 grid_neg = make_int2(__vneg4(grid_pos[0]), __vneg4(grid_pos[1]));
 
-        const int signs_packed = ksigns_iq2xs[(aux32 >> (7*k0/2)) & 127];
+        const int signs_packed = ksigns_iq2xs[(aux32 >> (7*k0/2)) & 0x7F];
 
         const int signs0 = ((signs_packed & 0x03) << 7) | ((signs_packed & 0x0C) << 21);
         const int mask0 = __vcmpeq4(signs0, 0x00000000);
@@ -885,7 +885,8 @@ static __device__ __forceinline__ float vec_dot_iq2_xs_q8_1(
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
     const block_iq2_xs * bq2 = (const block_iq2_xs *) vbq + kbx;
 
-    const uint16_t * q2 = bq2->qs + 2*iqs;
+    const int2 q2_packed = make_int2(get_int_b2(bq2->qs, iqs + 0), get_int_b2(bq2->qs, iqs + 1));
+    const uint16_t * q2 = (const uint16_t *) &q2_packed;
     const int ls1 = bq2->scales[iqs/2] & 0x0F;
     const int ls2 = bq2->scales[iqs/2] >> 4;
 
