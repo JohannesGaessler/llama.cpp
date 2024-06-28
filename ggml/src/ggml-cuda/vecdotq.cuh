@@ -1104,10 +1104,10 @@ static __device__ __forceinline__ float vec_dot_iq1_m_q8_1(
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
 #pragma unroll
     for (int l0 = 0; l0 < 8; l0 += 2) {
-        const int * grid = (const int *)(iq1s_grid_gpu + (bq1->qs[4*iqs + l0/2] | (((bq1->qh[2*iqs + l0/4] >> 4*((l0/2)%2)) & 7) << 8)));
+        const int grid = iq1s_grid_gpu[bq1->qs[4*iqs + l0/2] | (((bq1->qh[2*iqs + l0/4] >> 4*((l0/2)%2)) & 7) << 8)];
 
-        const int grid0 = grid[0] & 0x0f0f0f0f;
-        const int grid1 = (grid[0] >> 4) & 0x0f0f0f0f;
+        const int grid0 = (grid >> 0) & 0x0F0F0F0F;
+        const int grid1 = (grid >> 4) & 0x0F0F0F0F;
 
         const int u0 = get_int_b4(bq8_1[iqs].qs, l0 + 0);
         const int u1 = get_int_b4(bq8_1[iqs].qs, l0 + 1);
