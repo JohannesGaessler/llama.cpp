@@ -1022,16 +1022,16 @@ static __device__ __forceinline__ float vec_dot_iq3_s_q8_1(
 
     int sumi = 0;
 #pragma unroll
-    for (int l = 0; l < 4; ++l) {
-        const uint32_t * grid1 = iq3s_grid + (qs[2*l+0] | ((bq2->qh[iqs/2] << (8 - 2*l)) & 256));
-        const uint32_t * grid2 = iq3s_grid + (qs[2*l+1] | ((bq2->qh[iqs/2] << (7 - 2*l)) & 256));
-        uint32_t signs0 = __vcmpeq4(((bq2->signs[2*iqs+l] & 0xf) * 0x01010101) & 0x08040201, 0x08040201);
-        uint32_t signs1 = __vcmpeq4(((bq2->signs[2*iqs+l] >>  4) * 0x01010101) & 0x08040201, 0x08040201);
+    for (int l0 = 0; l0 < 8; l0 += 2) {
+        const uint32_t * grid1 = iq3s_grid + (qs[l0+0] | ((bq2->qh[iqs/2] << (8 - l0)) & 256));
+        const uint32_t * grid2 = iq3s_grid + (qs[l0+1] | ((bq2->qh[iqs/2] << (7 - l0)) & 256));
+        uint32_t signs0 = __vcmpeq4(((bq2->signs[2*iqs + l0/2] & 0xf) * 0x01010101) & 0x08040201, 0x08040201);
+        uint32_t signs1 = __vcmpeq4(((bq2->signs[2*iqs + l0/2] >>  4) * 0x01010101) & 0x08040201, 0x08040201);
         const int grid_l = __vsub4(grid1[0] ^ signs0, signs0);
         const int grid_h = __vsub4(grid2[0] ^ signs1, signs1);
 
-        const int u0 = get_int_b4(bq8_1[iqs/2].qs, 2*l + 0);
-        const int u1 = get_int_b4(bq8_1[iqs/2].qs, 2*l + 1);
+        const int u0 = get_int_b4(bq8_1[iqs/2].qs, l0 + 0);
+        const int u1 = get_int_b4(bq8_1[iqs/2].qs, l0 + 1);
 
         sumi = __dp4a(grid_l, u0, sumi);
         sumi = __dp4a(grid_h, u1, sumi);
