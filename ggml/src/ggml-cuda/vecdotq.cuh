@@ -882,10 +882,9 @@ static __device__ __forceinline__ float vec_dot_iq2_xs_q8_1(
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
     const block_iq2_xs * bq2 = (const block_iq2_xs *) vbq + kbx;
 
-    const int ib32 = iqs/2;
-    const uint16_t * q2 = bq2->qs + 4*ib32;
-    const int ls1 = bq2->scales[ib32] & 0x0F;
-    const int ls2 = bq2->scales[ib32] >> 4;
+    const uint16_t * q2 = bq2->qs + 2*iqs;
+    const int ls1 = bq2->scales[iqs/2] & 0x0F;
+    const int ls2 = bq2->scales[iqs/2] >> 4;
     int sumi1 = 0;
 #pragma unroll
     for (int l = 0; l < 2; ++l) {
@@ -894,8 +893,8 @@ static __device__ __forceinline__ float vec_dot_iq2_xs_q8_1(
         const int grid_l = __vsub4(grid[0] ^ signs[0], signs[0]);
         const int grid_h = __vsub4(grid[1] ^ signs[1], signs[1]);
 
-        const int u0 = get_int_b4(bq8_1[ib32].qs, 2*l + 0);
-        const int u1 = get_int_b4(bq8_1[ib32].qs, 2*l + 1);
+        const int u0 = get_int_b4(bq8_1[iqs/2].qs, 2*l + 0);
+        const int u1 = get_int_b4(bq8_1[iqs/2].qs, 2*l + 1);
 
         sumi1 = __dp4a(grid_l, u0, sumi1);
         sumi1 = __dp4a(grid_h, u1, sumi1);
@@ -908,13 +907,13 @@ static __device__ __forceinline__ float vec_dot_iq2_xs_q8_1(
         const int grid_l = __vsub4(grid[0] ^ signs[0], signs[0]);
         const int grid_h = __vsub4(grid[1] ^ signs[1], signs[1]);
 
-        const int u0 = get_int_b4(bq8_1[ib32].qs, 2*l + 0);
-        const int u1 = get_int_b4(bq8_1[ib32].qs, 2*l + 1);
+        const int u0 = get_int_b4(bq8_1[iqs/2].qs, 2*l + 0);
+        const int u1 = get_int_b4(bq8_1[iqs/2].qs, 2*l + 1);
 
         sumi2 = __dp4a(grid_l, u0, sumi2);
         sumi2 = __dp4a(grid_h, u1, sumi2);
     }
-    const float d = (float)bq2->d * __low2float(bq8_1[ib32].ds) * 0.25f;
+    const float d = (float)bq2->d * __low2float(bq8_1[iqs/2].ds) * 0.25f;
     return d * ((0.5f + ls1) * sumi1 + (0.5f + ls2) * sumi2);
 #else
     GGML_UNUSED(ksigns64);
