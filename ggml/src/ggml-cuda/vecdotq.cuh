@@ -892,23 +892,23 @@ static __device__ __forceinline__ float vec_dot_iq2_xs_q8_1(
     int sumi      = 0;
     int sumi_part = 0;
 #pragma unroll
-    for (int l = 0; l < 4; ++l) {
-        const uint32_t * grid = (const uint32_t *)(iq2xs_grid + (q2[l] & 0x000001FF));
-        const uint32_t * signs = (const uint32_t *)(ksigns64 + (q2[l] >> 9));
+    for (int l0 = 0; l0 < 8; l0 += 2) {
+        const uint32_t * grid  = (const uint32_t *)(iq2xs_grid + (q2[l0/2] & 0x000001FF));
+        const uint32_t * signs = (const uint32_t *)(ksigns64   + (q2[l0/2] >> 9));
         const int grid_l = __vsub4(grid[0] ^ signs[0], signs[0]);
         const int grid_h = __vsub4(grid[1] ^ signs[1], signs[1]);
 
-        const int u0 = get_int_b4(bq8_1[iqs/2].qs, 2*l + 0);
-        const int u1 = get_int_b4(bq8_1[iqs/2].qs, 2*l + 1);
+        const int u0 = get_int_b4(bq8_1[iqs/2].qs, l0 + 0);
+        const int u1 = get_int_b4(bq8_1[iqs/2].qs, l0 + 1);
 
         sumi_part = __dp4a(grid_l, u0, sumi_part);
         sumi_part = __dp4a(grid_h, u1, sumi_part);
 
-        if (l == 1) {
+        if (l0 == 2) {
             sumi      = ls1*sumi_part + sumi_part/2;
             sumi_part = 0;
         }
-        if (l == 3) {
+        if (l0 == 6) {
             sumi     += ls2*sumi_part + sumi_part/2;
         }
     }
