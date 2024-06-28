@@ -1061,30 +1061,32 @@ static __device__ __forceinline__ float vec_dot_iq1_s_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
     const block_iq1_s * bq1 = (const block_iq1_s *) vbq + kbx;
 
-    const int ib32 = iqs;
     int sumi = 0;
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
-    const int * q8 = (const int *)bq8_1[ib32].qs;
+    const int * q8 = (const int *)bq8_1[iqs].qs;
+#pragma unroll
     for (int l = 0; l < 4; ++l) {
-        const int * grid = (const int *)(iq1s_grid_gpu + (bq1->qs[4*ib32+l] | (((bq1->qh[ib32] >> 3*l) & 7) << 8)));
+        const int * grid = (const int *)(iq1s_grid_gpu + (bq1->qs[4*iqs+l] | (((bq1->qh[iqs] >> 3*l) & 7) << 8)));
         int grid0 = grid[0] & 0x0f0f0f0f;
         int grid1 = (grid[0] >> 4) & 0x0f0f0f0f;
         sumi = __dp4a(q8[2*l+1], grid1, __dp4a(q8[2*l+0], grid0, sumi));
     }
 #else
-    const int8_t * q8 = bq8_1[ib32].qs;
+    const int8_t * q8 = bq8_1[iqs].qs;
+#pragma unroll
     for (int l = 0; l < 4; ++l) {
-        const uint8_t * grid = (const uint8_t *)(iq1s_grid_gpu + (bq1->qs[4*ib32+l] | (((bq1->qh[ib32] >> 3*l) & 7) << 8)));
+        const uint8_t * grid = (const uint8_t *)(iq1s_grid_gpu + (bq1->qs[4*iqs+l] | (((bq1->qh[iqs] >> 3*l) & 7) << 8)));
+#pragma unroll
         for (int j = 0; j < 4; ++j) {
             sumi += q8[j] * (grid[j] & 0xf) + q8[j+4] * (grid[j] >> 4);
         }
         q8 += 8;
     }
-#endif
-    const float delta = bq1->qh[ib32] & 0x8000 ? -1-IQ1S_DELTA : -1+IQ1S_DELTA;
-    const float d1q = (float)bq1->d * (2*((bq1->qh[ib32] >> 12) & 7) + 1);
-    const float d = d1q * __low2float (bq8_1[ib32].ds);
-    const float m = d1q * __high2float(bq8_1[ib32].ds);
+#endif // __CUDA_ARCH__ >= MIN_CC_DP4A
+    const float delta = bq1->qh[iqs] & 0x8000 ? -1-IQ1S_DELTA : -1+IQ1S_DELTA;
+    const float d1q = (float)bq1->d * (2*((bq1->qh[iqs] >> 12) & 7) + 1);
+    const float d = d1q * __low2float (bq8_1[iqs].ds);
+    const float m = d1q * __high2float(bq8_1[iqs].ds);
     return d * sumi + m * delta;
 }
 
