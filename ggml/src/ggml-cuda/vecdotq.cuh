@@ -980,10 +980,9 @@ static __device__ __forceinline__ float vec_dot_iq3_xxs_q8_1(
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
     const block_iq3_xxs * bq2 = (const block_iq3_xxs *) vbq + kbx;
 
-    const int ib32 = iqs/2;
-    const uint8_t  * q3 = bq2->qs + 8*ib32;
-    const uint16_t * gas = (const uint16_t *)(bq2->qs + QK_K/4) + 2*ib32;
-    const int8_t   * q8 = bq8_1[ib32].qs;
+    const uint8_t  * q3 = bq2->qs + 4*iqs;
+    const uint16_t * gas = (const uint16_t *)(bq2->qs + QK_K/4) + iqs;
+    const int8_t   * q8 = bq8_1[iqs/2].qs;
     uint32_t aux32 = gas[0] | (gas[1] << 16);
     int sumi = 0;
     for (int l = 0; l < 4; ++l) {
@@ -997,7 +996,7 @@ static __device__ __forceinline__ float vec_dot_iq3_xxs_q8_1(
         q8 += 8;
         aux32 >>= 7;
     }
-    const float d = (float)bq2->d * (0.5f + aux32) * __low2float(bq8_1[ib32].ds) * 0.5f;
+    const float d = (float)bq2->d * (0.5f + aux32) * __low2float(bq8_1[iqs/2].ds) * 0.5f;
     return d * sumi;
 #else
     NO_DEVICE_CODE;
