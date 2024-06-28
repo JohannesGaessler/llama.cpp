@@ -932,34 +932,31 @@ static __device__ __forceinline__ float vec_dot_iq2_s_q8_1(
     const uint8_t * signs = bq2->qs + QK_K/8 + 4*iqs/2;
     const int ls1 = bq2->scales[iqs/2] & 0x0F;
     const int ls2 = bq2->scales[iqs/2] >> 4;
-    int sumi1 = 0;
-    for (int l = 0; l < 2; ++l) {
-        const uint32_t * grid = (const uint32_t *)(iq2s_grid + (bq2->qs[4*iqs/2+l] | ((bq2->qh[iqs/2] << (8-2*l)) & 0x300)));
-        const uint32_t signs0 = __vcmpeq4(((signs[l] & 0xf) * 0x01010101) & 0x08040201, 0x08040201);
-        const uint32_t signs1 = __vcmpeq4(((signs[l] >>  4) * 0x01010101) & 0x08040201, 0x08040201);
-        const int grid_l = __vsub4(grid[0] ^ signs0, signs0);
-        const int grid_h = __vsub4(grid[1] ^ signs1, signs1);
-        sumi1 = __dp4a(grid_l, *((const int *)q8 + 0), sumi1);
-        sumi1 = __dp4a(grid_h, *((const int *)q8 + 1), sumi1);
-        q8 += 8;
-    }
-    sumi1 = ls1*sumi1 + sumi1/2;
 
-    int sumi2 = 0;
-    for (int l = 2; l < 4; ++l) {
+    int sumi      = 0;
+    int sumi_part = 0;
+#pragma unroll
+    for (int l = 0; l < 4; ++l) {
         const uint32_t * grid = (const uint32_t *)(iq2s_grid + (bq2->qs[4*iqs/2+l] | ((bq2->qh[iqs/2] << (8-2*l)) & 0x300)));
         const uint32_t signs0 = __vcmpeq4(((signs[l] & 0xf) * 0x01010101) & 0x08040201, 0x08040201);
         const uint32_t signs1 = __vcmpeq4(((signs[l] >>  4) * 0x01010101) & 0x08040201, 0x08040201);
         const int grid_l = __vsub4(grid[0] ^ signs0, signs0);
         const int grid_h = __vsub4(grid[1] ^ signs1, signs1);
-        sumi2 = __dp4a(grid_l, *((const int *)q8 + 0), sumi2);
-        sumi2 = __dp4a(grid_h, *((const int *)q8 + 1), sumi2);
+        sumi_part = __dp4a(grid_l, *((const int *)q8 + 0), sumi_part);
+        sumi_part = __dp4a(grid_h, *((const int *)q8 + 1), sumi_part);
         q8 += 8;
+
+        if (l == 1) {
+            sumi      = ls1*sumi_part + sumi_part/2;
+            sumi_part = 0;
+        }
+        if (l == 3) {
+            sumi     += ls2*sumi_part + sumi_part/2;
+        }
     }
-    sumi2 = ls2*sumi2 + sumi2/2;
 
     const float d = (float)bq2->d * __low2float(bq8_1[iqs/2].ds) * 0.25f;
-    return d * (sumi1 + sumi2);
+    return d * sumi;
 #else
     GGML_UNUSED(ksigns64);
     NO_DEVICE_CODE;
