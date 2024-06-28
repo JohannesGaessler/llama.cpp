@@ -852,19 +852,16 @@ static __device__ __forceinline__ float vec_dot_iq2_xxs_q8_1(
 #pragma unroll
     for (int k0 = 0; k0 < 8; k0 += 2) {
         const int * grid_pos = (const int *) (iq2xxs_grid + aux8[k0/2]);
-        const int2 grid_neg = make_int2(__vneg4(grid_pos[0]), __vneg4(grid_pos[1]));
 
         const int signs_packed = ksigns_iq2xs[(aux32 >> (7*k0/2)) & 0x7F];
 
-        const int signs0 = ((signs_packed & 0x03) << 7) | ((signs_packed & 0x0C) << 21);
-        const int mask0 = __vcmpeq4(signs0, 0x00000000);
-        const int grid0 = (grid_pos[0] & mask0) | (grid_neg.x & (~mask0));
+        const int signs0 = __vcmpne4(((signs_packed & 0x03) << 7) | ((signs_packed & 0x0C) << 21), 0x00000000);
+        const int grid0 = __vsub4(grid_pos[0] ^ signs0, signs0);
         const int u0 = get_int_b4(bq8_1[iqs/2].qs, k0 + 0);
         sumi = __dp4a(grid0, u0, sumi);
 
-        const int signs1 = ((signs_packed & 0x30) << 3) | ((signs_packed & 0xC0) << 17);
-        const int mask1 = __vcmpeq4(signs1, 0x00000000);
-        const int grid1 = (grid_pos[1] & mask1) | (grid_neg.y & (~mask1));
+        const int signs1 = __vcmpne4(((signs_packed & 0x30) << 3) | ((signs_packed & 0xC0) << 17), 0x00000000);
+        const int grid1 = __vsub4(grid_pos[1] ^ signs1, signs1);
         const int u1 = get_int_b4(bq8_1[iqs/2].qs, k0 + 1);
         sumi = __dp4a(grid1, u1, sumi);
     }
