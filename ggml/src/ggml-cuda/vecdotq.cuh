@@ -930,8 +930,8 @@ static __device__ __forceinline__ float vec_dot_iq2_s_q8_1(
 
     const int8_t  * q8 = bq8_1[iqs/2].qs;
     const uint8_t * signs = bq2->qs + QK_K/8 + 4*iqs/2;
-    const uint8_t ls1 = bq2->scales[iqs/2] & 0xf;
-    const uint8_t ls2 = bq2->scales[iqs/2] >>  4;
+    const int ls1 = bq2->scales[iqs/2] & 0x0F;
+    const int ls2 = bq2->scales[iqs/2] >> 4;
     int sumi1 = 0;
     for (int l = 0; l < 2; ++l) {
         const uint32_t * grid = (const uint32_t *)(iq2s_grid + (bq2->qs[4*iqs/2+l] | ((bq2->qh[iqs/2] << (8-2*l)) & 0x300)));
