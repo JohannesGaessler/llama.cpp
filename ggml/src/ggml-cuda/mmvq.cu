@@ -40,6 +40,7 @@ static constexpr __device__ int get_vdr_mmvq(ggml_type type) {
         type == GGML_TYPE_IQ2_XXS ? VDR_IQ2_XXS_Q8_1_MMVQ :
         type == GGML_TYPE_IQ2_XS  ? VDR_IQ2_XS_Q8_1_MMVQ :
         type == GGML_TYPE_IQ2_S   ? VDR_IQ2_S_Q8_1_MMVQ :
+        type == GGML_TYPE_IQ3_XXS ? VDR_IQ3_XXS_Q8_1_MMVQ :
         type == GGML_TYPE_IQ4_NL  ? VDR_Q4_K_Q8_1_MMVQ :
         1;
 }
