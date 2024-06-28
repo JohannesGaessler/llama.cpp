@@ -1089,7 +1089,7 @@ static __device__ __forceinline__ float vec_dot_iq1_s_q8_1(
     }
 #endif // __CUDA_ARCH__ >= MIN_CC_DP4A
 
-    const float  d1q   = __half2float(bq1->d) * (2*((bq1->qh[iqs] >> 12) & 0x07) + 1);
+    const float  d1q   = __half2float(bq1->d) * (((bq1->qh[iqs] >> 11) & 0x0E) + 1);
     const float  delta = -1.0f + IQ1S_DELTA - (bq1->qh[iqs] & 0x8000) * (2.0f*IQ1S_DELTA/0x8000);
     const float2 ds    = __half22float2(bq8_1[iqs].ds);
     return d1q * (ds.x*sumi + ds.y*delta);
