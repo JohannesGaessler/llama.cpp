@@ -1063,13 +1063,18 @@ static __device__ __forceinline__ float vec_dot_iq1_s_q8_1(
 
     int sumi = 0;
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
-    const int * q8 = (const int *)bq8_1[iqs].qs;
 #pragma unroll
     for (int l = 0; l < 4; ++l) {
         const int * grid = (const int *)(iq1s_grid_gpu + (bq1->qs[4*iqs+l] | (((bq1->qh[iqs] >> 3*l) & 7) << 8)));
-        int grid0 = grid[0] & 0x0f0f0f0f;
-        int grid1 = (grid[0] >> 4) & 0x0f0f0f0f;
-        sumi = __dp4a(q8[2*l+1], grid1, __dp4a(q8[2*l+0], grid0, sumi));
+
+        const int grid0 = (grid[0] >> 0) & 0x0F0F0F0F;
+        const int grid1 = (grid[0] >> 4) & 0x0F0F0F0F;
+
+        const int u0 = get_int_b4(bq8_1[iqs].qs, 2*l + 0);
+        const int u1 = get_int_b4(bq8_1[iqs].qs, 2*l + 1);
+
+        sumi = __dp4a(grid0, u0, sumi);
+        sumi = __dp4a(grid1, u1, sumi);
     }
 #else
     const int8_t * q8 = bq8_1[iqs].qs;
@@ -1083,6 +1088,7 @@ static __device__ __forceinline__ float vec_dot_iq1_s_q8_1(
         q8 += 8;
     }
 #endif // __CUDA_ARCH__ >= MIN_CC_DP4A
+
     const float delta = bq1->qh[iqs] & 0x8000 ? -1-IQ1S_DELTA : -1+IQ1S_DELTA;
     const float d1q = (float)bq1->d * (2*((bq1->qh[iqs] >> 12) & 7) + 1);
     const float d = d1q * __low2float (bq8_1[iqs].ds);
