@@ -981,8 +981,7 @@ static __device__ __forceinline__ float vec_dot_iq3_xxs_q8_1(
     const block_iq3_xxs * bq2 = (const block_iq3_xxs *) vbq + kbx;
 
     const uint8_t  * q3 = bq2->qs + 4*iqs;
-    const uint16_t * gas = (const uint16_t *)(bq2->qs + QK_K/4) + iqs;
-    uint32_t aux32 = gas[0] | (gas[1] << 16);
+    uint aux32 = get_int_b2(bq2->qs, QK_K/16 + iqs/2);
 
     int sumi = 0;
 #pragma unroll
