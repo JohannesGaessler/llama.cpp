@@ -133,7 +133,7 @@ typedef sycl::half2 ggml_half2;
 #define QR4_XS 8
 
 #define QI3_S (QK_K / (4*QR3_S))
-#define QR3_S 8
+#define QR3_S 4
 
 #endif // GGML_COMMON_DECL_CUDA || GGML_COMMON_DECL_HIP
 

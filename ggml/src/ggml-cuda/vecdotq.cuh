@@ -1010,16 +1010,20 @@ static __device__ __forceinline__ float vec_dot_iq3_xxs_q8_1(
 #endif
 }
 
+#define VDR_IQ3_S_Q8_1_MMVQ 2
+
 // TODO: don't use lookup table for signs
 static __device__ __forceinline__ float vec_dot_iq3_s_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
     const block_iq3_s * bq2 = (const block_iq3_s *) vbq + kbx;
 
-    const int ib32 = iqs;
+    const int ib32 = iqs/2;
     const uint8_t  * qs = bq2->qs + 8*ib32;
     const int8_t   * q8 = bq8_1[ib32].qs;
+
     int sumi = 0;
+#pragma unroll
     for (int l = 0; l < 4; ++l) {
         const uint32_t * grid1 = iq3s_grid + (qs[2*l+0] | ((bq2->qh[ib32] << (8 - 2*l)) & 256));
         const uint32_t * grid2 = iq3s_grid + (qs[2*l+1] | ((bq2->qh[ib32] << (7 - 2*l)) & 256));
@@ -1031,6 +1035,7 @@ static __device__ __forceinline__ float vec_dot_iq3_s_q8_1(
         sumi = __dp4a(grid_h, *((int *)q8+1), sumi);
         q8 += 8;
     }
+
     const float d = (float)bq2->d * (1 + 2*((bq2->scales[ib32/2] >> 4*(ib32%2)) & 0xf)) * __low2float(bq8_1[ib32].ds);
     return d * sumi;
 #else
