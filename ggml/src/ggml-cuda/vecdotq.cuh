@@ -1103,7 +1103,9 @@ static __device__ __forceinline__ float vec_dot_iq1_m_q8_1(
     float sumf[2] = {0.0f};
 #pragma unroll
     for (int l0 = 0; l0 < 8; l0 += 2) {
-        const int grid = iq1s_grid_gpu[qs[l0/2] | (((qh[l0/4] >> 4*((l0/2)%2)) & 7) << 8)];
+        const int qhl = qh[l0/4] >> (4 * ((l0/2) % 2));
+
+        const int grid = iq1s_grid_gpu[qs[l0/2] | ((qhl & 0x07) << 8)];
 
         const int grid0 = (grid >> 0) & 0x0F0F0F0F;
         const int grid1 = (grid >> 4) & 0x0F0F0F0F;
@@ -1113,7 +1115,7 @@ static __device__ __forceinline__ float vec_dot_iq1_m_q8_1(
 
         sumi[l0/4] = __dp4a(grid0, u0, sumi[l0/4]);
         sumi[l0/4] = __dp4a(grid1, u1, sumi[l0/4]);
-        const float delta = (bq1->qh[2*iqs + l0/4] >> 4*((l0/2)%2)) & 0x08 ? -1-IQ1M_DELTA : -1+IQ1M_DELTA;
+        const float delta = qhl & 0x08 ? -1-IQ1M_DELTA : -1+IQ1M_DELTA;
 
         int sumy = 0;
         sumy = __dp4a(u0, 0x01010101, sumy);
