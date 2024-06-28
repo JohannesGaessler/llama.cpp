@@ -1115,8 +1115,8 @@ static __device__ __forceinline__ float vec_dot_iq1_m_q8_1(
 
         sumi[l0/4] = __dp4a(grid0, u0, sumi[l0/4]);
         sumi[l0/4] = __dp4a(grid1, u1, sumi[l0/4]);
-        const float delta = qhl & 0x08 ? -1-IQ1M_DELTA : -1+IQ1M_DELTA;
 
+        const float delta = -1.0f + IQ1M_DELTA - (qhl & 0x08) * (2.0f*IQ1M_DELTA/0x08);
         int sumy = 0;
         sumy = __dp4a(u0, 0x01010101, sumy);
         sumy = __dp4a(u1, 0x01010101, sumy);
