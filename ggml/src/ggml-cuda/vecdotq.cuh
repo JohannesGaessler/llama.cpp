@@ -936,9 +936,9 @@ static __device__ __forceinline__ float vec_dot_iq2_s_q8_1(
     int sumi_part = 0;
 #pragma unroll
     for (int l0 = 0; l0 < 8; l0 += 2) {
-        const uint32_t * grid = (const uint32_t *)(iq2s_grid + (bq2->qs[2*iqs + l0/2] | ((bq2->qh[iqs/2] << (8-l0)) & 0x300)));
-        const uint32_t signs0 = __vcmpeq4(((signs[l0/2] & 0xf) * 0x01010101) & 0x08040201, 0x08040201);
-        const uint32_t signs1 = __vcmpeq4(((signs[l0/2] >>  4) * 0x01010101) & 0x08040201, 0x08040201);
+        const int * grid = (const int *)(iq2s_grid + (bq2->qs[2*iqs + l0/2] | ((bq2->qh[iqs/2] << (8-l0)) & 0x300)));
+        const int signs0 = __vcmpeq4(((signs[l0/2] & 0xf) * 0x01010101) & 0x08040201, 0x08040201);
+        const int signs1 = __vcmpeq4(((signs[l0/2] >>  4) * 0x01010101) & 0x08040201, 0x08040201);
         const int grid_l = __vsub4(grid[0] ^ signs0, signs0);
         const int grid_h = __vsub4(grid[1] ^ signs1, signs1);
 
