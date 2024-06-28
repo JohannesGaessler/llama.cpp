@@ -884,19 +884,21 @@ static __device__ __forceinline__ float vec_dot_iq2_xs_q8_1(
 
     const int ib32 = iqs;
     const uint16_t * q2 = bq2->qs + 4*ib32;
-    const int8_t   * q8 = bq8_1[ib32].qs;
     const int ls1 = bq2->scales[ib32] & 0x0F;
     const int ls2 = bq2->scales[ib32] >> 4;
     int sumi1 = 0;
 #pragma unroll
     for (int l = 0; l < 2; ++l) {
-        const uint32_t * grid = (const uint32_t *)(iq2xs_grid + (q2[l] & 511));
+        const uint32_t * grid = (const uint32_t *)(iq2xs_grid + (q2[l] & 0x000001FF));
         const uint32_t * signs = (const uint32_t *)(ksigns64 + (q2[l] >> 9));
         const int grid_l = __vsub4(grid[0] ^ signs[0], signs[0]);
         const int grid_h = __vsub4(grid[1] ^ signs[1], signs[1]);
-        sumi1 = __dp4a(grid_l, *((const int *)q8 + 0), sumi1);
-        sumi1 = __dp4a(grid_h, *((const int *)q8 + 1), sumi1);
-        q8 += 8;
+
+        const int u0 = get_int_b4(bq8_1[ib32].qs, 2*l + 0);
+        const int u1 = get_int_b4(bq8_1[ib32].qs, 2*l + 1);
+
+        sumi1 = __dp4a(grid_l, u0, sumi1);
+        sumi1 = __dp4a(grid_h, u1, sumi1);
     }
     int sumi2 = 0;
 #pragma unroll
@@ -905,9 +907,12 @@ static __device__ __forceinline__ float vec_dot_iq2_xs_q8_1(
         const uint32_t * signs = (const uint32_t *)(ksigns64 + (q2[l] >> 9));
         const int grid_l = __vsub4(grid[0] ^ signs[0], signs[0]);
         const int grid_h = __vsub4(grid[1] ^ signs[1], signs[1]);
-        sumi2 = __dp4a(grid_l, *((const int *)q8 + 0), sumi2);
-        sumi2 = __dp4a(grid_h, *((const int *)q8 + 1), sumi2);
-        q8 += 8;
+
+        const int u0 = get_int_b4(bq8_1[ib32].qs, 2*l + 0);
+        const int u1 = get_int_b4(bq8_1[ib32].qs, 2*l + 1);
+
+        sumi2 = __dp4a(grid_l, u0, sumi2);
+        sumi2 = __dp4a(grid_h, u1, sumi2);
     }
     const float d = (float)bq2->d * __low2float(bq8_1[ib32].ds) * 0.25f;
     return d * ((0.5f + ls1) * sumi1 + (0.5f + ls2) * sumi2);
