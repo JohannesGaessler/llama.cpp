@@ -928,14 +928,13 @@ static __device__ __forceinline__ float vec_dot_iq2_s_q8_1(
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
     const block_iq2_s * bq2 = (const block_iq2_s *) vbq + kbx;
 
-    const int ib32 = iqs/2;
-    const int8_t  * q8 = bq8_1[ib32].qs;
-    const uint8_t * signs = bq2->qs + QK_K/8 + 4*ib32;
-    const uint8_t ls1 = bq2->scales[ib32] & 0xf;
-    const uint8_t ls2 = bq2->scales[ib32] >>  4;
+    const int8_t  * q8 = bq8_1[iqs/2].qs;
+    const uint8_t * signs = bq2->qs + QK_K/8 + 4*iqs/2;
+    const uint8_t ls1 = bq2->scales[iqs/2] & 0xf;
+    const uint8_t ls2 = bq2->scales[iqs/2] >>  4;
     int sumi1 = 0;
     for (int l = 0; l < 2; ++l) {
-        const uint32_t * grid = (const uint32_t *)(iq2s_grid + (bq2->qs[4*ib32+l] | ((bq2->qh[ib32] << (8-2*l)) & 0x300)));
+        const uint32_t * grid = (const uint32_t *)(iq2s_grid + (bq2->qs[4*iqs/2+l] | ((bq2->qh[iqs/2] << (8-2*l)) & 0x300)));
         const uint32_t signs0 = __vcmpeq4(((signs[l] & 0xf) * 0x01010101) & 0x08040201, 0x08040201);
         const uint32_t signs1 = __vcmpeq4(((signs[l] >>  4) * 0x01010101) & 0x08040201, 0x08040201);
         const int grid_l = __vsub4(grid[0] ^ signs0, signs0);
@@ -946,7 +945,7 @@ static __device__ __forceinline__ float vec_dot_iq2_s_q8_1(
     }
     int sumi2 = 0;
     for (int l = 2; l < 4; ++l) {
-        const uint32_t * grid = (const uint32_t *)(iq2s_grid + (bq2->qs[4*ib32+l] | ((bq2->qh[ib32] << (8-2*l)) & 0x300)));
+        const uint32_t * grid = (const uint32_t *)(iq2s_grid + (bq2->qs[4*iqs/2+l] | ((bq2->qh[iqs/2] << (8-2*l)) & 0x300)));
         const uint32_t signs0 = __vcmpeq4(((signs[l] & 0xf) * 0x01010101) & 0x08040201, 0x08040201);
         const uint32_t signs1 = __vcmpeq4(((signs[l] >>  4) * 0x01010101) & 0x08040201, 0x08040201);
         const int grid_l = __vsub4(grid[0] ^ signs0, signs0);
@@ -955,7 +954,7 @@ static __device__ __forceinline__ float vec_dot_iq2_s_q8_1(
         sumi2 = __dp4a(grid_h, *((const int *)q8 + 1), sumi2);
         q8 += 8;
     }
-    const float d = (float)bq2->d * __low2float(bq8_1[ib32].ds) * 0.25f;
+    const float d = (float)bq2->d * __low2float(bq8_1[iqs/2].ds) * 0.25f;
     return d * ((0.5f + ls1) * sumi1 + (0.5f + ls2) * sumi2);
 #else
     GGML_UNUSED(ksigns64);
