@@ -1019,7 +1019,6 @@ static __device__ __forceinline__ float vec_dot_iq3_s_q8_1(
     const block_iq3_s * bq2 = (const block_iq3_s *) vbq + kbx;
 
     const uint8_t  * qs = bq2->qs + 4*iqs;
-    const int8_t   * q8 = bq8_1[iqs/2].qs;
 
     int sumi = 0;
 #pragma unroll
@@ -1030,9 +1029,12 @@ static __device__ __forceinline__ float vec_dot_iq3_s_q8_1(
         uint32_t signs1 = __vcmpeq4(((bq2->signs[2*iqs+l] >>  4) * 0x01010101) & 0x08040201, 0x08040201);
         const int grid_l = __vsub4(grid1[0] ^ signs0, signs0);
         const int grid_h = __vsub4(grid2[0] ^ signs1, signs1);
-        sumi = __dp4a(grid_l, *((int *)q8+0), sumi);
-        sumi = __dp4a(grid_h, *((int *)q8+1), sumi);
-        q8 += 8;
+
+        const int u0 = get_int_b4(bq8_1[iqs/2].qs, 2*l + 0);
+        const int u1 = get_int_b4(bq8_1[iqs/2].qs, 2*l + 1);
+
+        sumi = __dp4a(grid_l, u0, sumi);
+        sumi = __dp4a(grid_h, u1, sumi);
     }
 
     const float d = (float)bq2->d * (1 + 2*((bq2->scales[iqs/4] >> 4*((iqs/2)%2)) & 0xf)) * __low2float(bq8_1[iqs/2].ds);
