@@ -885,8 +885,8 @@ static __device__ __forceinline__ float vec_dot_iq2_xs_q8_1(
     const int ib32 = iqs;
     const uint16_t * q2 = bq2->qs + 4*ib32;
     const int8_t   * q8 = bq8_1[ib32].qs;
-    const uint8_t ls1 = bq2->scales[ib32] & 0xf;
-    const uint8_t ls2 = bq2->scales[ib32] >>  4;
+    const int ls1 = bq2->scales[ib32] & 0x0F;
+    const int ls2 = bq2->scales[ib32] >> 4;
     int sumi1 = 0;
 #pragma unroll
     for (int l = 0; l < 2; ++l) {
