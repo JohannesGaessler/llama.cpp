@@ -885,9 +885,11 @@ static __device__ __forceinline__ float vec_dot_iq2_xs_q8_1(
     const uint16_t * q2 = bq2->qs + 2*iqs;
     const int ls1 = bq2->scales[iqs/2] & 0x0F;
     const int ls2 = bq2->scales[iqs/2] >> 4;
-    int sumi1 = 0;
+
+    int   sumi = 0;
+    float sumf;
 #pragma unroll
-    for (int l = 0; l < 2; ++l) {
+    for (int l = 0; l < 4; ++l) {
         const uint32_t * grid = (const uint32_t *)(iq2xs_grid + (q2[l] & 0x000001FF));
         const uint32_t * signs = (const uint32_t *)(ksigns64 + (q2[l] >> 9));
         const int grid_l = __vsub4(grid[0] ^ signs[0], signs[0]);
@@ -896,25 +898,19 @@ static __device__ __forceinline__ float vec_dot_iq2_xs_q8_1(
         const int u0 = get_int_b4(bq8_1[iqs/2].qs, 2*l + 0);
         const int u1 = get_int_b4(bq8_1[iqs/2].qs, 2*l + 1);
 
-        sumi1 = __dp4a(grid_l, u0, sumi1);
-        sumi1 = __dp4a(grid_h, u1, sumi1);
-    }
-    int sumi2 = 0;
-#pragma unroll
-    for (int l = 2; l < 4; ++l) {
-        const uint32_t * grid = (const uint32_t *)(iq2xs_grid + (q2[l] & 511));
-        const uint32_t * signs = (const uint32_t *)(ksigns64 + (q2[l] >> 9));
-        const int grid_l = __vsub4(grid[0] ^ signs[0], signs[0]);
-        const int grid_h = __vsub4(grid[1] ^ signs[1], signs[1]);
+        sumi = __dp4a(grid_l, u0, sumi);
+        sumi = __dp4a(grid_h, u1, sumi);
 
-        const int u0 = get_int_b4(bq8_1[iqs/2].qs, 2*l + 0);
-        const int u1 = get_int_b4(bq8_1[iqs/2].qs, 2*l + 1);
-
-        sumi2 = __dp4a(grid_l, u0, sumi2);
-        sumi2 = __dp4a(grid_h, u1, sumi2);
+        if (l == 1) {
+            sumf  = (0.5f + ls1) * sumi;
+            sumi  = 0;
+        }
+        if (l == 3) {
+            sumf += (0.5f + ls2) * sumi;
+        }
     }
-    const float d = (float)bq2->d * __low2float(bq8_1[iqs/2].ds) * 0.25f;
-    return d * ((0.5f + ls1) * sumi1 + (0.5f + ls2) * sumi2);
+    const float d = __half2float(bq2->d) * __low2float(bq8_1[iqs/2].ds) / 4;
+    return d * sumf;
 #else
     GGML_UNUSED(ksigns64);
     NO_DEVICE_CODE;
