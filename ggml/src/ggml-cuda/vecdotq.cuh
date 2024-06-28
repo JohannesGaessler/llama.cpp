@@ -875,14 +875,14 @@ static __device__ __forceinline__ float vec_dot_iq2_xxs_q8_1(
 #endif
 }
 
-#define VDR_IQ2_XS_Q8_1_MMVQ 1
+#define VDR_IQ2_XS_Q8_1_MMVQ 2
 
 static __device__ __forceinline__ float vec_dot_iq2_xs_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
     const block_iq2_xs * bq2 = (const block_iq2_xs *) vbq + kbx;
 
-    const int ib32 = iqs;
+    const int ib32 = iqs/2;
     const uint16_t * q2 = bq2->qs + 4*ib32;
     const int ls1 = bq2->scales[ib32] & 0x0F;
     const int ls2 = bq2->scales[ib32] >> 4;
