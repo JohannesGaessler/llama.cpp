@@ -1025,12 +1025,21 @@ static __device__ __forceinline__ float vec_dot_iq3_s_q8_1(
     int sumi = 0;
 #pragma unroll
     for (int l0 = 0; l0 < 8; l0 += 2) {
-        const int grid1 = iq3s_grid[qs[l0 + 0] | ((qh << (8 - l0)) & 0x100)];
-        const int grid2 = iq3s_grid[qs[l0 + 1] | ((qh << (7 - l0)) & 0x100)];
-        const int signs0 = __vcmpeq4(((bq3->signs[2*iqs + l0/2] & 0xf) * 0x01010101) & 0x08040201, 0x08040201);
-        const int signs1 = __vcmpeq4(((bq3->signs[2*iqs + l0/2] >>  4) * 0x01010101) & 0x08040201, 0x08040201);
-        const int grid_l = __vsub4(grid1 ^ signs0, signs0);
-        const int grid_h = __vsub4(grid2 ^ signs1, signs1);
+        const int2 grid_pos = make_int2(
+            iq3s_grid[qs[l0 + 0] | ((qh << (8 - l0)) & 0x100)],
+            iq3s_grid[qs[l0 + 1] | ((qh << (7 - l0)) & 0x100)]);
+        const int2 grid_neg = make_int2(__vneg4(grid_pos.x), __vneg4(grid_pos.y));
+
+        const int signs_packed = bq3->signs[2*iqs + l0/2];
+
+        const int signs0 = ((signs_packed & 0x03) << 7) | ((signs_packed & 0x0C) << 21);
+        const int signs1 = ((signs_packed & 0x30) << 3) | ((signs_packed & 0xC0) << 17);
+
+        const int mask0 = __vcmpeq4(signs0, 0x00000000);
+        const int mask1 = __vcmpeq4(signs1, 0x00000000);
+
+        const int grid_l = (grid_pos.x & mask0) | (grid_neg.x & ~mask0);
+        const int grid_h = (grid_pos.y & mask1) | (grid_neg.y & ~mask1);
 
         const int u0 = get_int_b4(bq8_1[iqs/2].qs, l0 + 0);
         const int u1 = get_int_b4(bq8_1[iqs/2].qs, l0 + 1);
