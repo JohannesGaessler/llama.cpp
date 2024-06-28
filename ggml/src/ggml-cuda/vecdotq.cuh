@@ -1128,9 +1128,11 @@ static __device__ __forceinline__ float vec_dot_iq1_m_q8_1(
     const uint16_t * sc = (const uint16_t *) &sc_packed;
 
     iq1m_scale_t scale;
-    scale.u16 = (sc[0] >> 12) | ((sc[1] >> 8) & 0x00f0) | ((sc[2] >> 4) & 0x0f00) | (sc[3] & 0xf000);
-    const float d = (float)scale.f16 * __low2float (bq8_1[iqs].ds);
-    return d * ((sumi[0] + sumf[0]) * (2*((sc[iqs/2] >> 6*(iqs%2)) & 0x7) + 1) + (sumi[1] + sumf[1]) * (2*((sc[iqs/2] >> (6*(iqs%2)+3)) & 0x7) + 1));
+    scale.u16 = (sc[0] >> 12) | ((sc[1] >> 8) & 0x00F0) | ((sc[2] >> 4) & 0x0F00) | (sc[3] & 0xF000);
+    const float d = __half2float(scale.f16) * __low2float(bq8_1[iqs].ds);
+    const int sc0 = (2*((sc[iqs/2] >>  6*(iqs%2))    & 0x07) + 1);
+    const int sc1 = (2*((sc[iqs/2] >> (6*(iqs%2)+3)) & 0x07) + 1);
+    return d * ((sumi[0] + sumf[0]) * sc0 + (sumi[1] + sumf[1]) * sc1);
 #else
     NO_DEVICE_CODE;
 #endif // __CUDA_ARCH__ >= MIN_CC_DP4A
