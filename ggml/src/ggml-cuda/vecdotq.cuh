@@ -1091,9 +1091,10 @@ static __device__ __forceinline__ float vec_dot_iq1_s_q8_1(
 
 static __device__ __forceinline__ float vec_dot_iq1_m_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
-    const block_iq1_m * bq1 = (const block_iq1_m *) vbq + kbx;
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
-    const int qs_packed = get_int_b2(bq1->qs, iqs);
+    const block_iq1_m * bq1 = (const block_iq1_m *) vbq + kbx;
+
+    const int qs_packed = get_int_b4(bq1->qs, iqs);
     const int qh_packed = ((const uint16_t *) bq1->qh)[iqs];
 
     const uint8_t * qs = (const uint8_t *) &qs_packed;
@@ -1123,8 +1124,10 @@ static __device__ __forceinline__ float vec_dot_iq1_m_q8_1(
         sumf[l0/4] += delta*sumy;
     }
 
+    const int2 sc_packed = *((const int2 *) bq1->scales);
+    const uint16_t * sc = (const uint16_t *) &sc_packed;
+
     iq1m_scale_t scale;
-    const uint16_t * sc = (const uint16_t *)bq1->scales;
     scale.u16 = (sc[0] >> 12) | ((sc[1] >> 8) & 0x00f0) | ((sc[2] >> 4) & 0x0f00) | (sc[3] & 0xf000);
     const float d = (float)scale.f16 * __low2float (bq8_1[iqs].ds);
     return d * ((sumi[0] + sumf[0]) * (2*((sc[iqs/2] >> 6*(iqs%2)) & 0x7) + 1) + (sumi[1] + sumf[1]) * (2*((sc[iqs/2] >> (6*(iqs%2)+3)) & 0x7) + 1));
