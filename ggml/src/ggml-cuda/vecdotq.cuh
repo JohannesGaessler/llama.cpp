@@ -1025,12 +1025,12 @@ static __device__ __forceinline__ float vec_dot_iq3_s_q8_1(
     int sumi = 0;
 #pragma unroll
     for (int l0 = 0; l0 < 8; l0 += 2) {
-        const uint32_t * grid1 = iq3s_grid + (qs[l0 + 0] | ((qh << (8 - l0)) & 0x100));
-        const uint32_t * grid2 = iq3s_grid + (qs[l0 + 1] | ((qh << (7 - l0)) & 0x100));
+        const int grid1 = iq3s_grid[qs[l0 + 0] | ((qh << (8 - l0)) & 0x100)];
+        const int grid2 = iq3s_grid[qs[l0 + 1] | ((qh << (7 - l0)) & 0x100)];
         const int signs0 = __vcmpeq4(((bq3->signs[2*iqs + l0/2] & 0xf) * 0x01010101) & 0x08040201, 0x08040201);
         const int signs1 = __vcmpeq4(((bq3->signs[2*iqs + l0/2] >>  4) * 0x01010101) & 0x08040201, 0x08040201);
-        const int grid_l = __vsub4(grid1[0] ^ signs0, signs0);
-        const int grid_h = __vsub4(grid2[0] ^ signs1, signs1);
+        const int grid_l = __vsub4(grid1 ^ signs0, signs0);
+        const int grid_h = __vsub4(grid2 ^ signs1, signs1);
 
         const int u0 = get_int_b4(bq8_1[iqs/2].qs, l0 + 0);
         const int u1 = get_int_b4(bq8_1[iqs/2].qs, l0 + 1);
