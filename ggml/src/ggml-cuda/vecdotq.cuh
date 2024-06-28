@@ -868,7 +868,8 @@ static __device__ __forceinline__ float vec_dot_iq2_xxs_q8_1(
         const int u1 = get_int_b4(bq8_1[iqs/2].qs, k0 + 1);
         sumi = __dp4a(grid1, u1, sumi);
     }
-    const float d = __half2float(bq2->d) * (0.5f + (aux32 >> 28)) * __low2float(bq8_1[iqs/2].ds) / 4;
+    sumi = sumi / 4;
+    const float d = __half2float(bq2->d) * (0.5f + (aux32 >> 28)) * __low2float(bq8_1[iqs/2].ds);
     return d * sumi;
 #else
     NO_DEVICE_CODE;
