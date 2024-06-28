@@ -1016,17 +1016,19 @@ static __device__ __forceinline__ float vec_dot_iq3_xxs_q8_1(
 static __device__ __forceinline__ float vec_dot_iq3_s_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
-    const block_iq3_s * bq2 = (const block_iq3_s *) vbq + kbx;
+    const block_iq3_s * bq3 = (const block_iq3_s *) vbq + kbx;
 
-    const uint8_t  * qs = bq2->qs + 4*iqs;
+    const int2 qs_packed = make_int2(get_int_b2(bq3->qs, iqs + 0), get_int_b2(bq3->qs, iqs + 1));
+    const uint8_t * qs = (const uint8_t *) &qs_packed;
+    const int qh = bq3->qh[iqs/2];
 
     int sumi = 0;
 #pragma unroll
     for (int l0 = 0; l0 < 8; l0 += 2) {
-        const uint32_t * grid1 = iq3s_grid + (qs[l0+0] | ((bq2->qh[iqs/2] << (8 - l0)) & 256));
-        const uint32_t * grid2 = iq3s_grid + (qs[l0+1] | ((bq2->qh[iqs/2] << (7 - l0)) & 256));
-        uint32_t signs0 = __vcmpeq4(((bq2->signs[2*iqs + l0/2] & 0xf) * 0x01010101) & 0x08040201, 0x08040201);
-        uint32_t signs1 = __vcmpeq4(((bq2->signs[2*iqs + l0/2] >>  4) * 0x01010101) & 0x08040201, 0x08040201);
+        const uint32_t * grid1 = iq3s_grid + (qs[l0 + 0] | ((qh << (8 - l0)) & 256));
+        const uint32_t * grid2 = iq3s_grid + (qs[l0 + 1] | ((qh << (7 - l0)) & 256));
+        uint32_t signs0 = __vcmpeq4(((bq3->signs[2*iqs + l0/2] & 0xf) * 0x01010101) & 0x08040201, 0x08040201);
+        uint32_t signs1 = __vcmpeq4(((bq3->signs[2*iqs + l0/2] >>  4) * 0x01010101) & 0x08040201, 0x08040201);
         const int grid_l = __vsub4(grid1[0] ^ signs0, signs0);
         const int grid_h = __vsub4(grid2[0] ^ signs1, signs1);
 
@@ -1037,7 +1039,7 @@ static __device__ __forceinline__ float vec_dot_iq3_s_q8_1(
         sumi = __dp4a(grid_h, u1, sumi);
     }
 
-    const float d = (float)bq2->d * (1 + 2*((bq2->scales[iqs/4] >> 4*((iqs/2)%2)) & 0xf)) * __low2float(bq8_1[iqs/2].ds);
+    const float d = (float)bq3->d * (1 + 2*((bq3->scales[iqs/4] >> 4*((iqs/2)%2)) & 0xf)) * __low2float(bq8_1[iqs/2].ds);
     return d * sumi;
 #else
     NO_DEVICE_CODE;
