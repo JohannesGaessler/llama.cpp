@@ -939,8 +939,13 @@ static __device__ __forceinline__ float vec_dot_iq2_s_q8_1(
         const int * grid_pos = (const int *)(iq2s_grid + (bq2->qs[2*iqs + l0/2] | ((bq2->qh[iqs/2] << (8-l0)) & 0x300)));
         const int2  grid_neg = make_int2(__vneg4(grid_pos[0]), __vneg4(grid_pos[1]));
 
-        const int mask0 = __vcmpeq4(((signs[l0/2] & 0xf) * 0x01010101) & 0x08040201, 0x00000000);
-        const int mask1 = __vcmpeq4(((signs[l0/2] >>  4) * 0x01010101) & 0x08040201, 0x00000000);
+        const int signs_packed = signs[l0/2];
+
+        const int signs0 = ((signs_packed & 0x03) << 7) | ((signs_packed & 0x0C) << 21);
+        const int signs1 = ((signs_packed & 0x30) << 3) | ((signs_packed & 0xC0) << 17);
+
+        const int mask0 = __vcmpeq4(signs0, 0x00000000);
+        const int mask1 = __vcmpeq4(signs1, 0x00000000);
 
         const int grid_l = (grid_pos[0] & mask0) | (grid_neg.x & ~mask0);
         const int grid_h = (grid_pos[1] & mask1) | (grid_neg.y & ~mask1);
