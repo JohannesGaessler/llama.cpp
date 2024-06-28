@@ -987,12 +987,12 @@ static __device__ __forceinline__ float vec_dot_iq3_xxs_q8_1(
     int sumi = 0;
 #pragma unroll
     for (int l0 = 0; l0 < 8; l0 += 2) {
-        const uint32_t * grid1 = iq3xxs_grid + q3[l0 + 0];
-        const uint32_t * grid2 = iq3xxs_grid + q3[l0 + 1];
-        const uint32_t * signs = (const uint32_t *)(ksigns64 + (aux32 & 127));
+        const int grid1 = iq3xxs_grid[q3[l0 + 0]];
+        const int grid2 = iq3xxs_grid[q3[l0 + 1]];
+        const int * signs = (const int *)(ksigns64 + (aux32 & 127));
 
-        const int grid_l = __vsub4(grid1[0] ^ signs[0], signs[0]);
-        const int grid_h = __vsub4(grid2[0] ^ signs[1], signs[1]);
+        const int grid_l = __vsub4(grid1 ^ signs[0], signs[0]);
+        const int grid_h = __vsub4(grid2 ^ signs[1], signs[1]);
 
         const int u0 = get_int_b4(bq8_1[iqs/2].qs, l0 + 0);
         const int u1 = get_int_b4(bq8_1[iqs/2].qs, l0 + 1);
