@@ -886,8 +886,8 @@ static __device__ __forceinline__ float vec_dot_iq2_xs_q8_1(
     const int ls1 = bq2->scales[iqs/2] & 0x0F;
     const int ls2 = bq2->scales[iqs/2] >> 4;
 
-    int   sumi = 0;
-    float sumf;
+    int sumi      = 0;
+    int sumi_part = 0;
 #pragma unroll
     for (int l = 0; l < 4; ++l) {
         const uint32_t * grid = (const uint32_t *)(iq2xs_grid + (q2[l] & 0x000001FF));
@@ -898,19 +898,19 @@ static __device__ __forceinline__ float vec_dot_iq2_xs_q8_1(
         const int u0 = get_int_b4(bq8_1[iqs/2].qs, 2*l + 0);
         const int u1 = get_int_b4(bq8_1[iqs/2].qs, 2*l + 1);
 
-        sumi = __dp4a(grid_l, u0, sumi);
-        sumi = __dp4a(grid_h, u1, sumi);
+        sumi_part = __dp4a(grid_l, u0, sumi_part);
+        sumi_part = __dp4a(grid_h, u1, sumi_part);
 
         if (l == 1) {
-            sumf  = (0.5f + ls1) * sumi;
-            sumi  = 0;
+            sumi      = ls1*sumi_part + sumi_part/2;
+            sumi_part = 0;
         }
         if (l == 3) {
-            sumf += (0.5f + ls2) * sumi;
+            sumi     += ls2*sumi_part + sumi_part/2;
         }
     }
-    const float d = __half2float(bq2->d) * __low2float(bq8_1[iqs/2].ds) / 4;
-    return d * sumf;
+    const float d = __half2float(bq2->d) * __low2float(bq8_1[iqs/2].ds);
+    return d * (sumi/4);
 #else
     GGML_UNUSED(ksigns64);
     NO_DEVICE_CODE;
