@@ -965,8 +965,8 @@ static __device__ __forceinline__ float vec_dot_iq2_s_q8_1(
         }
     }
 
-    const float d = (float)bq2->d * __low2float(bq8_1[iqs/2].ds) * 0.25f;
-    return d * sumi;
+    const float d = __half2float(bq2->d) * __low2float(bq8_1[iqs/2].ds);
+    return d * (sumi/4);
 #else
     GGML_UNUSED(ksigns64);
     NO_DEVICE_CODE;
