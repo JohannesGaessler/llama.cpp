@@ -943,6 +943,8 @@ static __device__ __forceinline__ float vec_dot_iq2_s_q8_1(
         sumi1 = __dp4a(grid_h, *((const int *)q8 + 1), sumi1);
         q8 += 8;
     }
+    sumi1 = ls1*sumi1 + sumi1/2;
+
     int sumi2 = 0;
     for (int l = 2; l < 4; ++l) {
         const uint32_t * grid = (const uint32_t *)(iq2s_grid + (bq2->qs[4*iqs/2+l] | ((bq2->qh[iqs/2] << (8-2*l)) & 0x300)));
@@ -954,8 +956,10 @@ static __device__ __forceinline__ float vec_dot_iq2_s_q8_1(
         sumi2 = __dp4a(grid_h, *((const int *)q8 + 1), sumi2);
         q8 += 8;
     }
+    sumi2 = ls2*sumi2 + sumi2/2;
+
     const float d = (float)bq2->d * __low2float(bq8_1[iqs/2].ds) * 0.25f;
-    return d * ((0.5f + ls1) * sumi1 + (0.5f + ls2) * sumi2);
+    return d * (sumi1 + sumi2);
 #else
     GGML_UNUSED(ksigns64);
     NO_DEVICE_CODE;
