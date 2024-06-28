@@ -1099,18 +1099,26 @@ static __device__ __forceinline__ float vec_dot_iq1_m_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
     const block_iq1_m * bq1 = (const block_iq1_m *) vbq + kbx;
 
-    int   sumi[2] = {0, 0};
-    float sumf[2] = {0.f, 0.f};
+    int   sumi[2] = {0};
+    float sumf[2] = {0.0f};
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
-    const int * q8 = (const int *)bq8_1[iqs].qs;
 #pragma unroll
     for (int l = 0; l < 4; ++l) {
         const int * grid = (const int *)(iq1s_grid_gpu + (bq1->qs[4*iqs+l] | (((bq1->qh[2*iqs+l/2] >> 4*(l%2)) & 7) << 8)));
-        int grid0 = grid[0] & 0x0f0f0f0f;
-        int grid1 = (grid[0] >> 4) & 0x0f0f0f0f;
-        sumi[l/2] = __dp4a(q8[2*l+1], grid1, __dp4a(q8[2*l+0], grid0, sumi[l/2]));
+
+        const int grid0 = grid[0] & 0x0f0f0f0f;
+        const int grid1 = (grid[0] >> 4) & 0x0f0f0f0f;
+
+        const int u0 = get_int_b4(bq8_1[iqs].qs, 2*l + 0);
+        const int u1 = get_int_b4(bq8_1[iqs].qs, 2*l + 1);
+
+        sumi[l/2] = __dp4a(grid0, u0, sumi[l/2]);
+        sumi[l/2] = __dp4a(grid1, u1, sumi[l/2]);
         const float delta = (bq1->qh[2*iqs+l/2] >> 4*(l%2)) & 0x08 ? -1-IQ1M_DELTA : -1+IQ1M_DELTA;
-        const int sumy = __dp4a(q8[2*l+1], 0x01010101, __dp4a(q8[2*l+0], 0x01010101, 0));
+
+        int sumy = 0;
+        sumy = __dp4a(u0, 0x01010101, sumy);
+        sumy = __dp4a(u1, 0x01010101, sumy);
         sumf[l/2] += delta*sumy;
     }
 #else
