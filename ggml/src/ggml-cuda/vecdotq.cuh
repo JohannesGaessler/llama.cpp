@@ -1138,8 +1138,8 @@ static __device__ __forceinline__ float vec_dot_iq1_m_q8_1(
 }
 
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
-static __device__ __forceinline__ int2 get_int_from_table_16(const uint32_t & q4) {
-    const uint8_t * values = (const uint8_t *) kvalues_iq4nl;
+static __device__ __forceinline__ int2 get_int_from_table_16(const int & q4) {
+    const int8_t * values = (const int8_t *) kvalues_iq4nl;
 
     const int      q0_32  = (q4 >> 0) & 0x0F0F0F0F;
     const int8_t * q0_8   = (const int8_t *) &q0_32;
