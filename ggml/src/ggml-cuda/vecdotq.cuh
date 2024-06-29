@@ -986,12 +986,11 @@ static __device__ __forceinline__ float vec_dot_iq3_xxs_q8_1(
 #pragma unroll
     for (int l0 = 0; l0 < 8; l0 += 2) {
         const int2 grid_pos = make_int2(iq3xxs_grid[q3[l0 + 0]], iq3xxs_grid[q3[l0 + 1]]);
-        const int2 grid_neg = make_int2(__vneg4(grid_pos.x), __vneg4(grid_pos.y));
 
-        const int * mask = (const int *)(ksigns64 + ((aux32 >> (7*l0/2)) & 0x7F));
+        const int * signs = (const int *)(ksigns64 + ((aux32 >> (7*l0/2)) & 0x7F));
 
-        const int grid_l = (grid_pos.x & ~mask[0]) | (grid_neg.x & mask[0]);
-        const int grid_h = (grid_pos.y & ~mask[1]) | (grid_neg.y & mask[1]);
+        const int grid_l = __vsub4(grid_pos.x ^ signs[0], signs[0]);
+        const int grid_h = __vsub4(grid_pos.y ^ signs[1], signs[1]);
 
         const int u0 = get_int_b4(bq8_1[iqs/2].qs, l0 + 0);
         const int u1 = get_int_b4(bq8_1[iqs/2].qs, l0 + 1);
