@@ -1151,7 +1151,7 @@ static __device__ __forceinline__ int2 get_int_from_table_16(const int & q4) {
 
     return make_int2(*((const int *) &val0_8), *((const int *) &val1_8));
 }
-#endif
+#endif // __CUDA_ARCH__ >= MIN_CC_DP4A
 
 static __device__ __forceinline__ float vec_dot_iq4_nl_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
@@ -1175,7 +1175,7 @@ static __device__ __forceinline__ float vec_dot_iq4_nl_q8_1(
     return d * sumi;
 #else
     NO_DEVICE_CODE;
-#endif
+#endif // __CUDA_ARCH__ >= MIN_CC_DP4A
 }
 
 static __device__ __forceinline__ float vec_dot_iq4_xs_q8_1(
@@ -1186,16 +1186,18 @@ static __device__ __forceinline__ float vec_dot_iq4_xs_q8_1(
     const int32_t  * q8 = (const int *)bq8_1[iqs].qs;
     const uint32_t * q4 = (const uint32_t *)bq4->qs + 4*iqs;
     const int8_t ls = ((bq4->scales_l[iqs/2] >> 4*(iqs%2)) & 0xf) | (((bq4->scales_h >> 2*iqs) & 3) << 4);
-    const float d = (float)bq4->d * (ls - 32) * __low2float(bq8_1[iqs].ds);
-    int sumi1 = 0, sumi2 = 0;
+
+    int sumi = 0;
 #pragma unroll
     for (int j = 0; j < 4; ++j) {
         const int2 v = get_int_from_table_16(q4[j]);
-        sumi1 = __dp4a(v.x, q8[j+0], sumi1);
-        sumi2 = __dp4a(v.y, q8[j+4], sumi2);
+        sumi = __dp4a(v.x, q8[j+0], sumi);
+        sumi = __dp4a(v.y, q8[j+4], sumi);
     }
-    return d * (sumi1 + sumi2);
+
+    const float d = (float)bq4->d * (ls - 32) * __low2float(bq8_1[iqs].ds);
+    return d * sumi;
 #else
-    return vec_dot_iq4_xs_q8_1(vbq, bq8_1, kbx, iqs);
-#endif
+    NO_DEVICE_CODE;
+#endif // __CUDA_ARCH__ >= MIN_CC_DP4A
 }
