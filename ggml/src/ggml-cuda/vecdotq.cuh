@@ -1138,18 +1138,20 @@ static __device__ __forceinline__ float vec_dot_iq1_m_q8_1(
 }
 
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
-static __device__ __forceinline__ void get_int_from_table_16(const uint32_t & q4, const uint8_t * values,
-        int & val1, int & val2) {
-
+static __device__ __forceinline__ int2 get_int_from_table_16(const uint32_t & q4, const uint8_t * values) {
     uint32_t aux32; const uint8_t * q8 = (const uint8_t *)&aux32;
+
     aux32 = q4 & 0x0f0f0f0f;
     uint16_t v1 = values[q8[0]] | (values[q8[1]] << 8);
     uint16_t v2 = values[q8[2]] | (values[q8[3]] << 8);
-    val1 = v1 | (v2 << 16);
+    const int val1 = v1 | (v2 << 16);
+
     aux32 = (q4 >> 4) & 0x0f0f0f0f;
     v1 = values[q8[0]] | (values[q8[1]] << 8);
     v2 = values[q8[2]] | (values[q8[3]] << 8);
-    val2 = v1 | (v2 << 16);
+    const int val2 = v1 | (v2 << 16);
+
+    return make_int2(val1, val2);
 }
 #endif
 
@@ -1163,14 +1165,13 @@ static __device__ __forceinline__ float vec_dot_iq4_nl_q8_1(
 
     const uint8_t * values = (const uint8_t *)kvalues_iq4nl;
 
-    int v1, v2;
     int sumi1 = 0, sumi2 = 0;
 #pragma unroll
     for (int l = 0; l < VDR_Q4_0_Q8_1_MMVQ; ++l) {
         const uint32_t aux = q4[2*l] | (q4[2*l+1] << 16);
-        get_int_from_table_16(aux, values, v1, v2);
-        sumi1 = __dp4a(v1, q8[l+0], sumi1);
-        sumi2 = __dp4a(v2, q8[l+4], sumi2);
+        const int2 v = get_int_from_table_16(aux, values);
+        sumi1 = __dp4a(v.x, q8[l+0], sumi1);
+        sumi2 = __dp4a(v.y, q8[l+4], sumi2);
     }
 
     const float d = (float)bq->d * __low2float(bq8_1->ds);
@@ -1193,12 +1194,12 @@ static __device__ __forceinline__ float vec_dot_iq4_xs_q8_1(
     const uint32_t * q4 = (const uint32_t *)bq4->qs + 4*ib32;
     const int8_t ls = ((bq4->scales_l[ib32/2] >> 4*(ib32%2)) & 0xf) | (((bq4->scales_h >> 2*ib32) & 3) << 4);
     const float d = (float)bq4->d * (ls - 32) * __low2float(bq8_1[ib32].ds);
-    int v1, v2;
     int sumi1 = 0, sumi2 = 0;
+#pragma unroll
     for (int j = 0; j < 4; ++j) {
-        get_int_from_table_16(q4[j], values, v1, v2);
-        sumi1 = __dp4a(v1, q8[j+0], sumi1);
-        sumi2 = __dp4a(v2, q8[j+4], sumi2);
+        const int2 v = get_int_from_table_16(q4[j], values);
+        sumi1 = __dp4a(v.x, q8[j+0], sumi1);
+        sumi2 = __dp4a(v.y, q8[j+4], sumi2);
     }
     return d * (sumi1 + sumi2);
 #else
