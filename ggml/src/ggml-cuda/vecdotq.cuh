@@ -976,10 +976,11 @@ static __device__ __forceinline__ float vec_dot_iq2_s_q8_1(
 static __device__ __forceinline__ float vec_dot_iq3_xxs_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
-    const block_iq3_xxs * bq2 = (const block_iq3_xxs *) vbq + kbx;
+    const block_iq3_xxs * bq3 = (const block_iq3_xxs *) vbq + kbx;
 
-    const uint8_t * q3 = bq2->qs + 4*iqs;
-    const uint aux32 = get_int_b2(bq2->qs, QK_K/16 + iqs/2);
+    const int2 q3_packed = make_int2(get_int_b2(bq3->qs, iqs), get_int_b2(bq3->qs, iqs+1));
+    const uint8_t * q3 = (const uint8_t *) &q3_packed;
+    const uint aux32 = get_int_b2(bq3->qs, QK_K/16 + iqs/2);
 
     int sumi = 0;
 #pragma unroll
@@ -1001,7 +1002,7 @@ static __device__ __forceinline__ float vec_dot_iq3_xxs_q8_1(
 
     const int ls = aux32 >> 28;
     sumi = (ls*sumi + sumi/2)/2;
-    const float d = __half2float(bq2->d) * __low2float(bq8_1[iqs/2].ds);
+    const float d = __half2float(bq3->d) * __low2float(bq8_1[iqs/2].ds);
     return d * sumi;
 #else
     NO_DEVICE_CODE;
