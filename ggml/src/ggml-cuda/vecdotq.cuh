@@ -1057,8 +1057,9 @@ static __device__ __forceinline__ float vec_dot_iq1_s_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
     const block_iq1_s * bq1 = (const block_iq1_s *) vbq + kbx;
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
-    const int qs_packed = get_int_b2(bq1->qs, iqs);
-    const uint8_t * qs = (const uint8_t *) &qs_packed;
+    const int       qs_packed = get_int_b2(bq1->qs, iqs);
+    const uint8_t * qs        = (const uint8_t *) &qs_packed;
+
     const int qh = bq1->qh[iqs];
 
     int sumi = 0;
@@ -1076,8 +1077,8 @@ static __device__ __forceinline__ float vec_dot_iq1_s_q8_1(
         sumi = __dp4a(grid1, u1, sumi);
     }
 
-    const float  d1q   = __half2float(bq1->d) * (((bq1->qh[iqs] >> 11) & 0x0E) + 1);
-    const float  delta = -1.0f + IQ1S_DELTA - (bq1->qh[iqs] & 0x8000) * (2.0f*IQ1S_DELTA/0x8000);
+    const float  d1q   = __half2float(bq1->d) * (((qh >> 11) & 0x0E) + 1);
+    const float  delta = -1.0f + IQ1S_DELTA - (qh & 0x8000) * (2.0f*IQ1S_DELTA/0x8000);
     const float2 ds    = __half22float2(bq8_1[iqs].ds);
     return d1q * (ds.x*sumi + ds.y*delta);
 #else
