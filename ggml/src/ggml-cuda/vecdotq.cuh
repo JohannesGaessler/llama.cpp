@@ -1183,8 +1183,6 @@ static __device__ __forceinline__ float vec_dot_iq4_xs_q8_1(
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
     const block_iq4_xs * bq4 = (const block_iq4_xs *) vbq + kbx;
 
-    const int ls = ((bq4->scales_l[iqs/2] >> 4*(iqs%2)) & 0xf) | (((bq4->scales_h >> 2*iqs) & 3) << 4);
-
     int sumi = 0;
 #pragma unroll
     for (int j = 0; j < 4; ++j) {
@@ -1198,7 +1196,10 @@ static __device__ __forceinline__ float vec_dot_iq4_xs_q8_1(
         sumi = __dp4a(v.y, u1, sumi);
     }
 
-    const float d = (float)bq4->d * (ls - 32) * __low2float(bq8_1[iqs].ds);
+    const int ls = ((bq4->scales_l[iqs/2] >> 4*(iqs%2)) & 0xf) | (((bq4->scales_h >> 2*iqs) & 3) << 4);
+    sumi *= ls - 32;
+
+    const float d = __half2float(bq4->d) * __low2float(bq8_1[iqs].ds);
     return d * sumi;
 #else
     NO_DEVICE_CODE;
