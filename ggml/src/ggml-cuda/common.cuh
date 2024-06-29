@@ -268,6 +268,18 @@ static __device__ __forceinline__ unsigned int __vcmpeq4(unsigned int a, unsigne
     return c;
 }
 
+static __device__ __forceinline__ unsigned int __vcmpne4(unsigned int a, unsigned int b) {
+    const uint8x4_t& va = reinterpret_cast<const uint8x4_t&>(a);
+    const uint8x4_t& vb = reinterpret_cast<const uint8x4_t&>(b);
+    unsigned int c;
+    uint8x4_t& vc = reinterpret_cast<uint8x4_t&>(c);
+#pragma unroll
+    for (int i = 0; i < 4; ++i) {
+        vc[i] = va[i] == vb[i] ? 0x00 : 0xff;
+    }
+    return c;
+}
+
 static __device__ __forceinline__ int __dp4a(const int a, const int b, int c) {
 #if defined(__gfx906__) || defined(__gfx908__) || defined(__gfx90a__) || defined(__gfx1030__)
     c = __builtin_amdgcn_sdot4(a, b, c, false);
