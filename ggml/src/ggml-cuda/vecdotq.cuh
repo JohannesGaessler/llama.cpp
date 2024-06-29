@@ -1157,11 +1157,11 @@ static __device__ __forceinline__ float vec_dot_iq4_nl_q8_1(
     int sumi = 0;
 #pragma unroll
     for (int l = 0; l < VDR_Q4_0_Q8_1_MMVQ; ++l) {
-        const int aux_q4 = get_int_b2(bq4->qs, iqs + l);
-        const int2 v = get_int_from_table_16(aux_q4);
-
         const int u0 = get_int_b4(bq8_1->qs, iqs + (l + 0));
         const int u1 = get_int_b4(bq8_1->qs, iqs + (l + 4));
+
+        const int aux_q4 = get_int_b2(bq4->qs, iqs + l);
+        const int2 v = get_int_from_table_16(aux_q4);
 
         sumi = __dp4a(v.x, u0, sumi);
         sumi = __dp4a(v.y, u1, sumi);
