@@ -1114,8 +1114,7 @@ static __device__ __forceinline__ float vec_dot_iq1_m_q8_1(
         sumf[l0/4] += delta*sumy;
     }
 
-    const int2       sc_packed = *((const int2 *) bq1->scales);
-    const uint16_t * sc        = (const uint16_t *) &sc_packed;
+    const uint16_t * sc = (const uint16_t *) bq1->scales;
 
     iq1m_scale_t scale;
     scale.u16 = (sc[0] >> 12) | ((sc[1] >> 8) & 0x00F0) | ((sc[2] >> 4) & 0x0F00) | (sc[3] & 0xF000);
