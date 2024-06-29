@@ -1090,14 +1090,11 @@ static __device__ __forceinline__ float vec_dot_iq1_m_q8_1(
     const int       qs_packed = get_int_b4(bq1->qs, iqs);
     const uint8_t * qs        = (const uint8_t *) &qs_packed;
 
-    const int       qh_packed = ((const uint16_t *) bq1->qh)[iqs];
-    const uint8_t * qh        = (const uint8_t *) &qh_packed;
-
     int   sumi[2] = {0};
     float sumf[2] = {0.0f};
 #pragma unroll
     for (int l0 = 0; l0 < 8; l0 += 2) {
-        const int qhl = qh[l0/4] >> (4 * ((l0/2) % 2));
+        const int qhl = bq1->qh[2*iqs + l0/4] >> (4 * ((l0/2) % 2));
 
         const int grid = iq1s_grid_gpu[qs[l0/2] | ((qhl & 0x07) << 8)];
 
