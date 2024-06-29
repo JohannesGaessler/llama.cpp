@@ -1196,7 +1196,7 @@ static __device__ __forceinline__ float vec_dot_iq4_xs_q8_1(
         sumi = __dp4a(v.y, u1, sumi);
     }
 
-    const int ls = ((bq4->scales_l[iqs/2] >> 4*(iqs%2)) & 0xf) | (((bq4->scales_h >> 2*iqs) & 3) << 4);
+    const int ls = ((bq4->scales_l[iqs/2] >> (4*(iqs%2)) & 0x0F)) | (((bq4->scales_h >> (2*iqs)) & 0x03) << 4);
     sumi *= ls - 32;
 
     const float d = __half2float(bq4->d) * __low2float(bq8_1[iqs].ds);
