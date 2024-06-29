@@ -1026,18 +1026,14 @@ static __device__ __forceinline__ float vec_dot_iq3_s_q8_1(
         const int2 grid_pos = make_int2(
             iq3s_grid[qs[l0 + 0] | ((qh << (8 - l0)) & 0x100)],
             iq3s_grid[qs[l0 + 1] | ((qh << (7 - l0)) & 0x100)]);
-        const int2 grid_neg = make_int2(__vneg4(grid_pos.x), __vneg4(grid_pos.y));
 
         const int signs_packed = bq3->signs[2*iqs + l0/2];
 
-        const int signs0 = ((signs_packed & 0x03) << 7) | ((signs_packed & 0x0C) << 21);
-        const int signs1 = ((signs_packed & 0x30) << 3) | ((signs_packed & 0xC0) << 17);
+        const int signs0 = __vcmpne4(((signs_packed & 0x03) << 7) | ((signs_packed & 0x0C) << 21), 0x00000000);
+        const int signs1 = __vcmpne4(((signs_packed & 0x30) << 3) | ((signs_packed & 0xC0) << 17), 0x00000000);
 
-        const int mask0 = __vcmpeq4(signs0, 0x00000000);
-        const int mask1 = __vcmpeq4(signs1, 0x00000000);
-
-        const int grid_l = (grid_pos.x & mask0) | (grid_neg.x & ~mask0);
-        const int grid_h = (grid_pos.y & mask1) | (grid_neg.y & ~mask1);
+        const int grid_l = __vsub4(grid_pos.x ^ signs0, signs0);
+        const int grid_h = __vsub4(grid_pos.y ^ signs1, signs1);
 
         const int u0 = get_int_b4(bq8_1[iqs/2].qs, l0 + 0);
         const int u1 = get_int_b4(bq8_1[iqs/2].qs, l0 + 1);
