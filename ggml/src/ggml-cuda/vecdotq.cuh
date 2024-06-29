@@ -1139,21 +1139,17 @@ static __device__ __forceinline__ float vec_dot_iq1_m_q8_1(
 
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
 static __device__ __forceinline__ int2 get_int_from_table_16(const uint32_t & q4) {
-    uint32_t aux32; const uint8_t * q8 = (const uint8_t *)&aux32;
-
     const uint8_t * values = (const uint8_t *) kvalues_iq4nl;
 
-    aux32 = q4 & 0x0f0f0f0f;
-    uint16_t v1 = values[q8[0]] | (values[q8[1]] << 8);
-    uint16_t v2 = values[q8[2]] | (values[q8[3]] << 8);
-    const int val1 = v1 | (v2 << 16);
+    const int      q0_32  = (q4 >> 0) & 0x0F0F0F0F;
+    const int8_t * q0_8   = (const int8_t *) &q0_32;
+    const char4    val0_8 = make_char4(values[q0_8[0]], values[q0_8[1]], values[q0_8[2]], values[q0_8[3]]);
 
-    aux32 = (q4 >> 4) & 0x0f0f0f0f;
-    v1 = values[q8[0]] | (values[q8[1]] << 8);
-    v2 = values[q8[2]] | (values[q8[3]] << 8);
-    const int val2 = v1 | (v2 << 16);
+    const int      q1_32  = (q4 >> 4) & 0x0F0F0F0F;
+    const int8_t * q1_8   = (const int8_t *) &q1_32;
+    const char4    val1_8 = make_char4(values[q1_8[0]], values[q1_8[1]], values[q1_8[2]], values[q1_8[3]]);
 
-    return make_int2(val1, val2);
+    return make_int2(*((const int *) &val0_8), *((const int *) &val1_8));
 }
 #endif
 
