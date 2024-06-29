@@ -1160,7 +1160,6 @@ static __device__ __forceinline__ float vec_dot_iq4_nl_q8_1(
 #if __CUDA_ARCH__ >= MIN_CC_DP4A // lowest compute capability for integer intrinsics
     const block_iq4_nl * bq = (const block_iq4_nl *) vbq + kbx;
 
-    const uint16_t * q4 = (const uint16_t *)bq->qs + 2*iqs;
     const int32_t  * q8 = (const int32_t  *)bq8_1->qs + iqs;
 
     const uint8_t * values = (const uint8_t *)kvalues_iq4nl;
@@ -1168,8 +1167,8 @@ static __device__ __forceinline__ float vec_dot_iq4_nl_q8_1(
     int sumi1 = 0, sumi2 = 0;
 #pragma unroll
     for (int l = 0; l < VDR_Q4_0_Q8_1_MMVQ; ++l) {
-        const uint32_t aux = q4[2*l] | (q4[2*l+1] << 16);
-        const int2 v = get_int_from_table_16(aux, values);
+        const int aux_q4 = get_int_b2(bq->qs, iqs + l);
+        const int2 v = get_int_from_table_16(aux_q4, values);
         sumi1 = __dp4a(v.x, q8[l+0], sumi1);
         sumi2 = __dp4a(v.y, q8[l+4], sumi2);
     }
