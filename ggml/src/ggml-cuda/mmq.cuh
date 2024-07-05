@@ -935,6 +935,8 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
         }
     }
 
+    half2 * sumh = (half2 *) sum;
+
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += ntx*mma_C::J) {
 #pragma unroll
@@ -957,8 +959,10 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
                 C.mma_K8(A[n][k0/QI8_0], B);
 
 #pragma unroll
-                for (int l = 0; l < mma_C::ne; ++l) {
-                    sum[(j0/mma_C::J + n)*mma_C::ne + l] += C.x[l]*dA[n][l/2][k0/QI8_0]*dB[l%2];
+                for (int l = 0; l < mma_C::ne; l += 2) {
+                    sumh[((j0/mma_C::J + n)*mma_C::ne + l)/2] += make_half2(
+                        C.x[l + 0]*dA[n][l/2][k0/QI8_0]*dB[0],
+                        C.x[l + 1]*dA[n][l/2][k0/QI8_0]*dB[1]);
                 }
             }
         }
@@ -2186,6 +2190,7 @@ static __device__ __forceinline__ void mmq_write_back_mma(
     static_assert(nwarps*mma_C::I == mmq_y, "nwarps*mma_C::I != mmq_y");
 #endif // INT8_MMA_AVAILABLE
 
+    const half * sumh = (const half *) sum;
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += ntx*mma_C::J) {
 #pragma unroll
@@ -2204,7 +2209,7 @@ static __device__ __forceinline__ void mmq_write_back_mma(
                     continue;
                 }
 
-                dst[j*stride + i] = sum[(j0/mma_C::J + n)*mma_C::ne + l];
+                dst[j*stride + i] = sumh[(j0/mma_C::J + n)*mma_C::ne + l];
             }
         }
     }
