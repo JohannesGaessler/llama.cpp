@@ -27,7 +27,7 @@ struct tile_x_sizes {
 };
 
 static constexpr int get_mmq_x_max_host(const int cc) {
-    return int8_mma_available(cc) ? 128 :
+    return int8_mma_available(cc) ? 256 :
 #ifdef GGML_CUDA_FORCE_MMQ
         cc >= CC_VOLTA && cc < CC_OFFSET_AMD ? 128                     : 64;
 #else
@@ -37,7 +37,7 @@ static constexpr int get_mmq_x_max_host(const int cc) {
 
 static constexpr __device__ int get_mmq_x_max_device() {
 #ifdef INT8_MMA_AVAILABLE
-    return 128;
+    return 256;
 #else // INT8_MMA_AVAILABLE
 
 #if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
@@ -2734,6 +2734,30 @@ void mul_mat_q_case(ggml_backend_cuda_context & ctx, const mmq_args & args, cuda
             break;
         case 128:
             launch_mul_mat_q<type, 128>(ctx, args, stream);
+            break;
+        case 144:
+            launch_mul_mat_q<type, 144>(ctx, args, stream);
+            break;
+        case 160:
+            launch_mul_mat_q<type, 160>(ctx, args, stream);
+            break;
+        case 176:
+            launch_mul_mat_q<type, 176>(ctx, args, stream);
+            break;
+        case 192:
+            launch_mul_mat_q<type, 192>(ctx, args, stream);
+            break;
+        case 208:
+            launch_mul_mat_q<type, 208>(ctx, args, stream);
+            break;
+        case 224:
+            launch_mul_mat_q<type, 224>(ctx, args, stream);
+            break;
+        case 240:
+            launch_mul_mat_q<type, 240>(ctx, args, stream);
+            break;
+        case 256:
+            launch_mul_mat_q<type, 256>(ctx, args, stream);
             break;
         default:
             fprintf(stderr, "mmq_x_best=%d\n", mmq_x_best);
