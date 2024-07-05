@@ -915,45 +915,51 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
     const int   * y_qs = (const int   *) y + 4;
     const float * y_df = (const float *) y;
 
-    mma_A A[ntx];
-    float dA[ntx][mma_C::ne/2];
+    mma_A A[ntx][WARP_SIZE/QI8_0];
+    float dA[ntx][mma_C::ne/2][WARP_SIZE/QI8_0];
 
     const int i0 = (threadIdx.y/ntx)*rows_per_warp;
 
 #pragma unroll
-    for (int n = 0; n < ntx; ++n) {
-        A[n].load(x_qs + (i0 + n*mma_A::I)*MMQ_MMA_TILE_X_K_Q8_0 + k0, MMQ_MMA_TILE_X_K_Q8_0);
+    for (int k0 = 0; k0 < WARP_SIZE; k0 += QI8_0) {
+#pragma unroll
+        for (int n = 0; n < ntx; ++n) {
+            A[n][k0/QI8_0].load(x_qs + (i0 + n*mma_A::I)*MMQ_MMA_TILE_X_K_Q8_0 + k0, MMQ_MMA_TILE_X_K_Q8_0);
 
 #pragma unroll
-        for (int l = 0; l < mma_C::ne/2; ++l) {
-            const int i = i0 + n*mma_A::I + mma_C::get_i(2*l);
+            for (int l = 0; l < mma_C::ne/2; ++l) {
+                const int i = i0 + n*mma_A::I + mma_C::get_i(2*l);
 
-            dA[n][l] = x_df[i*MMQ_MMA_TILE_X_K_Q8_0 + k0/QI8_0];
+                dA[n][l][k0/QI8_0] = x_df[i*MMQ_MMA_TILE_X_K_Q8_0 + k0/QI8_0];
+            }
         }
     }
 
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += ntx*mma_C::J) {
-        mma_B B;
-        float dB[mma_C::ne/2];
+#pragma unroll
+        for (int k0 = 0; k0 < WARP_SIZE; k0 += QI8_0) {
+            mma_B B;
+            float dB[mma_C::ne/2];
 
-        B.load(y_qs + j0*MMQ_TILE_Y_K + k0, MMQ_TILE_Y_K);
+            B.load(y_qs + j0*MMQ_TILE_Y_K + k0, MMQ_TILE_Y_K);
 
 #pragma unroll
-        for (int l = 0; l < mma_C::ne/2; ++l) {
-            const int j = j0 + mma_C::get_j(l);
+            for (int l = 0; l < mma_C::ne/2; ++l) {
+                const int j = j0 + mma_C::get_j(l);
 
-            dB[l] = y_df[j*MMQ_TILE_Y_K + k0/QI8_1];
-        }
-
-#pragma unroll
-        for (int n = 0; n < ntx; ++n) {
-            mma_C C;
-            C.mma_K8(A[n], B);
+                dB[l] = y_df[j*MMQ_TILE_Y_K + k0/QI8_1];
+            }
 
 #pragma unroll
-            for (int l = 0; l < mma_C::ne; ++l) {
-                sum[(j0/mma_C::J + n)*mma_C::ne + l] += C.x[l]*dA[n][l/2]*dB[l%2];
+            for (int n = 0; n < ntx; ++n) {
+                mma_C C;
+                C.mma_K8(A[n][k0/QI8_0], B);
+
+#pragma unroll
+                for (int l = 0; l < mma_C::ne; ++l) {
+                    sum[(j0/mma_C::J + n)*mma_C::ne + l] += C.x[l]*dA[n][l/2][k0/QI8_0]*dB[l%2];
+                }
             }
         }
     }
@@ -2342,7 +2348,6 @@ static __device__ void mul_mat_q_process_tile(
     constexpr int              qr         = ggml_cuda_type_traits<type>::qr;
     constexpr int              qi         = ggml_cuda_type_traits<type>::qi;
     constexpr int              mmq_y      = get_mmq_y_device();
-    constexpr int              vdr        = mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, type>::vdr;
     constexpr load_tiles_mmq_t load_tiles = mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, type>::load_tiles;
 
     extern __shared__ char data_mul_mat_q[];
@@ -2382,10 +2387,7 @@ static __device__ void mul_mat_q_process_tile(
 
             __syncthreads();
 
-// #pragma unroll // unrolling this loop causes too much register pressure
-            for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
-                vec_dot(tile_x, tile_y, sum, k0);
-            }
+            vec_dot(tile_x, tile_y, sum, 0);
 
             __syncthreads();
         }
