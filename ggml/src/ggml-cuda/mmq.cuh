@@ -2369,7 +2369,7 @@ static __device__ void mul_mat_q_process_tile(
 
     constexpr int blocks_per_warp = WARP_SIZE / qi;
 
-    float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
+    float sum[mmq_x*mmq_y / (2*nwarps*WARP_SIZE)] = {0.0f};
 
     const int tile_x_max_i = ne01 - it*mmq_y - 1;
     const int tile_y_max_j = ne11 - jt*mmq_x - 1;
