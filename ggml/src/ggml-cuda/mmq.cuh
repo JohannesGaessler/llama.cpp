@@ -2341,7 +2341,6 @@ static __device__ void mul_mat_q_process_tile(
 
     constexpr int              qk         = ggml_cuda_type_traits<type>::qk;
     constexpr int              qr         = ggml_cuda_type_traits<type>::qr;
-    constexpr int              qi         = ggml_cuda_type_traits<type>::qi;
     constexpr int              mmq_y      = get_mmq_y_device();
     constexpr int              vdr        = mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, type>::vdr;
     constexpr load_tiles_mmq_t load_tiles = mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, type>::load_tiles;
@@ -2358,7 +2357,7 @@ static __device__ void mul_mat_q_process_tile(
     constexpr mmq_write_back_t write_back = mmq_write_back_dp4a<mmq_x, mmq_y, nwarps, need_check>;
 #endif // INT8_MMA_AVAILABLE
 
-    constexpr int blocks_per_warp = WARP_SIZE / qi;
+    constexpr int blocks_per_iter = MMQ_K_ITER / qk;
 
     float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
 
@@ -2367,7 +2366,7 @@ static __device__ void mul_mat_q_process_tile(
 
     const int * y = (const int *) yc + jt*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
 
-    for (int kb0 = kb0_start; kb0 < kb0_stop; kb0 += blocks_per_warp) {
+    for (int kb0 = kb0_start; kb0 < kb0_stop; kb0 += blocks_per_iter) {
 
         load_tiles(x, tile_x, stride01*it*mmq_y + kb0, tile_x_max_i, stride01);
 
@@ -2385,10 +2384,19 @@ static __device__ void mul_mat_q_process_tile(
 
 // #pragma unroll // unrolling this loop causes too much register pressure
         for (int k0 = 0; k0 < WARP_SIZE/2; k0 += vdr) {
-            vec_dot(tile_x, tile_y, sum, k0);
+            if (qr == 1) {
+                vec_dot(tile_x, tile_y, sum, 2*k0);
+                vec_dot(tile_x, tile_y, sum, 2*k0 + vdr);
+            } else {
+                vec_dot(tile_x, tile_y, sum, k0);
+            }
         }
 
         __syncthreads();
+
+        if (qr == 1) {
+            load_tiles(x, tile_x, stride01*it*mmq_y + kb0 + 128/qk, tile_x_max_i, stride01);
+        }
 
         {
             const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + 1*sizeof(block_q8_1_mmq)/sizeof(int));
@@ -2404,7 +2412,12 @@ static __device__ void mul_mat_q_process_tile(
 
 // #pragma unroll // unrolling this loop causes too much register pressure
         for (int k0 = WARP_SIZE/2; k0 < WARP_SIZE; k0 += vdr) {
-            vec_dot(tile_x, tile_y, sum, k0);
+            if (qr == 1) {
+                vec_dot(tile_x, tile_y, sum, (2*k0)       % WARP_SIZE);
+                vec_dot(tile_x, tile_y, sum, (2*k0 + vdr) % WARP_SIZE);
+            } else {
+                vec_dot(tile_x, tile_y, sum, k0);
+            }
         }
 
         __syncthreads();
