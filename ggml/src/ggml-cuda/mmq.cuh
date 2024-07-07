@@ -8,7 +8,7 @@
 #include <cstdint>
 
 #define MMQ_DP4A_MAX_BATCH_SIZE 64 // Max. batch size to use for dp4a MMQ kernels when FP16 tensor cores are available.
-#define MMQ_K_ITER 256
+#define MMQ_K_ITER 512
 #define MMQ_NWARPS 8
 
 typedef void (*load_tiles_mmq_t)(const char * __restrict__ x, int * x_tile, const int & kbx0, const int & i_max, const int & stride);
@@ -2380,41 +2380,45 @@ static __device__ void mul_mat_q_process_tile(
 
     const int * y = (const int *) yc + jt*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
 
-    for (int kb0 = kb0_start; kb0 < kb0_stop; kb0 += blocks_per_iter) {
-
-        load_tiles(x, tile_x, stride01*it*mmq_y + kb0, tile_x_max_i, stride01);
-
-        {
-            const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + 0*sizeof(block_q8_1_mmq)/sizeof(int));
+    for (int kb00 = kb0_start; kb00 < kb0_stop; kb00 += blocks_per_iter) {
 #pragma unroll
-            for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += nwarps*WARP_SIZE) {
-                int l = l0 + threadIdx.y*WARP_SIZE + threadIdx.x;
+        for (int kb01 = 0; kb01 < blocks_per_iter; kb01 += 256/qk) {
+            const int kb0 = kb00 + kb01;
 
-                tile_y[l] = by0[l];
-            }
-        }
+            load_tiles(x, tile_x, stride01*it*mmq_y + kb0, tile_x_max_i, stride01);
 
-        __syncthreads();
-
-        vec_dot(tile_x, tile_y, sum, 0);
-
-        __syncthreads();
-
-        {
-            const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + 1*sizeof(block_q8_1_mmq)/sizeof(int));
+            {
+                const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + 0*sizeof(block_q8_1_mmq)/sizeof(int));
 #pragma unroll
-            for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += nwarps*WARP_SIZE) {
-                int l = l0 + threadIdx.y*WARP_SIZE + threadIdx.x;
+                for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += nwarps*WARP_SIZE) {
+                    int l = l0 + threadIdx.y*WARP_SIZE + threadIdx.x;
 
-                tile_y[l] = by0[l];
+                    tile_y[l] = by0[l];
+                }
             }
+
+            __syncthreads();
+
+            vec_dot(tile_x, tile_y, sum, 0);
+
+            __syncthreads();
+
+            {
+                const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + 1*sizeof(block_q8_1_mmq)/sizeof(int));
+#pragma unroll
+                for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += nwarps*WARP_SIZE) {
+                    int l = l0 + threadIdx.y*WARP_SIZE + threadIdx.x;
+
+                    tile_y[l] = by0[l];
+                }
+            }
+
+            __syncthreads();
+
+            vec_dot(tile_x, tile_y, sum, WARP_SIZE);
+
+            __syncthreads();
         }
-
-        __syncthreads();
-
-        vec_dot(tile_x, tile_y, sum, WARP_SIZE);
-
-        __syncthreads();
     }
 
     if (fixup) {
