@@ -8,7 +8,6 @@
 #include <cstdint>
 
 #define MMQ_DP4A_MAX_BATCH_SIZE 64 // Max. batch size to use for dp4a MMQ kernels when FP16 tensor cores are available.
-#define MMQ_K_ITER 512
 #define MMQ_NWARPS 8
 
 typedef void (*load_tiles_mmq_t)(const char * __restrict__ x, int * x_tile, const int & kbx0, const int & i_max, const int & stride);
@@ -161,6 +160,10 @@ static constexpr __device__ int mmq_get_granularity_device(const int /* mmq_x */
     return 8;
 }
 #endif // INT8_MMA_AVAILABLE
+
+static constexpr __device__ int get_mmq_iter_k(const int mmq_x) {
+    return mmq_x <= 64 ? 512 : 256;
+}
 
 // ------------------------------------------------------------
 
@@ -2371,7 +2374,7 @@ static __device__ void mul_mat_q_process_tile(
     constexpr mmq_write_back_t write_back = mmq_write_back_dp4a<mmq_x, mmq_y, nwarps, need_check>;
 #endif // INT8_MMA_AVAILABLE
 
-    constexpr int blocks_per_iter = MMQ_K_ITER / qk;
+    constexpr int blocks_per_iter = get_mmq_iter_k(mmq_x) / qk;
 
     float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
 
@@ -2468,7 +2471,7 @@ static __global__ void mul_mat_q(
 #endif // (defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) || __CUDA_ARCH__ < CC_VOLTA
 
     const     int64_t blocks_per_ne00 = ne00 / qk;
-    constexpr int     blocks_per_iter = MMQ_K_ITER / qk;
+    constexpr int     blocks_per_iter = get_mmq_iter_k(mmq_x) / qk;
 
     const int ntx = (ne11 + mmq_x - 1) / mmq_x; // Number of tiles x
     const int nty = (ne01 + mmq_y - 1) / mmq_y; // Number of tiles y
@@ -2519,7 +2522,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
 
     constexpr int     mmq_y           = get_mmq_y_device();
     constexpr int     qk              = ggml_cuda_type_traits<type>::qk;
-    constexpr int     blocks_per_iter = MMQ_K_ITER / qk;
+    constexpr int     blocks_per_iter = get_mmq_iter_k(mmq_x) / qk;
     const     int64_t blocks_per_ne00 = ne00 / qk;
 
     float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
