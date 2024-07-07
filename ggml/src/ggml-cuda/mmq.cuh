@@ -8,6 +8,8 @@
 #include <cstdint>
 
 #define MMQ_DP4A_MAX_BATCH_SIZE 64 // Max. batch size to use for dp4a MMQ kernels when FP16 tensor cores are available.
+#define MMQ_K_ITER 256
+#define MMQ_NWARPS 8
 
 typedef void (*load_tiles_mmq_t)(const char * __restrict__ x, int * x_tile, const int & kbx0, const int & i_max, const int & stride);
 typedef void (*vec_dot_mmq_t)(const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0);
@@ -145,7 +147,6 @@ static constexpr __host__ __device__ int mmq_get_mma_tile_x_k(ggml_type type) {
 }
 
 #define MMQ_TILE_Y_K (WARP_SIZE + WARP_SIZE/QI8_1)
-#define MMQ_NWARPS 8
 
 static int mmq_get_granularity_host(const int mmq_x, const int cc) {
     return int8_mma_available(cc) && mmq_x >= 48 ? 16 : 8;
@@ -2424,7 +2425,6 @@ static __global__ void mul_mat_q(
     }
 
     constexpr int qk    = ggml_cuda_type_traits<type>::qk;
-    constexpr int qi    = ggml_cuda_type_traits<type>::qi;
     constexpr int mmq_y = get_mmq_y_device();
 
     // On AMD or old CUDA the performance with stream-k was worse, use conventional tiling instead:
@@ -2439,7 +2439,7 @@ static __global__ void mul_mat_q(
 #endif // (defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) || __CUDA_ARCH__ < CC_VOLTA
 
     const     int64_t blocks_per_ne00 = ne00 / qk;
-    constexpr int     blocks_per_warp = WARP_SIZE / qi;
+    constexpr int     blocks_per_iter = MMQ_K_ITER / qk;
 
     const int ntx = (ne11 + mmq_x - 1) / mmq_x; // Number of tiles x
     const int nty = (ne01 + mmq_y - 1) / mmq_y; // Number of tiles y
@@ -2448,8 +2448,8 @@ static __global__ void mul_mat_q(
     int64_t kbc      = (int64_t) blockIdx.x     *blocks_per_ne00*ntx*nty / gridDim.x;
     int64_t kbc_stop = (int64_t)(blockIdx.x + 1)*blocks_per_ne00*ntx*nty / gridDim.x;
 
-    kbc      -= (kbc      % blocks_per_ne00) % blocks_per_warp;
-    kbc_stop -= (kbc_stop % blocks_per_ne00) % blocks_per_warp;
+    kbc      -= (kbc      % blocks_per_ne00) % blocks_per_iter;
+    kbc_stop -= (kbc_stop % blocks_per_ne00) % blocks_per_iter;
 
     // kb0 == k index when doing the matrix multiplication for an output tile.
     int kb0_start = kbc % blocks_per_ne00;
@@ -2490,8 +2490,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
 
     constexpr int     mmq_y           = get_mmq_y_device();
     constexpr int     qk              = ggml_cuda_type_traits<type>::qk;
-    constexpr int     qi              = ggml_cuda_type_traits<type>::qi;
-    constexpr int     blocks_per_warp = WARP_SIZE / qi;
+    constexpr int     blocks_per_iter = MMQ_K_ITER / qk;
     const     int64_t blocks_per_ne00 = ne00 / qk;
 
     float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
@@ -2508,8 +2507,8 @@ static __global__ void mul_mat_q_stream_k_fixup(
         int64_t kbc      = (int64_t) bidx     *blocks_per_ne00*ntx*nty / block_num_mmq;
         int64_t kbc_stop = (int64_t)(bidx + 1)*blocks_per_ne00*ntx*nty / block_num_mmq;
 
-        kbc      -= (kbc      % blocks_per_ne00) % blocks_per_warp;
-        kbc_stop -= (kbc_stop % blocks_per_ne00) % blocks_per_warp;
+        kbc      -= (kbc      % blocks_per_ne00) % blocks_per_iter;
+        kbc_stop -= (kbc_stop % blocks_per_ne00) % blocks_per_iter;
 
         // Skip fixup tile if the MMQ CUDA block never wrote anything to it:
         if (kbc == kbc_stop || kbc_stop % blocks_per_ne00 == 0) {
