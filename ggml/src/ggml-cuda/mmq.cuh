@@ -2382,7 +2382,7 @@ static __device__ void mul_mat_q_process_tile(
 
         __syncthreads();
 
-// #pragma unroll // unrolling this loop causes too much register pressure
+#pragma unroll // unrolling this loop causes too much register pressure
         for (int k0 = 0; k0 < WARP_SIZE/2; k0 += vdr) {
             if (qr == 1) {
                 vec_dot(tile_x, tile_y, sum, 2*k0);
@@ -2410,7 +2410,7 @@ static __device__ void mul_mat_q_process_tile(
 
         __syncthreads();
 
-// #pragma unroll // unrolling this loop causes too much register pressure
+#pragma unroll // unrolling this loop causes too much register pressure
         for (int k0 = WARP_SIZE/2; k0 < WARP_SIZE; k0 += vdr) {
             if (qr == 1) {
                 vec_dot(tile_x, tile_y, sum, (2*k0)       % WARP_SIZE);
