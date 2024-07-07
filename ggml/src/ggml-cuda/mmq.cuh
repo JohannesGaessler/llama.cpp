@@ -1965,25 +1965,22 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_mma(
 
     const int i0 = (threadIdx.y / ntx) * (ntx*mma_A::I);
 
-#pragma unroll
-    for (int k0 = k00/2; k0 <= k00/2 + 8; k0 += 8) {
-
-    mma_A   A[ntx][4];
-    int   scA[ntx][mma_C::ne/2][4];
+    mma_A   A[ntx][8];
+    int   scA[ntx][mma_C::ne/2][8];
     float  dA[ntx][mma_C::ne/2];
 
 #pragma unroll
     for (int n = 0; n < ntx; ++n) {
 #pragma unroll
-        for (int kvdr = 0; kvdr < VDR_Q6_K_Q8_1_MMQ; kvdr += 4) {
-            A[n][kvdr/2 + 0].load(x_qs + (i0 + n*mma_A::I)*MMQ_MMA_TILE_X_K_Q6_K + (QR6_K*k0 + QR6_K*kvdr + 0),        MMQ_MMA_TILE_X_K_Q6_K);
-            A[n][kvdr/2 + 1].load(x_qs + (i0 + n*mma_A::I)*MMQ_MMA_TILE_X_K_Q6_K + (QR6_K*k0 + QR6_K*kvdr + mma_A::K), MMQ_MMA_TILE_X_K_Q6_K);
+        for (int kvdr = 0; kvdr < VDR_Q6_K_Q8_1_MMQ*2; kvdr += 4) {
+            A[n][kvdr/2 + 0].load(x_qs + (i0 + n*mma_A::I)*MMQ_MMA_TILE_X_K_Q6_K + (k00 + QR6_K*kvdr + 0),        MMQ_MMA_TILE_X_K_Q6_K);
+            A[n][kvdr/2 + 1].load(x_qs + (i0 + n*mma_A::I)*MMQ_MMA_TILE_X_K_Q6_K + (k00 + QR6_K*kvdr + mma_A::K), MMQ_MMA_TILE_X_K_Q6_K);
 
 #pragma unroll
             for (int l = 0; l < mma_C::ne/2; ++l) {
                 const int i = i0 + n*mma_C::I + mma_C::get_i(2*l);
 
-                const int8_t * sc = ((const int8_t *) &x_sc[i*MMQ_MMA_TILE_X_K_Q6_K + k0/8]);
+                const int8_t * sc = ((const int8_t *) &x_sc[i*MMQ_MMA_TILE_X_K_Q6_K + k00/16]);
 
                 scA[n][l][kvdr/2 + 0] = sc[kvdr/2 + 0];
                 scA[n][l][kvdr/2 + 1] = sc[kvdr/2 + 1];
@@ -1994,7 +1991,7 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_mma(
         for (int l = 0; l < mma_C::ne/2; ++l) {
             const int i = i0 + n*mma_C::I + mma_C::get_i(2*l);
 
-            dA[n][l] = x_df[i*MMQ_MMA_TILE_X_K_Q6_K + k0/QI6_K];
+            dA[n][l] = x_df[i*MMQ_MMA_TILE_X_K_Q6_K];
         }
     }
 
@@ -2003,11 +2000,11 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_mma(
         float tmp[ntx][mma_C::ne] = {{0.0f}};
 
 #pragma unroll
-        for (int kvdr = 0; kvdr < VDR_Q6_K_Q8_1_MMQ; kvdr += 4) {
+        for (int kvdr = 0; kvdr < VDR_Q6_K_Q8_1_MMQ*2; kvdr += 4) {
             mma_B B[2];
             float dB[mma_C::ne/2];
 
-            const int k0B = (2*k0 + 2*kvdr) % WARP_SIZE;
+            const int k0B = (k00 + 2*kvdr) % WARP_SIZE;
             B[0].load(y_qs + j0*MMQ_TILE_Y_K + 0        + k0B, MMQ_TILE_Y_K);
             B[1].load(y_qs + j0*MMQ_TILE_Y_K + mma_B::K + k0B, MMQ_TILE_Y_K);
 
@@ -2015,7 +2012,7 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_mma(
             for (int l = 0; l < mma_C::ne/2; ++l) {
                 const int j = j0 + mma_C::get_j(l);
 
-                dB[l] = y_df[j*MMQ_TILE_Y_K + ((2*k0 + 2*kvdr)/QI8_1) % (WARP_SIZE/QI8_1)];
+                dB[l] = y_df[j*MMQ_TILE_Y_K + ((k00 + 2*kvdr)/QI8_1) % (WARP_SIZE/QI8_1)];
             }
 
 #pragma unroll
@@ -2038,7 +2035,6 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_mma(
                 sum[(j0/mma_C::J + n)*mma_C::ne + l] += tmp[n][l]*dA[n][l/2];
             }
         }
-    }
     }
 #else
     GGML_UNUSED(x); GGML_UNUSED(y); GGML_UNUSED(sum);
