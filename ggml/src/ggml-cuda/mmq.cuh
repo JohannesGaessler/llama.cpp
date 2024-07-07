@@ -2371,25 +2371,43 @@ static __device__ void mul_mat_q_process_tile(
 
         load_tiles(x, tile_x, stride01*it*mmq_y + kb0, tile_x_max_i, stride01);
 
-#pragma unroll
-        for (int kr = 0; kr < qr; ++kr) {
-            const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + kr*sizeof(block_q8_1_mmq)/sizeof(int));
+        {
+            const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + 0*sizeof(block_q8_1_mmq)/sizeof(int));
 #pragma unroll
             for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += nwarps*WARP_SIZE) {
                 int l = l0 + threadIdx.y*WARP_SIZE + threadIdx.x;
 
                 tile_y[l] = by0[l];
             }
+        }
 
-            __syncthreads();
+        __syncthreads();
 
 // #pragma unroll // unrolling this loop causes too much register pressure
-            for (int k0 = kr*WARP_SIZE/qr; k0 < (kr+1)*WARP_SIZE/qr; k0 += vdr) {
-                vec_dot(tile_x, tile_y, sum, k0);
-            }
-
-            __syncthreads();
+        for (int k0 = 0; k0 < WARP_SIZE/2; k0 += vdr) {
+            vec_dot(tile_x, tile_y, sum, k0);
         }
+
+        __syncthreads();
+
+        {
+            const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + 1*sizeof(block_q8_1_mmq)/sizeof(int));
+#pragma unroll
+            for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += nwarps*WARP_SIZE) {
+                int l = l0 + threadIdx.y*WARP_SIZE + threadIdx.x;
+
+                tile_y[l] = by0[l];
+            }
+        }
+
+        __syncthreads();
+
+// #pragma unroll // unrolling this loop causes too much register pressure
+        for (int k0 = WARP_SIZE/2; k0 < WARP_SIZE; k0 += vdr) {
+            vec_dot(tile_x, tile_y, sum, k0);
+        }
+
+        __syncthreads();
     }
 
     if (fixup) {
