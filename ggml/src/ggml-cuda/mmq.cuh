@@ -1944,7 +1944,9 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_dp4a(
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q6_K_q8_1_mma(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00) {
+#pragma unroll
+    for (int k0 = k00/2; k0 <= k00/2 + 0; k0 += 8) {
 #ifdef INT8_MMA_AVAILABLE
 
     typedef mma_int_A_I16K4 mma_A;
@@ -2040,6 +2042,7 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_mma(
     GGML_UNUSED(x); GGML_UNUSED(y); GGML_UNUSED(sum);
     NO_DEVICE_CODE;
 #endif // INT8_MMA_AVAILABLE
+    }
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_iq4_nl(
@@ -2403,6 +2406,7 @@ static __device__ void mul_mat_q_process_tile(
             __syncthreads();
 
             vec_dot(tile_x, tile_y, sum, 0);
+            vec_dot(tile_x, tile_y, sum, 16);
 
             __syncthreads();
 
@@ -2419,6 +2423,7 @@ static __device__ void mul_mat_q_process_tile(
             __syncthreads();
 
             vec_dot(tile_x, tile_y, sum, WARP_SIZE);
+            vec_dot(tile_x, tile_y, sum, WARP_SIZE + 16);
 
             __syncthreads();
         }
@@ -2451,7 +2456,7 @@ static __global__ void mul_mat_q(
     const int ne00, const int ne01, const int stride01, const int ne10, const int ne11, const int stride11, const int ne0) {
 
     // Skip unused template specializations for faster compilation:
-    if (mmq_x > get_mmq_x_max_device() || mmq_x % mmq_get_granularity_device(mmq_x) != 0 || type != GGML_TYPE_Q8_0) {
+    if (mmq_x > get_mmq_x_max_device() || mmq_x % mmq_get_granularity_device(mmq_x) != 0 || ggml_cuda_type_traits<type>::qr == 4) {
         NO_DEVICE_CODE;
         return;
     }
