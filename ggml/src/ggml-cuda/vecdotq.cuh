@@ -232,11 +232,9 @@ static __device__ __forceinline__ float vec_dot_q2_K_q8_1_impl_mmq(
         int sumi_d = 0;
         int sumi_m = 0;
 
-        const int vi0 = v[i0/(QI8_1/2)];
 #pragma unroll
         for (int i = i0; i < i0 + QI8_1/2; ++i) {
-            const int vi = (vi0 >> (2*(i % (QI8_1/2)))) & 0x03030303;
-            sumi_d = ggml_cuda_dp4a(vi,         u[i], sumi_d); // SIMD dot product
+            sumi_d = ggml_cuda_dp4a(v[i],       u[i], sumi_d); // SIMD dot product
             sumi_m = ggml_cuda_dp4a(0x01010101, u[i], sumi_m);
         }
 
