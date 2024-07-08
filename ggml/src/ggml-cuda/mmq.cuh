@@ -164,7 +164,7 @@ static constexpr __device__ int get_mmq_iter_k(const ggml_type /* type */, const
 }
 #else
 static constexpr __device__ int get_mmq_iter_k(const ggml_type type, const int mmq_x) {
-    return type == GGML_TYPE_Q8_0 && mmq_x <= 64 ? 512 : 256;
+    return type == GGML_TYPE_Q3_K || (type == GGML_TYPE_Q8_0 && mmq_x <= 64) ? 512 : 256;
 }
 #endif // (defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) || __CUDA_ARCH__ < CC_VOLTA
 
@@ -1260,7 +1260,7 @@ static __device__ __forceinline__ void vec_dot_q3_K_q8_1_dp4a(
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q3_K_q8_1_mma(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00) {
 #ifdef INT8_MMA_AVAILABLE
 
     typedef mma_int_A_I16K4 mma_A;
@@ -1281,6 +1281,7 @@ static __device__ __forceinline__ void vec_dot_q3_K_q8_1_mma(
 
     const int i0 = (threadIdx.y / ntx) * (ntx*mma_A::I);
 
+    for (int k0 = k00/4; k0 < k00/4 + 8; k0 += VDR_Q3_K_Q8_1_MMQ) {
     mma_A   A[ntx][2];
     int   scA[ntx][mma_C::ne/2][2];
     float  dA[ntx][mma_C::ne/2];
@@ -1344,6 +1345,7 @@ static __device__ __forceinline__ void vec_dot_q3_K_q8_1_mma(
                 sum[(j0/mma_C::J + n)*mma_C::ne + l] += (C[0].x[l]*scA[n][l/2][0] + C[1].x[l]*scA[n][l/2][1])*dA[n][l/2]*dB[l%2];
             }
         }
+    }
     }
 #else
     GGML_UNUSED(x); GGML_UNUSED(y); GGML_UNUSED(sum);
@@ -2386,7 +2388,7 @@ static __device__ void mul_mat_q_process_tile(
 
     for (int kb00 = kb0_start; kb00 < kb0_stop; kb00 += blocks_per_iter) {
 #pragma unroll
-        for (int kb01 = 0; kb01 < blocks_per_iter; kb01 += 256/qk) {
+        for (int kb01 = 0; kb01 < 1; kb01 += 256/qk) {
             const int kb0 = kb00 + kb01;
 
             load_tiles(x, tile_x, stride01*it*mmq_y + kb0, tile_x_max_i, stride01);
@@ -2422,6 +2424,42 @@ static __device__ void mul_mat_q_process_tile(
             vec_dot(tile_x, tile_y, sum, WARP_SIZE);
 
             __syncthreads();
+
+            if (type != GGML_TYPE_Q3_K) {
+                continue;
+            }
+
+            {
+                const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + 2*sizeof(block_q8_1_mmq)/sizeof(int));
+#pragma unroll
+                for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += nwarps*WARP_SIZE) {
+                    int l = l0 + threadIdx.y*WARP_SIZE + threadIdx.x;
+
+                    tile_y[l] = by0[l];
+                }
+            }
+
+            __syncthreads();
+
+            vec_dot(tile_x, tile_y, sum, 2*WARP_SIZE);
+
+            __syncthreads();
+
+            {
+                const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + 3*sizeof(block_q8_1_mmq)/sizeof(int));
+#pragma unroll
+                for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += nwarps*WARP_SIZE) {
+                    int l = l0 + threadIdx.y*WARP_SIZE + threadIdx.x;
+
+                    tile_y[l] = by0[l];
+                }
+            }
+
+            __syncthreads();
+
+            vec_dot(tile_x, tile_y, sum, 3*WARP_SIZE);
+
+            __syncthreads();
         }
     }
 
@@ -2452,8 +2490,7 @@ static __global__ void mul_mat_q(
     const int ne00, const int ne01, const int stride01, const int ne10, const int ne11, const int stride11, const int ne0) {
 
     // Skip unused template specializations for faster compilation:
-    if (mmq_x > get_mmq_x_max_device() || mmq_x % mmq_get_granularity_device(mmq_x) != 0 ||
-        (type == GGML_TYPE_Q2_K && type == GGML_TYPE_Q3_K)) {
+    if (mmq_x > get_mmq_x_max_device() || mmq_x % mmq_get_granularity_device(mmq_x) != 0 || type == GGML_TYPE_Q2_K) {
         NO_DEVICE_CODE;
         return;
     }
