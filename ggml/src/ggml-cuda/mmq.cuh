@@ -1255,6 +1255,7 @@ static __device__ __forceinline__ void vec_dot_q3_K_q8_1_mma(
 #ifdef INT8_MMA_AVAILABLE
 
     typedef mma_int_A_I16K4 mma_A;
+    typedef mma_int_A_I16K8 mma_A_K8;
     typedef mma_int_B_J8K4  mma_B;
     typedef mma_int_C_I16J8 mma_C;
 
@@ -1282,14 +1283,7 @@ static __device__ __forceinline__ void vec_dot_q3_K_q8_1_mma(
         for (int k01 = 0; k01 < WARP_SIZE; k01 += 8) {
             const int k0 = k00 + k01;
 
-#pragma unroll
-            for (int l = 0; l < mma_A::ne; ++l) {
-                const int i = i0 + n*mma_A::I + mma_A::get_i(l);
-                const int k = k0 + mma_A::get_k(l);
-
-                A[n][k01/4 + 0].x[l] = x_qs[i*MMQ_MMA_TILE_X_K_Q3_K + k + 0];
-                A[n][k01/4 + 1].x[l] = x_qs[i*MMQ_MMA_TILE_X_K_Q3_K + k + mma_A::K];
-            }
+            ((mma_A_K8 *) A[n])[k01/8].load(x_qs + (i0 + n*mma_A::I)*MMQ_MMA_TILE_X_K_Q3_K + k0, MMQ_MMA_TILE_X_K_Q3_K);
 
 #pragma unroll
             for (int l = 0; l < mma_C::ne/2; ++l) {
