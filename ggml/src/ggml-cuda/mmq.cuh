@@ -161,13 +161,15 @@ static constexpr __device__ int mmq_get_granularity_device(const int /* mmq_x */
 }
 #endif // INT8_MMA_AVAILABLE
 
-static constexpr __device__ int get_mmq_iter_k(const ggml_type type, const int mmq_x) {
 #if (defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) || __CUDA_ARCH__ < CC_VOLTA
+static constexpr __device__ int get_mmq_iter_k(const ggml_type /* type */, const int /* mmq_x */) {
     return 256;
-#else
-    return type == GGML_TYPE_Q8_0 && mmq_x <= 64 ? 512 : 256;
-#endif // (defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) || __CUDA_ARCH__ < CC_VOLTA
 }
+#else
+static constexpr __device__ int get_mmq_iter_k(const ggml_type type, const int mmq_x) {
+    return type == GGML_TYPE_Q8_0 && mmq_x <= 64 ? 512 : 256;
+}
+#endif // (defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) || __CUDA_ARCH__ < CC_VOLTA
 
 // ------------------------------------------------------------
 
@@ -1740,7 +1742,7 @@ static __device__ __forceinline__ void vec_dot_q5_K_q8_1_dp4a(
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q5_K_q8_1_mma(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00) {
 #ifdef INT8_MMA_AVAILABLE
 
     typedef mma_int_A_I16K8 mma_A;
@@ -1761,26 +1763,26 @@ static __device__ __forceinline__ void vec_dot_q5_K_q8_1_mma(
 
     const int i0 = (threadIdx.y / ntx) * (ntx*mma_A::I);
 
-    mma_A   A[ntx][2];
-    int   scA[ntx][mma_C::ne/2][2];
-    int    mA[ntx][mma_C::ne/2][2];
+    mma_A   A[ntx][4];
+    int   scA[ntx][mma_C::ne/2][4];
+    int    mA[ntx][mma_C::ne/2][4];
     half2 dmA[ntx][mma_C::ne/2];
 
 #pragma unroll
     for (int n = 0; n < ntx; ++n) {
 #pragma unroll
-        for (int kvdr = 0; kvdr < VDR_Q5_K_Q8_1_MMQ; kvdr += 4) {
-            A[n][kvdr/4].load(x_qs + (i0 + n*mma_A::I)*MMQ_MMA_TILE_X_K_Q5_K + (QR5_K*k0 + QR5_K*kvdr), MMQ_MMA_TILE_X_K_Q5_K);
+        for (int kvdr = 0; kvdr < WARP_SIZE; kvdr += 8) {
+            A[n][kvdr/8].load(x_qs + (i0 + n*mma_A::I)*MMQ_MMA_TILE_X_K_Q5_K + (k00 + kvdr), MMQ_MMA_TILE_X_K_Q5_K);
 
 #pragma unroll
             for (int l = 0; l < mma_C::ne/2; ++l) {
                 const int i = i0 + n*mma_C::I + mma_C::get_i(2*l);
 
-                const uint8_t * sc = ((const uint8_t *) &x_sc[i*MMQ_MMA_TILE_X_K_Q5_K + k0/16]) + 2 * ((k0 % 16) / 8);
+                const uint8_t * sc = ((const uint8_t *) &x_sc[i*MMQ_MMA_TILE_X_K_Q5_K + k00/32]) + 2 * ((k00 % 32) / 16);
                 const uint8_t *  m = sc + 8;
 
-                scA[n][l][kvdr/4] = sc[kvdr/4];
-                mA[n][l][kvdr/4]  =  m[kvdr/4];
+                scA[n][l][kvdr/8] = sc[kvdr/8];
+                mA[n][l][kvdr/8]  =  m[kvdr/8];
             }
         }
 
@@ -1788,7 +1790,7 @@ static __device__ __forceinline__ void vec_dot_q5_K_q8_1_mma(
         for (int l = 0; l < mma_C::ne/2; ++l) {
             const int i = i0 + n*mma_C::I + mma_C::get_i(2*l);
 
-            dmA[n][l] = x_dm[i*MMQ_MMA_TILE_X_K_Q5_K + k0/QI5_K];
+            dmA[n][l] = x_dm[i*MMQ_MMA_TILE_X_K_Q5_K];
         }
     }
 
@@ -1798,28 +1800,28 @@ static __device__ __forceinline__ void vec_dot_q5_K_q8_1_mma(
         float tmpm[ntx][mma_C::ne] = {{0.0f}};
 
 #pragma unroll
-        for (int kvdr = 0; kvdr < VDR_Q5_K_Q8_1_MMQ; kvdr += 4) {
+        for (int kvdr = 0; kvdr < WARP_SIZE; kvdr += 8) {
             mma_B   B;
             half2 dsB[mma_C::ne/2];
 
-            B.load(y_qs + j0*MMQ_TILE_Y_K + (2*k0 + 2*kvdr) % WARP_SIZE, MMQ_TILE_Y_K);
+            B.load(y_qs + j0*MMQ_TILE_Y_K + (k00 + kvdr) % WARP_SIZE, MMQ_TILE_Y_K);
 
 #pragma unroll
             for (int l = 0; l < mma_C::ne/2; ++l) {
                 const int j = j0 + mma_C::get_j(l);
 
-                dsB[l] = y_ds[j*MMQ_TILE_Y_K + ((2*k0 + 2*kvdr)/QI8_1) % (WARP_SIZE/QI8_1)];
+                dsB[l] = y_ds[j*MMQ_TILE_Y_K + ((k00 + kvdr)/QI8_1) % (WARP_SIZE/QI8_1)];
             }
 
 #pragma unroll
         for (int n = 0; n < ntx; ++n) {
                 mma_C C;
-                C.mma_K8(A[n][kvdr/4], B);
+                C.mma_K8(A[n][kvdr/8], B);
 
 #pragma unroll
                 for (int l = 0; l < mma_C::ne; ++l) {
-                    tmpd[n][l] += (C.x[l]*scA[n][l/2][kvdr/4]) *  __low2float(dsB[l%2]);
-                    tmpm[n][l] += mA[n][l/2][kvdr/4]           * __high2float(dsB[l%2]);
+                    tmpd[n][l] += (C.x[l]*scA[n][l/2][kvdr/8]) *  __low2float(dsB[l%2]);
+                    tmpm[n][l] += mA[n][l/2][kvdr/8]           * __high2float(dsB[l%2]);
                 }
             }
         }
@@ -2467,7 +2469,7 @@ static __global__ void mul_mat_q(
 
     // Skip unused template specializations for faster compilation:
     if (mmq_x > get_mmq_x_max_device() || mmq_x % mmq_get_granularity_device(mmq_x) != 0 ||
-        (type != GGML_TYPE_Q6_K && type != GGML_TYPE_Q8_0)) {
+        (type == GGML_TYPE_Q2_K && type == GGML_TYPE_Q3_K)) {
         NO_DEVICE_CODE;
         return;
     }
