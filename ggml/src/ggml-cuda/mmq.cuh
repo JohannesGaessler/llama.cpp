@@ -1540,13 +1540,15 @@ static __device__ __forceinline__ void vec_dot_q4_K_q8_1_mma(
 #pragma unroll
     for (int n = 0; n < ntx; ++n) {
 #pragma unroll
-        for (int kvdr = 0; kvdr < WARP_SIZE; kvdr += 16) {
-            A[n][kvdr/8 + 0].load(x_qs + (i0 + n*mma_A::I)*MMQ_MMA_TILE_X_K_Q4_K + (k00 + kvdr)/2, MMQ_MMA_TILE_X_K_Q4_K);
+        for (int k01 = 0; k01 < WARP_SIZE; k01 += 16) {
+            const int k0 = k00 + k01;
+
+            A[n][k01/8 + 0].load(x_qs + (i0 + n*mma_A::I)*MMQ_MMA_TILE_X_K_Q4_K + k0/QR4_K, MMQ_MMA_TILE_X_K_Q4_K);
 
 #pragma unroll
             for (int l = 0; l < mma_A::ne; ++l) {
-                A[n][kvdr/8 + 1].x[l]  = (A[n][kvdr/8 + 0].x[l] >> 4) & 0x0F0F0F0F;
-                A[n][kvdr/8 + 0].x[l] &= 0x0F0F0F0F;
+                A[n][k01/8 + 1].x[l]  = (A[n][k01/8 + 0].x[l] >> 4) & 0x0F0F0F0F;
+                A[n][k01/8 + 0].x[l] &= 0x0F0F0F0F;
             }
         }
 
@@ -1581,28 +1583,28 @@ static __device__ __forceinline__ void vec_dot_q4_K_q8_1_mma(
         float tmpm[ntx][mma_C::ne] = {{0.0f}};
 
 #pragma unroll
-        for (int kvdr = 0; kvdr < WARP_SIZE; kvdr += 8) {
+        for (int k01 = 0; k01 < WARP_SIZE; k01 += 8) {
             mma_B   B;
             half2 dsB[mma_C::ne/2];
 
-            B.load(y_qs + j0*MMQ_TILE_Y_K + (k00 + kvdr) % WARP_SIZE, MMQ_TILE_Y_K);
+            B.load(y_qs + j0*MMQ_TILE_Y_K + k01, MMQ_TILE_Y_K);
 
 #pragma unroll
             for (int l = 0; l < mma_C::ne/2; ++l) {
                 const int j = j0 + mma_C::get_j(l);
 
-                dsB[l] = y_ds[j*MMQ_TILE_Y_K + ((k00 + kvdr)/QI8_1) % (WARP_SIZE/QI8_1)];
+                dsB[l] = y_ds[j*MMQ_TILE_Y_K + k01/QI8_1];
             }
 
 #pragma unroll
             for (int n = 0; n < ntx; ++n) {
                 mma_C C;
-                C.mma_K8(A[n][kvdr/8], B);
+                C.mma_K8(A[n][k01/8], B);
 
 #pragma unroll
                 for (int l = 0; l < mma_C::ne; ++l) {
-                    tmpd[n][l] += (C.x[l]*scA[n][l/2][kvdr/8]) *  __low2float(dsB[l%2]);
-                    tmpm[n][l] += mA[n][l/2][kvdr/8]           * __high2float(dsB[l%2]);
+                    tmpd[n][l] += (C.x[l]*scA[n][l/2][k01/8]) *  __low2float(dsB[l%2]);
+                    tmpm[n][l] += mA[n][l/2][k01/8]           * __high2float(dsB[l%2]);
                 }
             }
         }
