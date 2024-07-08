@@ -973,14 +973,14 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 #pragma unroll
         for (int l = 0; l < QR2_K; ++l) {
-            const int k = (kqsx/8)*8 + l*2 + (kqsx % 8)/4;
+            const int k = (kqsx/8)*32 + l*8 + kqsx % 8;
 
             const int x_qs_k = (x_ql_0 >> (2*l)) & 0x03030303;
 
 #ifdef INT8_MMA_AVAILABLE
-            x_qs[i*MMQ_MMA_TILE_X_K_Q2_K + 4*k + kqsx % 4] = x_qs_k;
+            x_qs[i*MMQ_MMA_TILE_X_K_Q2_K + k] = x_qs_k;
 #else
-            x_qs[i*(2*WARP_SIZE + 1)     + 4*k + kqsx % 4] = x_qs_k;
+            x_qs[i*(2*WARP_SIZE + 1)     + k] = x_qs_k;
 #endif // INT8_MMA_AVAILABLE
         }
 
