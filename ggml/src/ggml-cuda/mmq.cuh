@@ -1162,7 +1162,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             const int x_ql_k =  (x_ql_0 >> (2*l))       & 0x03030303;
             const int x_qh_k = ((x_qh_0 >>    l)  << 2) & 0x04040404;
 
-            const int x_qs_k = (x_ql_k | x_qh_k);
+            const int x_qs_k = __vsubss4(x_ql_k | x_qh_k, 0x04040404);
 
 #ifdef INT8_MMA_AVAILABLE
             x_qs[i*MMQ_MMA_TILE_X_K_Q3_K + k] = x_qs_k;
@@ -1290,8 +1290,6 @@ static __device__ __forceinline__ void vec_dot_q3_K_q8_1_mma(
 
             A[n][0].x[l] = x_qs[i*MMQ_MMA_TILE_X_K_Q3_K + k + 0];
             A[n][1].x[l] = x_qs[i*MMQ_MMA_TILE_X_K_Q3_K + k + mma_A::K];
-            A[n][0].x[l] = __vsubss4(A[n][0].x[l], 0x04040404);
-            A[n][1].x[l] = __vsubss4(A[n][1].x[l], 0x04040404);
         }
 
 #pragma unroll
