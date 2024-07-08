@@ -1294,11 +1294,10 @@ static __device__ __forceinline__ void vec_dot_q3_K_q8_1_mma(
             for (int k01 = 0; k01 < WARP_SIZE; k01 += 8) {
                 const int k0 = k00 + k01;
 
-                const int ky = (k0/4) % QI3_K;
-                const int8_t * sc = ((const int8_t *) (x_sc + i*MMQ_MMA_TILE_X_K_Q3_K)) + ky;
+                const int8_t * sc = (const int8_t *) (x_sc + i*MMQ_MMA_TILE_X_K_Q3_K);
 
-                scA[n][l][k01/4 + 0] = sc[0];
-                scA[n][l][k01/4 + 1] = sc[1];
+                scA[n][l][k01/4 + 0] = sc[k0/4 + 0];
+                scA[n][l][k01/4 + 1] = sc[k0/4 + 1];
             }
 
             dA[n][l] = x_df[i*MMQ_MMA_TILE_X_K_Q3_K];
