@@ -1714,7 +1714,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q5_K_q8_1_dp4a(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00) {
 
     constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q5_K, mmq_y);
     const int   * x_qs = (const int   *) x;
@@ -1723,6 +1723,8 @@ static __device__ __forceinline__ void vec_dot_q5_K_q8_1_dp4a(
     const int   * y_qs = (const int   *) y + 4;
     const half2 * y_ds = (const half2 *) y;
 
+// #pragma unroll
+    for (int k0 = k00/2; k0 < (k00+WARP_SIZE)/2; k0 += VDR_Q5_K_Q8_1_MMQ) {
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
         const int j = j0 + threadIdx.y;
@@ -1737,6 +1739,7 @@ static __device__ __forceinline__ void vec_dot_q5_K_q8_1_dp4a(
                 &x_qs[i*(QR5_K*WARP_SIZE + 1) + QR5_K*k0], &y_qs[j*MMQ_TILE_Y_K + (QR5_K*k0) % WARP_SIZE], sc, sc+8,
                 x_dm[i*(WARP_SIZE/QI5_K) + i/QI5_K], &y_ds[j*MMQ_TILE_Y_K + ((QR5_K*k0) % WARP_SIZE)/QI8_1]);
         }
+    }
     }
 }
 
