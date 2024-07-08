@@ -162,7 +162,11 @@ static constexpr __device__ int mmq_get_granularity_device(const int /* mmq_x */
 #endif // INT8_MMA_AVAILABLE
 
 static constexpr __device__ int get_mmq_iter_k(const ggml_type type, const int mmq_x) {
+#if (defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) || __CUDA_ARCH__ < CC_VOLTA
+    return 256;
+#else
     return type == GGML_TYPE_Q8_0 && mmq_x <= 64 ? 512 : 256;
+#endif // (defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) || __CUDA_ARCH__ < CC_VOLTA
 }
 
 // ------------------------------------------------------------
@@ -886,7 +890,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_dp4a(
     const int   * y_qs = (const int   *) y + 4;
     const float * y_df = (const float *) y;
 
-#pragma unroll
+// #pragma unroll
     for (int k01 = 0; k01 < WARP_SIZE; k01 += VDR_Q8_0_Q8_1_MMQ) {
         const int k0 = k00 + k01;
 
@@ -1931,7 +1935,7 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_dp4a(
     const int   * y_qs = (const int   *) y + 4;
     const float * y_df = (const float *) y;
 
-#pragma unroll
+// #pragma unroll
     for (int k01 = 0; k01 < WARP_SIZE; k01 += QR6_K*VDR_Q6_K_Q8_1_MMQ) {
         const int k0 = k00 + k01;
 
