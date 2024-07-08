@@ -1289,9 +1289,8 @@ static __device__ __forceinline__ void vec_dot_q3_K_q8_1_mma(
             for (int l = 0; l < mma_C::ne/2; ++l) {
                 const int i = i0 + n*mma_C::I + mma_C::get_i(2*l);
 
-                const int kbx  = (k0/4) / QI3_K;
-                const int ky  = ((k0/4) % QI3_K) * QR3_K;
-                const int8_t * sc = ((const int8_t *) (x_sc + i*MMQ_MMA_TILE_X_K_Q3_K + kbx*4)) + ky/4;
+                const int ky = (k0/4) % QI3_K;
+                const int8_t * sc = ((const int8_t *) (x_sc + i*MMQ_MMA_TILE_X_K_Q3_K)) + ky;
 
                 scA[n][l][k01/4 + 0] = sc[0];
                 scA[n][l][k01/4 + 1] = sc[1];
