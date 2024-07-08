@@ -1272,7 +1272,9 @@ static __device__ __forceinline__ void vec_dot_q3_K_q8_1_mma(
 
     const int i0 = (threadIdx.y / ntx) * (ntx*mma_A::I);
 
-    for (int k0 = k00; k0 < k00 + WARP_SIZE; k0 += QR3_K*VDR_Q3_K_Q8_1_MMQ) {
+    for (int k01 = 0; k01 < WARP_SIZE; k01 += QR3_K*VDR_Q3_K_Q8_1_MMQ) {
+    const int k0 = k00 + k01;
+
     mma_A   A[ntx][2];
     int   scA[ntx][mma_C::ne/2][2];
     float  dA[ntx][mma_C::ne/2];
@@ -1313,14 +1315,14 @@ static __device__ __forceinline__ void vec_dot_q3_K_q8_1_mma(
         mma_B B[2];
         float dB[mma_C::ne/2];
 
-        B[0].load(y_qs + j0*MMQ_TILE_Y_K + (k0 + 0)        % WARP_SIZE, MMQ_TILE_Y_K);
-        B[1].load(y_qs + j0*MMQ_TILE_Y_K + (k0 + mma_B::K) % WARP_SIZE, MMQ_TILE_Y_K);
+        B[0].load(y_qs + j0*MMQ_TILE_Y_K + (k01 + 0),        MMQ_TILE_Y_K);
+        B[1].load(y_qs + j0*MMQ_TILE_Y_K + (k01 + mma_B::K), MMQ_TILE_Y_K);
 
 #pragma unroll
         for (int l = 0; l < mma_C::ne/2; ++l) {
             const int j = j0 + mma_C::get_j(l);
 
-            dB[l] = y_df[j*MMQ_TILE_Y_K + (k0/QI8_1) % (WARP_SIZE/QI8_1)];
+            dB[l] = y_df[j*MMQ_TILE_Y_K + k01/QI8_1];
         }
 
 #pragma unroll
