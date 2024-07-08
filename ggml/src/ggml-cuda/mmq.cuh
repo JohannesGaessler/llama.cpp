@@ -1532,36 +1532,38 @@ static __device__ __forceinline__ void vec_dot_q4_K_q8_1_mma(
 
     const int i0 = (threadIdx.y / ntx) * (ntx*mma_A::I);
 
-    for (int k0 = k00/2; k0 < (k00+32)/2; k0 += VDR_Q4_K_Q8_1_MMQ){
-    mma_A   A[ntx][2];
-    int   scA[ntx][mma_C::ne/2][2];
-    int    mA[ntx][mma_C::ne/2][2];
+    mma_A   A[ntx][4];
+    int   scA[ntx][mma_C::ne/2][4];
+    int    mA[ntx][mma_C::ne/2][4];
     half2 dmA[ntx][mma_C::ne/2];
 
 #pragma unroll
     for (int n = 0; n < ntx; ++n) {
 #pragma unroll
-        for (int kvdr = 0; kvdr < VDR_Q4_K_Q8_1_MMQ; kvdr += 8) {
-            A[n][kvdr/4 + 0].load(x_qs + (i0 + n*mma_A::I)*MMQ_MMA_TILE_X_K_Q4_K + k0, MMQ_MMA_TILE_X_K_Q4_K);
+        for (int kvdr = 0; kvdr < WARP_SIZE; kvdr += 16) {
+            A[n][kvdr/8 + 0].load(x_qs + (i0 + n*mma_A::I)*MMQ_MMA_TILE_X_K_Q4_K + (k00 + kvdr)/2, MMQ_MMA_TILE_X_K_Q4_K);
 
 #pragma unroll
             for (int l = 0; l < mma_A::ne; ++l) {
-                A[n][kvdr/4 + 1].x[l]  = (A[n][kvdr/4 + 0].x[l] >> 4) & 0x0F0F0F0F;
-                A[n][kvdr/4 + 0].x[l] &= 0x0F0F0F0F;
+                A[n][kvdr/8 + 1].x[l]  = (A[n][kvdr/8 + 0].x[l] >> 4) & 0x0F0F0F0F;
+                A[n][kvdr/8 + 0].x[l] &= 0x0F0F0F0F;
             }
         }
 
 #pragma unroll
-        for (int kvdr = 0; kvdr < VDR_Q4_K_Q8_1_MMQ; kvdr += 4) {
+        for (int l = 0; l < mma_C::ne/2; ++l) {
+            const int i = i0 + n*mma_C::I + mma_C::get_i(2*l);
+
+            const int sc_packed = x_sc[i*MMQ_MMA_TILE_X_K_Q4_K + (k00/32 + 0)];
+            const int  m_packed = x_sc[i*MMQ_MMA_TILE_X_K_Q4_K + (k00/32 + 2)];
+
+            const uint8_t * sc = (const uint8_t *) &sc_packed;
+            const uint8_t *  m = (const uint8_t *)  &m_packed;
+
 #pragma unroll
-            for (int l = 0; l < mma_C::ne/2; ++l) {
-                const int i = i0 + n*mma_A::I + mma_C::get_i(2*l);
-
-                const uint8_t * sc = ((const uint8_t *) &x_sc[i*MMQ_MMA_TILE_X_K_Q4_K + k0/16]) + 2 * ((k0 % 16) / 8);
-                const uint8_t *  m = sc + 8;
-
-                scA[n][l][kvdr/4] = sc[kvdr/4];
-                mA[n][l][kvdr/4]  =  m[kvdr/4];
+            for (int ksc = 0; ksc < sizeof(int); ++ksc) {
+                scA[n][l][ksc] = sc[ksc];
+                mA[n][l][ksc]  =  m[ksc];
             }
         }
 
@@ -1569,7 +1571,7 @@ static __device__ __forceinline__ void vec_dot_q4_K_q8_1_mma(
         for (int l = 0; l < mma_C::ne/2; ++l) {
             const int i = i0 + n*mma_A::I + mma_C::get_i(2*l);
 
-            dmA[n][l] = x_dm[i*MMQ_MMA_TILE_X_K_Q4_K + k0/QI4_K];
+            dmA[n][l] = x_dm[i*MMQ_MMA_TILE_X_K_Q4_K];
         }
     }
 
@@ -1579,28 +1581,28 @@ static __device__ __forceinline__ void vec_dot_q4_K_q8_1_mma(
         float tmpm[ntx][mma_C::ne] = {{0.0f}};
 
 #pragma unroll
-        for (int kvdr = 0; kvdr < VDR_Q4_K_Q8_1_MMQ; kvdr += 4) {
+        for (int kvdr = 0; kvdr < WARP_SIZE; kvdr += 8) {
             mma_B   B;
             half2 dsB[mma_C::ne/2];
 
-            B.load(y_qs + j0*MMQ_TILE_Y_K + (2*k0 + 2*kvdr) % WARP_SIZE, MMQ_TILE_Y_K);
+            B.load(y_qs + j0*MMQ_TILE_Y_K + (k00 + kvdr) % WARP_SIZE, MMQ_TILE_Y_K);
 
 #pragma unroll
             for (int l = 0; l < mma_C::ne/2; ++l) {
                 const int j = j0 + mma_C::get_j(l);
 
-                dsB[l] = y_ds[j*MMQ_TILE_Y_K + ((2*k0 + 2*kvdr)/QI8_1) % (WARP_SIZE/QI8_1)];
+                dsB[l] = y_ds[j*MMQ_TILE_Y_K + ((k00 + kvdr)/QI8_1) % (WARP_SIZE/QI8_1)];
             }
 
 #pragma unroll
             for (int n = 0; n < ntx; ++n) {
                 mma_C C;
-                C.mma_K8(A[n][kvdr/4], B);
+                C.mma_K8(A[n][kvdr/8], B);
 
 #pragma unroll
                 for (int l = 0; l < mma_C::ne; ++l) {
-                    tmpd[n][l] += (C.x[l]*scA[n][l/2][kvdr/4]) *  __low2float(dsB[l%2]);
-                    tmpm[n][l] += mA[n][l/2][kvdr/4]           * __high2float(dsB[l%2]);
+                    tmpd[n][l] += (C.x[l]*scA[n][l/2][kvdr/8]) *  __low2float(dsB[l%2]);
+                    tmpm[n][l] += mA[n][l/2][kvdr/8]           * __high2float(dsB[l%2]);
                 }
             }
         }
@@ -1612,7 +1614,6 @@ static __device__ __forceinline__ void vec_dot_q4_K_q8_1_mma(
                 sum[(j0/mma_C::J + n)*mma_C::ne + l] += __low2float(dmA[n][l/2])*tmpd[n][l] - __high2float(dmA[n][l/2])*tmpm[n][l];
             }
         }
-    }
     }
 #else
     GGML_UNUSED(x); GGML_UNUSED(y); GGML_UNUSED(sum);
