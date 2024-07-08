@@ -1291,13 +1291,16 @@ static __device__ __forceinline__ void vec_dot_q3_K_q8_1_mma(
             const int i = i0 + n*mma_C::I + mma_C::get_i(2*l);
 
 #pragma unroll
-            for (int k01 = 0; k01 < WARP_SIZE; k01 += 8) {
+            for (int k01 = 0; k01 < WARP_SIZE; k01 += 16) {
                 const int k0 = k00 + k01;
 
-                const int8_t * sc = (const int8_t *) (x_sc + i*MMQ_MMA_TILE_X_K_Q3_K);
+                const int sc_packed = x_sc[i*MMQ_MMA_TILE_X_K_Q3_K + k0/16];
+                const int8_t * sc = (const int8_t *) &sc_packed;
 
-                scA[n][l][k01/4 + 0] = sc[k0/4 + 0];
-                scA[n][l][k01/4 + 1] = sc[k0/4 + 1];
+#pragma unroll
+                for (int ksc = 0; ksc < sizeof(int); ++ksc) {
+                    scA[n][l][k01/4 + ksc] = sc[ksc];
+                }
             }
 
             dA[n][l] = x_df[i*MMQ_MMA_TILE_X_K_Q3_K];
