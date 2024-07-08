@@ -11,7 +11,7 @@
 #define MMQ_NWARPS 8
 
 typedef void (*load_tiles_mmq_t)(const char * __restrict__ x, int * x_tile, const int & kbx0, const int & i_max, const int & stride);
-typedef void (*vec_dot_mmq_t)(const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0);
+typedef void (*vec_dot_mmq_t)(const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00);
 typedef void (*mmq_write_back_t)(const float * __restrict__ sum, float * __restrict__ dst, const int & stride, const int & i_max, const int & j_max);
 
 struct block_q8_1_mmq {
@@ -111,7 +111,7 @@ static constexpr __host__ __device__ tile_x_sizes mmq_get_dp4a_tile_x_sizes(ggml
 #define MMQ_MMA_TILE_X_K_Q8_0 (2*WARP_SIZE + 2*WARP_SIZE/QI8_0             + 4)
 #define MMQ_MMA_TILE_X_K_Q8_1 (2*WARP_SIZE + 2*WARP_SIZE/QI8_0             + 4)
 #define MMQ_MMA_TILE_X_K_Q2_K (1*WARP_SIZE + WARP_SIZE                     + 4)
-#define MMQ_MMA_TILE_X_K_Q3_K (2*WARP_SIZE + WARP_SIZE/QI3_K + WARP_SIZE/4 + 2)
+#define MMQ_MMA_TILE_X_K_Q3_K (4*WARP_SIZE + WARP_SIZE/QI3_K + WARP_SIZE/4 + 2)
 #define MMQ_MMA_TILE_X_K_Q4_K (1*WARP_SIZE + WARP_SIZE/QI4_K + WARP_SIZE/8 + 7)
 #define MMQ_MMA_TILE_X_K_Q5_K (2*WARP_SIZE + WARP_SIZE/QI5_K + WARP_SIZE/8 + 7)
 #define MMQ_MMA_TILE_X_K_Q6_K (2*WARP_SIZE + WARP_SIZE/QI6_K + WARP_SIZE/8 + 7)
@@ -1130,7 +1130,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 #ifdef INT8_MMA_AVAILABLE
     int   * x_qs = (int   *)  x_tile;
-    float * x_df = (float *) (x_qs + WARP_SIZE*2);
+    float * x_df = (float *) (x_qs + WARP_SIZE*4);
     int   * x_sc = (int   *) (x_df + WARP_SIZE/QI3_K);
 #else
     constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q3_K, mmq_y);
@@ -1162,17 +1162,12 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
             const int x_ql_k =  (x_ql_0 >> (2*l))       & 0x03030303;
             const int x_qh_k = ((x_qh_0 >>    l)  << 2) & 0x04040404;
 
-            int x_qs_k = (x_ql_k | x_qh_k) << (4*(k%2));
-            x_qs_k |= __shfl_xor_sync(0xFFFFFFFF, x_qs_k, 1, WARP_SIZE);
-
-            if (kqsx % 2 != 0) {
-                continue;
-            }
+            const int x_qs_k = (x_ql_k | x_qh_k);
 
 #ifdef INT8_MMA_AVAILABLE
-            x_qs[i*MMQ_MMA_TILE_X_K_Q3_K + k/2] = x_qs_k;
+            x_qs[i*MMQ_MMA_TILE_X_K_Q3_K + k] = x_qs_k;
 #else
-            x_qs[i*(2*WARP_SIZE + 1)     + k/2] = x_qs_k;
+            x_qs[i*(2*WARP_SIZE + 1)     + k] = x_qs_k;
 #endif // INT8_MMA_AVAILABLE
         }
     }
@@ -1274,7 +1269,7 @@ static __device__ __forceinline__ void vec_dot_q3_K_q8_1_mma(
     y += (threadIdx.y % ntx) * (mma_B::J*MMQ_TILE_Y_K);
 
     const int   * x_qs = (const int   *) x;
-    const float * x_df = (const float *) x_qs + WARP_SIZE*2;
+    const float * x_df = (const float *) x_qs + WARP_SIZE*4;
     const int   * x_sc = (const int   *) x_df + WARP_SIZE/QI3_K;
     const int   * y_qs = (const int   *) y + 4;
     const float * y_df = (const float *) y;
@@ -1293,8 +1288,8 @@ static __device__ __forceinline__ void vec_dot_q3_K_q8_1_mma(
             const int i = i0 + n*mma_A::I + mma_A::get_i(l);
             const int k = QR3_K*k0 + mma_A::get_k(l);
 
-            A[n][0].x[l] = (x_qs[i*MMQ_MMA_TILE_X_K_Q3_K + k/2 + 0]          >> (4*(k%2))) & 0x0F0F0F0F;
-            A[n][1].x[l] = (x_qs[i*MMQ_MMA_TILE_X_K_Q3_K + k/2 + mma_A::K/2] >> (4*(k%2))) & 0x0F0F0F0F;
+            A[n][0].x[l] = x_qs[i*MMQ_MMA_TILE_X_K_Q3_K + k + 0];
+            A[n][1].x[l] = x_qs[i*MMQ_MMA_TILE_X_K_Q3_K + k + mma_A::K];
             A[n][0].x[l] = __vsubss4(A[n][0].x[l], 0x04040404);
             A[n][1].x[l] = __vsubss4(A[n][1].x[l], 0x04040404);
         }
