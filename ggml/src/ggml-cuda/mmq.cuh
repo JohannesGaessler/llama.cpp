@@ -164,7 +164,7 @@ static constexpr __device__ int get_mmq_iter_k(const ggml_type /* type */, const
 }
 #else
 static constexpr __device__ int get_mmq_iter_k(const ggml_type type, const int mmq_x) {
-    return type == GGML_TYPE_Q8_0 && mmq_x <= 64 ? 512 : 256;
+    return type == GGML_TYPE_Q2_K || (type == GGML_TYPE_Q8_0 && mmq_x <= 64) ? 512 : 256;
 }
 #endif // (defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) || __CUDA_ARCH__ < CC_VOLTA
 
@@ -1034,7 +1034,7 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_dp4a(
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00) {
 #ifdef INT8_MMA_AVAILABLE
 
     typedef mma_int_A_I16K4 mma_A;
@@ -1053,6 +1053,10 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
     const float * y_df = (const float *) y;
 
     const int i0 = (threadIdx.y / ntx) * (ntx*mma_A::I);
+
+#pragma unroll
+    for (int k01 = 0; k01 < WARP_SIZE; k01 += QR2_K*VDR_Q2_K_Q8_1_MMQ) {
+    const int k0 = (k00 + k01)/QR2_K;
 
     mma_A   A[ntx][2];
     float  dA[ntx][mma_C::ne/2][2];
@@ -1118,6 +1122,7 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
                     Cd[0].x[l]*dA[n][l/2][0] + Cd[1].x[l]*dA[n][l/2][1] - Cm[0].x[l]*mA[n][l/2][0] - Cm[1].x[l]*mA[n][l/2][1])*dB[l%2];
             }
         }
+    }
     }
 #else
     GGML_UNUSED(x); GGML_UNUSED(y); GGML_UNUSED(sum);
@@ -2418,7 +2423,7 @@ static __device__ void mul_mat_q_process_tile(
 
             __syncthreads();
 
-            if (true || type != GGML_TYPE_Q3_K) {
+            if (type != GGML_TYPE_Q2_K) {
                 continue;
             }
 
@@ -2483,7 +2488,7 @@ static __global__ void mul_mat_q(
     const int ne00, const int ne01, const int stride01, const int ne10, const int ne11, const int stride11, const int ne0) {
 
     // Skip unused template specializations for faster compilation:
-    if (mmq_x > get_mmq_x_max_device() || mmq_x % mmq_get_granularity_device(mmq_x) != 0 || type == GGML_TYPE_Q2_K) {
+    if (mmq_x > get_mmq_x_max_device() || mmq_x % mmq_get_granularity_device(mmq_x) != 0) {
         NO_DEVICE_CODE;
         return;
     }
