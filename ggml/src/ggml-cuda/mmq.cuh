@@ -248,7 +248,7 @@ static __device__ __forceinline__ void vec_dot_q4_0_q8_1_dp4a(
             for (int i0 = 0; i0 < mmq_y; i0 += WARP_SIZE) {
                 const int i = i0 + threadIdx.x;
 
-                const int kyqs = (k01/2) % (QI8_1/2) + QI8_1 * ((k01/2) / (QI8_1/2));
+                const int kyqs = QI8_1 * ((k01/2) / (QI8_1/2)) + (k01/2) % (QI8_1/2);
 
                 int u[2*VDR_Q4_0_Q8_1_MMQ];
 
@@ -268,7 +268,7 @@ static __device__ __forceinline__ void vec_dot_q4_0_q8_1_dp4a(
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q4_0_q8_1_mma(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00) {
 #ifdef INT8_MMA_AVAILABLE
 
     typedef mma_int_A_I16K8 mma_A;
@@ -286,52 +286,60 @@ static __device__ __forceinline__ void vec_dot_q4_0_q8_1_mma(
     const int   * y_qs = (const int   *) y + 4;
     const half2 * y_ds = (const half2 *) y;
 
-    mma_A A[ntx];
-    float dA[ntx][mma_C::ne/2];
+    mma_A A[ntx][4];
+    float dA[ntx][mma_C::ne/2][4];
 
     const int i0 = (threadIdx.y / ntx) * (ntx*mma_A::I);
 
 #pragma unroll
     for (int n = 0; n < ntx; ++n) {
 #pragma unroll
-        for (int l = 0; l < mma_A::ne; ++l) {
-            const int i     = i0 + n*mma_A::I + mma_A::get_i(l);
-            const int k     = k0              + mma_A::get_k(l) % QI4_0;
-            const int shift =                4*(mma_A::get_k(l) / QI4_0);
-
-            A[n].x[l] = __vsubss4((x_qs[i*MMQ_MMA_TILE_X_K_Q4_0 + k] >> shift) & 0x0F0F0F0F, 0x08080808);
-        }
+        for (int k01 = 0; k01 < WARP_SIZE; k01 += QR4_0*QI4_0) {
+            const int k0 = k00 + k01;
 
 #pragma unroll
-        for (int l = 0; l < mma_C::ne/2; ++l) {
-            const int i = i0 + n*mma_C::I + mma_C::get_i(2*l);
+            for (int l = 0; l < mma_A::ne; ++l) {
+                const int i     = i0 + n*mma_A::I + mma_A::get_i(l);
+                const int k     = k0/QR4_0        + mma_A::get_k(l) % QI4_0;
+                const int shift =                4*(mma_A::get_k(l) / QI4_0);
 
-            dA[n][l] = x_df[i*MMQ_MMA_TILE_X_K_Q4_0 + k0/QI4_0];
+                A[n][k01/(QR4_0*QI4_0)].x[l] = __vsubss4((x_qs[i*MMQ_MMA_TILE_X_K_Q4_0 + k] >> shift) & 0x0F0F0F0F, 0x08080808);
+            }
+
+#pragma unroll
+            for (int l = 0; l < mma_C::ne/2; ++l) {
+                const int i = i0 + n*mma_C::I + mma_C::get_i(2*l);
+
+                dA[n][l][k01/(QR4_0*QI4_0)] = x_df[i*MMQ_MMA_TILE_X_K_Q4_0 + k0/(QR4_0*QI4_0)];
+            }
         }
     }
 
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += ntx*mma_C::J) {
-        mma_B  B;
-        float dB[mma_C::ne/2];
+#pragma unroll
+        for (int k01 = 0; k01 < WARP_SIZE; k01 += QR4_0*QI4_0) {
+            mma_B  B;
+            float dB[mma_C::ne/2];
 
-        B.load(y_qs + j0*MMQ_TILE_Y_K + (2*k0) % WARP_SIZE, MMQ_TILE_Y_K);
+            B.load(y_qs + j0*MMQ_TILE_Y_K + k01, MMQ_TILE_Y_K);
 
 #pragma unroll
-        for (int l = 0; l < mma_C::ne/2; ++l) {
-            const int j = j0 + mma_C::get_j(l);
+            for (int l = 0; l < mma_C::ne/2; ++l) {
+                const int j = j0 + mma_C::get_j(l);
 
-            dB[l] = __low2float(y_ds[j*MMQ_TILE_Y_K + (2*k0/QI8_1) % (WARP_SIZE/QI8_1)]);
-        }
-
-#pragma unroll
-    for (int n = 0; n < ntx; ++n) {
-            mma_C C;
-            C.mma_K8(A[n], B);
+                dB[l] = __low2float(y_ds[j*MMQ_TILE_Y_K + k01/QI8_1]);
+            }
 
 #pragma unroll
-            for (int l = 0; l < mma_C::ne; ++l) {
-                sum[(j0/mma_C::J + n)*mma_C::ne + l] += dA[n][l/2]*dB[l%2]*C.x[l];
+            for (int n = 0; n < ntx; ++n) {
+                mma_C C;
+                C.mma_K8(A[n][k01/(QR4_0*QI4_0)], B);
+
+#pragma unroll
+                for (int l = 0; l < mma_C::ne; ++l) {
+                    sum[(j0/mma_C::J + n)*mma_C::ne + l] += dA[n][l/2][k01/(QR4_0*QI4_0)]*dB[l%2]*C.x[l];
+                }
             }
         }
     }
