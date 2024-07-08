@@ -84,7 +84,7 @@ static constexpr __device__ int get_mmq_y_device() {
 #define MMQ_DP4A_TXS_Q4_1 tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI4_1   + mmq_y/QI4_1,     0}
 #define MMQ_DP4A_TXS_Q8_0 tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE*2/QI8_0 + mmq_y/(QI8_0/2), 0}
 #define MMQ_DP4A_TXS_Q8_1 tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE*2/QI8_1 + mmq_y/(QI8_1/2), 0}
-#define MMQ_DP4A_TXS_Q2_K tile_x_sizes{mmq_y*WARP_SIZE*4 + mmq_y, mmq_y*WARP_SIZE         + mmq_y,           0}
+#define MMQ_DP4A_TXS_Q2_K tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE         + mmq_y,           0}
 #define MMQ_DP4A_TXS_Q3_K tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y,                                     mmq_y*WARP_SIZE/8 + mmq_y/8}
 #define MMQ_DP4A_TXS_Q4_K tile_x_sizes{mmq_y*WARP_SIZE   + mmq_y, mmq_y*WARP_SIZE/QI4_K   + mmq_y/QI4_K,     mmq_y*WARP_SIZE/8 + mmq_y/8}
 #define MMQ_DP4A_TXS_Q5_K tile_x_sizes{mmq_y*WARP_SIZE*2 + mmq_y, mmq_y*WARP_SIZE/QI5_K   + mmq_y/QI5_K,     mmq_y*WARP_SIZE/8 + mmq_y/8}
@@ -110,7 +110,7 @@ static constexpr __host__ __device__ tile_x_sizes mmq_get_dp4a_tile_x_sizes(ggml
 #define MMQ_MMA_TILE_X_K_Q4_1 (1*WARP_SIZE + WARP_SIZE/QI4_1                   + 4)
 #define MMQ_MMA_TILE_X_K_Q8_0 (2*WARP_SIZE + 2*WARP_SIZE/QI8_0                 + 4)
 #define MMQ_MMA_TILE_X_K_Q8_1 (2*WARP_SIZE + 2*WARP_SIZE/QI8_0                 + 4)
-#define MMQ_MMA_TILE_X_K_Q2_K (4*WARP_SIZE + WARP_SIZE                         + 4)
+#define MMQ_MMA_TILE_X_K_Q2_K (2*WARP_SIZE + WARP_SIZE                         + 4)
 #define MMQ_MMA_TILE_X_K_Q3_K (2*WARP_SIZE + WARP_SIZE/(2*QI3_K) + WARP_SIZE/8 + 7)
 #define MMQ_MMA_TILE_X_K_Q4_K (1*WARP_SIZE + WARP_SIZE/QI4_K     + WARP_SIZE/8 + 7)
 #define MMQ_MMA_TILE_X_K_Q5_K (2*WARP_SIZE + WARP_SIZE/QI5_K     + WARP_SIZE/8 + 7)
@@ -164,7 +164,7 @@ static constexpr __device__ int get_mmq_iter_k(const ggml_type /* type */, const
 }
 #else
 static constexpr __device__ int get_mmq_iter_k(const ggml_type type, const int mmq_x) {
-    return type == GGML_TYPE_Q2_K || (type == GGML_TYPE_Q8_0 && mmq_x <= 64) ? 512 : 256;
+    return type == GGML_TYPE_Q8_0 && mmq_x <= 64 ? 512 : 256;
 }
 #endif // (defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) || __CUDA_ARCH__ < CC_VOLTA
 
@@ -950,31 +950,30 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 #ifdef INT8_MMA_AVAILABLE
     int   * x_qs = (int   *)  x_tile;
-    half2 * x_dm = (half2 *) (x_qs + 4*WARP_SIZE);
+    half2 * x_dm = (half2 *) (x_qs + 2*WARP_SIZE);
 #else
     constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q2_K, mmq_y);
     int   * x_qs = (int   *)  x_tile;
     half2 * x_dm = (half2 *) (x_qs + txs.qs);
 #endif // INT8_MMA_AVAILABLE
 
-    const int kbx  = threadIdx.x / QI2_K;
     const int kqsx = threadIdx.x % QI2_K;
 
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nwarps) {
-        int i = i0 + threadIdx.y;
+    for (int i0 = 0; i0 < mmq_y; i0 += nwarps * WARP_SIZE/QI2_K) {
+        int i = i0 + threadIdx.y*(WARP_SIZE/QI2_K) + threadIdx.x/QI2_K;
 
         if (need_check) {
             i = min(i, i_max);
         }
 
-        const block_q2_K * bxi = (const block_q2_K *) x + kbx0 + i*stride + kbx;
+        const block_q2_K * bxi = (const block_q2_K *) x + kbx0 + i*stride;
 
         const int x_ql_0 = get_int_b2(bxi->qs, kqsx);
 
 #pragma unroll
         for (int l = 0; l < QR2_K; ++l) {
-            const int k = kbx*QI2_K + (kqsx/8)*8 + l*2 + (kqsx % 8)/4;
+            const int k = (kqsx/8)*8 + l*2 + (kqsx % 8)/4;
 
             const int x_qs_k = (x_ql_0 >> (2*l)) & 0x03030303;
 
@@ -994,9 +993,9 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 #endif // FAST_FP16_AVAILABLE
 
 #ifdef INT8_MMA_AVAILABLE
-        x_dm[i*MMQ_MMA_TILE_X_K_Q2_K + threadIdx.x] = x_dm_ik;
+        x_dm[i*MMQ_MMA_TILE_X_K_Q2_K + kqsx] = x_dm_ik;
 #else
-        x_dm[i*(WARP_SIZE + 1)       + threadIdx.x] = x_dm_ik;
+        x_dm[i*(WARP_SIZE + 1)       + kqsx] = x_dm_ik;
 #endif // INT8_MMA_AVAILABLE
     }
 }
@@ -1048,7 +1047,7 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
     y += (threadIdx.y % ntx) * (mma_B::J*MMQ_TILE_Y_K);
 
     const int   * x_qs = (const int   *) x;
-    const half2 * x_dm = (const half2 *) x_qs + WARP_SIZE*4;
+    const half2 * x_dm = (const half2 *) x_qs + WARP_SIZE*2;
     const int   * y_qs = (const int   *) y + 4;
     const float * y_df = (const float *) y;
 
@@ -2379,7 +2378,7 @@ static __device__ void mul_mat_q_process_tile(
 
     for (int kb00 = kb0_start; kb00 < kb0_stop; kb00 += blocks_per_iter) {
 #pragma unroll
-        for (int kb01 = 0; kb01 < 1; kb01 += 256/qk) {
+        for (int kb01 = 0; kb01 < blocks_per_iter; kb01 += 256/qk) {
             const int kb0 = kb00 + kb01;
 
             load_tiles(x, tile_x, stride01*it*mmq_y + kb0, tile_x_max_i, stride01);
@@ -2413,42 +2412,6 @@ static __device__ void mul_mat_q_process_tile(
             __syncthreads();
 
             vec_dot(tile_x, tile_y, sum, WARP_SIZE);
-
-            __syncthreads();
-
-            if (type != GGML_TYPE_Q2_K) {
-                continue;
-            }
-
-            {
-                const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + 2*sizeof(block_q8_1_mmq)/sizeof(int));
-#pragma unroll
-                for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += nwarps*WARP_SIZE) {
-                    int l = l0 + threadIdx.y*WARP_SIZE + threadIdx.x;
-
-                    tile_y[l] = by0[l];
-                }
-            }
-
-            __syncthreads();
-
-            vec_dot(tile_x, tile_y, sum, 2*WARP_SIZE);
-
-            __syncthreads();
-
-            {
-                const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + 3*sizeof(block_q8_1_mmq)/sizeof(int));
-#pragma unroll
-                for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += nwarps*WARP_SIZE) {
-                    int l = l0 + threadIdx.y*WARP_SIZE + threadIdx.x;
-
-                    tile_y[l] = by0[l];
-                }
-            }
-
-            __syncthreads();
-
-            vec_dot(tile_x, tile_y, sum, 3*WARP_SIZE);
 
             __syncthreads();
         }
