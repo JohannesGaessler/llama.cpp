@@ -1511,7 +1511,7 @@ static __device__ __forceinline__ void vec_dot_q4_K_q8_1_dp4a(
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q4_K_q8_1_mma(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k0) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00) {
 #ifdef INT8_MMA_AVAILABLE
 
     typedef mma_int_A_I16K8 mma_A;
@@ -1532,6 +1532,7 @@ static __device__ __forceinline__ void vec_dot_q4_K_q8_1_mma(
 
     const int i0 = (threadIdx.y / ntx) * (ntx*mma_A::I);
 
+    for (int k0 = k00/2; k0 < (k00+32)/2; k0 += VDR_Q4_K_Q8_1_MMQ){
     mma_A   A[ntx][2];
     int   scA[ntx][mma_C::ne/2][2];
     int    mA[ntx][mma_C::ne/2][2];
@@ -1611,6 +1612,7 @@ static __device__ __forceinline__ void vec_dot_q4_K_q8_1_mma(
                 sum[(j0/mma_C::J + n)*mma_C::ne + l] += __low2float(dmA[n][l/2])*tmpd[n][l] - __high2float(dmA[n][l/2])*tmpm[n][l];
             }
         }
+    }
     }
 #else
     GGML_UNUSED(x); GGML_UNUSED(y); GGML_UNUSED(sum);
