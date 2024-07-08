@@ -2003,15 +2003,23 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_mma(
 
             A[n][k01/4 + 0].load(x_qs + (i0 + n*mma_A::I)*MMQ_MMA_TILE_X_K_Q6_K + (k0 + 0),        MMQ_MMA_TILE_X_K_Q6_K);
             A[n][k01/4 + 1].load(x_qs + (i0 + n*mma_A::I)*MMQ_MMA_TILE_X_K_Q6_K + (k0 + mma_A::K), MMQ_MMA_TILE_X_K_Q6_K);
+        }
+
+#pragma unroll
+        for (int k01 = 0; k01 < WARP_SIZE; k01 += 16) {
+            const int k0 = k00 + k01;
 
 #pragma unroll
             for (int l = 0; l < mma_C::ne/2; ++l) {
                 const int i = i0 + n*mma_C::I + mma_C::get_i(2*l);
 
-                const int8_t * sc = ((const int8_t *) &x_sc[i*MMQ_MMA_TILE_X_K_Q6_K + k00/16]);
+                const int      sc_packed = x_sc[i*MMQ_MMA_TILE_X_K_Q6_K + k0/16];
+                const int8_t * sc        = (const int8_t *) &sc_packed;
 
-                scA[n][l][k01/4 + 0] = sc[k01/4 + 0];
-                scA[n][l][k01/4 + 1] = sc[k01/4 + 1];
+#pragma unroll
+                for (int ksc = 0; ksc < sizeof(int); ++ksc) {
+                    scA[n][l][k01/4 + ksc] = sc[ksc];
+                }
             }
         }
 
