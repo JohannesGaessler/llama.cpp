@@ -1780,16 +1780,22 @@ static __device__ __forceinline__ void vec_dot_q5_K_q8_1_mma(
             const int k0 = k00 + k01;
 
             A[n][k01/8].load(x_qs + (i0 + n*mma_A::I)*MMQ_MMA_TILE_X_K_Q5_K + k0, MMQ_MMA_TILE_X_K_Q5_K);
+        }
 
 #pragma unroll
-            for (int l = 0; l < mma_C::ne/2; ++l) {
-                const int i = i0 + n*mma_C::I + mma_C::get_i(2*l);
+        for (int l = 0; l < mma_C::ne/2; ++l) {
+            const int i = i0 + n*mma_C::I + mma_C::get_i(2*l);
 
-                const uint8_t * sc = (const uint8_t *) &x_sc[i*MMQ_MMA_TILE_X_K_Q5_K + k00/32];
-                const uint8_t *  m = sc + 8;
+            const int sc_packed = x_sc[i*MMQ_MMA_TILE_X_K_Q5_K + (k00/32 + 0)];
+            const int  m_packed = x_sc[i*MMQ_MMA_TILE_X_K_Q5_K + (k00/32 + 2)];
 
-                scA[n][l][k01/8] = sc[k01/8];
-                mA[n][l][k01/8]  =  m[k01/8];
+            const uint8_t * sc = (const uint8_t *) &sc_packed;
+            const uint8_t *  m = (const uint8_t *)  &m_packed;
+
+#pragma unroll
+            for (int ksc = 0; ksc < sizeof(int); ++ksc) {
+                scA[n][l][ksc] = sc[ksc];
+                mA[n][l][ksc]  =  m[ksc];
             }
         }
 
