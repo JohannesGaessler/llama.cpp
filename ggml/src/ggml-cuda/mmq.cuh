@@ -474,7 +474,7 @@ static __device__ __forceinline__ void vec_dot_q4_1_q8_1_mma(
         for (int k01 = 0; k01 < WARP_SIZE; k01 += QR4_1*QI4_1) {
             const int k0 = k00 + k01;
 
-            ((mma_A_K4 *) &A[n][k01/(QR4_1*QI4_1)])[0].load(x_qs + (i0 + n*mma_A::I)*MMQ_MMA_TILE_X_K_Q4_1 + k0/QR4_1, MMQ_MMA_TILE_X_K_Q4_1);
+            A[n][k01/(QR4_1*QI4_1)].load_low(x_qs + (i0 + n*mma_A::I)*MMQ_MMA_TILE_X_K_Q4_1 + k0/QR4_1, MMQ_MMA_TILE_X_K_Q4_1);
             A[n][k01/(QR4_1*QI4_1)].x[2]  = (A[n][k01/(QR4_1*QI4_1)].x[0] >> 4) & 0x0F0F0F0F;
             A[n][k01/(QR4_1*QI4_1)].x[3]  = (A[n][k01/(QR4_1*QI4_1)].x[1] >> 4) & 0x0F0F0F0F;
             A[n][k01/(QR4_1*QI4_1)].x[0] &= 0x0F0F0F0F;
