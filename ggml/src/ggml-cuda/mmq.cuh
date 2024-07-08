@@ -980,7 +980,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 #ifdef INT8_MMA_AVAILABLE
             x_qs[i*MMQ_MMA_TILE_X_K_Q2_K + 4*k + kqsx % 4] = x_qs_k;
 #else
-            x_qs[i*(4*WARP_SIZE + 1)     + 4*k + kqsx % 4] = x_qs_k;
+            x_qs[i*(2*WARP_SIZE + 1)     + 4*k + kqsx % 4] = x_qs_k;
 #endif // INT8_MMA_AVAILABLE
         }
 
@@ -1023,7 +1023,7 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_dp4a(
                 const int i = i0 + threadIdx.x;
 
                 sum[j0/nwarps*mmq_y/WARP_SIZE + i0/WARP_SIZE] += vec_dot_q2_K_q8_1_impl_mmq(
-                    &x_qs[i*(4*WARP_SIZE + 1) + 4*k0], &y_qs[j*MMQ_TILE_Y_K + (QR2_K*k0) % WARP_SIZE],
+                    &x_qs[i*(2*WARP_SIZE + 1) + 4*k0], &y_qs[j*MMQ_TILE_Y_K + (QR2_K*k0) % WARP_SIZE],
                     &x_dm[i*(WARP_SIZE + 1) + k0], y_df[j*MMQ_TILE_Y_K + ((QR2_K*k0) % WARP_SIZE)/QI8_1]);
             }
         }
