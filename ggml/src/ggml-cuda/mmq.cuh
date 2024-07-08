@@ -1272,71 +1272,75 @@ static __device__ __forceinline__ void vec_dot_q3_K_q8_1_mma(
 
     const int i0 = (threadIdx.y / ntx) * (ntx*mma_A::I);
 
-    for (int k01 = 0; k01 < WARP_SIZE; k01 += QR3_K*VDR_Q3_K_Q8_1_MMQ) {
-    const int k0 = k00 + k01;
-
-    mma_A   A[ntx][2];
-    int   scA[ntx][mma_C::ne/2][2];
+    mma_A   A[ntx][8];
+    int   scA[ntx][mma_C::ne/2][8];
     float  dA[ntx][mma_C::ne/2];
 
 #pragma unroll
-    for (int n = 0; n < ntx; ++n) {
-#pragma unroll
-        for (int l = 0; l < mma_A::ne; ++l) {
-            const int i = i0 + n*mma_A::I + mma_A::get_i(l);
-            const int k = k0 + mma_A::get_k(l);
-
-            A[n][0].x[l] = x_qs[i*MMQ_MMA_TILE_X_K_Q3_K + k + 0];
-            A[n][1].x[l] = x_qs[i*MMQ_MMA_TILE_X_K_Q3_K + k + mma_A::K];
-        }
+    for (int k01 = 0; k01 < WARP_SIZE; k01 += QR3_K*VDR_Q3_K_Q8_1_MMQ) {
+        const int k0 = k00 + k01;
 
 #pragma unroll
-        for (int l = 0; l < mma_C::ne/2; ++l) {
-            const int i = i0 + n*mma_C::I + mma_C::get_i(2*l);
+        for (int n = 0; n < ntx; ++n) {
+#pragma unroll
+            for (int l = 0; l < mma_A::ne; ++l) {
+                const int i = i0 + n*mma_A::I + mma_A::get_i(l);
+                const int k = k0 + mma_A::get_k(l);
 
-            const int kbx  = (k0/4) / QI3_K;
-            const int ky  = ((k0/4) % QI3_K) * QR3_K;
-            const int8_t * sc = ((const int8_t *) (x_sc + i*MMQ_MMA_TILE_X_K_Q3_K + kbx*4)) + ky/4;
-
-            scA[n][l][0] = sc[0];
-            scA[n][l][1] = sc[1];
-        }
+                A[n][k01/4 + 0].x[l] = x_qs[i*MMQ_MMA_TILE_X_K_Q3_K + k + 0];
+                A[n][k01/4 + 1].x[l] = x_qs[i*MMQ_MMA_TILE_X_K_Q3_K + k + mma_A::K];
+            }
 
 #pragma unroll
-        for (int l = 0; l < mma_C::ne/2; ++l) {
-            const int i = i0 + n*mma_C::I + mma_C::get_i(2*l);
+            for (int l = 0; l < mma_C::ne/2; ++l) {
+                const int i = i0 + n*mma_C::I + mma_C::get_i(2*l);
 
-            dA[n][l] = x_df[i*MMQ_MMA_TILE_X_K_Q3_K];
+                const int kbx  = (k0/4) / QI3_K;
+                const int ky  = ((k0/4) % QI3_K) * QR3_K;
+                const int8_t * sc = ((const int8_t *) (x_sc + i*MMQ_MMA_TILE_X_K_Q3_K + kbx*4)) + ky/4;
+
+                scA[n][l][k01/4 + 0] = sc[0];
+                scA[n][l][k01/4 + 1] = sc[1];
+            }
+
+#pragma unroll
+            for (int l = 0; l < mma_C::ne/2; ++l) {
+                const int i = i0 + n*mma_C::I + mma_C::get_i(2*l);
+
+                dA[n][l] = x_df[i*MMQ_MMA_TILE_X_K_Q3_K];
+            }
         }
     }
 
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += ntx*mma_C::J) {
-        mma_B B[2];
-        float dB[mma_C::ne/2];
+#pragma unroll
+        for (int k01 = 0; k01 < WARP_SIZE; k01 += QR3_K*VDR_Q3_K_Q8_1_MMQ) {
+            mma_B B[2];
+            float dB[mma_C::ne/2];
 
-        B[0].load(y_qs + j0*MMQ_TILE_Y_K + (k01 + 0),        MMQ_TILE_Y_K);
-        B[1].load(y_qs + j0*MMQ_TILE_Y_K + (k01 + mma_B::K), MMQ_TILE_Y_K);
+            B[0].load(y_qs + j0*MMQ_TILE_Y_K + (k01 + 0),        MMQ_TILE_Y_K);
+            B[1].load(y_qs + j0*MMQ_TILE_Y_K + (k01 + mma_B::K), MMQ_TILE_Y_K);
 
 #pragma unroll
-        for (int l = 0; l < mma_C::ne/2; ++l) {
-            const int j = j0 + mma_C::get_j(l);
+            for (int l = 0; l < mma_C::ne/2; ++l) {
+                const int j = j0 + mma_C::get_j(l);
 
-            dB[l] = y_df[j*MMQ_TILE_Y_K + k01/QI8_1];
-        }
-
-#pragma unroll
-        for (int n = 0; n < ntx; ++n) {
-            mma_C C[2];
-            C[0].mma_K4(A[n][0], B[0]);
-            C[1].mma_K4(A[n][1], B[1]);
+                dB[l] = y_df[j*MMQ_TILE_Y_K + k01/QI8_1];
+            }
 
 #pragma unroll
-            for (int l = 0; l < mma_C::ne; ++l) {
-                sum[(j0/mma_C::J + n)*mma_C::ne + l] += (C[0].x[l]*scA[n][l/2][0] + C[1].x[l]*scA[n][l/2][1])*dA[n][l/2]*dB[l%2];
+            for (int n = 0; n < ntx; ++n) {
+                mma_C C[2];
+                C[0].mma_K4(A[n][k01/4 + 0], B[0]);
+                C[1].mma_K4(A[n][k01/4 + 1], B[1]);
+
+#pragma unroll
+                for (int l = 0; l < mma_C::ne; ++l) {
+                    sum[(j0/mma_C::J + n)*mma_C::ne + l] += (C[0].x[l]*scA[n][l/2][k01/4 + 0] + C[1].x[l]*scA[n][l/2][k01/4 + 1])*dA[n][l/2]*dB[l%2];
+                }
             }
         }
-    }
     }
 #else
     GGML_UNUSED(x); GGML_UNUSED(y); GGML_UNUSED(sum);
