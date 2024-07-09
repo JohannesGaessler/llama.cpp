@@ -1053,68 +1053,81 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
 
     const int i0 = (threadIdx.y / ntx) * (ntx*mma_A::I);
 
-#pragma unroll
-    for (int k01 = 0; k01 < WARP_SIZE; k01 += QR2_K*VDR_Q2_K_Q8_1_MMQ) {
-    const int k0 = (k00 + k01)/QR2_K;
-
-    mma_A   A[ntx][2];
-    float  dA[ntx][mma_C::ne/2][2];
-    float  mA[ntx][mma_C::ne/2][2];
+    mma_A   A[ntx][8];
+    float  dA[ntx][mma_C::ne/2][8];
+    float  mA[ntx][mma_C::ne/2][8];
 
 #pragma unroll
     for (int n = 0; n < ntx; ++n) {
-        ((mma_A_K8 *) A[n])[0].load(x_qs + (i0 + n*mma_A::I)*MMQ_MMA_TILE_X_K_Q2_K + k0*4, MMQ_MMA_TILE_X_K_Q2_K);
+#pragma unroll
+        for (int k01 = 0; k01 < WARP_SIZE; k01 += QI8_1) {
+            const int k0 = k00 + k01;
 
+            ((mma_A_K8 *) A[n])[k01/QI8_1].load(x_qs + (i0 + n*mma_A::I)*MMQ_MMA_TILE_X_K_Q2_K + k0, MMQ_MMA_TILE_X_K_Q2_K);
+        }
+    }
+
+#pragma unroll
+    for (int n = 0; n < ntx; ++n) {
 #pragma unroll
         for (int l = 0; l < mma_C::ne/2; ++l) {
             const int i = i0 + n*mma_C::I + mma_C::get_i(2*l);
 
 #pragma unroll
-            for (int kdm = 0; kdm < 2; ++kdm) {
-                const float2 dm = __half22float2(x_dm[i*MMQ_MMA_TILE_X_K_Q2_K + k0 + kdm]);
+            for (int k01 = 0; k01 < WARP_SIZE; k01 += QI8_1/2) {
+                const int k0 = k00 + k01;
 
-                dA[n][l][kdm] = dm.x;
-                mA[n][l][kdm] = dm.y;
+                const float2 dm = __half22float2(x_dm[i*MMQ_MMA_TILE_X_K_Q2_K + k0/(QI8_1/2)]);
+
+                dA[n][l][k01/(QI8_1/2)] = dm.x;
+                mA[n][l][k01/(QI8_1/2)] = dm.y;
             }
         }
     }
 
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += ntx*mma_C::J) {
-        mma_B B[2];
-        float dB[mma_C::ne/2];
+#pragma unroll
+        for (int k01 = 0; k01 < WARP_SIZE; k01 += QI8_1) {
+            const int k0 = k00 + k01;
 
-        B[0].load(y_qs + j0*MMQ_TILE_Y_K + (QR2_K*k0 + 0)        % WARP_SIZE, MMQ_TILE_Y_K);
-        B[1].load(y_qs + j0*MMQ_TILE_Y_K + (QR2_K*k0 + mma_B::K) % WARP_SIZE, MMQ_TILE_Y_K);
+            mma_B B[2];
+            float dB[mma_C::ne/2];
+
+            B[0].load(y_qs + j0*MMQ_TILE_Y_K + (k01 + 0),        MMQ_TILE_Y_K);
+            B[1].load(y_qs + j0*MMQ_TILE_Y_K + (k01 + mma_B::K), MMQ_TILE_Y_K);
 
 #pragma unroll
-        for (int l = 0; l < mma_C::ne/2; ++l) {
-            const int j = j0 + mma_C::get_j(l);
+            for (int l = 0; l < mma_C::ne/2; ++l) {
+                const int j = j0 + mma_C::get_j(l);
 
-            dB[l] = y_df[j*MMQ_TILE_Y_K + ((4*k0)/QI8_1) % (WARP_SIZE/QI8_1)];
-        }
+                dB[l] = y_df[j*MMQ_TILE_Y_K + k01/QI8_1];
+            }
 
-        mma_C Cm[2];
-        mma_A A1;
-        A1.x[0] = 0x01010101;
-        A1.x[1] = 0x01010101;
-        Cm[0].mma_K4(A1, B[0]);
-        Cm[1].mma_K4(A1, B[1]);
-
-#pragma unroll
-    for (int n = 0; n < ntx; ++n) {
-            mma_C Cd[2];
-
-            Cd[0].mma_K4(A[n][0], B[0]);
-            Cd[1].mma_K4(A[n][1], B[1]);
+            mma_C Cm[2];
+            mma_A A1;
+            A1.x[0] = 0x01010101;
+            A1.x[1] = 0x01010101;
+            Cm[0].mma_K4(A1, B[0]);
+            Cm[1].mma_K4(A1, B[1]);
 
 #pragma unroll
-            for (int l = 0; l < mma_C::ne; ++l) {
-                sum[(j0/mma_C::J + n)*mma_C::ne + l] += (
-                    Cd[0].x[l]*dA[n][l/2][0] + Cd[1].x[l]*dA[n][l/2][1] - Cm[0].x[l]*mA[n][l/2][0] - Cm[1].x[l]*mA[n][l/2][1])*dB[l%2];
+        for (int n = 0; n < ntx; ++n) {
+                mma_C Cd[2];
+
+                Cd[0].mma_K4(A[n][k01/4 + 0], B[0]);
+                Cd[1].mma_K4(A[n][k01/4 + 1], B[1]);
+
+#pragma unroll
+                for (int l = 0; l < mma_C::ne; ++l) {
+                    sum[(j0/mma_C::J + n)*mma_C::ne + l] += dB[l%2]*(
+                          Cd[0].x[l]*dA[n][l/2][k01/4 + 0]
+                        - Cm[0].x[l]*mA[n][l/2][k01/4 + 0]
+                        + Cd[1].x[l]*dA[n][l/2][k01/4 + 1]
+                        - Cm[1].x[l]*mA[n][l/2][k01/4 + 1]);
+                }
             }
         }
-    }
     }
 #else
     GGML_UNUSED(x); GGML_UNUSED(y); GGML_UNUSED(sum);
