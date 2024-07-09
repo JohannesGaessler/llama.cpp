@@ -77,20 +77,21 @@ static __global__ void quantize_mmq_q8_1(
         }
     }
 
-    const float d = amax / 127;
+    const float d_inv = 127.0f / amax;
     char4 q;
-    q.x = roundf(xi.x / d);
-    q.y = roundf(xi.y / d);
-    q.z = roundf(xi.z / d);
-    q.w = roundf(xi.w / d);
-    *((int *) &q) *= amax != 0.0f;
+    q.x = roundf(xi.x*d_inv);
+    q.y = roundf(xi.y*d_inv);
+    q.z = roundf(xi.z*d_inv);
+    q.w = roundf(xi.w*d_inv);
 
-    char4 * yqs4 = (char4  *) y[ib].qs;
+    char4 * yqs4 = (char4 *) y[ib].qs;
     yqs4[iqs/4] = q;
 
     if (iqs % QI8_1 != 0) {
         return;
     }
+
+    const float d = 1.0f / d_inv;
 
     if (need_sum) {
         y[ib].ds[iqs/QK8_1] = make_half2(d, sum);
