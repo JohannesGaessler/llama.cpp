@@ -79,10 +79,11 @@ static __global__ void quantize_mmq_q8_1(
 
     const float d = amax / 127;
     char4 q;
-    q.x = amax == 0.0f ? 0 : roundf(xi.x / d);
-    q.y = amax == 0.0f ? 0 : roundf(xi.y / d);
-    q.z = amax == 0.0f ? 0 : roundf(xi.z / d);
-    q.w = amax == 0.0f ? 0 : roundf(xi.w / d);
+    q.x = roundf(xi.x / d);
+    q.y = roundf(xi.y / d);
+    q.z = roundf(xi.z / d);
+    q.w = roundf(xi.w / d);
+    *((int *) &q) *= amax != 0.0f;
 
     char4 * yqs4 = (char4  *) y[ib].qs;
     yqs4[iqs/4] = q;
