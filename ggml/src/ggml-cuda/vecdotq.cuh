@@ -189,7 +189,7 @@ template <int vdr> static __device__ __forceinline__ float vec_dot_q8_1_q8_1_imp
 }
 
 #define VDR_Q2_K_Q8_1_MMVQ 1
-#define VDR_Q2_K_Q8_1_MMQ  2
+#define VDR_Q2_K_Q8_1_MMQ  4
 
 // contiguous v/x values
 static __device__ __forceinline__ float vec_dot_q2_K_q8_1_impl_mmvq(
@@ -227,7 +227,7 @@ static __device__ __forceinline__ float vec_dot_q2_K_q8_1_impl_mmq(
     float sumf_m = 0.0f;
 
 #pragma unroll
-    for (int i0 = 0; i0 < QI8_1; i0 += QI8_1/2) {
+    for (int i0 = 0; i0 < QR2_K*VDR_Q2_K_Q8_1_MMQ; i0 += QI8_1/2) {
         const float2 dm2f = __half22float2(dm2[i0/(QI8_1/2)]);
         int sumi_d = 0;
         int sumi_m = 0;
