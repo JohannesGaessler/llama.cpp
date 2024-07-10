@@ -1049,7 +1049,7 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
     const int   * x_qs = (const int   *) x;
     const half2 * x_dm = (const half2 *) x_qs + WARP_SIZE*2;
     const int   * y_qs = (const int   *) y + 4;
-    const float * y_df = (const float *) y;
+    const half2 * y_ds = (const half2 *) y;
 
     const int i0 = (threadIdx.y / ntx) * (ntx*mma_A::I);
 
@@ -1087,20 +1087,21 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
 
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += ntx*mma_C::J) {
+        float2 dB[mma_C::ne/2];
+
+#pragma unroll
+        for (int l = 0; l < mma_C::ne/2; ++l) {
+            const int j = j0 + mma_C::get_j(l);
+
+            dB[l] = __half22float2(y_ds[j*MMQ_TILE_Y_K]);
+        }
+
 #pragma unroll
         for (int k01 = 0; k01 < WARP_SIZE; k01 += QI8_1) {
             mma_B B[2];
-            float dB[mma_C::ne/2];
 
             B[0].load(y_qs + j0*MMQ_TILE_Y_K + (k01 + 0),        MMQ_TILE_Y_K);
             B[1].load(y_qs + j0*MMQ_TILE_Y_K + (k01 + mma_B::K), MMQ_TILE_Y_K);
-
-#pragma unroll
-            for (int l = 0; l < mma_C::ne/2; ++l) {
-                const int j = j0 + mma_C::get_j(l);
-
-                dB[l] = y_df[j*MMQ_TILE_Y_K + k01/QI8_1];
-            }
 
             mma_C Cm[2];
             mma_A A1;
@@ -1118,7 +1119,7 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
 
 #pragma unroll
                 for (int l = 0; l < mma_C::ne; ++l) {
-                    sum[(j0/mma_C::J + n)*mma_C::ne + l] += dB[l%2]*(
+                    sum[(j0/mma_C::J + n)*mma_C::ne + l] += (k01 < WARP_SIZE/2 ? dB[l%2].x : dB[l%2].y)*(
                           Cd[0].x[l]*dA[n][l/2][k01/4 + 0]
                         - Cm[0].x[l]*mA[n][l/2][k01/4 + 0]
                         + Cd[1].x[l]*dA[n][l/2][k01/4 + 1]
@@ -2329,31 +2330,33 @@ struct mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, GGML_TYPE_IQ4_XS> {
     static constexpr vec_dot_mmq_t    vec_dot_dp4a = vec_dot_q8_0_q8_1_dp4a<mmq_x, mmq_y, nwarps>;
 };
 
-static bool mmq_need_sum(const ggml_type type_x) {
+static int mmq_need_sum(const ggml_type type_x) {
     switch (type_x) {
         case GGML_TYPE_Q4_0:
         case GGML_TYPE_Q4_1:
-            return true;
+            return 1;
         case GGML_TYPE_Q5_0:
-            return false;
+            return 0;
         case GGML_TYPE_Q5_1:
-            return true;
+            return 1;
         case GGML_TYPE_Q8_0:
+            return 0;
         case GGML_TYPE_Q2_K:
+            return 2;
         case GGML_TYPE_Q3_K:
-            return false;
+            return 0;
         case GGML_TYPE_Q4_K:
         case GGML_TYPE_Q5_K:
-            return true;
+            return 1;
         case GGML_TYPE_Q6_K:
         case GGML_TYPE_IQ4_XS:
         case GGML_TYPE_IQ4_NL:
-            return false;
+            return 0;
         default:
             GGML_ASSERT(false);
             break;
     }
-    return false;
+    return -1;
 }
 
 template <ggml_type type, int mmq_x, int nwarps, bool need_check, bool fixup>

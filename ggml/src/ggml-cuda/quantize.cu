@@ -69,10 +69,10 @@ static __global__ void quantize_mmq_q8_1(
     }
 
     float sum;
-    if (need_sum != 0) {
+    if (need_sum > 0) {
         sum = xi.x + xi.y + xi.z + xi.w;
 #pragma unroll
-        for (int mask = need_sum == 2 ? 2 : 4; mask > 0; mask >>= 1) {
+        for (int mask = 4; mask > 0; mask >>= 1) {
             sum += __shfl_xor_sync(0xFFFFFFFF, sum, mask, WARP_SIZE);
         }
     }
@@ -94,28 +94,26 @@ static __global__ void quantize_mmq_q8_1(
 
         const float d = 1.0f / d_inv;
 
-        if (need_sum) {
+        if (need_sum > 0) {
             y[ib].ds[iqs/QK8_1] = make_half2(d, sum);
         } else {
             ((float *) y[ib].ds)[iqs/QK8_1] = d;
         }
     } else {
-        if (iqs % (QK8_1/2) != 0) {
+        if (iqs % (QK8_1/2) != 0 || iqs >= (3*QK8_1)) {
             return;
         }
 
-        const float d = 1.0f / d_inv;
-
-        const int si = roundf((127.0f/16) * sum / d);
-        int8_t * ysi = (int8_t *) (y[ib].ds + 2);
-        ysi[iqs/(QK8_1/2)] = si;
+        half * ydsh = (half *) y[ib].ds;
+        ydsh[2 + iqs/(QK8_1/2)] = sum;
 
         if (iqs % (QK8_1*2) != 0) {
             return;
         }
 
-        half * yd = (half *) y[ib].ds;
-        yd[iqs/(QK8_1*2)] = d;
+        const float d = 1.0f / d_inv;
+
+        ydsh[iqs/(QK8_1*2)] = d;
     }
 }
 
@@ -142,9 +140,18 @@ void quantize_mmq_q8_1_cuda(
     const int64_t block_num_x = (kx0_padded + 4*CUDA_QUANTIZE_BLOCK_SIZE - 1) / (4*CUDA_QUANTIZE_BLOCK_SIZE);
     const dim3 num_blocks(block_num_x, kx1, channels);
     const dim3 block_size(CUDA_QUANTIZE_BLOCK_SIZE, 1, 1);
-    if (mmq_need_sum(type_x)) {
-        quantize_mmq_q8_1<1><<<num_blocks, block_size, 0, stream>>>(x, vy, kx0, kx1, kx0_padded);
-    } else {
-        quantize_mmq_q8_1<0><<<num_blocks, block_size, 0, stream>>>(x, vy, kx0, kx1, kx0_padded);
+    switch (mmq_need_sum(type_x)) {
+        case 0:
+            quantize_mmq_q8_1<0><<<num_blocks, block_size, 0, stream>>>(x, vy, kx0, kx1, kx0_padded);
+            break;
+        case 1:
+            quantize_mmq_q8_1<1><<<num_blocks, block_size, 0, stream>>>(x, vy, kx0, kx1, kx0_padded);
+            break;
+        case 2:
+            quantize_mmq_q8_1<2><<<num_blocks, block_size, 0, stream>>>(x, vy, kx0, kx1, kx0_padded);
+            break;
+        default:
+            GGML_ASSERT(false);
+            break;
     }
 }
