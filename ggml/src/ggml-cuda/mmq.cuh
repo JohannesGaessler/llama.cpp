@@ -1008,9 +1008,17 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_dp4a(
     const int   * x_qs = (const int   *) x;
     const half2 * x_dm = (const half2 *) x_qs + txs.qs;
     const int   * y_qs = (const int   *) y + 4;
-    const float * y_df = (const float *) y;
+    const half2 * y_ds = (const half2 *) y;
 
-// #pragma unroll
+    float2 y_df[mmq_x/nwarps];
+#pragma unroll
+    for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
+        const int j = j0 + threadIdx.y;
+
+        y_df[j0/nwarps] = __half22float2(y_ds[j*MMQ_TILE_Y_K]);
+    }
+
+#pragma unroll
     for (int k01 = 0; k01 < WARP_SIZE; k01 += QR2_K*VDR_Q2_K_Q8_1_MMQ) {
         const int k0 = k00 + k01;
 
@@ -1024,7 +1032,7 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_dp4a(
 
                 sum[j0/nwarps*mmq_y/WARP_SIZE + i0/WARP_SIZE] += vec_dot_q2_K_q8_1_impl_mmq(
                     &x_qs[i*(2*WARP_SIZE + 1) + k0], &y_qs[j*MMQ_TILE_Y_K + k01],
-                    &x_dm[i*(WARP_SIZE + 1) + k0/4], ((const half *) (y_df + j*MMQ_TILE_Y_K))[k01/(2*QI8_1)]);
+                    &x_dm[i*(WARP_SIZE + 1) + k0/4], k01 < WARP_SIZE/2 ? y_df[j0/nwarps].x : y_df[j0/nwarps].y);
             }
         }
     }
