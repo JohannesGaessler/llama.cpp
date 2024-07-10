@@ -37,7 +37,7 @@ static __global__ void quantize_q8_1(const float * __restrict__ x, void * __rest
     reinterpret_cast<half&>(y[ib].ds.y) = sum;
 }
 
-template <bool need_sum>
+template <int need_sum>
 static __global__ void quantize_mmq_q8_1(
     const float * __restrict__ x, void * __restrict__ vy, const int64_t kx0, const int64_t kx1, const int64_t kx0_padded) {
 
@@ -64,15 +64,15 @@ static __global__ void quantize_mmq_q8_1(
     amax = fmaxf(amax, fabsf(xi.w));
 
 #pragma unroll
-    for (int mask = 8; mask > 0; mask >>= 1) {
+    for (int mask = need_sum == 2 ? 8 : 4; mask > 0; mask >>= 1) {
         amax = fmaxf(amax, __shfl_xor_sync(0xFFFFFFFF, amax, mask, WARP_SIZE));
     }
 
     float sum;
-    if (need_sum) {
+    if (need_sum != 0) {
         sum = xi.x + xi.y + xi.z + xi.w;
 #pragma unroll
-        for (int mask = 4; mask > 0; mask >>= 1) {
+        for (int mask = need_sum == 2 ? 2 : 4; mask > 0; mask >>= 1) {
             sum += __shfl_xor_sync(0xFFFFFFFF, sum, mask, WARP_SIZE);
         }
     }
@@ -87,16 +87,35 @@ static __global__ void quantize_mmq_q8_1(
     char4 * yqs4 = (char4 *) y[ib].qs;
     yqs4[iqs/4] = q;
 
-    if (iqs % QI8_1 != 0) {
-        return;
-    }
+    if (need_sum < 2) {
+        if (iqs % QK8_1 != 0) {
+            return;
+        }
 
-    const float d = 1.0f / d_inv;
+        const float d = 1.0f / d_inv;
 
-    if (need_sum) {
-        y[ib].ds[iqs/QK8_1] = make_half2(d, sum);
+        if (need_sum) {
+            y[ib].ds[iqs/QK8_1] = make_half2(d, sum);
+        } else {
+            ((float *) y[ib].ds)[iqs/QK8_1] = d;
+        }
     } else {
-        ((float *) y[ib].ds)[iqs/QK8_1] = d;
+        if (iqs % (QK8_1/2) != 0) {
+            return;
+        }
+
+        const float d = 1.0f / d_inv;
+
+        const int si = roundf((127.0f/16) * sum / d);
+        int8_t * ysi = (int8_t *) (y[ib].ds + 2);
+        ysi[iqs/(QK8_1/2)] = si;
+
+        if (iqs % (QK8_1*2) != 0) {
+            return;
+        }
+
+        half * yd = (half *) y[ib].ds;
+        yd[iqs/(QK8_1*2)] = d;
     }
 }
 
@@ -124,8 +143,8 @@ void quantize_mmq_q8_1_cuda(
     const dim3 num_blocks(block_num_x, kx1, channels);
     const dim3 block_size(CUDA_QUANTIZE_BLOCK_SIZE, 1, 1);
     if (mmq_need_sum(type_x)) {
-        quantize_mmq_q8_1<true><<<num_blocks, block_size, 0, stream>>>(x, vy, kx0, kx1, kx0_padded);
+        quantize_mmq_q8_1<1><<<num_blocks, block_size, 0, stream>>>(x, vy, kx0, kx1, kx0_padded);
     } else {
-        quantize_mmq_q8_1<false><<<num_blocks, block_size, 0, stream>>>(x, vy, kx0, kx1, kx0_padded);
+        quantize_mmq_q8_1<0><<<num_blocks, block_size, 0, stream>>>(x, vy, kx0, kx1, kx0_padded);
     }
 }
