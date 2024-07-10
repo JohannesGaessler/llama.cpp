@@ -1012,7 +1012,7 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_dp4a(
 
 // #pragma unroll
     for (int k01 = 0; k01 < WARP_SIZE; k01 += QR2_K*VDR_Q2_K_Q8_1_MMQ) {
-        const int k0 = (k00 + k01)/QR2_K;
+        const int k0 = k00 + k01;
 
 #pragma unroll
         for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
@@ -1023,8 +1023,8 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_dp4a(
                 const int i = i0 + threadIdx.x;
 
                 sum[j0/nwarps*mmq_y/WARP_SIZE + i0/WARP_SIZE] += vec_dot_q2_K_q8_1_impl_mmq(
-                    &x_qs[i*(2*WARP_SIZE + 1) + 4*k0], &y_qs[j*MMQ_TILE_Y_K + (QR2_K*k0) % WARP_SIZE],
-                    &x_dm[i*(WARP_SIZE + 1) + k0], y_df[j*MMQ_TILE_Y_K + ((QR2_K*k0) % WARP_SIZE)/QI8_1]);
+                    &x_qs[i*(2*WARP_SIZE + 1) + k0], &y_qs[j*MMQ_TILE_Y_K + k01],
+                    &x_dm[i*(WARP_SIZE + 1) + k0/4], y_df[j*MMQ_TILE_Y_K + k01/QI8_1]);
             }
         }
     }
