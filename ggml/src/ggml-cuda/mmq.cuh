@@ -1107,11 +1107,13 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
             mma_A A1;
             A1.x[0] = 0x01010101;
             A1.x[1] = 0x01010101;
+            A1.x[0] = k01 >= WARP_SIZE * 3/4 ? 0x01010101 : 0x00000000;
+            A1.x[1] = k01 >= WARP_SIZE * 3/4 ? 0x01010101 : 0x00000000;
             Cm[0].mma_K4(A1, B[0]);
             Cm[1].mma_K4(A1, B[1]);
 
 #pragma unroll
-        for (int n = 0; n < ntx; ++n) {
+            for (int n = 0; n < ntx; ++n) {
                 mma_C Cd[2];
 
                 Cd[0].mma_K4(A[n][k01/4 + 0], B[0]);
@@ -1124,6 +1126,27 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
                         - Cm[0].x[l]*mA[n][l/2][k01/4 + 0]
                         + Cd[1].x[l]*dA[n][l/2][k01/4 + 1]
                         - Cm[1].x[l]*mA[n][l/2][k01/4 + 1]);
+                }
+            }
+        }
+
+#pragma unroll
+        for (int k01 = 0; k01 < WARP_SIZE * 3/4; k01 += QI8_1) {
+            float2 sB[mma_C::ne/2];
+
+#pragma unroll
+            for (int l = 0; l < mma_C::ne/2; ++l) {
+                const int j = j0 + mma_C::get_j(l);
+
+                sB[l] = __half22float2(y_ds[j*MMQ_TILE_Y_K + (1 + k01/QI8_1)]);
+            }
+
+#pragma unroll
+            for (int n = 0; n < ntx; ++n) {
+#pragma unroll
+                for (int l = 0; l < mma_C::ne; ++l) {
+                    sum[(j0/mma_C::J + n)*mma_C::ne + l] -= mA[n][l/2][k01/4 + 0]*sB[l%2].x;
+                    sum[(j0/mma_C::J + n)*mma_C::ne + l] -= mA[n][l/2][k01/4 + 1]*sB[l%2].y;
                 }
             }
         }

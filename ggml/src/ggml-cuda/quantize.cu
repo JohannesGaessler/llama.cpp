@@ -72,7 +72,7 @@ static __global__ void quantize_mmq_q8_1(
     if (need_sum > 0) {
         sum = xi.x + xi.y + xi.z + xi.w;
 #pragma unroll
-        for (int mask = 4; mask > 0; mask >>= 1) {
+        for (int mask = need_sum == 2 ? 2 : 4; mask > 0; mask >>= 1) {
             sum += __shfl_xor_sync(0xFFFFFFFF, sum, mask, WARP_SIZE);
         }
     }
