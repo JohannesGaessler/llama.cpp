@@ -1089,8 +1089,6 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
     for (int j0 = 0; j0 < mmq_x; j0 += ntx*mma_C::J) {
 #pragma unroll
         for (int k01 = 0; k01 < WARP_SIZE; k01 += QI8_1) {
-            const int k0 = k00 + k01;
-
             mma_B B[2];
             float dB[mma_C::ne/2];
 
