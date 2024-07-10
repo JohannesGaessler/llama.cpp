@@ -164,7 +164,7 @@ static constexpr __device__ int get_mmq_iter_k(const ggml_type /* type */, const
 }
 #else
 static constexpr __device__ int get_mmq_iter_k(const ggml_type type, const int mmq_x) {
-    return 256;
+    return 512;
 }
 #endif // (defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)) || __CUDA_ARCH__ < CC_VOLTA
 
