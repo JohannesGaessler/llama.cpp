@@ -1104,13 +1104,13 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
             B[1].load(y_qs + j0*MMQ_TILE_Y_K + (k01 + mma_B::K), MMQ_TILE_Y_K);
 
             mma_C Cm[2];
-            mma_A A1;
-            A1.x[0] = 0x01010101;
-            A1.x[1] = 0x01010101;
-            A1.x[0] = k01 >= WARP_SIZE * 3/4 ? 0x01010101 : 0x00000000;
-            A1.x[1] = k01 >= WARP_SIZE * 3/4 ? 0x01010101 : 0x00000000;
-            Cm[0].mma_K4(A1, B[0]);
-            Cm[1].mma_K4(A1, B[1]);
+            if (k01 >= WARP_SIZE * 3/4) {
+                mma_A A1;
+                A1.x[0] = 0x01010101;
+                A1.x[1] = 0x01010101;
+                Cm[0].mma_K4(A1, B[0]);
+                Cm[1].mma_K4(A1, B[1]);
+            }
 
 #pragma unroll
             for (int n = 0; n < ntx; ++n) {
@@ -1121,11 +1121,11 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
 
 #pragma unroll
                 for (int l = 0; l < mma_C::ne; ++l) {
-                    sum[(j0/mma_C::J + n)*mma_C::ne + l] += (k01 < WARP_SIZE/2 ? dB[l%2].x : dB[l%2].y)*(
-                          Cd[0].x[l]*dA[n][l/2][k01/4 + 0]
-                        - Cm[0].x[l]*mA[n][l/2][k01/4 + 0]
-                        + Cd[1].x[l]*dA[n][l/2][k01/4 + 1]
-                        - Cm[1].x[l]*mA[n][l/2][k01/4 + 1]);
+                    float tmp = Cd[0].x[l]*dA[n][l/2][k01/4 + 0] + Cd[1].x[l]*dA[n][l/2][k01/4 + 1];
+                    if (k01 >= WARP_SIZE * 3/4) {
+                        tmp -= Cm[0].x[l]*mA[n][l/2][k01/4 + 0] + Cm[1].x[l]*mA[n][l/2][k01/4 + 1];
+                    }
+                    sum[(j0/mma_C::J + n)*mma_C::ne + l] += tmp*(k01 < WARP_SIZE/2 ? dB[l%2].x : dB[l%2].y);
                 }
             }
         }
