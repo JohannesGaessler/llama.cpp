@@ -64,7 +64,7 @@ static __global__ void quantize_mmq_q8_1(
     amax = fmaxf(amax, fabsf(xi.w));
 
 #pragma unroll
-    for (int mask = 4; mask > 0; mask >>= 1) {
+    for (int mask = 8; mask > 0; mask >>= 1) {
         amax = fmaxf(amax, __shfl_xor_sync(0xFFFFFFFF, amax, mask, WARP_SIZE));
     }
 
