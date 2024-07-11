@@ -309,24 +309,23 @@ static __device__ __forceinline__ float vec_dot_q3_K_q8_1_impl_mmvq(
 
 // contiguous v/x + u/y values
 static __device__ __forceinline__ float vec_dot_q3_K_q8_1_impl_mmq(
-    const int * __restrict__ v, const int * __restrict__ u, const int8_t * __restrict__ scales,
-    const float & d3, const float & d8) {
+    const int * __restrict__ v, const int * __restrict__ u, const float * __restrict__ d3, const float & d8) {
 
-    int sumi = 0;
+    int sumf = 0.0f;
 
 #pragma unroll
     for (int i0 = 0; i0 < QR3_K*VDR_Q3_K_Q8_1_MMQ; i0 += QI8_1/2) {
-        int sumi_sc = 0;
+        int sumi = 0;
 
 #pragma unroll
         for (int i = i0; i < i0 + QI8_1/2; ++i) {
-            sumi_sc = ggml_cuda_dp4a(v[i], u[i], sumi_sc); // SIMD dot product
+            sumi = ggml_cuda_dp4a(v[i], u[i], sumi); // SIMD dot product
         }
 
-        sumi += sumi_sc * scales[i0 / (QI8_1/2)];
+        sumf += sumi*d3[i0 / (QI8_1/2)];
     }
 
-    return d3*d8 * sumi;
+    return d8*sumf;
 }
 
 #define VDR_Q4_K_Q8_1_MMVQ 2
