@@ -2978,6 +2978,22 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
             {
                 struct ggml_tensor * a = op->src[0];
                 struct ggml_tensor * b = op->src[1];
+                // only use row split if the weight matrix is large enough for every GPU to get data (this solves some edge cases)
+                // also for small matrices the overhead is very large anyways so splitting is slow
+                if (a->buffer && ggml_backend_buft_is_cuda_split(a->buffer->buft)) {
+                    ggml_backend_cuda_split_buffer_type_context * buft_ctx = (ggml_backend_cuda_split_buffer_type_context *) a->buffer->buft->context;
+                    int64_t active_devices = 0;
+                    for (int id = 0; id < ggml_backend_cuda_get_device_count(); ++id) {
+                        int64_t row_low;
+                        int64_t row_high;
+                        get_row_split(&row_low, &row_high, a, buft_ctx->tensor_split, id);
+                        active_devices += row_low == row_high;
+                    }
+                    const int64_t rounding = get_row_rounding(buft_ctx->tensor_split);
+                    if (rounding*active_devices < a->ne[1]) {
+                        return false;
+                    }
+                }
                 if (b->type == GGML_TYPE_F16 && a->type != GGML_TYPE_F16) {
                     return false;
                 }
