@@ -13,7 +13,7 @@ __device__ float __forceinline__ t2f32<half>(half val) {
     return __half2float(val);
 }
 
-template <bool use_shared, int ncols_template, int block_size_template, typename T>
+template <bool vals_smem, int ncols_template, int block_size_template, typename T>
 static __global__ void soft_max_f32(
         const float * x, const T * mask, float * dst, const int ncols_par, const int nrows_y,
         const float scale, const float max_bias, const float m0, const float m1, uint32_t n_head_log2) {
@@ -22,10 +22,6 @@ static __global__ void soft_max_f32(
     const int tid  = threadIdx.x;
     const int rowx = blockIdx.x;
     const int rowy = rowx % nrows_y; // broadcast the mask in the row dimension
-
-    x    += int64_t(rowx)*ncols;
-    mask += int64_t(rowy)*ncols * (mask != nullptr);
-    dst  += int64_t(rowx)*ncols;
 
     const int block_size = block_size_template == 0 ? blockDim.x : block_size_template;
 
@@ -37,7 +33,7 @@ static __global__ void soft_max_f32(
     extern __shared__ float data_soft_max_f32[];
     float * buf_iw = data_soft_max_f32; // shared memory buffer for inter-warp communication
     // shared memory buffer to cache values between iterations:
-    float * vals = use_shared ? buf_iw + WARP_SIZE : dst;
+    float * vals = vals_smem ? buf_iw + WARP_SIZE : dst + (int64_t)rowx*ncols;
 
     float max_val = -INFINITY;
 
@@ -49,7 +45,10 @@ static __global__ void soft_max_f32(
             break;
         }
 
-        const float val = x[col]*scale + (mask ? slope*t2f32(mask[col]) : 0.0f);
+        const int64_t ix = (int64_t)rowx*ncols + col;
+        const int64_t iy = (int64_t)rowy*ncols + col;
+
+        const float val = x[ix]*scale + (mask ? slope*t2f32(mask[iy]) : 0.0f);
 
         vals[col] = val;
         max_val = max(max_val, val);
@@ -115,29 +114,30 @@ static __global__ void soft_max_f32(
             return;
         }
 
-        dst[col] = vals[col] * inv_sum;
+        const int64_t idst = (int64_t)rowx*ncols + col;
+        dst[idst] = vals[col] * inv_sum;
     }
 }
 
 static __global__ void soft_max_back_f32(
-        const float * grad, const float * dstf, float * dst, const int ncols, const float scale) {
+        const float * x, const float * grad, float * dst, const int ncols, const float scale) {
     const int tid  = threadIdx.x;
     const int rowx = blockIdx.x;
 
-    grad += int64_t(rowx)*ncols;
-    dstf += int64_t(rowx)*ncols;
-    dst  += int64_t(rowx)*ncols;
-
-    float dgf_dot = 0.0f; // dot product of dst from forward pass and gradients
+    float xgdot = 0.0f;
 
     for (int col = tid; col < ncols; col += WARP_SIZE) {
-        dgf_dot += dstf[col]*grad[col];
+        const int64_t ix = (int64_t)rowx*ncols + col;
+
+        xgdot += x[ix]*grad[ix];
     }
 
-    dgf_dot = warp_reduce_sum(dgf_dot);
+    xgdot = warp_reduce_sum(xgdot);
 
     for (int col = tid; col < ncols; col += WARP_SIZE) {
-        dst[col] = scale * (grad[col] - dgf_dot) * dstf[col];
+        const int64_t ix = (int64_t)rowx*ncols + col;
+
+        dst[ix] = scale * (grad[ix] - xgdot) * x[ix];
     }
 }
 
@@ -147,7 +147,7 @@ static void soft_max_f32_cuda(const float * x, const T * mask, float * dst, cons
     while (nth < ncols_x && nth < CUDA_SOFT_MAX_BLOCK_SIZE) nth *= 2;
     const dim3 block_dims(nth,     1, 1);
     const dim3 block_nums(nrows_x, 1, 1);
-    const size_t nbytes_shared = (GGML_PAD(ncols_x, WARP_SIZE) + WARP_SIZE)*sizeof(float);
+    const size_t shmem = (GGML_PAD(ncols_x, WARP_SIZE) + WARP_SIZE)*sizeof(float);
     static_assert(CUDA_SOFT_MAX_BLOCK_SIZE == 1024, "These values need to be adjusted.");
 
     const uint32_t n_head      = nrows_x/nrows_y;
@@ -157,58 +157,49 @@ static void soft_max_f32_cuda(const float * x, const T * mask, float * dst, cons
     const float m1 = powf(2.0f, -(max_bias / 2.0f) / n_head_log2);
 
     // FIXME: this limit could be raised by ~2-4x on Ampere or newer
-    if (nbytes_shared < ggml_cuda_info().devices[ggml_cuda_get_device()].smpb) {
+    if (shmem < ggml_cuda_info().devices[ggml_cuda_get_device()].smpb) {
         switch (ncols_x) {
             case 32:
-                soft_max_f32<true,   32,   32><<<block_nums, block_dims, nbytes_shared, stream>>>
-                    (x, mask, dst, ncols_x, nrows_y, scale, max_bias, m0, m1, n_head_log2);
+                soft_max_f32<true, 32, 32><<<block_nums, block_dims, shmem, stream>>>(x, mask, dst, ncols_x, nrows_y, scale, max_bias, m0, m1, n_head_log2);
                 break;
             case 64:
-                soft_max_f32<true,   64,   64><<<block_nums, block_dims, nbytes_shared, stream>>>
-                    (x, mask, dst, ncols_x, nrows_y, scale, max_bias, m0, m1, n_head_log2);
+                soft_max_f32<true, 64, 64><<<block_nums, block_dims, shmem, stream>>>(x, mask, dst, ncols_x, nrows_y, scale, max_bias, m0, m1, n_head_log2);
                 break;
             case 128:
-                soft_max_f32<true,  128,  128><<<block_nums, block_dims, nbytes_shared, stream>>>
-                    (x, mask, dst, ncols_x, nrows_y, scale, max_bias, m0, m1, n_head_log2);
+                soft_max_f32<true, 128, 128><<<block_nums, block_dims, shmem, stream>>>(x, mask, dst, ncols_x, nrows_y, scale, max_bias, m0, m1, n_head_log2);
                 break;
             case 256:
-                soft_max_f32<true,  256,  256><<<block_nums, block_dims, nbytes_shared, stream>>>
-                    (x, mask, dst, ncols_x, nrows_y, scale, max_bias, m0, m1, n_head_log2);
+                soft_max_f32<true, 256, 256><<<block_nums, block_dims, shmem, stream>>>(x, mask, dst, ncols_x, nrows_y, scale, max_bias, m0, m1, n_head_log2);
                 break;
             case 512:
-                soft_max_f32<true,  512,  512><<<block_nums, block_dims, nbytes_shared, stream>>>
-                    (x, mask, dst, ncols_x, nrows_y, scale, max_bias, m0, m1, n_head_log2);
+                soft_max_f32<true, 512, 512><<<block_nums, block_dims, shmem, stream>>>(x, mask, dst, ncols_x, nrows_y, scale, max_bias, m0, m1, n_head_log2);
                 break;
             case 1024:
-                soft_max_f32<true, 1024, 1024><<<block_nums, block_dims, nbytes_shared, stream>>>
-                    (x, mask, dst, ncols_x, nrows_y, scale, max_bias, m0, m1, n_head_log2);
+                soft_max_f32<true, 1024, 1024><<<block_nums, block_dims, shmem, stream>>>(x, mask, dst, ncols_x, nrows_y, scale, max_bias, m0, m1, n_head_log2);
                 break;
             case 2048:
-                soft_max_f32<true, 2048, 1024><<<block_nums, block_dims, nbytes_shared, stream>>>
-                    (x, mask, dst, ncols_x, nrows_y, scale, max_bias, m0, m1, n_head_log2);
+                soft_max_f32<true, 2048, 1024><<<block_nums, block_dims, shmem, stream>>>(x, mask, dst, ncols_x, nrows_y, scale, max_bias, m0, m1, n_head_log2);
                 break;
             case 4096:
-                soft_max_f32<true, 4096, 1024><<<block_nums, block_dims, nbytes_shared, stream>>>
-                    (x, mask, dst, ncols_x, nrows_y, scale, max_bias, m0, m1, n_head_log2);
+                soft_max_f32<true, 4096, 1024><<<block_nums, block_dims, shmem, stream>>>(x, mask, dst, ncols_x, nrows_y, scale, max_bias, m0, m1, n_head_log2);
                 break;
             default:
-                soft_max_f32<true,    0,    0><<<block_nums, block_dims, nbytes_shared, stream>>>
-                    (x, mask, dst, ncols_x, nrows_y, scale, max_bias, m0, m1, n_head_log2);
+                soft_max_f32<true, 0, 0><<<block_nums, block_dims, shmem, stream>>>(x, mask, dst, ncols_x, nrows_y, scale, max_bias, m0, m1, n_head_log2);
                 break;
         }
     } else {
-        const size_t nbytes_shared_low = WARP_SIZE*sizeof(float);
-        soft_max_f32<false, 0, 0><<<block_nums, block_dims, nbytes_shared_low, stream>>>(x, mask, dst, ncols_x, nrows_y, scale, max_bias, m0, m1, n_head_log2);
+        const size_t shmem_low = WARP_SIZE*sizeof(float);
+        soft_max_f32<false, 0, 0><<<block_nums, block_dims, shmem_low, stream>>>(x, mask, dst, ncols_x, nrows_y, scale, max_bias, m0, m1, n_head_log2);
     }
 }
 
 static void soft_max_back_f32_cuda(
-        const float * grad, const float * dstf, float * dst,
+        const float * x, const float * grad, float * dst,
         const int ncols, const int nrows, const float scale, cudaStream_t stream) {
     const dim3 block_dims(WARP_SIZE, 1, 1);
     const dim3 block_nums(nrows,     1, 1);
 
-    soft_max_back_f32<<<block_nums, block_dims, 0, stream>>>(grad, dstf, dst, ncols, scale);
+    soft_max_back_f32<<<block_nums, block_dims, 0, stream>>>(x, grad, dst, ncols, scale);
 }
 
 void ggml_cuda_op_soft_max(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
@@ -217,8 +208,8 @@ void ggml_cuda_op_soft_max(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
 
     const float * src0_d = (const float *) src0->data;
     const void  * src1_d = src1 ? (const void *) src1->data : nullptr;
-    float       *  dst_d = (float *) dst->data;
 
+    float * dst_d = (float *) dst->data;
     cudaStream_t stream = ctx.stream();
 
     GGML_ASSERT(src0->type == GGML_TYPE_F32);
@@ -239,9 +230,13 @@ void ggml_cuda_op_soft_max(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const bool use_f16 = (src1 && src1->type == GGML_TYPE_F16);
 
     if (use_f16) {
-        soft_max_f32_cuda(src0_d, (const half  *) src1_d, dst_d, ne00, nrows_x, nrows_y, scale, max_bias, stream);
+        const half * src1_dd = (const half *) src1_d;
+
+        soft_max_f32_cuda(src0_d, src1_dd, dst_d, ne00, nrows_x, nrows_y, scale, max_bias, stream);
     } else {
-        soft_max_f32_cuda(src0_d, (const float *) src1_d, dst_d, ne00, nrows_x, nrows_y, scale, max_bias, stream);
+        const float * src1_dd = (const float *) src1_d;
+
+        soft_max_f32_cuda(src0_d, src1_dd, dst_d, ne00, nrows_x, nrows_y, scale, max_bias, stream);
     }
 }
 
@@ -270,5 +265,5 @@ void ggml_cuda_op_soft_max_back(ggml_backend_cuda_context & ctx, ggml_tensor * d
 
     GGML_ASSERT(max_bias == 0.0f);
 
-    soft_max_back_f32_cuda(src0_d, src1_d, dst_d, ncols, nrows, scale, stream);
+    soft_max_back_f32_cuda(src1_d, src0_d, dst_d, ncols, nrows, scale, stream);
 }
