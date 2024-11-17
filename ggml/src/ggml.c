@@ -5167,7 +5167,7 @@ static void ggml_compute_backward(
         } break;
         case GGML_OP_MUL: {
             if (src0_needs_grads) {
-                ggml_add_or_set(ctx, cgraph, isrc0, ggml_mul(ctx, src1, grad));
+                ggml_add_or_set(ctx, cgraph, isrc0, ggml_mul(ctx, grad, src1));
             }
             if (src1_needs_grads) {
                 struct ggml_tensor * tmp = ggml_mul(ctx, src0, grad);
@@ -5342,7 +5342,9 @@ static void ggml_compute_backward(
             if (src0_needs_grads) {
                 GGML_ASSERT(!cgraph->grads[isrc0] || ggml_is_contiguous(cgraph->grads[isrc0]));
                 GGML_ASSERT(ggml_is_contiguous(grad));
-                ggml_add_or_set(ctx, cgraph, isrc0, grad);
+                GGML_ASSERT(ggml_nelements(tensor) == ggml_nelements(src0));
+                ggml_add_or_set(ctx, cgraph, isrc0,
+                    ggml_are_same_shape(tensor, src0) ? grad : ggml_reshape(ctx, grad, src0));
             }
         } break;
         case GGML_OP_RESHAPE: {

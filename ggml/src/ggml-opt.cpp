@@ -73,7 +73,7 @@ struct ggml_opt_result {
 
 // ====== Dataset ======
 
-ggml_opt_dataset_t ggml_opt_dataset_init(int64_t ne_datapoint, int64_t ne_label, int64_t ndata, int64_t ndata_shard) {
+ggml_opt_dataset_t ggml_opt_dataset_init(enum ggml_type type_data, int64_t ne_datapoint, int64_t ne_label, int64_t ndata, int64_t ndata_shard) {
     GGML_ASSERT(ne_datapoint >  0);
     GGML_ASSERT(ne_label     >= 0);
     GGML_ASSERT(ndata        >  0);
@@ -92,7 +92,7 @@ ggml_opt_dataset_t ggml_opt_dataset_init(int64_t ne_datapoint, int64_t ne_label,
         result->ctx = ggml_init(params);
     }
 
-    result->data = ggml_new_tensor_2d(result->ctx, GGML_TYPE_F32, ne_datapoint, ndata);
+    result->data = ggml_new_tensor_2d(result->ctx, type_data, ne_datapoint, ndata);
     result->nbs_data = ggml_nbytes(result->data) * ndata_shard/ndata;
 
     if (ne_label > 0) {
@@ -144,6 +144,8 @@ void ggml_opt_dataset_get_batch(ggml_opt_dataset_t dataset, struct ggml_tensor *
     GGML_ASSERT(   data_batch && ggml_is_contiguous(data_batch));
     GGML_ASSERT(!labels_batch || ggml_is_contiguous(labels_batch));
     GGML_ASSERT((labels_batch == nullptr) == (dataset->labels == nullptr));
+    GGML_ASSERT(                   data_batch->type == dataset->data->type);
+    GGML_ASSERT(!labels_batch || labels_batch->type == dataset->labels->type);
 
     const size_t nb_data_batch = ggml_nbytes(data_batch);
     GGML_ASSERT(nb_data_batch % dataset->nbs_data == 0);
@@ -198,6 +200,7 @@ struct ggml_opt_params ggml_opt_default_params(
         /*ctx_compute     =*/ ctx_compute,
         /*inputs          =*/ inputs,
         /*logits          =*/ outputs,
+        /*gf              =*/ nullptr,
         /*loss_type       =*/ loss_type,
         /*build_type      =*/ GGML_OPT_BUILD_TYPE_OPT,
         /*opt_period      =*/ 1,
@@ -286,6 +289,18 @@ static void ggml_opt_alloc_graph(ggml_opt_context_t opt_ctx, ggml_cgraph * graph
 
     opt_ctx->allocated_graph_copy = dup_graph(opt_ctx->ctx_copy, graph);
 
+    // FIXME some nodes in backward pass are not being assigned a backend, problem is probably related to graph deep copy
+    {
+        ggml_backend_t backend = ggml_backend_sched_get_backend(opt_ctx->backend_sched, 0);
+        ggml_backend_t backend_cpu = ggml_backend_sched_get_backend(
+            opt_ctx->backend_sched, ggml_backend_sched_get_n_backends(opt_ctx->backend_sched)-1);
+        for (int i = opt_ctx->gf->n_nodes; i < opt_ctx->allocated_graph_copy->n_nodes; ++i) {
+            ggml_tensor * node = opt_ctx->allocated_graph_copy->nodes[i];
+            ggml_backend_sched_set_tensor_backend(
+                opt_ctx->backend_sched, node, ggml_backend_supports_op(backend, node) ? backend : backend_cpu);
+        }
+    }
+
     ggml_backend_sched_alloc_graph(opt_ctx->backend_sched, opt_ctx->allocated_graph_copy);
     opt_ctx->allocated_graph = graph;
 }
@@ -309,8 +324,15 @@ ggml_opt_context_t ggml_opt_init(struct ggml_opt_params params) {
     ggml_set_input(result->inputs);
     ggml_set_output(result->outputs);
 
-    result->gf = ggml_new_graph_custom(result->ctx_compute, GGML_DEFAULT_GRAPH_SIZE, /*grads =*/ true); // Forward pass.
+    if (result->gf) {
+        struct ggml_cgraph * gf_cpy = ggml_new_graph_custom(result->ctx_compute, result->gf->size, true);
+        ggml_graph_cpy(result->gf, gf_cpy);
+        result->gf = gf_cpy;
+    } else {
+        result->gf = ggml_new_graph_custom(result->ctx_compute, GGML_DEFAULT_GRAPH_SIZE, /*grads =*/ true); // Forward pass.
+    }
     ggml_build_forward_expand(result->gf, result->outputs);
+    // TODO check that inputs/outputs are in forward graph
 
     int n_param = 0;
     for (int i = 0; i < result->gf->n_nodes; ++i) {
@@ -441,7 +463,7 @@ ggml_opt_context_t ggml_opt_init(struct ggml_opt_params params) {
         struct ggml_tensor * node = result->gb_opt->nodes[i];
         struct ggml_tensor * grad = ggml_graph_get_grad(result->gb_opt, node);
 
-        if (node->flags & GGML_TENSOR_FLAG_PARAM) {
+        if (grad && (node->flags & GGML_TENSOR_FLAG_PARAM)) {
             struct ggml_tensor * m        = ggml_dup_tensor(result->ctx_static, node);
             struct ggml_tensor * v        = ggml_dup_tensor(result->ctx_static, node);
             struct ggml_tensor * opt_step = ggml_opt_step_adamw(result->ctx_compute, node, grad, m, v, result->adamw_params);
