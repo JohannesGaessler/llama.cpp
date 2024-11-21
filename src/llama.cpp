@@ -3340,8 +3340,6 @@ struct llama_context {
     struct ggml_tensor * inp_pos_bucket;    // I32 [n_batch|n_kv, n_batch]
     struct ggml_tensor * inp_embd_enc;      // F32 [n_embd, n_outputs_enc]
     struct ggml_tensor * inp_KQ_mask_cross; // F32 [n_outputs_enc, n_batch]
-
-    bool static_inputs = false;
 };
 
 struct llama_lora_weight {
@@ -9386,22 +9384,13 @@ static struct ggml_tensor * llm_build_inp_embd(
     struct ggml_tensor * inpL;
 
     if (batch.token) {
-        if (lctx.static_inputs) {
-            GGML_ASSERT(lctx.inp_tokens);
-            GGML_ASSERT(lctx.inp_tokens->ne[0] == batch.n_tokens);
-            GGML_ASSERT(lctx.inp_tokens->ne[1] == 1);
-            GGML_ASSERT(lctx.inp_tokens->ne[2] == 1);
-            GGML_ASSERT(lctx.inp_tokens->ne[3] == 1);
-        } else {
-            lctx.inp_tokens = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, batch.n_tokens);
-            cb(lctx.inp_tokens, "inp_tokens", -1);
-            ggml_set_input(lctx.inp_tokens);
-        }
+        lctx.inp_tokens = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, batch.n_tokens);
+        cb(lctx.inp_tokens, "inp_tokens", -1);
+        ggml_set_input(lctx.inp_tokens);
 
         inpL = ggml_get_rows(ctx, tok_embd, lctx.inp_tokens);
     } else {
-        GGML_ASSERT(!lctx.static_inputs);
-        lctx.inp_embd = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, batch.n_tokens);
+       lctx.inp_embd = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, batch.n_tokens);
         inpL = lctx.inp_embd;
         ggml_set_input(lctx.inp_embd);
     }
@@ -10368,9 +10357,7 @@ struct llm_build_context {
 
         ctx0 = ggml_init(params);
 
-        if (!lctx.static_inputs) {
-            lctx.inp_tokens  = nullptr;
-        }
+        lctx.inp_tokens      = nullptr;
         lctx.inp_embd        = nullptr;
         lctx.inp_pos         = nullptr;
         lctx.inp_out_ids     = nullptr;
