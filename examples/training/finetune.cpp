@@ -54,10 +54,6 @@ int main(int argc, char ** argv) {
     std::vector<llama_token> tokens = common_tokenize(ctx, params.prompt, true);
     ggml_opt_dataset_t dataset = llama_opt_dataset_init(model, tokens.data(), tokens.size());
 
-    const int64_t nepoch    = 10;
-    const float   val_split = 0.05f;
-    const bool    silent    = false;
-    llama_opt_fit(ctx, dataset, ggml_opt_get_default_optimizer_params, nepoch, val_split, silent);
 
     // struct ggml_context * c = ggml_init({1024*1024*1024, NULL, true});
     // struct ggml_tensor * a = ggml_new_tensor_2d(c, GGML_TYPE_I32, 1, 128);

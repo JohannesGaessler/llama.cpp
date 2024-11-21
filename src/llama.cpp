@@ -1,3 +1,4 @@
+#include "ggml-opt.h"
 #include "llama-impl.h"
 #include "llama-vocab.h"
 #include "llama-sampling.h"
@@ -3320,6 +3321,8 @@ struct llama_context {
     // memory buffers used to evaluate the model
     std::vector<uint8_t> buf_compute_meta;
     ggml_backend_sched_ptr sched;
+    ggml_opt_dataset_t opt_dataset;
+    ggml_opt_context_t opt_context;
 
     ggml_abort_callback abort_callback      = nullptr;
     void *              abort_callback_data = nullptr;
@@ -17475,15 +17478,16 @@ static enum ggml_status llama_graph_compute(
 // return positive int on warning
 // return negative int on error
 //
-static int llama_decode_internal(
+static std::pair<int, struct ggml_cgraph *> llama_decode_internal(
          llama_context & lctx,
-           llama_batch   inp_batch) {
+           llama_batch   inp_batch,
+                  bool   build_only) {
 
     lctx.is_encoding = false;
 
     if (inp_batch.n_tokens == 0) {
         LLAMA_LOG_ERROR("%s: n_tokens == 0\n", __func__);
-        return -1;
+        return std::make_pair(-1, nullptr);
     }
 
     // temporary allocate memory for the input batch if needed
@@ -17501,7 +17505,7 @@ static int llama_decode_internal(
         for (uint32_t i = 0; i < n_tokens_all; ++i) {
             if (batch.token[i] < 0 || (uint32_t)batch.token[i] >= model.vocab.n_vocab) {
                 LLAMA_LOG_ERROR("%s: invalid token[%d] = %d\n", __func__, i, batch.token[i]);
-                return -1;
+                return std::make_pair(-1, nullptr);
             }
         }
     }
@@ -17550,7 +17554,7 @@ static int llama_decode_internal(
     // reserve output buffer
     if (llama_output_reserve(lctx, n_outputs) < n_outputs) {
         LLAMA_LOG_ERROR("%s: could not reserve space for batch with %u outputs\n", __func__, n_outputs);
-        return -2;
+        return std::make_pair(-2, nullptr);
     };
 
     while (lctx.sbatch.n_tokens > 0) {
@@ -17603,7 +17607,7 @@ static int llama_decode_internal(
 
             const auto slot = llama_kv_cache_find_slot(kv_self, ubatch);
             if (!slot) {
-                return 1;
+                return std::make_pair(1, nullptr);
             }
             kv_slot_restorer.save(slot);
 
@@ -17623,6 +17627,10 @@ static int llama_decode_internal(
         ggml_backend_sched_set_eval_callback(lctx.sched.get(), lctx.cparams.cb_eval, lctx.cparams.cb_eval_user_data);
 
         ggml_cgraph * gf = llama_build_graph(lctx, ubatch, false);
+
+        if (build_only) {
+            return std::make_pair(0, gf);
+        }
 
         // the output is always the last tensor in the graph
         struct ggml_tensor * res  = ggml_graph_node(gf, -1);
@@ -17657,12 +17665,12 @@ static int llama_decode_internal(
             kv_slot_restorer.restore(kv_self);
             switch (compute_status) {
                 case GGML_STATUS_ABORTED:
-                    return 2;
+                    return std::make_pair(2, nullptr);
                 case GGML_STATUS_ALLOC_FAILED:
-                    return -2;
+                    return std::make_pair(-2, nullptr);
                 case GGML_STATUS_FAILED:
                 default:
-                    return -3;
+                    return std::make_pair(-3, nullptr);
             }
         }
 
@@ -17796,7 +17804,7 @@ static int llama_decode_internal(
     // overlap with device computation.
     ggml_backend_sched_reset(lctx.sched.get());
 
-    return 0;
+    return std::make_pair(0, nullptr);
 }
 
 // encode a batch of tokens by evaluating the encoder part of the transformer
@@ -21533,7 +21541,7 @@ int32_t llama_encode(
 int32_t llama_decode(
         struct llama_context * ctx,
           struct llama_batch   batch) {
-    const int ret = llama_decode_internal(*ctx, batch);
+    const int ret = llama_decode_internal(*ctx, batch, false).first;
     if (ret != 0) {
         LLAMA_LOG_ERROR("%s: failed to decode, ret = %d\n", __func__, ret);
     }
@@ -22306,14 +22314,15 @@ void llama_log_callback_default(ggml_log_level level, const char * text, void * 
 // training
 //
 
-ggml_opt_dataset_t llama_opt_dataset_init(const struct llama_model * model, const llama_token * tokens, int64_t n_tokens) {
-    const int32_t ne_datapoint = llama_n_ctx_train(model);
-    const int32_t ne_label     = llama_n_vocab(model);
+void llama_opt_dataset_init(struct llama_context * ctx, const llama_token * tokens, int64_t n_tokens) {
+    const struct llama_model & model = ctx->model;
+    const int32_t ne_datapoint = llama_n_ctx_train(&model);
+    const int32_t ne_label     = llama_n_vocab(&model);
     const int64_t ndata        = n_tokens - ne_datapoint - 1;
-    ggml_opt_dataset_t result = ggml_opt_dataset_init(GGML_TYPE_I32, ne_datapoint, ne_label, ndata, /*ndata_shard =*/ 1);
+    ctx->opt_dataset = ggml_opt_dataset_init(GGML_TYPE_I32, ne_datapoint, ne_label, ndata, /*ndata_shard =*/ 1);
 
-    llama_token * data   = (llama_token *) ggml_opt_dataset_data(result)->data;
-    float       * labels = (float       *) ggml_opt_dataset_labels(result)->data;
+    llama_token * data   = (llama_token *) ggml_opt_dataset_data(ctx->opt_dataset)->data;
+    float       * labels = (float       *) ggml_opt_dataset_labels(ctx->opt_dataset)->data;
 
     for (int64_t idata = 0; idata < ndata; ++idata) {
         memcpy(data + idata*ne_datapoint, tokens + idata, ne_datapoint*sizeof(llama_token));
@@ -22321,6 +22330,31 @@ ggml_opt_dataset_t llama_opt_dataset_init(const struct llama_model * model, cons
         memset(labels + idata*ne_label, 0, ne_label*sizeof(float));
         labels[idata*ne_label + tokens[idata + ne_datapoint]] = 1.0f;
     }
+}
 
-    return result;
+void llama_opt_context_init(struct llama_context * ctx) {
+    const struct llama_model & model = ctx->model;
+    const int32_t ne_datapoint = llama_n_ctx_train(&model);
+
+    struct ggml_context * ctx_compute;
+    {
+        struct ggml_init_params params = {
+            /*.mem_size   =*/ 1024*1024*1024,
+            /*.mem_buffer =*/ nullptr,
+            /*.no_alloc   =*/ true,
+        };
+        ctx_compute = ggml_init(params);
+    }
+
+    struct llama_batch batch = llama_batch_init(ne_datapoint, 0, 1);
+    batch.n_tokens = ne_datapoint;
+
+    std::pair<int, struct ggml_cgraph *> ret = llama_decode_internal(*ctx, batch, true);
+    GGML_ASSERT(ret.first == 0);
+
+    struct ggml_tensor * inputs  = ctx->inp_tokens;
+    struct ggml_tensor * outputs =
+
+    struct ggml_opt_params opt_params = ggml_opt_default_params(ctx->sched.get(), ctx_compute, , , );
+    ctx->opt_context = ggml_opt_ini
 }
