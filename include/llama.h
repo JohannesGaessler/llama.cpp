@@ -1249,13 +1249,6 @@ extern "C" {
     LLAMA_API void                           llama_perf_sampler_reset(      struct llama_sampler * chain);
 
     LLAMA_API ggml_opt_dataset_t llama_opt_dataset_init(const struct llama_model * model, const llama_token * tokens, int64_t n_tokens);
-    LLAMA_API void llama_opt_fit(
-            struct llama_context          * lctx,
-            ggml_opt_dataset_t              dataset,
-            ggml_opt_get_optimizer_params   get_opt_pars,
-            int64_t                         nepoch,
-            float                           val_split,
-            bool                            silent);
 
 #ifdef __cplusplus
 }
