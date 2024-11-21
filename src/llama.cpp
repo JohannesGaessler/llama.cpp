@@ -22379,6 +22379,8 @@ void llama_opt_fit(
     const int64_t nbatch_physical = 1;
     const int64_t nbatch_logical  = 1;
 
+    lctx->n_outputs = nbatch_physical;
+
     ggml_backend_buffer_t buf_static;
     {
         ggml_backend_t backend = ggml_backend_sched_get_backend(lctx->sched.get(), 0);
