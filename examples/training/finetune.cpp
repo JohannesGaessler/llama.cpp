@@ -3,18 +3,10 @@
 #include "log.h"
 #include "llama.h"
 
-#include <algorithm>
-#include <array>
-#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
-#include <fstream>
-#include <mutex>
-#include <random>
-#include <sstream>
-#include <thread>
 #include <vector>
 
 #if defined(_MSC_VER)
@@ -51,9 +43,19 @@ int main(int argc, char ** argv) {
         LOG_INF("%s\n", common_params_get_system_info(params).c_str());
     }
 
-    std::vector<llama_token> tokens = common_tokenize(ctx, params.prompt, true);
-    ggml_opt_dataset_t dataset = llama_opt_dataset_init(model, tokens.data(), tokens.size());
+    const int32_t n_ctx_train = llama_n_ctx_train(model);
 
+    struct llama_batch batch = llama_batch_init(n_ctx_train, 0, 1);
+    for (int i = 0; i < n_ctx_train; ++i) {
+        common_batch_add(batch, 0, i, {0}, /*logits =*/ i == n_ctx_train-1);
+    }
+
+    std::vector<llama_token> tokens = common_tokenize(ctx, params.prompt, true);
+    ggml_opt_dataset_t dataset = llama_opt_dataset_init(ctx, tokens.data(), tokens.size());
+    ggml_opt_context_t opt_ctx = llama_opt_init(ctx, batch);
+    ggml_opt_result_t result = ggml_opt_result_init();
+
+    ggml_opt_epoch(opt_ctx, dataset, nullptr, result, 0, nullptr, ggml_opt_epoch_callback_progress_bar);
 
     // struct ggml_context * c = ggml_init({1024*1024*1024, NULL, true});
     // struct ggml_tensor * a = ggml_new_tensor_2d(c, GGML_TYPE_I32, 1, 128);

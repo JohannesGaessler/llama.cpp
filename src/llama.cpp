@@ -3321,28 +3321,28 @@ struct llama_context {
     // memory buffers used to evaluate the model
     std::vector<uint8_t> buf_compute_meta;
     ggml_backend_sched_ptr sched;
-    ggml_opt_dataset_t opt_dataset;
-    ggml_opt_context_t opt_context;
 
     ggml_abort_callback abort_callback      = nullptr;
     void *              abort_callback_data = nullptr;
 
     // input tensors
-    struct ggml_tensor * inp_tokens;      // I32 [n_batch]
-    struct ggml_tensor * inp_embd;        // F32 [n_embd, n_batch]
-    struct ggml_tensor * inp_pos;         // I32 [n_batch]
-    struct ggml_tensor * inp_out_ids;     // I32 [n_outputs]
-    struct ggml_tensor * inp_KQ_mask;     // F32 [kv_size, n_batch]
-    struct ggml_tensor * inp_KQ_mask_swa; // F32 [kv_size, n_batch]
-    struct ggml_tensor * inp_K_shift;     // I32 [kv_size]
-    struct ggml_tensor * inp_mean;        // F32 [n_batch, n_batch]
-    struct ggml_tensor * inp_cls;         // I32 [n_batch]
-    struct ggml_tensor * inp_s_copy;      // I32 [kv_size]
-    struct ggml_tensor * inp_s_mask;      // F32 [1, n_kv]
-    struct ggml_tensor * inp_s_seq;       // I32 [n_kv, n_batch]
+    struct ggml_tensor * inp_tokens;        // I32 [n_batch]
+    struct ggml_tensor * inp_embd;          // F32 [n_embd, n_batch]
+    struct ggml_tensor * inp_pos;           // I32 [n_batch]
+    struct ggml_tensor * inp_out_ids;       // I32 [n_outputs]
+    struct ggml_tensor * inp_KQ_mask;       // F32 [kv_size, n_batch]
+    struct ggml_tensor * inp_KQ_mask_swa;   // F32 [kv_size, n_batch]
+    struct ggml_tensor * inp_K_shift;       // I32 [kv_size]
+    struct ggml_tensor * inp_mean;          // F32 [n_batch, n_batch]
+    struct ggml_tensor * inp_cls;           // I32 [n_batch]
+    struct ggml_tensor * inp_s_copy;        // I32 [kv_size]
+    struct ggml_tensor * inp_s_mask;        // F32 [1, n_kv]
+    struct ggml_tensor * inp_s_seq;         // I32 [n_kv, n_batch]
     struct ggml_tensor * inp_pos_bucket;    // I32 [n_batch|n_kv, n_batch]
     struct ggml_tensor * inp_embd_enc;      // F32 [n_embd, n_outputs_enc]
     struct ggml_tensor * inp_KQ_mask_cross; // F32 [n_outputs_enc, n_batch]
+
+    struct ggml_context * ctx_static = nullptr;
 };
 
 struct llama_lora_weight {
@@ -9377,6 +9377,7 @@ enum llm_norm_type {
 
 static struct ggml_tensor * llm_build_inp_embd(
         struct ggml_context * ctx,
+        struct ggml_context * ctx_static,
        struct llama_context & lctx,
         const llama_hparams & hparams,
          const llama_ubatch & batch,
@@ -9387,13 +9388,13 @@ static struct ggml_tensor * llm_build_inp_embd(
     struct ggml_tensor * inpL;
 
     if (batch.token) {
-        lctx.inp_tokens = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, batch.n_tokens);
+        lctx.inp_tokens = ggml_new_tensor_1d(ctx_static, GGML_TYPE_I32, batch.n_tokens);
         cb(lctx.inp_tokens, "inp_tokens", -1);
         ggml_set_input(lctx.inp_tokens);
 
         inpL = ggml_get_rows(ctx, tok_embd, lctx.inp_tokens);
     } else {
-       lctx.inp_embd = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, batch.n_tokens);
+        lctx.inp_embd = ggml_new_tensor_2d(ctx_static, GGML_TYPE_F32, n_embd, batch.n_tokens);
         inpL = lctx.inp_embd;
         ggml_set_input(lctx.inp_embd);
     }
@@ -10303,7 +10304,8 @@ struct llm_build_context {
 
     std::vector<uint8_t> & buf_compute_meta;
 
-    struct ggml_context * ctx0 = nullptr;
+    struct ggml_context * ctx0       = nullptr;
+    struct ggml_context * ctx_static = nullptr;
 
     // TODO: consider making the entire interface noexcept
     llm_build_context(
@@ -10359,19 +10361,20 @@ struct llm_build_context {
         };
 
         ctx0 = ggml_init(params);
+        ctx_static = lctx.ctx_static ? lctx.ctx_static : ctx0;
 
-        lctx.inp_tokens      = nullptr;
-        lctx.inp_embd        = nullptr;
-        lctx.inp_pos         = nullptr;
-        lctx.inp_out_ids     = nullptr;
-        lctx.inp_KQ_mask     = nullptr;
-        lctx.inp_KQ_mask_swa = nullptr;
-        lctx.inp_K_shift     = nullptr;
-        lctx.inp_mean        = nullptr;
-        lctx.inp_cls         = nullptr;
-        lctx.inp_s_copy      = nullptr;
-        lctx.inp_s_mask      = nullptr;
-        lctx.inp_s_seq       = nullptr;
+        lctx.inp_tokens        = nullptr;
+        lctx.inp_embd          = nullptr;
+        lctx.inp_pos           = nullptr;
+        lctx.inp_out_ids       = nullptr;
+        lctx.inp_KQ_mask       = nullptr;
+        lctx.inp_KQ_mask_swa   = nullptr;
+        lctx.inp_K_shift       = nullptr;
+        lctx.inp_mean          = nullptr;
+        lctx.inp_cls           = nullptr;
+        lctx.inp_s_copy        = nullptr;
+        lctx.inp_s_mask        = nullptr;
+        lctx.inp_s_seq         = nullptr;
         lctx.inp_pos_bucket    = nullptr;
         lctx.inp_embd_enc      = nullptr;
         lctx.inp_KQ_mask_cross = nullptr;
@@ -10501,7 +10504,7 @@ struct llm_build_context {
     }
 
     struct ggml_tensor * build_inp_pos() {
-        lctx.inp_pos = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_tokens);
+        lctx.inp_pos = ggml_new_tensor_1d(ctx_static, GGML_TYPE_I32, n_tokens);
         cb(lctx.inp_pos, "inp_pos", -1);
         ggml_set_input(lctx.inp_pos);
         return lctx.inp_pos;
@@ -10704,7 +10707,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -10864,7 +10867,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = model.type == MODEL_7B ? build_inp_pos() : nullptr;
@@ -10979,7 +10982,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -11083,7 +11086,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -11205,7 +11208,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // multiply by embedding_multiplier_scale of 78.38367176906169
         inpL = ggml_scale(ctx0, inpL, 78.38367176906169f);
@@ -11363,7 +11366,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -11485,7 +11488,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -11588,7 +11591,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // KQ_mask (mask for 1 head, it will be broadcasted to all heads)
         struct ggml_tensor * KQ_mask = build_inp_KQ_mask();
@@ -11690,7 +11693,7 @@ struct llm_build_context {
         }
 
         // construct input embeddings (token, type, position)
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // token types are hardcoded to zero ("Sentence A")
         struct ggml_tensor * type_row0 = ggml_view_1d(ctx0, model.type_embd, n_embd, 0);
@@ -11877,7 +11880,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // KQ_mask (mask for 1 head, it will be broadcasted to all heads)
         struct ggml_tensor * KQ_mask = build_inp_KQ_mask();
@@ -11979,7 +11982,7 @@ struct llm_build_context {
         struct ggml_tensor * pos;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // KQ_mask (mask for 1 head, it will be broadcasted to all heads)
         struct ggml_tensor * KQ_mask = build_inp_KQ_mask();
@@ -12117,7 +12120,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -12267,7 +12270,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -12380,7 +12383,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -12495,7 +12498,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -12640,7 +12643,7 @@ struct llm_build_context {
         struct ggml_tensor * ffn_output;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -12759,7 +12762,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -12887,7 +12890,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -12992,7 +12995,7 @@ struct llm_build_context {
         struct ggml_tensor * pos;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -13097,7 +13100,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -13207,7 +13210,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -13325,7 +13328,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -13452,7 +13455,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // scale the input embeddings
         inpL = ggml_scale(ctx0, inpL, scale_embd);
@@ -13596,7 +13599,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // scale the input embeddings
         inpL = ggml_scale(ctx0, inpL, scale_embd);
@@ -13797,7 +13800,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         inpL = ggml_scale(ctx0, inpL, sqrtf(n_embd));
         cb(inpL, "inp_scaled", -1);
@@ -13905,7 +13908,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         inpL = ggml_scale(ctx0, inpL, sqrtf(n_embd));
         cb(inpL, "inp_scaled", -1);
@@ -14043,7 +14046,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -14159,7 +14162,7 @@ struct llm_build_context {
         struct ggml_tensor * inpL;
 
         // {n_embd, n_tokens}
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         struct ggml_tensor * state_copy = build_inp_s_copy();
         struct ggml_tensor * state_mask = build_inp_s_mask();
@@ -14217,7 +14220,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -14374,7 +14377,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -14498,7 +14501,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -14626,7 +14629,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -14745,7 +14748,7 @@ struct llm_build_context {
 
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -14872,7 +14875,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -15017,7 +15020,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -15158,7 +15161,7 @@ struct llm_build_context {
         struct ggml_tensor * inpL;
 
         // {n_embd, n_tokens}
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -15373,7 +15376,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -15528,7 +15531,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         GGML_ASSERT(lctx.is_encoding);
         struct ggml_tensor * pos_bucket_enc = llm_build_pos_bucket(false);
@@ -15660,7 +15663,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         GGML_ASSERT(!lctx.is_encoding);
         GGML_ASSERT(n_outputs_enc > 0 && "call llama_encode() first");
@@ -15862,7 +15865,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // KQ_mask (mask for 1 head, it will be broadcasted to all heads)
         struct ggml_tensor * KQ_mask = build_inp_KQ_mask();
@@ -15954,7 +15957,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -16068,7 +16071,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -16192,7 +16195,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -16324,7 +16327,7 @@ struct llm_build_context {
         struct ggml_tensor * state_copy = build_inp_s_copy();
         struct ggml_tensor * state_mask = build_inp_s_mask();
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
         inpL = llm_build_norm(ctx0, inpL, hparams, model.tok_norm, model.tok_norm_b, LLM_NORM, cb, -1);
 
         for (int il = 0; il < n_layer; ++il) {
@@ -16438,7 +16441,7 @@ struct llm_build_context {
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
 
-        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
+        inpL = llm_build_inp_embd(ctx0, ctx_static, lctx, hparams, ubatch, model.tok_embd, cb);
 
         // inp_pos - contains the positions
         struct ggml_tensor * inp_pos = build_inp_pos();
@@ -17629,6 +17632,8 @@ static std::pair<int, struct ggml_cgraph *> llama_decode_internal(
         ggml_cgraph * gf = llama_build_graph(lctx, ubatch, false);
 
         if (build_only) {
+            ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors(lctx.ctx_static, lctx.backends[0].get());
+            llama_set_inputs(lctx, ubatch);
             return std::make_pair(0, gf);
         }
 
@@ -22314,15 +22319,15 @@ void llama_log_callback_default(ggml_log_level level, const char * text, void * 
 // training
 //
 
-void llama_opt_dataset_init(struct llama_context * ctx, const llama_token * tokens, int64_t n_tokens) {
+ggml_opt_dataset_t llama_opt_dataset_init(struct llama_context * ctx, const llama_token * tokens, int64_t n_tokens) {
     const struct llama_model & model = ctx->model;
     const int32_t ne_datapoint = llama_n_ctx_train(&model);
     const int32_t ne_label     = llama_n_vocab(&model);
     const int64_t ndata        = n_tokens - ne_datapoint - 1;
-    ctx->opt_dataset = ggml_opt_dataset_init(GGML_TYPE_I32, ne_datapoint, ne_label, ndata, /*ndata_shard =*/ 1);
+    ggml_opt_dataset_t result = ggml_opt_dataset_init(GGML_TYPE_I32, ne_datapoint, ne_label, ndata, /*ndata_shard =*/ 1);
 
-    llama_token * data   = (llama_token *) ggml_opt_dataset_data(ctx->opt_dataset)->data;
-    float       * labels = (float       *) ggml_opt_dataset_labels(ctx->opt_dataset)->data;
+    llama_token * data   = (llama_token *) ggml_opt_dataset_data(result)->data;
+    float       * labels = (float       *) ggml_opt_dataset_labels(result)->data;
 
     for (int64_t idata = 0; idata < ndata; ++idata) {
         memcpy(data + idata*ne_datapoint, tokens + idata, ne_datapoint*sizeof(llama_token));
@@ -22330,11 +22335,19 @@ void llama_opt_dataset_init(struct llama_context * ctx, const llama_token * toke
         memset(labels + idata*ne_label, 0, ne_label*sizeof(float));
         labels[idata*ne_label + tokens[idata + ne_datapoint]] = 1.0f;
     }
+
+    return result;
 }
 
-void llama_opt_context_init(struct llama_context * ctx) {
-    const struct llama_model & model = ctx->model;
-    const int32_t ne_datapoint = llama_n_ctx_train(&model);
+ggml_opt_context_t llama_opt_init(struct llama_context * ctx, struct llama_batch batch) {
+    {
+        struct ggml_init_params params = {
+            /*.mem_size   =*/ 1024*ggml_tensor_overhead(),
+            /*.mem_buffer =*/ nullptr,
+            /*.no_alloc   =*/ true,
+        };
+        ctx->ctx_static = ggml_init(params);
+    }
 
     struct ggml_context * ctx_compute;
     {
@@ -22346,15 +22359,13 @@ void llama_opt_context_init(struct llama_context * ctx) {
         ctx_compute = ggml_init(params);
     }
 
-    struct llama_batch batch = llama_batch_init(ne_datapoint, 0, 1);
-    batch.n_tokens = ne_datapoint;
-
     std::pair<int, struct ggml_cgraph *> ret = llama_decode_internal(*ctx, batch, true);
     GGML_ASSERT(ret.first == 0);
 
-    struct ggml_tensor * inputs  = ctx->inp_tokens;
-    struct ggml_tensor * outputs =
+    struct ggml_tensor * outputs = ggml_graph_node(ret.second, -1);
 
-    struct ggml_opt_params opt_params = ggml_opt_default_params(ctx->sched.get(), ctx_compute, , , );
-    ctx->opt_context = ggml_opt_ini
+    struct ggml_opt_params opt_params = ggml_opt_default_params(ctx->sched.get(), ctx_compute, ctx->inp_tokens, outputs, GGML_OPT_LOSS_TYPE_CROSS_ENTROPY);
+    opt_params.gf = ret.second;
+    opt_params.build_type = GGML_OPT_BUILD_TYPE_FORWARD;
+    return ggml_opt_init(opt_params);
 }
