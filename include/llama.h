@@ -4,7 +4,6 @@
 #include "ggml.h"
 #include "ggml-cpu.h"
 #include "ggml-backend.h"
-#include "ggml-opt.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -1247,12 +1246,6 @@ extern "C" {
     LLAMA_API struct llama_perf_sampler_data llama_perf_sampler      (const struct llama_sampler * chain);
     LLAMA_API void                           llama_perf_sampler_print(const struct llama_sampler * chain);
     LLAMA_API void                           llama_perf_sampler_reset(      struct llama_sampler * chain);
-
-    //
-    // training
-    //
-    LLAMA_API ggml_opt_dataset_t llama_opt_dataset_init(struct llama_context * ctx, const llama_token * tokens, int64_t n_tokens);
-    LLAMA_API ggml_opt_context_t llama_opt_init(struct llama_context * ctx, struct llama_batch batch);
 
 #ifdef __cplusplus
 }
