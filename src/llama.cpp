@@ -8,6 +8,7 @@
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
 #include "ggml-cpp.h"
+#include "ggml-opt.h"
 
 // TODO: replace with ggml API call
 #define QK_K 256
@@ -22305,4 +22306,28 @@ void llama_log_callback_default(ggml_log_level level, const char * text, void * 
     (void) user_data;
     fputs(text, stderr);
     fflush(stderr);
+}
+
+//
+// training
+//
+
+ggml_opt_dataset_t llama_opt_dataset_init(struct llama_context * ctx, const llama_token * tokens, int64_t n_tokens) {
+    const struct llama_model & model = ctx->model;
+    const int32_t ne_datapoint = llama_n_ctx_train(&model);
+    const int32_t ne_label     = llama_n_vocab(&model);
+    const int64_t ndata        = n_tokens - ne_datapoint - 1;
+    ggml_opt_dataset_t result = ggml_opt_dataset_init(GGML_TYPE_I32, ne_datapoint, ne_label, ndata, /*ndata_shard =*/ 1);
+
+    llama_token * data   = (llama_token *) ggml_opt_dataset_data(result)->data;
+    float       * labels = (float       *) ggml_opt_dataset_labels(result)->data;
+
+    for (int64_t idata = 0; idata < ndata; ++idata) {
+        memcpy(data + idata*ne_datapoint, tokens + idata, ne_datapoint*sizeof(llama_token));
+
+        memset(labels + idata*ne_label, 0, ne_label*sizeof(float));
+        labels[idata*ne_label + tokens[idata + ne_datapoint]] = 1.0f;
+    }
+
+    return result;
 }

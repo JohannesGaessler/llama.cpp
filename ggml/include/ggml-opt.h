@@ -45,6 +45,7 @@ extern "C" {
     GGML_API void ggml_opt_dataset_free(ggml_opt_dataset_t dataset);
 
     // get underlying tensors that store the data
+    GGML_API int64_t              ggml_opt_dataset_ndata (ggml_opt_dataset_t dataset);
     GGML_API struct ggml_tensor * ggml_opt_dataset_data  (ggml_opt_dataset_t dataset); // shape = [ne_datapoint, ndata]
     GGML_API struct ggml_tensor * ggml_opt_dataset_labels(ggml_opt_dataset_t dataset); // shape = [nd_label,     ndata]
 
@@ -57,6 +58,12 @@ extern "C" {
             struct ggml_tensor * data_batch,   // shape = [ne_datapoint, ndata_batch]
             struct ggml_tensor * labels_batch, // shape = [ne_label,     ndata_batch]
             int64_t              ibatch);
+    GGML_API void ggml_opt_dataset_get_batch_host(
+        ggml_opt_dataset_t   dataset,
+        void               * data_batch,
+        size_t               nb_data_batch,
+        void               * labels_batch,
+        int64_t              ibatch);
 
     // ====== Model / Context ======
 

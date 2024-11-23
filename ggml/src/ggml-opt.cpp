@@ -119,6 +119,10 @@ void ggml_opt_dataset_free(ggml_opt_dataset_t dataset) {
     delete dataset;
 }
 
+int64_t ggml_opt_dataset_ndata(ggml_opt_dataset_t dataset) {
+    return dataset->ndata;
+}
+
 struct ggml_tensor * ggml_opt_dataset_data(ggml_opt_dataset_t dataset) {
     return dataset->data;
 }
@@ -170,6 +174,31 @@ void ggml_opt_dataset_get_batch(ggml_opt_dataset_t dataset, struct ggml_tensor *
 
         const char * ptr_labels = (const char *) dataset->labels->data + ishard*dataset->nbs_labels;
         ggml_backend_tensor_set(labels_batch, ptr_labels, ishard_batch*dataset->nbs_labels, dataset->nbs_labels);
+    }
+}
+
+void ggml_opt_dataset_get_batch_host(ggml_opt_dataset_t dataset, void * data_batch, size_t nb_data_batch, void * labels_batch, int64_t ibatch) {
+    GGML_ASSERT((labels_batch == nullptr) == (dataset->labels == nullptr));
+    GGML_ASSERT(nb_data_batch % dataset->nbs_data == 0);
+
+    const int64_t shards_per_batch = nb_data_batch / dataset->nbs_data;
+
+    GGML_ASSERT((ibatch + 1)*shards_per_batch <= int64_t(dataset->permutation.size()));
+
+    for (int64_t ishard_batch = 0; ishard_batch < shards_per_batch; ++ishard_batch) {
+        const int64_t ishard = dataset->permutation[ibatch*shards_per_batch + ishard_batch];
+
+        const char * ptr_data       = (const char *) dataset->data->data + ishard      *dataset->nbs_data;
+        char       * ptr_data_batch = (char       *) data_batch          + ishard_batch*dataset->nbs_data;
+        memcpy(ptr_data_batch, ptr_data, dataset->nbs_data);
+
+        if (!labels_batch) {
+            continue;
+        }
+
+        const char * ptr_labels       = (const char *) dataset->labels->data + ishard      *dataset->nbs_labels;
+        char       * ptr_labels_batch = (char       *) labels_batch          + ishard_batch*dataset->nbs_labels;
+        memcpy(ptr_labels_batch, ptr_labels, dataset->nbs_labels);
     }
 }
 
