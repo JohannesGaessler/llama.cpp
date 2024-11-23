@@ -66,37 +66,12 @@ int main(int argc, char ** argv) {
     const int32_t n_ctx_train = llama_n_ctx_train(model);
     const int32_t n_vocab     = llama_n_vocab(model);
 
-    struct llama_batch batch = llama_batch_init(n_ctx_train, 0, 1);
     std::vector<llama_token> tokens = common_tokenize(ctx, params.prompt, true);
     ggml_opt_dataset_t dataset = llama_opt_dataset_init(ctx, tokens.data(), tokens.size());
-    const int64_t ndata = ggml_opt_dataset_ndata(dataset);
-
-    std::vector<float> logits(n_vocab);
-    std::vector<float> labels(n_vocab);
-    double ppl = 0.0;
-    for (int64_t idata = 0; idata < ndata; ++idata) {
-        llama_kv_cache_clear(ctx);
-
-        batch.n_tokens = n_ctx_train;
-        ggml_opt_dataset_get_batch_host(dataset, batch.token, batch.n_tokens*sizeof(llama_token), labels.data(), idata);
-        for (int32_t pos = 0; pos < n_ctx_train; ++pos) {
-            batch.pos     [pos]    = pos;
-            batch.n_seq_id[pos]    = 1;
-            batch.seq_id  [pos][0] = 0;
-            batch.logits  [pos]    = pos == n_ctx_train-1;
-        }
-
-        GGML_ASSERT(llama_decode(ctx, batch) == 0);
-
-        const float * logits_ptr = llama_get_logits(ctx);
-        memcpy(logits.data(), logits_ptr, n_vocab*sizeof(float));
-        const std::vector<float> probs = softmax(logits);
-
-        for (int32_t i_vocab = 0; i_vocab < n_vocab; ++i_vocab) {
-            ppl -= labels[i_vocab]*std::log(probs[i_vocab]);
-        }
-        printf("%s: idata=%ld/%ld, ppl=%lf\n", __func__, idata, ndata, ppl/idata);
-    }
+    ggml_opt_context_t opt_ctx = llama_opt_init(ctx);
+    ggml_opt_result_t result = ggml_opt_result_init();
+    llama_opt_epoch(ctx, opt_ctx, dataset, result, ggml_opt_epoch_callback_progress_bar);
+    ggml_opt_result_free(result);
 
     // struct ggml_context * c = ggml_init({1024*1024*1024, NULL, true});
     // struct ggml_tensor * a = ggml_new_tensor_2d(c, GGML_TYPE_I32, 1, 128);

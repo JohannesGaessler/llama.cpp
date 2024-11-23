@@ -59,11 +59,11 @@ extern "C" {
             struct ggml_tensor * labels_batch, // shape = [ne_label,     ndata_batch]
             int64_t              ibatch);
     GGML_API void ggml_opt_dataset_get_batch_host(
-        ggml_opt_dataset_t   dataset,
-        void               * data_batch,
-        size_t               nb_data_batch,
-        void               * labels_batch,
-        int64_t              ibatch);
+            ggml_opt_dataset_t   dataset,
+            void               * data_batch,
+            size_t               nb_data_batch,
+            void               * labels_batch,
+            int64_t              ibatch);
 
     // ====== Model / Context ======
 
@@ -152,6 +152,8 @@ extern "C" {
     GGML_API void ggml_opt_result_accuracy(ggml_opt_result_t result, double  * accuracy, double * unc); // writes 1 value
 
     // ====== Computation ======
+
+    GGML_API void ggml_opt_set_forward_graph(ggml_opt_context_t opt_ctx, struct ggml_cgraph * gf, struct ggml_tensor * inputs, struct ggml_tensor * outputs);
 
     // do forward pass, increment result if not NULL
     GGML_API void ggml_opt_forward(ggml_opt_context_t opt_ctx, ggml_opt_result_t result);
