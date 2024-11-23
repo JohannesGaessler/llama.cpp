@@ -229,7 +229,6 @@ struct ggml_opt_params ggml_opt_default_params(
         /*ctx_compute     =*/ ctx_compute,
         /*inputs          =*/ inputs,
         /*logits          =*/ outputs,
-        /*gf              =*/ nullptr,
         /*loss_type       =*/ loss_type,
         /*build_type      =*/ GGML_OPT_BUILD_TYPE_OPT,
         /*opt_period      =*/ 1,
@@ -340,7 +339,6 @@ ggml_opt_context_t ggml_opt_init(struct ggml_opt_params params) {
     result->ctx_compute     = params.ctx_compute;
     result->inputs          = params.inputs;
     result->outputs         = params.outputs;
-    result->gf              = params.gf;
     result->opt_period      = params.opt_period;
     result->get_opt_pars    = params.get_opt_pars;
     result->get_opt_pars_ud = params.get_opt_pars_ud;
@@ -354,15 +352,8 @@ ggml_opt_context_t ggml_opt_init(struct ggml_opt_params params) {
     ggml_set_input(result->inputs);
     ggml_set_output(result->outputs);
 
-    if (result->gf) {
-        struct ggml_cgraph * gf_cpy = ggml_new_graph_custom(result->ctx_compute, result->gf->size, true);
-        ggml_graph_cpy(result->gf, gf_cpy);
-        result->gf = gf_cpy;
-    } else {
-        result->gf = ggml_new_graph_custom(result->ctx_compute, GGML_DEFAULT_GRAPH_SIZE, /*grads =*/ true); // Forward pass.
-    }
+    result->gf = ggml_new_graph_custom(result->ctx_compute, GGML_DEFAULT_GRAPH_SIZE, /*grads =*/ true); // Forward pass.
     ggml_build_forward_expand(result->gf, result->outputs);
-    // TODO check that inputs/outputs are in forward graph
 
     int n_param = 0;
     for (int i = 0; i < result->gf->n_nodes; ++i) {

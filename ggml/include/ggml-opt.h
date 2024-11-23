@@ -104,7 +104,6 @@ extern "C" {
         //     are not intended to be reusable between multiple optimization contexts
         struct ggml_tensor * inputs;
         struct ggml_tensor * outputs;
-        struct ggml_cgraph * gf; // graph forward, optional, can be used to control order of tensor execution
 
         enum ggml_opt_loss_type  loss_type;
         enum ggml_opt_build_type build_type;
