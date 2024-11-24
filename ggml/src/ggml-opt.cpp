@@ -317,7 +317,11 @@ static void ggml_opt_alloc_graph(ggml_opt_context_t opt_ctx, ggml_cgraph * graph
         opt_ctx->ctx_copy = ggml_init(params);
     }
 
-    // FIXME some nodes in backward pass are not being assigned a backend, problem is probably related to graph deep copy
+    opt_ctx->allocated_graph_copy = opt_ctx->static_graphs ? dup_graph(opt_ctx->ctx_copy, graph) : graph;
+    ggml_backend_sched_alloc_graph(opt_ctx->backend_sched, opt_ctx->allocated_graph_copy);
+    opt_ctx->allocated_graph = graph;
+
+    // FIXME some nodes in backward pass are not being assigned a backend
     // {
     //     ggml_backend_t backend = ggml_backend_sched_get_backend(opt_ctx->backend_sched, 0);
     //     ggml_backend_t backend_cpu = ggml_backend_sched_get_backend(
@@ -328,10 +332,6 @@ static void ggml_opt_alloc_graph(ggml_opt_context_t opt_ctx, ggml_cgraph * graph
     //             opt_ctx->backend_sched, node, ggml_backend_supports_op(backend, node) ? backend : backend_cpu);
     //     }
     // }
-
-    opt_ctx->allocated_graph_copy = opt_ctx->static_graphs ? dup_graph(opt_ctx->ctx_copy, graph) : graph;
-    ggml_backend_sched_alloc_graph(opt_ctx->backend_sched, opt_ctx->allocated_graph_copy);
-    opt_ctx->allocated_graph = graph;
 }
 
 static void ggml_opt_build(ggml_opt_context_t opt_ctx, const enum ggml_opt_build_type build_type) {
@@ -643,13 +643,29 @@ void ggml_opt_result_accuracy(ggml_opt_result_t result, double * accuracy, doubl
 
 // ====== Computation ======
 
-void ggml_opt_set_forward_graph(ggml_opt_context_t opt_ctx, struct ggml_cgraph * gf, struct ggml_tensor * inputs, struct ggml_tensor * outputs) {
+void ggml_opt_set_forward_graph(
+        ggml_opt_context_t opt_ctx, struct ggml_context * ctx_compute, struct ggml_cgraph * gf,
+        struct ggml_tensor * inputs, struct ggml_tensor * outputs, enum ggml_opt_build_type build_type) {
     GGML_ASSERT(!opt_ctx->static_graphs);
-    opt_ctx->gf      = gf;
-    opt_ctx->inputs  = inputs;
-    opt_ctx->outputs = outputs;
-    ggml_opt_build(opt_ctx, GGML_OPT_BUILD_TYPE_FORWARD);
-    ggml_opt_alloc_graph(opt_ctx, opt_ctx->gf);
+    opt_ctx->ctx_compute = ctx_compute;
+    opt_ctx->gf          = gf;
+    opt_ctx->inputs      = inputs;
+    opt_ctx->outputs     = outputs;
+    ggml_opt_build(opt_ctx, build_type);
+    switch (build_type) {
+        case GGML_OPT_BUILD_TYPE_FORWARD: {
+            ggml_opt_alloc_graph(opt_ctx, opt_ctx->gf);
+            break;
+        }
+        case GGML_OPT_BUILD_TYPE_GRAD: {
+            ggml_opt_alloc_graph(opt_ctx, opt_ctx->gb_grad);
+            break;
+        }
+        case GGML_OPT_BUILD_TYPE_OPT: {
+            ggml_opt_alloc_graph(opt_ctx, opt_ctx->gb_opt);
+            break;
+        }
+    }
 }
 
 static void ggml_opt_eval_graph(ggml_opt_context_t opt_ctx, ggml_cgraph * graph, ggml_opt_result * result) {
@@ -679,7 +695,11 @@ static void ggml_opt_eval_graph(ggml_opt_context_t opt_ctx, ggml_cgraph * graph,
         adamw_par_data[6] = beta2h;
     }
 
-    ggml_opt_alloc_graph(opt_ctx, graph);
+    if (opt_ctx->static_graphs) {
+        ggml_opt_alloc_graph(opt_ctx, graph);
+    } else {
+        GGML_ASSERT(graph == opt_ctx->allocated_graph);
+    }
     ggml_backend_sched_graph_compute(opt_ctx->backend_sched, opt_ctx->allocated_graph_copy);
     opt_ctx->iter += opt_ctx->allocated_graph == opt_ctx->gb_opt;
 

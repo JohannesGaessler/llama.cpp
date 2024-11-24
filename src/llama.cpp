@@ -22355,7 +22355,8 @@ void llama_opt_epoch(
     std::vector<float> labels(n_vocab);
 
     int64_t t_loop_start = ggml_time_us();
-    for (int64_t idata = 0; idata < ndata; ++idata) {
+
+    for (int64_t idata = 0; idata < 1000; ++idata) {
         llama_kv_cache_clear(lctx);
 
         batch.n_tokens = n_ctx_train;
@@ -22375,13 +22376,15 @@ void llama_opt_epoch(
         }
 
         struct ggml_cgraph * gf = llama_build_graph(*lctx, ubatch, false);
-        ggml_opt_set_forward_graph(opt_ctx, gf, lctx->inp_tokens, ggml_graph_node(gf, -1));
+        struct ggml_context * ctx_compute = ggml_init({1024*1024*1024, nullptr, true});
+        ggml_opt_set_forward_graph(opt_ctx, ctx_compute, gf, lctx->inp_tokens, ggml_graph_node(gf, -1), GGML_OPT_BUILD_TYPE_OPT);
         llama_set_inputs(*lctx, ubatch);
         ggml_backend_tensor_set(ggml_opt_labels(opt_ctx), labels.data(), 0, labels.size()*sizeof(float));
-        ggml_opt_forward(opt_ctx, result_eval);
+        ggml_opt_forward_backward(opt_ctx, result_eval);
         if (callback_eval) {
             callback_eval(false, opt_ctx, dataset, result_eval, idata+1, ndata, t_loop_start);
         }
+        ggml_free(ctx_compute);
     }
 
     llama_batch_free(batch);

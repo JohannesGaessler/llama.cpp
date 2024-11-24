@@ -43,6 +43,11 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    if (params.use_mmap) {
+        LOG_INF("%s: force disabling memory mapping because it would result in-read-only pointers to the weights\n", __func__);
+        params.use_mmap = false;
+    }
+
     common_init();
     llama_backend_init();
     llama_numa_init(params.numa);
@@ -69,9 +74,12 @@ int main(int argc, char ** argv) {
     std::vector<llama_token> tokens = common_tokenize(ctx, params.prompt, true);
     ggml_opt_dataset_t dataset = llama_opt_dataset_init(ctx, tokens.data(), tokens.size());
     ggml_opt_context_t opt_ctx = llama_opt_init(ctx);
-    ggml_opt_result_t result = ggml_opt_result_init();
-    llama_opt_epoch(ctx, opt_ctx, dataset, result, ggml_opt_epoch_callback_progress_bar);
-    ggml_opt_result_free(result);
+    while (true) {
+        ggml_opt_result_t result = ggml_opt_result_init();
+        llama_opt_epoch(ctx, opt_ctx, dataset, result, ggml_opt_epoch_callback_progress_bar);
+        fprintf(stderr, "\n");
+        ggml_opt_result_free(result);
+    }
 
     // struct ggml_context * c = ggml_init({1024*1024*1024, NULL, true});
     // struct ggml_tensor * a = ggml_new_tensor_2d(c, GGML_TYPE_I32, 1, 128);

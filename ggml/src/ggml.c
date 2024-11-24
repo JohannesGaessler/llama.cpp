@@ -5834,7 +5834,7 @@ void ggml_graph_cpy(struct ggml_cgraph * src, struct ggml_cgraph * dst) {
 }
 
 struct ggml_cgraph * ggml_graph_dup(struct ggml_context * ctx, struct ggml_cgraph * cgraph) {
-    struct ggml_cgraph * result = ggml_new_graph_custom(ctx, cgraph->size, cgraph->grads != NULL);
+    struct ggml_cgraph * result = ggml_new_graph_custom(ctx, cgraph->size, true); // FIXME
     ggml_graph_cpy(cgraph, result);
     return result;
 }

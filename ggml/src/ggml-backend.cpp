@@ -611,7 +611,7 @@ static bool ggml_is_view_op(enum ggml_op op) {
 #endif
 
 #ifndef GGML_SCHED_MAX_SPLIT_INPUTS
-#define GGML_SCHED_MAX_SPLIT_INPUTS GGML_MAX_SRC
+#define GGML_SCHED_MAX_SPLIT_INPUTS 1024
 #endif
 
 #ifndef GGML_SCHED_MAX_COPIES

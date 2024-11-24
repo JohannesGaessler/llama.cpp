@@ -153,7 +153,9 @@ extern "C" {
 
     // ====== Computation ======
 
-    GGML_API void ggml_opt_set_forward_graph(ggml_opt_context_t opt_ctx, struct ggml_cgraph * gf, struct ggml_tensor * inputs, struct ggml_tensor * outputs);
+    GGML_API void ggml_opt_set_forward_graph(
+        ggml_opt_context_t opt_ctx, struct ggml_context * ctx_compute, struct ggml_cgraph * gf,
+        struct ggml_tensor * inputs, struct ggml_tensor * outputs, enum ggml_opt_build_type build_type);
 
     // do forward pass, increment result if not NULL
     GGML_API void ggml_opt_forward(ggml_opt_context_t opt_ctx, ggml_opt_result_t result);
