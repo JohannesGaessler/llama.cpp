@@ -22356,7 +22356,7 @@ void llama_opt_epoch(
 
     int64_t t_loop_start = ggml_time_us();
 
-    for (int64_t idata = 0; idata < 1000; ++idata) {
+    for (int64_t idata = 0; idata < ndata; ++idata) {
         llama_kv_cache_clear(lctx);
 
         batch.n_tokens = n_ctx_train;

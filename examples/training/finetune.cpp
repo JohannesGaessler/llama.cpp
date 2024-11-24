@@ -81,33 +81,6 @@ int main(int argc, char ** argv) {
         ggml_opt_result_free(result);
     }
 
-    // struct ggml_context * c = ggml_init({1024*1024*1024, NULL, true});
-    // struct ggml_tensor * a = ggml_new_tensor_2d(c, GGML_TYPE_I32, 1, 128);
-    // struct ggml_tensor * b = ggml_new_tensor_2d(c, GGML_TYPE_F32, 1, 512);
-    // ggml_backend_alloc_ctx_tensors_from_buft(c, ggml_backend_cpu_buffer_type());
-
-    // for (int i = 0; i < 512; ++i) {
-    //     std::string s = common_token_to_piece(ctx, i);
-    //     printf("i=%d s=%s\n", i, s.c_str());
-    // }
-
-    // for (int64_t ibatch = 0; ibatch < 10; ++ibatch) {
-    //     ggml_opt_dataset_get_batch(dataset, a, b, ibatch);
-    //     std::vector<llama_token> s(128);
-    //     memcpy(s.data(), a->data, 128*sizeof(llama_token));
-    //     std::string s2;
-    //     for (llama_token t : s) {
-    //         s2 += common_token_to_piece(ctx, t);
-    //     }
-
-    //     std::vector<float> l(512);
-    //     memcpy(l.data(), b->data, 512*sizeof(float));
-    //     std::vector<float>::iterator p = std::max_element(l.begin(), l.end());
-    //     std::string s3 = common_token_to_piece(ctx, p-l.begin());
-
-    //     printf("input='%s' output='%s'\n", s2.c_str(), s3.c_str());
-    // }
-
     LOG("\n");
     llama_perf_context_print(ctx);
 

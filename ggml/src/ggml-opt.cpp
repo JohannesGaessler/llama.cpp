@@ -211,7 +211,7 @@ struct ggml_opt_optimizer_params ggml_opt_get_default_optimizer_params(void * us
 
     ggml_opt_optimizer_params result;
 
-    result.adamw.alpha = 0.001f;
+    result.adamw.alpha = 1e-6f;
     result.adamw.beta1 = 0.9f;
     result.adamw.beta2 = 0.999f;
     result.adamw.eps   = 1e-8f;

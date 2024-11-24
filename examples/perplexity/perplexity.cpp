@@ -1946,6 +1946,11 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    if (params.use_mmap) {
+        LOG_INF("%s: force disabling memory mapping because it would result in-read-only pointers to the weights\n", __func__);
+        params.use_mmap = false;
+    }
+
     common_init();
 
     const int32_t n_ctx = params.n_ctx;
@@ -1994,7 +1999,8 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    const int n_ctx_train = llama_n_ctx_train(model);
+    const int32_t n_ctx_train = llama_n_ctx_train(model);
+    const int32_t n_vocab     = llama_n_vocab(model);
 
     if (params.n_ctx > n_ctx_train) {
         LOG_WRN("%s: model was trained on only %d context tokens (%d specified)\n",
@@ -2005,6 +2011,21 @@ int main(int argc, char ** argv) {
     {
         LOG_INF("\n");
         LOG_INF("%s\n", common_params_get_system_info(params).c_str());
+    }
+
+    {
+        std::vector<llama_token> tokens = common_tokenize(ctx, params.prompt, true);
+        ggml_opt_dataset_t dataset = llama_opt_dataset_init(ctx, tokens.data(), tokens.size());
+        ggml_opt_context_t opt_ctx = llama_opt_init(ctx);
+        for (int i = 0; i < 1; ++i) {
+            ggml_opt_result_t result = ggml_opt_result_init();
+            ggml_opt_dataset_shuffle(opt_ctx, dataset, -1);
+            llama_opt_epoch(ctx, opt_ctx, dataset, result, ggml_opt_epoch_callback_progress_bar);
+            fprintf(stderr, "\n");
+            ggml_opt_result_free(result);
+        }
+        ggml_opt_dataset_free(dataset);
+        ggml_opt_free(opt_ctx);
     }
 
     struct results_perplexity results;
