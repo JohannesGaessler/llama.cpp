@@ -7869,10 +7869,8 @@ static void ggml_compute_forward_out_prod_f32(
 
     GGML_ASSERT(ne0  == ne00);
     GGML_ASSERT(ne1  == ne10);
-    GGML_ASSERT(ne2  == ne02);
-    GGML_ASSERT(ne02 == ne12);
+    GGML_ASSERT(ne2  == ne12);
     GGML_ASSERT(ne3  == ne13);
-    GGML_ASSERT(ne03 == ne13);
 
     // we don't support permuted src0 or src1
     GGML_ASSERT(nb00 == sizeof(float));
@@ -7914,6 +7912,12 @@ static void ggml_compute_forward_out_prod_f32(
     const int64_t blck_0 = MAX(GGML_VEC_MAD_UNROLL, 32);
     const int64_t blck_1 = 16;
 
+    // broadcast factors
+    GGML_ASSERT(ne12 % ne02 == 0);
+    GGML_ASSERT(ne13 % ne03 == 0);
+    const int64_t r2 = ne12 / ne02;
+    const int64_t r3 = ne13 / ne03;
+
     for (int64_t bir = ir0; bir < ir1; bir += blck_1) {
         const int64_t bir1 = MIN(bir + blck_1, ir1);
         for (int64_t bi01 = 0; bi01 < ne01; bi01 += blck_0) {
@@ -7945,9 +7949,9 @@ static void ggml_compute_forward_out_prod_f32(
                 for (int64_t i01 = bne01_unroll; i01 < bne01; ++i01) {
                     const int64_t i11 = i01;
 
-                    float * s0 = (float *) ((char *) src0->data + (          i01*nb01 + i02*nb02 + i03*nb03));
-                    float * s1 = (float *) ((char *) src1->data + (i1*nb10 + i11*nb11 + i12*nb12 + i13*nb13));
-                    float * d  = (float *) ((char *)  dst->data + (          i1*nb1 + i2*nb2 + i3*nb3));
+                    float * s0 = (float *) ((char *) src0->data + (          i01*nb01 + (i02/r2)*nb02 + (i03/r3)*nb03));
+                    float * s1 = (float *) ((char *) src1->data + (i1*nb10 + i11*nb11 +  i12    *nb12 +  i13    *nb13));
+                    float * d  = (float *) ((char *)  dst->data + (          i1 *nb1  +  i2     *nb2  +  i3     *nb3));
 
                     ggml_vec_mad_f32(ne0, d, s0, *s1);
                 }
@@ -7955,9 +7959,9 @@ static void ggml_compute_forward_out_prod_f32(
                 for (int64_t i01 = bi01; i01 < bne01; ++i01) {
                     const int64_t i11 = i01;
 
-                    float * s0 = (float *) ((char *) src0->data + (          i01*nb01 + i02*nb02 + i03*nb03));
-                    float * s1 = (float *) ((char *) src1->data + (i1*nb10 + i11*nb11 + i12*nb12 + i13*nb13));
-                    float * d  = (float *) ((char *)  dst->data + (          i1*nb1 + i2*nb2 + i3*nb3));
+                    float * s0 = (float *) ((char *) src0->data + (          i01*nb01 + (i02/r2)*nb02 + (i03/r3)*nb03));
+                    float * s1 = (float *) ((char *) src1->data + (i1*nb10 + i11*nb11 +  i12    *nb12 +  i13    *nb13));
+                    float * d  = (float *) ((char *)  dst->data + (          i1*nb1   +  i2     *nb2  +  i3     *nb3));
 
                     ggml_vec_mad_f32(ne0, d, s0, *s1);
                 }
@@ -7982,8 +7986,6 @@ static void ggml_compute_forward_out_prod_q_f32(
     const enum ggml_type type = src0->type;
     ggml_to_float_t const dequantize_row_q = ggml_get_type_traits(type)->to_float;
 
-    GGML_ASSERT(ne02 == ne12);
-    GGML_ASSERT(ne03 == ne13);
     GGML_ASSERT(ne2  == ne12);
     GGML_ASSERT(ne3  == ne13);
 
@@ -7998,8 +8000,6 @@ static void ggml_compute_forward_out_prod_q_f32(
 
     GGML_ASSERT(ne0 == ne00);
     GGML_ASSERT(ne1 == ne10);
-    GGML_ASSERT(ne2 == ne02);
-    GGML_ASSERT(ne3 == ne03);
 
     // nb01 >= nb00 - src0 is not transposed
     //   compute by src0 rows
@@ -8030,6 +8030,12 @@ static void ggml_compute_forward_out_prod_q_f32(
 
     float * wdata = (float *) params->wdata + (ne0 + CACHE_LINE_SIZE_F32) * ith;
 
+    // broadcast factors
+    GGML_ASSERT(ne12 % ne02 == 0);
+    GGML_ASSERT(ne13 % ne03 == 0);
+    const int64_t r2 = ne12 / ne02;
+    const int64_t r3 = ne13 / ne03;
+
     for (int64_t ir = ir0; ir < ir1; ++ir) {
         // dst indices
         const int64_t i3 = ir/(ne2*ne1);
@@ -8046,9 +8052,9 @@ static void ggml_compute_forward_out_prod_q_f32(
         for (int64_t i01 = 0; i01 < ne01; ++i01) {
             const int64_t i11 = i01;
 
-            float * s0 = (float *) ((char *) src0->data + (          i01*nb01 + i02*nb02 + i03*nb03));
-            float * s1 = (float *) ((char *) src1->data + (i1*nb10 + i11*nb11 + i12*nb12 + i13*nb13));
-            float * d  = (float *) ((char *)  dst->data + (          i1*nb1 + i2*nb2 + i3*nb3));
+            float * s0 = (float *) ((char *) src0->data + (          i01*nb01 + (i02/r2)*nb02 + (i03/r3)*nb03));
+            float * s1 = (float *) ((char *) src1->data + (i1*nb10 + i11*nb11 +  i12    *nb12 +  i13    *nb13));
+            float * d  = (float *) ((char *)  dst->data + (          i1 *nb1  +  i2     *nb2  +  i3     *nb3));
 
             dequantize_row_q(s0, wdata, ne0);
             ggml_vec_mad_f32(ne0, d, wdata, *s1);
