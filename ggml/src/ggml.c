@@ -5259,11 +5259,17 @@ static void ggml_compute_backward(
             // src1.shape   [n,p,qq,rr]
 
             if (src0_needs_grads) {
-                struct ggml_tensor * s1_tg =
+                struct ggml_tensor * tmp =
                     ggml_out_prod(ctx, // [n,m,qq,rr]
                         src1,          // [n,p,qq,rr]
                         grad);         // [m,p,qq,rr]
-                ggml_add_or_set(ctx, cgraph, isrc0, s1_tg);
+                if (!ggml_are_same_shape(tmp, src0)) {
+                    GGML_ASSERT(tmp->ne[0] == src0->ne[0]);
+                    GGML_ASSERT(tmp->ne[1] == src0->ne[1]);
+                    tmp = ggml_repeat_back(ctx, tmp, src0);
+                    tmp->op_params[0] = 1; // FIXME
+                }
+                ggml_add_or_set(ctx, cgraph, isrc0, tmp);
             }
             if (src1_needs_grads) {
                 ggml_add_or_set(ctx, cgraph, isrc1,
