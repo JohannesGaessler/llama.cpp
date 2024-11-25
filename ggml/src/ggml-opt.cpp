@@ -75,7 +75,13 @@ struct ggml_opt_result {
 
 // ====== Dataset ======
 
-ggml_opt_dataset_t ggml_opt_dataset_init(enum ggml_type type_data, int64_t ne_datapoint, int64_t ne_label, int64_t ndata, int64_t ndata_shard) {
+ggml_opt_dataset_t ggml_opt_dataset_init(
+        enum ggml_type type_data,
+        enum ggml_type type_label,
+        int64_t        ne_datapoint,
+        int64_t        ne_label,
+        int64_t        ndata,
+        int64_t        ndata_shard) {
     GGML_ASSERT(ne_datapoint >  0);
     GGML_ASSERT(ne_label     >= 0);
     GGML_ASSERT(ndata        >  0);
@@ -98,7 +104,7 @@ ggml_opt_dataset_t ggml_opt_dataset_init(enum ggml_type type_data, int64_t ne_da
     result->nbs_data = ggml_nbytes(result->data) * ndata_shard/ndata;
 
     if (ne_label > 0) {
-        result->labels = ggml_new_tensor_2d(result->ctx, GGML_TYPE_F32, ne_label, ndata);
+        result->labels = ggml_new_tensor_2d(result->ctx, type_label, ne_label, ndata);
         result->nbs_labels = ggml_nbytes(result->labels) * ndata_shard/ndata;
     } else {
         result->labels = nullptr;

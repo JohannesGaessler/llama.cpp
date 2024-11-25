@@ -38,6 +38,7 @@ extern "C" {
 
     GGML_API ggml_opt_dataset_t ggml_opt_dataset_init(
             enum ggml_type type_data,    // the type for the internal data tensor
+            enum ggml_type type_label,   // the type for the internal labels tensor
             int64_t        ne_datapoint, // number of elements per datapoint
             int64_t        ne_label,     // number of elements per label
             int64_t        ndata,        // total number of datapoints/labels
