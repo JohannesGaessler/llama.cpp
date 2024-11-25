@@ -22371,7 +22371,17 @@ void llama_opt_epoch(
         GGML_ASSERT(llama_decode_internal(*lctx, batch, &ubatch) == 0);
 
         struct ggml_cgraph * gf = llama_build_graph(*lctx, ubatch, false);
-        struct ggml_context * ctx_compute = ggml_init({1024*1024*1024, nullptr, true});
+        struct ggml_context * ctx_compute;
+        {
+            const size_t size_gf = ggml_graph_size(gf);
+            const size_t size_meta = 4*size_gf*ggml_tensor_overhead() + 2*ggml_graph_overhead_custom(size_gf, /*grads = */ true);
+            struct ggml_init_params params = {
+                /*.mem_size   =*/ size_meta,
+                /*.mem_buffer =*/ nullptr,
+                /*.no_alloc   =*/ true,
+            };
+            ctx_compute = ggml_init(params);
+        }
         ggml_opt_set_forward_graph(opt_ctx, ctx_compute, gf, lctx->inp_tokens, ggml_graph_node(gf, -1), GGML_OPT_BUILD_TYPE_OPT);
         llama_set_inputs(*lctx, ubatch);
         ggml_backend_tensor_set(ggml_opt_labels(opt_ctx), labels.data(), 0, labels.size()*sizeof(float));
