@@ -17469,24 +17469,25 @@ static enum ggml_status llama_graph_compute(
 // the kv_cache state will be returned to its original state
 // (for non-recurrent models) or cleaned (for recurrent models)
 //
-//   - lctx:      llama context
-//   - batch:     batch to evaluate
+//   - lctx:         llama context
+//   - inp_batch:    batch to evaluate
+//   - ubatch_build: If not null, write the first constructed llama_ubatch to this pointer and return.
+//                   Used to hijack the forward path construction code for training.
 //
 // return 0 on success
 // return positive int on warning
 // return negative int on error
 //
-static std::pair<int, struct llama_ubatch> llama_decode_internal(
+static int llama_decode_internal(
          llama_context & lctx,
            llama_batch   inp_batch,
-                  bool   build_only) {
+          llama_ubatch * ubatch_build) {
 
     lctx.is_encoding = false;
 
     if (inp_batch.n_tokens == 0) {
         LLAMA_LOG_ERROR("%s: n_tokens == 0\n", __func__);
-        llama_ubatch ubatch;
-        return std::make_pair(-1, ubatch);
+        return -1;
     }
 
     // temporary allocate memory for the input batch if needed
@@ -17504,8 +17505,7 @@ static std::pair<int, struct llama_ubatch> llama_decode_internal(
         for (uint32_t i = 0; i < n_tokens_all; ++i) {
             if (batch.token[i] < 0 || (uint32_t)batch.token[i] >= model.vocab.n_vocab) {
                 LLAMA_LOG_ERROR("%s: invalid token[%d] = %d\n", __func__, i, batch.token[i]);
-                llama_ubatch ubatch;
-                return std::make_pair(-1, ubatch);
+                return -1;
             }
         }
     }
@@ -17554,8 +17554,7 @@ static std::pair<int, struct llama_ubatch> llama_decode_internal(
     // reserve output buffer
     if (llama_output_reserve(lctx, n_outputs) < n_outputs) {
         LLAMA_LOG_ERROR("%s: could not reserve space for batch with %u outputs\n", __func__, n_outputs);
-        llama_ubatch ubatch;
-        return std::make_pair(-2, ubatch);
+        return -2;
     };
 
     while (lctx.sbatch.n_tokens > 0) {
@@ -17608,7 +17607,7 @@ static std::pair<int, struct llama_ubatch> llama_decode_internal(
 
             const auto slot = llama_kv_cache_find_slot(kv_self, ubatch);
             if (!slot) {
-                return std::make_pair(1, ubatch);
+                return 1;
             }
             kv_slot_restorer.save(slot);
 
@@ -17627,8 +17626,9 @@ static std::pair<int, struct llama_ubatch> llama_decode_internal(
         ggml_backend_sched_reset(lctx.sched.get());
         ggml_backend_sched_set_eval_callback(lctx.sched.get(), lctx.cparams.cb_eval, lctx.cparams.cb_eval_user_data);
 
-        if (build_only) {
-            return std::make_pair(0, ubatch);
+        if (ubatch_build) {
+            *ubatch_build = ubatch;
+            return 0;
         }
 
         ggml_cgraph * gf = llama_build_graph(lctx, ubatch, false);
@@ -17666,12 +17666,12 @@ static std::pair<int, struct llama_ubatch> llama_decode_internal(
             kv_slot_restorer.restore(kv_self);
             switch (compute_status) {
                 case GGML_STATUS_ABORTED:
-                    return std::make_pair(2, ubatch);
+                    return 2;
                 case GGML_STATUS_ALLOC_FAILED:
-                    return std::make_pair(-2, ubatch);
+                    return -2;
                 case GGML_STATUS_FAILED:
                 default:
-                    return std::make_pair(-3, ubatch);
+                    return -3;
             }
         }
 
@@ -17805,8 +17805,7 @@ static std::pair<int, struct llama_ubatch> llama_decode_internal(
     // overlap with device computation.
     ggml_backend_sched_reset(lctx.sched.get());
 
-    llama_ubatch ubatch;
-    return std::make_pair(0, ubatch);
+    return 0;
 }
 
 // encode a batch of tokens by evaluating the encoder part of the transformer
@@ -21543,7 +21542,7 @@ int32_t llama_encode(
 int32_t llama_decode(
         struct llama_context * ctx,
           struct llama_batch   batch) {
-    const int ret = llama_decode_internal(*ctx, batch, false).first;
+    const int ret = llama_decode_internal(*ctx, batch, nullptr);
     if (ret != 0) {
         LLAMA_LOG_ERROR("%s: failed to decode, ret = %d\n", __func__, ret);
     }
@@ -22369,11 +22368,7 @@ void llama_opt_epoch(
         }
 
         struct llama_ubatch ubatch;
-        {
-            std::pair<int, struct llama_ubatch> tmp = llama_decode_internal(*lctx, batch, /*build_only =*/ true);
-            GGML_ASSERT(tmp.first == 0);
-            ubatch = tmp.second;
-        }
+        GGML_ASSERT(llama_decode_internal(*lctx, batch, &ubatch) == 0);
 
         struct ggml_cgraph * gf = llama_build_graph(*lctx, ubatch, false);
         struct ggml_context * ctx_compute = ggml_init({1024*1024*1024, nullptr, true});
