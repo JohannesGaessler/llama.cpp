@@ -22366,7 +22366,7 @@ void llama_opt_epoch(
         ggml_opt_dataset_get_batch_host(dataset, tokens.data(), n_ctx_train*sizeof(llama_token), labels_sparse.data(), idata);
 
         for (uint32_t pos_ctx = 0; pos_ctx < n_ctx_train; pos_ctx += n_batch) {
-            batch.n_tokens = std::min(n_batch, n_ctx_train - pos_ctx);
+            batch.n_tokens = n_batch;
             for (uint32_t pos_batch = 0; pos_batch < batch.n_tokens; ++pos_batch) {
                 batch.token   [pos_batch]    = tokens[pos_ctx + pos_batch];
                 batch.pos     [pos_batch]    = pos_ctx + pos_batch;
@@ -22375,7 +22375,7 @@ void llama_opt_epoch(
                 batch.logits  [pos_batch]    = true;
             }
 
-            for (int32_t opt_i = 0; opt_i < opt_period; ++opt_i) {
+            for (uint32_t pos_batch = 0; pos_batch < n_batch; pos_batch += n_ubatch) {
                 struct llama_ubatch ubatch;
                 GGML_ASSERT(llama_decode_internal(*lctx, batch, &ubatch) == 0);
 
@@ -22395,12 +22395,13 @@ void llama_opt_epoch(
                 llama_set_inputs(*lctx, ubatch);
                 {
                     struct ggml_tensor * labels = ggml_opt_labels(opt_ctx);
-                    GGML_ASSERT(labels->ne[1] == labels_sparse.size());
+                    GGML_ASSERT(labels->ne[1] == n_ubatch);
                     ggml_set_zero(labels);
                     const float onef = 1.0f;
-                    for (size_t i = 0; i < labels->ne[1]; ++i) {
-                        GGML_ASSERT(labels_sparse[i] < labels->ne[0]);
-                        ggml_backend_tensor_set(labels, &onef, (i*labels->ne[0] + labels_sparse[i])*sizeof(float), sizeof(float));
+                    for (uint32_t pos_ubatch = 0; pos_ubatch < n_ubatch; ++pos_ubatch) {
+                        const uint32_t ilabel = pos_ctx + pos_batch + pos_ubatch;
+                        GGML_ASSERT(labels_sparse[ilabel] < labels->ne[0]);
+                        ggml_backend_tensor_set(labels, &onef, (pos_ubatch*labels->ne[0] + labels_sparse[ilabel])*sizeof(float), sizeof(float));
                     }
                 }
                 ggml_opt_forward_backward(opt_ctx, result_eval);
