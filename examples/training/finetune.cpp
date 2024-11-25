@@ -47,6 +47,14 @@ int main(int argc, char ** argv) {
         LOG_INF("%s: force disabling memory mapping because it would result in-read-only pointers to the weights\n", __func__);
         params.use_mmap = false;
     }
+    if (params.cache_type_k == "f16") {
+        LOG_INF("%s: force changing k cache type to f32 due to a lack of f16 support for OUT_PROD\n", __func__);
+        params.cache_type_k = "f32";
+    }
+    if (params.cache_type_v == "f16") {
+        LOG_INF("%s: force changing v cache type to f32 due to a lack of f16 support for OUT_PROD\n", __func__);
+        params.cache_type_v = "f32";
+    }
 
     common_init();
     llama_backend_init();
