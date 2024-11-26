@@ -326,18 +326,6 @@ static void ggml_opt_alloc_graph(ggml_opt_context_t opt_ctx, ggml_cgraph * graph
     opt_ctx->allocated_graph_copy = opt_ctx->static_graphs ? dup_graph(opt_ctx->ctx_copy, graph) : graph;
     ggml_backend_sched_alloc_graph(opt_ctx->backend_sched, opt_ctx->allocated_graph_copy);
     opt_ctx->allocated_graph = graph;
-
-    // FIXME some nodes in backward pass are not being assigned a backend
-    // {
-    //     ggml_backend_t backend = ggml_backend_sched_get_backend(opt_ctx->backend_sched, 0);
-    //     ggml_backend_t backend_cpu = ggml_backend_sched_get_backend(
-    //         opt_ctx->backend_sched, ggml_backend_sched_get_n_backends(opt_ctx->backend_sched)-1);
-    //     for (int i = opt_ctx->gf->n_nodes; i < opt_ctx->allocated_graph_copy->n_nodes; ++i) {
-    //         ggml_tensor * node = opt_ctx->allocated_graph_copy->nodes[i];
-    //         ggml_backend_sched_set_tensor_backend(
-    //             opt_ctx->backend_sched, node, ggml_backend_supports_op(backend, node) ? backend : backend_cpu);
-    //     }
-    // }
 }
 
 static void ggml_opt_build(ggml_opt_context_t opt_ctx, const enum ggml_opt_build_type build_type) {
