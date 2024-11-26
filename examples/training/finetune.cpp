@@ -77,11 +77,10 @@ int main(int argc, char ** argv) {
     }
 
     std::vector<llama_token> tokens = common_tokenize(ctx, params.prompt, true);
-    ggml_opt_dataset_t dataset = llama_opt_dataset_init(ctx, tokens.data(), tokens.size());
-    ggml_opt_context_t opt_ctx = llama_opt_init(ctx);
+    ggml_opt_dataset_t dataset = llama_opt_dataset_init(ctx, tokens.data(), tokens.size(), llama_n_ctx(ctx)/2);
     while (true) {
         ggml_opt_result_t result = ggml_opt_result_init();
-        llama_opt_epoch(ctx, opt_ctx, dataset, result, ggml_opt_epoch_callback_progress_bar);
+        llama_opt_epoch(ctx, dataset, result, ggml_opt_epoch_callback_progress_bar);
         fprintf(stderr, "\n");
         ggml_opt_result_free(result);
     }

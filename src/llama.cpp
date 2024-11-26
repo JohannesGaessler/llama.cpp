@@ -3341,6 +3341,9 @@ struct llama_context {
     struct ggml_tensor * inp_pos_bucket;    // I32 [n_batch|n_kv, n_batch]
     struct ggml_tensor * inp_embd_enc;      // F32 [n_embd, n_outputs_enc]
     struct ggml_tensor * inp_KQ_mask_cross; // F32 [n_outputs_enc, n_batch]
+
+    // training
+    ggml_opt_context_t opt_ctx = nullptr;
 };
 
 struct llama_lora_weight {
@@ -19983,6 +19986,7 @@ struct llama_context * llama_new_context_with_model(
 }
 
 void llama_free(struct llama_context * ctx) {
+    ggml_opt_free(ctx->opt_ctx);
     delete ctx;
 }
 
@@ -22315,10 +22319,9 @@ void llama_log_callback_default(ggml_log_level level, const char * text, void * 
 // training
 //
 
-ggml_opt_dataset_t llama_opt_dataset_init(struct llama_context * ctx, const llama_token * tokens, int64_t n_tokens) {
+ggml_opt_dataset_t llama_opt_dataset_init(struct llama_context * ctx, const llama_token * tokens, int64_t n_tokens, int32_t stride) {
     const struct llama_model & model = ctx->model;
     const int32_t ne_datapoint = llama_n_ctx(ctx);
-    const int32_t stride       = ne_datapoint / 2;
     const int64_t ndata        = (n_tokens - ne_datapoint - 1) / stride;
     ggml_opt_dataset_t result = ggml_opt_dataset_init(
         GGML_TYPE_I32, GGML_TYPE_I32, ne_datapoint, ne_datapoint, ndata, /*ndata_shard =*/ 1);
@@ -22334,17 +22337,16 @@ ggml_opt_dataset_t llama_opt_dataset_init(struct llama_context * ctx, const llam
     return result;
 }
 
-ggml_opt_context_t llama_opt_init(struct llama_context * lctx) {
-    ggml_opt_params opt_params = ggml_opt_default_params(lctx->sched.get(), nullptr, nullptr, nullptr, GGML_OPT_LOSS_TYPE_CROSS_ENTROPY);
-    return ggml_opt_init(opt_params);
-}
-
 void llama_opt_epoch(
         struct llama_context    * lctx,
-        ggml_opt_context_t        opt_ctx,
         ggml_opt_dataset_t        dataset,
         ggml_opt_result_t         result_eval,
         ggml_opt_epoch_callback   callback_eval) {
+    if (!lctx->opt_ctx) {
+        ggml_opt_params opt_params = ggml_opt_default_params(lctx->sched.get(), nullptr, nullptr, nullptr, GGML_OPT_LOSS_TYPE_CROSS_ENTROPY);
+        lctx->opt_ctx = ggml_opt_init(opt_params);
+    }
+
     const uint32_t n_ctx    = llama_n_ctx(lctx);
     const uint32_t n_vocab  = llama_n_vocab(&lctx->model);
     const uint32_t n_batch  = std::min(lctx->cparams.n_batch, n_ctx);
@@ -22391,10 +22393,10 @@ void llama_opt_epoch(
                     };
                     ctx_compute = ggml_init(params);
                 }
-                ggml_opt_set_forward_graph(opt_ctx, ctx_compute, gf, lctx->inp_tokens, ggml_graph_node(gf, -1), GGML_OPT_BUILD_TYPE_OPT);
+                ggml_opt_set_forward_graph(lctx->opt_ctx, ctx_compute, gf, lctx->inp_tokens, ggml_graph_node(gf, -1), GGML_OPT_BUILD_TYPE_OPT);
                 llama_set_inputs(*lctx, ubatch);
                 {
-                    struct ggml_tensor * labels = ggml_opt_labels(opt_ctx);
+                    struct ggml_tensor * labels = ggml_opt_labels(lctx->opt_ctx);
                     GGML_ASSERT(labels->ne[1] == n_ubatch);
                     ggml_set_zero(labels);
                     const float onef = 1.0f;
@@ -22404,9 +22406,9 @@ void llama_opt_epoch(
                         ggml_backend_tensor_set(labels, &onef, (pos_ubatch*labels->ne[0] + labels_sparse[ilabel])*sizeof(float), sizeof(float));
                     }
                 }
-                ggml_opt_forward_backward(opt_ctx, result_eval);
+                ggml_opt_forward_backward(lctx->opt_ctx, result_eval);
                 if (callback_eval) {
-                    callback_eval(false, opt_ctx, dataset, result_eval, idata+1, ndata, t_loop_start);
+                    callback_eval(false, lctx->opt_ctx, dataset, result_eval, idata+1, ndata, t_loop_start);
                 }
                 ggml_free(ctx_compute);
             }
