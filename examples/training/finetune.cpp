@@ -76,9 +76,6 @@ int main(int argc, char ** argv) {
         LOG_INF("%s\n", common_params_get_system_info(params).c_str());
     }
 
-    const int32_t n_ctx_train = llama_n_ctx_train(model);
-    const int32_t n_vocab     = llama_n_vocab(model);
-
     std::vector<llama_token> tokens = common_tokenize(ctx, params.prompt, true);
     ggml_opt_dataset_t dataset = llama_opt_dataset_init(ctx, tokens.data(), tokens.size());
     ggml_opt_context_t opt_ctx = llama_opt_init(ctx);
