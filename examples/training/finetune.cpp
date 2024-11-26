@@ -76,13 +76,22 @@ int main(int argc, char ** argv) {
         LOG_INF("%s\n", common_params_get_system_info(params).c_str());
     }
 
+    constexpr float val_split = 0.0f;
+
     std::vector<llama_token> tokens = common_tokenize(ctx, params.prompt, true);
     ggml_opt_dataset_t dataset = llama_opt_dataset_init(ctx, tokens.data(), tokens.size(), llama_n_ctx(ctx)/2);
+    const int64_t idata_split = ggml_opt_dataset_ndata(dataset) * (1.0f - val_split);
+
     while (true) {
-        ggml_opt_result_t result = ggml_opt_result_init();
-        llama_opt_epoch(ctx, dataset, result, ggml_opt_epoch_callback_progress_bar);
+        ggml_opt_result_t result_train = ggml_opt_result_init();
+        ggml_opt_result_t result_eval  = ggml_opt_result_init();
+
+        llama_opt_epoch(ctx, dataset, result_train, result_eval, idata_split,
+            ggml_opt_epoch_callback_progress_bar, ggml_opt_epoch_callback_progress_bar);
         fprintf(stderr, "\n");
-        ggml_opt_result_free(result);
+
+        ggml_opt_result_free(result_train);
+        ggml_opt_result_free(result_eval);
     }
 
     LOG("\n");

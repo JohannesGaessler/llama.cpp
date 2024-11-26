@@ -1257,7 +1257,10 @@ extern "C" {
     LLAMA_API void llama_opt_epoch(
             struct llama_context    * lctx,
             ggml_opt_dataset_t        dataset,
+            ggml_opt_result_t         result_train,
             ggml_opt_result_t         result_eval,
+            int64_t                   idata_split,
+            ggml_opt_epoch_callback   callback_train,
             ggml_opt_epoch_callback   callback_eval);
 
 #ifdef __cplusplus
