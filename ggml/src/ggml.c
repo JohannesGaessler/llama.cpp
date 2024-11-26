@@ -5677,6 +5677,7 @@ void ggml_build_backward_expand(
         GGML_ASSERT(ggml_bitset_get(cgraph->visited_hash_set.used, ihash));
         if (grad_accs && grad_accs[i]) {
             cgraph->grad_accs[ihash] = grad_accs[i];
+            cgraph->grads[ihash]     = cgraph->grad_accs[ihash];
         }
         grads_needed[ihash] = true;
     }

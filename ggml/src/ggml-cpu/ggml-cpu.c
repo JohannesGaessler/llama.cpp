@@ -5858,7 +5858,6 @@ static void ggml_compute_forward_count_equal_i32(
             const int32_t val0 = *((const int32_t *) (data0 + i00*nb00));
             const int32_t val1 = *((const int32_t *) (data1 + i00*nb10));
 
-            /* fprintf(stderr, "%s: val0=%d val1=%d\n", __func__, val0, val1); */
             sum_thread += val0 == val1;
         }
     }

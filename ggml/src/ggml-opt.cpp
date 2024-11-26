@@ -357,7 +357,7 @@ static void ggml_opt_build(ggml_opt_context_t opt_ctx, const enum ggml_opt_build
         //   - ncorrect (2 tensors).
         const size_t tensors_per_param = (accumulate ? 1 : 0) +
             (!opt_ctx->static_graphs || build_type == GGML_OPT_BUILD_TYPE_OPT ? 2 : 0);
-        const size_t tensors_const = opt_ctx->static_graphs ? 9 : 0;
+        const size_t tensors_const = opt_ctx->static_graphs ? 9 : 1;
         const size_t size_meta = (tensors_per_param*n_param + tensors_const) * ggml_tensor_overhead();
         struct ggml_init_params params = {
             /*.mem_size   =*/ size_meta,
@@ -458,8 +458,11 @@ static void ggml_opt_build(ggml_opt_context_t opt_ctx, const enum ggml_opt_build
         opt_ctx->grad_accs.resize(n_nodes);
         for (int i = 0; i < n_nodes; ++i) {
             ggml_tensor * node = opt_ctx->gf->nodes[i];
-            opt_ctx->grad_accs[i] = accumulate && (node->flags & GGML_TENSOR_FLAG_PARAM) ?
-                ggml_new_tensor(opt_ctx->ctx_static, GGML_TYPE_F32, GGML_MAX_DIMS, node->ne) : nullptr;
+            if ((accumulate && (node->flags & GGML_TENSOR_FLAG_PARAM)) || (node->flags & GGML_TENSOR_FLAG_LOSS)) {
+                opt_ctx->grad_accs[i] = ggml_new_tensor(opt_ctx->ctx_static, GGML_TYPE_F32, GGML_MAX_DIMS, node->ne);
+            } else {
+                opt_ctx->grad_accs[i] = nullptr;
+            }
         }
 
         if ((!opt_ctx->static_graphs && opt_ctx->opt_period > 1) || build_type == GGML_OPT_BUILD_TYPE_OPT) { // FIXME better logic
@@ -485,8 +488,8 @@ static void ggml_opt_build(ggml_opt_context_t opt_ctx, const enum ggml_opt_build
     if (build_type == GGML_OPT_BUILD_TYPE_GRAD) {
         if (!opt_ctx->buf_static) {
             opt_ctx->buf_static = ggml_backend_alloc_ctx_tensors(opt_ctx->ctx_static, ggml_backend_sched_get_backend(opt_ctx->backend_sched, 0));
+            ggml_graph_reset(opt_ctx->gb_grad);
         }
-        ggml_graph_reset(opt_ctx->gb_grad);
         return;
     }
 
@@ -514,11 +517,10 @@ static void ggml_opt_build(ggml_opt_context_t opt_ctx, const enum ggml_opt_build
     if (!opt_ctx->buf_static) {
         opt_ctx->buf_static = ggml_backend_alloc_ctx_tensors(
             opt_ctx->ctx_static, ggml_backend_sched_get_backend(opt_ctx->backend_sched, 0));
+        ggml_graph_reset(opt_ctx->gb_opt);
     }
 
     opt_ctx->buf_static_cpu = ggml_backend_alloc_ctx_tensors_from_buft(opt_ctx->ctx_static_cpu, ggml_backend_cpu_buffer_type());
-
-    ggml_graph_reset(opt_ctx->gb_opt);
 }
 
 ggml_opt_context_t ggml_opt_init(struct ggml_opt_params params) {

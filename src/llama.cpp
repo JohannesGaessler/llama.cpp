@@ -22408,7 +22408,7 @@ void llama_opt_epoch_iter(
                 ggml_opt_forward(lctx->opt_ctx, result);
             }
             if (callback) {
-                callback(train, lctx->opt_ctx, dataset, result, idata_in_loop+1, ndata_in_loop, t_loop_start);
+                callback(train, lctx->opt_ctx, dataset, result, idata_in_loop + (pos_ctx + pos_batch)/n_ubatch + 1, ndata_in_loop, t_loop_start);
             }
             ggml_free(ctx_compute);
         }
@@ -22434,7 +22434,8 @@ void llama_opt_epoch(
 
     GGML_ASSERT(n_ctx   % n_batch  == 0);
     GGML_ASSERT(n_batch % n_ubatch == 0);
-    const int32_t opt_period = n_batch / n_ubatch;
+    const uint32_t opt_period     = n_batch / n_ubatch;
+    const uint32_t ubatch_per_ctx = n_ctx   / n_ubatch;
 
     if (!lctx->opt_ctx) {
         ggml_opt_params opt_params = ggml_opt_default_params(lctx->sched.get(), nullptr, nullptr, nullptr, GGML_OPT_LOSS_TYPE_CROSS_ENTROPY);
@@ -22449,10 +22450,10 @@ void llama_opt_epoch(
     int64_t idata = 0;
 
     int64_t t_loop_start = ggml_time_us();
+    int64_t ndata_in_loop = idata_split*ubatch_per_ctx;
     for (; idata < idata_split; ++idata) {
         constexpr bool train = true;
-        const int64_t idata_in_loop = idata;
-        const int64_t ndata_in_loop = idata_split;
+        const int64_t idata_in_loop = idata*ubatch_per_ctx;
 
         ggml_opt_dataset_get_batch_host(dataset, tokens.data(), n_ctx*sizeof(llama_token), labels_sparse.data(), idata);
         llama_opt_epoch_iter(lctx, dataset, result_train, tokens, labels_sparse, batch,
@@ -22460,10 +22461,10 @@ void llama_opt_epoch(
     }
 
     t_loop_start = ggml_time_us();
+    ndata_in_loop = (ndata - idata_split)*ubatch_per_ctx;
     for (; idata < ndata; ++idata) {
         constexpr bool train = false;
-        const int64_t idata_in_loop = idata - idata_split;
-        const int64_t ndata_in_loop = ndata - idata_split;
+        const int64_t idata_in_loop = (idata - idata_split)*ubatch_per_ctx;
 
         ggml_opt_dataset_get_batch_host(dataset, tokens.data(), n_ctx*sizeof(llama_token), labels_sparse.data(), idata);
         llama_opt_epoch_iter(lctx, dataset, result_eval, tokens, labels_sparse, batch,
