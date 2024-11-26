@@ -80,6 +80,7 @@ int main(int argc, char ** argv) {
 
     std::vector<llama_token> tokens = common_tokenize(ctx, params.prompt, true);
     ggml_opt_dataset_t dataset = llama_opt_dataset_init(ctx, tokens.data(), tokens.size(), llama_n_ctx(ctx)/2);
+    llama_opt_init(ctx);
     const int64_t idata_split = ggml_opt_dataset_ndata(dataset) * (1.0f - val_split);
 
     while (true) {

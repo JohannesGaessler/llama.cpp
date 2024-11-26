@@ -1254,6 +1254,8 @@ extern "C" {
 
     LLAMA_API ggml_opt_dataset_t llama_opt_dataset_init(struct llama_context * ctx, const llama_token * tokens, int64_t n_tokens, int32_t stride);
 
+    LLAMA_API void llama_opt_init(struct llama_context * lctx);
+
     LLAMA_API void llama_opt_epoch(
             struct llama_context    * lctx,
             ggml_opt_dataset_t        dataset,

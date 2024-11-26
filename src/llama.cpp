@@ -22342,6 +22342,25 @@ ggml_opt_dataset_t llama_opt_dataset_init(struct llama_context * ctx, const llam
     return result;
 }
 
+struct ggml_opt_optimizer_params llama_get_default_optimizer_params(void * userdata) {
+    struct ggml_opt_optimizer_params result = ggml_opt_get_default_optimizer_params(userdata);
+    result.adamw.alpha = 1e-6f;
+    return result;
+}
+
+void llama_opt_init(struct llama_context * lctx) {
+    GGML_ASSERT(!lctx->opt_ctx);
+    const uint32_t n_ctx    = llama_n_ctx(lctx);
+    const uint32_t n_batch  = std::min(llama_n_batch(lctx),  n_ctx);
+    const uint32_t n_ubatch = std::min(llama_n_ubatch(lctx), n_batch);
+    GGML_ASSERT(n_batch % n_ubatch == 0);
+
+    ggml_opt_params opt_params = ggml_opt_default_params(lctx->sched.get(), nullptr, nullptr, nullptr, GGML_OPT_LOSS_TYPE_CROSS_ENTROPY);
+    opt_params.opt_period = n_batch / n_ubatch;
+    opt_params.get_opt_pars = llama_get_default_optimizer_params;
+    lctx->opt_ctx = ggml_opt_init(opt_params);
+}
+
 void llama_opt_epoch_iter(
         struct llama_context           * lctx,
         ggml_opt_dataset_t               dataset,
@@ -22354,6 +22373,7 @@ void llama_opt_epoch_iter(
         const int64_t                    idata_in_loop,
         const int64_t                    ndata_in_loop,
         const int64_t                    t_loop_start) {
+    GGML_ASSERT(lctx->opt_ctx);
     const uint32_t n_ctx    = llama_n_ctx(lctx);
     const uint32_t n_batch  = std::min(lctx->cparams.n_batch,  n_ctx);
     const uint32_t n_ubatch = std::min(lctx->cparams.n_ubatch, n_batch);
@@ -22436,12 +22456,6 @@ void llama_opt_epoch(
     GGML_ASSERT(n_batch % n_ubatch == 0);
     const uint32_t opt_period     = n_batch / n_ubatch;
     const uint32_t ubatch_per_ctx = n_ctx   / n_ubatch;
-
-    if (!lctx->opt_ctx) {
-        ggml_opt_params opt_params = ggml_opt_default_params(lctx->sched.get(), nullptr, nullptr, nullptr, GGML_OPT_LOSS_TYPE_CROSS_ENTROPY);
-        opt_params.opt_period = opt_period;
-        lctx->opt_ctx = ggml_opt_init(opt_params);
-    }
 
     struct llama_batch batch = llama_batch_init(n_batch, 0, 1);
     std::vector<llama_token>        tokens(n_ctx);
