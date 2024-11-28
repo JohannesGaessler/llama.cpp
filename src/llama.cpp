@@ -17474,8 +17474,24 @@ static int llama_prepare_sbatch(
         llama_context     & lctx,
         const llama_batch & batch,
         uint32_t          & n_outputs) {
+    const auto & cparams = lctx.cparams;
     const auto & hparams = lctx.model.hparams;
     const int64_t n_embd  = hparams.n_embd;
+
+    // this indicates we are doing pooled embedding, so we ignore batch.logits and output all tokens
+    const bool embd_pooled = cparams.embeddings && cparams.pooling_type != LLAMA_POOLING_TYPE_NONE;
+
+    // count outputs
+    if (batch.logits && !embd_pooled) {
+        for (int32_t i = 0; i < batch.n_tokens; ++i) {
+            n_outputs += batch.logits[i] != 0;
+        }
+    } else if (lctx.logits_all || embd_pooled) {
+        n_outputs = batch.n_tokens;
+    } else {
+        // keep last output only
+        n_outputs = 1;
+    }
 
     lctx.sbatch.from_batch(batch, n_embd,
         /* simple_split */ !lctx.kv_self.recurrent,
@@ -17561,18 +17577,6 @@ static int llama_decode_internal(
     const bool embd_pooled = cparams.embeddings && cparams.pooling_type != LLAMA_POOLING_TYPE_NONE;
 
     lctx.embd_seq.clear();
-
-    // count outputs
-    if (batch.logits && !embd_pooled) {
-        for (uint32_t i = 0; i < n_tokens_all; ++i) {
-            n_outputs += batch.logits[i] != 0;
-        }
-    } else if (lctx.logits_all || embd_pooled) {
-        n_outputs = n_tokens_all;
-    } else {
-        // keep last output only
-        n_outputs = 1;
-    }
 
     {
         const int err_code = llama_prepare_sbatch(lctx, batch, n_outputs);
