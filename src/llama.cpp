@@ -17474,23 +17474,38 @@ static int llama_prepare_sbatch(
         llama_context     & lctx,
         const llama_batch & batch,
         uint32_t          & n_outputs) {
+    const auto & model   = lctx.model;
+    const auto & hparams = model.hparams;
     const auto & cparams = lctx.cparams;
-    const auto & hparams = lctx.model.hparams;
-    const int64_t n_embd  = hparams.n_embd;
+
+    const uint32_t n_tokens_all = batch.n_tokens;
+    const  int64_t n_embd       = hparams.n_embd;
 
     // this indicates we are doing pooled embedding, so we ignore batch.logits and output all tokens
     const bool embd_pooled = cparams.embeddings && cparams.pooling_type != LLAMA_POOLING_TYPE_NONE;
 
-    lctx.n_queued_tokens += batch.n_tokens;
+    GGML_ASSERT((!batch.token && batch.embd) || (batch.token && !batch.embd)); // NOLINT
+    if (batch.token) {
+        for (uint32_t i = 0; i < n_tokens_all; ++i) {
+            if (batch.token[i] < 0 || (uint32_t)batch.token[i] >= model.vocab.n_vocab) {
+                LLAMA_LOG_ERROR("%s: invalid token[%d] = %d\n", __func__, i, batch.token[i]);
+                return -1;
+            }
+        }
+    }
+    GGML_ASSERT(n_tokens_all <= cparams.n_batch);
+    GGML_ASSERT((cparams.causal_attn || cparams.n_ubatch >= n_tokens_all) && "non-causal attention requires n_ubatch >= n_tokens");
+
+    lctx.n_queued_tokens += n_tokens_all;
     lctx.embd_seq.clear();
 
     // count outputs
     if (batch.logits && !embd_pooled) {
-        for (int32_t i = 0; i < batch.n_tokens; ++i) {
+        for (uint32_t i = 0; i < n_tokens_all; ++i) {
             n_outputs += batch.logits[i] != 0;
         }
     } else if (lctx.logits_all || embd_pooled) {
-        n_outputs = batch.n_tokens;
+        n_outputs = n_tokens_all;
     } else {
         // keep last output only
         n_outputs = 1;
@@ -17498,7 +17513,7 @@ static int llama_prepare_sbatch(
 
     lctx.sbatch.from_batch(batch, n_embd,
         /* simple_split */ !lctx.kv_self.recurrent,
-        /* logits_all   */ n_outputs == uint32_t(batch.n_tokens));
+        /* logits_all   */ n_outputs == n_tokens_all);
 
     // reserve output buffer
     if (llama_output_reserve(lctx, n_outputs) < n_outputs) {
@@ -17544,21 +17559,6 @@ static int llama_decode_internal(
     const auto & model   = lctx.model;
     const auto & hparams = model.hparams;
     const auto & cparams = lctx.cparams;
-
-    GGML_ASSERT((!batch.token && batch.embd) || (batch.token && !batch.embd)); // NOLINT
-
-    if (batch.token) {
-        for (uint32_t i = 0; i < n_tokens_all; ++i) {
-            if (batch.token[i] < 0 || (uint32_t)batch.token[i] >= model.vocab.n_vocab) {
-                LLAMA_LOG_ERROR("%s: invalid token[%d] = %d\n", __func__, i, batch.token[i]);
-                return -1;
-            }
-        }
-    }
-
-    GGML_ASSERT(n_tokens_all <= cparams.n_batch);
-
-    GGML_ASSERT((cparams.causal_attn || cparams.n_ubatch >= n_tokens_all) && "non-causal attention requires n_ubatch >= n_tokens");
 
     if (lctx.t_compute_start_us == 0) {
         lctx.t_compute_start_us = ggml_time_us();
