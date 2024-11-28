@@ -17481,6 +17481,9 @@ static int llama_prepare_sbatch(
     // this indicates we are doing pooled embedding, so we ignore batch.logits and output all tokens
     const bool embd_pooled = cparams.embeddings && cparams.pooling_type != LLAMA_POOLING_TYPE_NONE;
 
+    lctx.n_queued_tokens += batch.n_tokens;
+    lctx.embd_seq.clear();
+
     // count outputs
     if (batch.logits && !embd_pooled) {
         for (int32_t i = 0; i < batch.n_tokens; ++i) {
@@ -17560,8 +17563,6 @@ static int llama_decode_internal(
     if (lctx.t_compute_start_us == 0) {
         lctx.t_compute_start_us = ggml_time_us();
     }
-    lctx.n_queued_tokens += n_tokens_all;
-
     auto & kv_self = lctx.kv_self;
     llama_kv_slot_restorer kv_slot_restorer(kv_self);
 
@@ -17575,8 +17576,6 @@ static int llama_decode_internal(
 
     // this indicates we are doing pooled embedding, so we ignore batch.logits and output all tokens
     const bool embd_pooled = cparams.embeddings && cparams.pooling_type != LLAMA_POOLING_TYPE_NONE;
-
-    lctx.embd_seq.clear();
 
     {
         const int err_code = llama_prepare_sbatch(lctx, batch, n_outputs);
