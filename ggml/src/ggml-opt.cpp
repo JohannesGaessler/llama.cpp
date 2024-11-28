@@ -864,13 +864,26 @@ void ggml_opt_epoch_callback_progress_bar(
         int64_t            t_start_us) {
     fprintf(stderr, "%s[", train ? "train: " : "val:   ");
 
-    constexpr int64_t bar_length = 25;
+    // The progress bar consists of partially filled blocks, unicode has 8 separate fill levels.
+    constexpr int64_t bar_length = 8;
+    const int64_t ibatch8 = 8 * ibatch;
     for (int64_t j = 0; j < bar_length; ++j) {
-        const int64_t ibatch_j = ibatch_max * j/bar_length;
-        if (ibatch_j < ibatch) {
-            fprintf(stderr, "=");
-        } else if (ibatch_max * (j - 1)/bar_length < ibatch) {
-            fprintf(stderr, ">");
+        if        (ibatch_max * (8*j + 8) / bar_length < ibatch8) {
+            fprintf(stderr, "\u2588"); // full block
+        } else if (ibatch_max * (8*j + 7) / bar_length < ibatch8) {
+            fprintf(stderr, "\u2589"); // 7/8 filled
+        } else if (ibatch_max * (8*j + 6) / bar_length < ibatch8) {
+            fprintf(stderr, "\u258A"); // 6/8 filled
+        } else if (ibatch_max * (8*j + 5) / bar_length < ibatch8) {
+            fprintf(stderr, "\u258B"); // 5/8 filled
+        } else if (ibatch_max * (8*j + 4) / bar_length < ibatch8) {
+            fprintf(stderr, "\u258C"); // 4/8 filled
+        } else if (ibatch_max * (8*j + 3) / bar_length < ibatch8) {
+            fprintf(stderr, "\u258D"); // 3/8 filled
+        } else if (ibatch_max * (8*j + 2) / bar_length < ibatch8) {
+            fprintf(stderr, "\u258E"); // 2/8 filled
+        } else if (ibatch_max * (8*j + 1) / bar_length < ibatch8) {
+            fprintf(stderr, "\u258F"); // 1/8 filled
         } else {
             fprintf(stderr, " ");
         }
@@ -902,8 +915,8 @@ void ggml_opt_epoch_callback_progress_bar(
     const int64_t t_eta_m = t_eta_s / 60;
     t_eta_s -= t_eta_m * 60;
 
-    fprintf(stderr, "| data=%06" PRId64 "/%06" PRId64 ", loss=%.6lf+-%.6lf, accuracy=%.2lf+-%.2lf%%, "
-            "t=%02" PRId64 ":%02" PRId64 ":%02" PRId64 ", ETA=%02" PRId64 ":%02" PRId64 ":%02" PRId64 "]\r",
+    fprintf(stderr, "] data=%07" PRId64 "/%07" PRId64 " loss=%.5lf±%.5lf acc=%.2lf±%.2lf%% "
+            "t=%02" PRId64 ":%02" PRId64 ":%02" PRId64 " ETA=%02" PRId64 ":%02" PRId64 ":%02" PRId64 " \r",
             idata, idata_max, loss, loss_unc, 100.0*accuracy, 100.0*accuracy_unc,
             t_ibatch_h, t_ibatch_m, t_ibatch_s, t_eta_h, t_eta_m, t_eta_s);
     if (ibatch == ibatch_max) {
