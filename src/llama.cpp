@@ -22434,7 +22434,9 @@ static void llama_opt_epoch_iter(
     const uint32_t n_batch  = std::min(lctx->cparams.n_batch,  n_ctx);
     const uint32_t n_ubatch = std::min(lctx->cparams.n_ubatch, n_batch);
 
+    lctx->is_encoding = false;
     llama_kv_cache_clear(lctx);
+    llama_kv_slot_restorer kv_slot_restorer(lctx->kv_self);
 
     for (uint32_t pos_ctx = 0; pos_ctx < n_ctx; pos_ctx += n_batch) {
         batch.n_tokens = n_batch;
@@ -22446,11 +22448,17 @@ static void llama_opt_epoch_iter(
             batch.logits  [pos_batch]    = true;
         }
 
+        uint32_t n_outputs = 0;
+        {
+            const int err_code = llama_prepare_sbatch(*lctx, batch, n_outputs);
+            GGML_ASSERT(err_code == 0);
+        }
+
         for (uint32_t pos_batch = 0; pos_batch < n_batch; pos_batch += n_ubatch) {
             struct llama_ubatch ubatch;
             {
-                const int ret = llama_decode_internal(*lctx, batch, &ubatch, pos_batch/n_ubatch);
-                GGML_ASSERT(ret == 0);
+                const int err_code = llama_prepare_ubatch(*lctx, kv_slot_restorer, ubatch, n_outputs);
+                GGML_ASSERT(err_code == 0);
             }
 
             struct ggml_cgraph * gf = llama_build_graph(*lctx, ubatch, false);
