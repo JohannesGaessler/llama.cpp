@@ -17524,11 +17524,16 @@ static int llama_prepare_sbatch(
     return 0;
 }
 
-static llama_ubatch llama_get_ubatch(llama_context & lctx, const uint32_t n_outputs) {
+static int llama_prepare_ubatch(
+        llama_context          & lctx,
+        llama_kv_slot_restorer & kv_slot_restorer,
+        llama_ubatch           & ubatch,
+        const uint32_t           n_outputs) {
     GGML_ASSERT(lctx.sbatch.n_tokens > 0);
-    llama_ubatch ubatch;
 
+    auto       & kv_self = lctx.kv_self;
     const auto & cparams = lctx.cparams;
+    const auto & hparams = lctx.model.hparams;
 
     // this indicates we are doing pooled embedding, so we ignore batch.logits and output all tokens
     const bool embd_pooled = cparams.embeddings && cparams.pooling_type != LLAMA_POOLING_TYPE_NONE;
@@ -17563,7 +17568,33 @@ static llama_ubatch llama_get_ubatch(llama_context & lctx, const uint32_t n_outp
         lctx.n_outputs = n_outputs_new;
     }
 
-    return ubatch;
+    // non-causal masks do not use the KV cache
+    if (hparams.causal_attn) {
+        llama_kv_cache_update(&lctx);
+
+        // if we have enough unused cells before the current head ->
+        //   better to start searching from the beginning of the cache, hoping to fill it
+        if (kv_self.head > kv_self.used + 2*ubatch.n_tokens) {
+            kv_self.head = 0;
+        }
+
+        const auto slot = llama_kv_cache_find_slot(kv_self, ubatch);
+        if (!slot) {
+            return 1;
+        }
+        kv_slot_restorer.save(slot);
+
+        if (!kv_self.recurrent) {
+            // a heuristic, to avoid attending the full cache if it is not yet utilized
+            // after enough generations, the benefit from this heuristic disappears
+            // if we start defragmenting the cache, the benefit from this will be more important
+            const uint32_t pad = llama_kv_cache_get_padding(cparams);
+            kv_self.n = std::min(kv_self.size, std::max(pad, GGML_PAD(llama_kv_cache_cell_max(kv_self), pad)));
+            //kv_self.n = llama_kv_cache_cell_max(kv_self);
+        }
+    }
+
+    return 0;
 }
 
 // decode a batch of tokens by evaluating the transformer
@@ -17627,38 +17658,18 @@ static int llama_decode_internal(
     }
 
     while (lctx.sbatch.n_tokens > 0) {
-        llama_ubatch ubatch = llama_get_ubatch(lctx, n_outputs);
+        llama_ubatch ubatch;
+        {
+            const int err_code = llama_prepare_ubatch(lctx, kv_slot_restorer, ubatch, n_outputs);
+            if (err_code != 0) {
+                return err_code;
+            }
+        }
 
-        int               n_threads  = ubatch.n_tokens == 1 ? cparams.n_threads : cparams.n_threads_batch;
+        const int         n_threads  = ubatch.n_tokens == 1 ? cparams.n_threads : cparams.n_threads_batch;
         ggml_threadpool_t threadpool = ubatch.n_tokens == 1 ? lctx.threadpool   : lctx.threadpool_batch;
 
         GGML_ASSERT(n_threads > 0);
-
-        // non-causal masks do not use the KV cache
-        if (hparams.causal_attn && (!ubatch_build || iub == 0)) {
-            llama_kv_cache_update(&lctx);
-
-            // if we have enough unused cells before the current head ->
-            //   better to start searching from the beginning of the cache, hoping to fill it
-            if (kv_self.head > kv_self.used + 2*ubatch.n_tokens) {
-                kv_self.head = 0;
-            }
-
-            const auto slot = llama_kv_cache_find_slot(kv_self, ubatch);
-            if (!slot) {
-                return 1;
-            }
-            kv_slot_restorer.save(slot);
-
-            if (!kv_self.recurrent) {
-                // a heuristic, to avoid attending the full cache if it is not yet utilized
-                // after enough generations, the benefit from this heuristic disappears
-                // if we start defragmenting the cache, the benefit from this will be more important
-                const uint32_t pad = llama_kv_cache_get_padding(cparams);
-                kv_self.n = std::min(kv_self.size, std::max(pad, GGML_PAD(llama_kv_cache_cell_max(kv_self), pad)));
-                //kv_self.n = llama_kv_cache_cell_max(kv_self);
-            }
-        }
 
         //printf("kv_self.n = %5d, kv_self.used = %5d, kv_self.head = %5d\n", kv_self.n, kv_self.used, kv_self.head);
 
