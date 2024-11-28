@@ -17470,6 +17470,26 @@ static enum ggml_status llama_graph_compute(
     return status;
 }
 
+static int llama_prepare_sbatch(
+        llama_context     & lctx,
+        const llama_batch & batch,
+        uint32_t          & n_outputs) {
+    const auto & hparams = lctx.model.hparams;
+    const int64_t n_embd  = hparams.n_embd;
+
+    lctx.sbatch.from_batch(batch, n_embd,
+        /* simple_split */ !lctx.kv_self.recurrent,
+        /* logits_all   */ n_outputs == uint32_t(batch.n_tokens));
+
+    // reserve output buffer
+    if (llama_output_reserve(lctx, n_outputs) < n_outputs) {
+        LLAMA_LOG_ERROR("%s: could not reserve space for batch with %u outputs\n", __func__, n_outputs);
+        return -2;
+    };
+
+    return 0;
+}
+
 // decode a batch of tokens by evaluating the transformer
 // in case of unsuccessful decoding (error or warning),
 // the kv_cache state will be returned to its original state
@@ -17554,15 +17574,12 @@ static int llama_decode_internal(
         n_outputs = 1;
     }
 
-    lctx.sbatch.from_batch(batch, n_embd,
-        /* simple_split */ !kv_self.recurrent,
-        /* logits_all   */ n_outputs == n_tokens_all);
-
-    // reserve output buffer
-    if (llama_output_reserve(lctx, n_outputs) < n_outputs) {
-        LLAMA_LOG_ERROR("%s: could not reserve space for batch with %u outputs\n", __func__, n_outputs);
-        return -2;
-    };
+    {
+        const int err_code = llama_prepare_sbatch(lctx, batch, n_outputs);
+        if (err_code != 0) {
+            return err_code;
+        }
+    }
 
     while (lctx.sbatch.n_tokens > 0) {
         llama_ubatch ubatch;
@@ -22338,7 +22355,6 @@ void llama_log_callback_default(ggml_log_level level, const char * text, void * 
 //
 
 ggml_opt_dataset_t llama_opt_dataset_init(struct llama_context * ctx, const llama_token * tokens, int64_t n_tokens, int32_t stride) {
-    const struct llama_model & model = ctx->model;
     const int32_t ne_datapoint = llama_n_ctx(ctx);
     const int64_t ndata        = (n_tokens - ne_datapoint - 1) / stride;
     ggml_opt_dataset_t result = ggml_opt_dataset_init(
@@ -22355,7 +22371,7 @@ ggml_opt_dataset_t llama_opt_dataset_init(struct llama_context * ctx, const llam
     return result;
 }
 
-struct ggml_opt_optimizer_params llama_get_default_optimizer_params(void * userdata) {
+static struct ggml_opt_optimizer_params llama_get_default_optimizer_params(void * userdata) {
     struct ggml_opt_optimizer_params result = ggml_opt_get_default_optimizer_params(userdata);
     result.adamw.alpha = 1e-6f;
     return result;
@@ -22366,6 +22382,7 @@ void llama_opt_init(struct llama_context * lctx) {
     const uint32_t n_ctx    = llama_n_ctx(lctx);
     const uint32_t n_batch  = std::min(llama_n_batch(lctx),  n_ctx);
     const uint32_t n_ubatch = std::min(llama_n_ubatch(lctx), n_batch);
+    GGML_ASSERT(n_ctx   % n_batch  == 0);
     GGML_ASSERT(n_batch % n_ubatch == 0);
 
     ggml_opt_params opt_params = ggml_opt_default_params(lctx->sched.get(), nullptr, nullptr, nullptr, GGML_OPT_LOSS_TYPE_CROSS_ENTROPY);
@@ -22374,7 +22391,7 @@ void llama_opt_init(struct llama_context * lctx) {
     lctx->opt_ctx = ggml_opt_init(opt_params);
 }
 
-void llama_opt_epoch_iter(
+static void llama_opt_epoch_iter(
         struct llama_context           * lctx,
         ggml_opt_dataset_t               dataset,
         ggml_opt_result_t                result,
@@ -22457,7 +22474,6 @@ void llama_opt_epoch(
         ggml_opt_epoch_callback   callback_train,
         ggml_opt_epoch_callback   callback_eval) {
     const uint32_t n_ctx    = llama_n_ctx(lctx);
-    const uint32_t n_vocab  = llama_n_vocab(&lctx->model);
     const uint32_t n_batch  = std::min(lctx->cparams.n_batch,  n_ctx);
     const uint32_t n_ubatch = std::min(lctx->cparams.n_ubatch, n_batch);
     const  int64_t ndata    = ggml_opt_dataset_ndata(dataset);
@@ -22465,10 +22481,7 @@ void llama_opt_epoch(
     GGML_ASSERT(idata_split >= 0);
     GGML_ASSERT(idata_split <= ndata);
 
-    GGML_ASSERT(n_ctx   % n_batch  == 0);
-    GGML_ASSERT(n_batch % n_ubatch == 0);
-    const uint32_t opt_period     = n_batch / n_ubatch;
-    const uint32_t ubatch_per_ctx = n_ctx   / n_ubatch;
+    const uint32_t ubatch_per_ctx = n_ctx / n_ubatch;
 
     struct llama_batch batch = llama_batch_init(n_batch, 0, 1);
     std::vector<llama_token>        tokens(n_ctx);
