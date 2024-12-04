@@ -202,7 +202,7 @@ static bool gguf_ex_read_1(const std::string & fname, bool check_data) {
 
             struct ggml_tensor * cur = ggml_get_tensor(ctx_data, name);
 
-            printf("%s: tensor[%d]: n_dims = %d, ne = (%d, %d, %d, %d) name = %s, data = %p\n",
+            printf("%s: tensor[%d]: n_dims = %d, ne = (%d, %d, %d, %d), name = %s, data = %p\n",
                 __func__, i, ggml_n_dims(cur), int(cur->ne[0]), int(cur->ne[1]), int(cur->ne[2]), int(cur->ne[3]), cur->name, cur->data);
 
             // print first 10 elements

@@ -76,14 +76,12 @@ union gguf_value {
 struct gguf_kv {
     struct gguf_str key;
 
-    enum  gguf_type  type;
+    enum  gguf_type  type = gguf_type(-1);
     union gguf_value value;
 
-    // gguf_kv() {
-    //     memset(&key,   0, sizeof(key));
-    //     memset(&type,  0, sizeof(type));
-    //     memset(&value, 0, sizeof(value));
-    // }
+    gguf_kv() {
+        memset(&value, 0, sizeof(value));
+    }
 };
 
 struct gguf_tensor_info {
@@ -108,37 +106,6 @@ struct gguf_context {
 static size_t gguf_type_size(enum gguf_type type) {
     auto it = GGUF_TYPE_SIZE.find(type);
     return it == GGUF_TYPE_SIZE.end() ? 0 : it->second;
-}
-
-static bool gguf_fread_el(FILE * file, void * dst, size_t size, size_t * offset) {
-    const size_t n = fread(dst, 1, size, file);
-    *offset += n;
-    return n == size;
-}
-
-static bool gguf_fread_str(FILE * file, struct gguf_str * p, size_t * offset) {
-    p->n    = 0;
-    p->data = NULL;
-
-    bool ok = true;
-
-    ok = ok && gguf_fread_el(file, &p->n, sizeof(p->n), offset);
-
-    // early exit if string length is invalid, prevents integer overflow
-    if (p->n >= SIZE_MAX) {
-        fprintf(stderr, "%s: invalid string length (%" PRIu64 ")\n", __func__, p->n);
-        return false;
-    }
-
-    p->data = (char *) calloc(p->n + 1, 1);
-    if (!p->data) {
-        fprintf(stderr, "%s: failed to allocate memory for string of length %" PRIu64 "\n", __func__, p->n);
-        return false;
-    }
-
-    ok = ok && gguf_fread_el(file, p->data, p->n, offset);
-
-    return ok;
 }
 
 static void gguf_free_kv(struct gguf_kv * kv) {
