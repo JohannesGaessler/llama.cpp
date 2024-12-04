@@ -8,6 +8,8 @@
 #include <inttypes.h>
 #include <map>
 #include <stdint.h>
+#include <string>
+#include <vector>
 
 struct gguf_str {
     uint64_t n;  // GGUFv2
@@ -94,7 +96,7 @@ struct gguf_tensor_info {
 struct gguf_context {
     struct gguf_header header;
 
-    struct gguf_kv          * kv;
+    std::vector<struct gguf_kv> kv;
     struct gguf_tensor_info * info;
 
     size_t alignment;
@@ -185,7 +187,6 @@ struct gguf_context * gguf_init_empty(void) {
     ctx->header.n_tensors = 0;
     ctx->header.n_kv      = 0;
 
-    ctx->kv   = NULL;
     ctx->info = NULL;
 
     ctx->alignment = GGUF_DEFAULT_ALIGNMENT;
@@ -241,7 +242,6 @@ struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_p
     {
         strncpy(ctx->header.magic, magic, 4);
 
-        ctx->kv   = NULL;
         ctx->info = NULL;
         ctx->data = NULL;
 
@@ -273,52 +273,45 @@ struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_p
     // read the KV pairs
     {
         const uint64_t n_kv = ctx->header.n_kv;
-
-        ctx->kv = (struct gguf_kv *) calloc(n_kv, sizeof(struct gguf_kv));
-        if (!ctx->kv) {
-            fprintf(stderr, "%s: failed to allocate memory for kv pairs\n", __func__);
-            fclose(file);
-            gguf_free(ctx);
-            return NULL;
-        }
+        ctx->kv.resize(n_kv);
 
         for (uint64_t i = 0; ok && i < n_kv; ++i) {
-            struct gguf_kv * kv = &ctx->kv[i];
+            struct gguf_kv & kv = ctx->kv[i];
 
             //fprintf(stderr, "%s: reading kv %d\n", __func__, i);
 
-            ok = ok && gguf_fread_str(file, &kv->key, &offset);
+            ok = ok && gguf_fread_str(file, &kv.key, &offset);
             {
                 int32_t tmp = -1; // always read enums as int32 regardless of platform
                 ok = ok && gguf_fread_el(file, &tmp, sizeof(tmp), &offset);
-                kv->type = gguf_type(tmp);
+                kv.type = gguf_type(tmp);
             }
 
             //fprintf(stderr, "%s: reading kv with key %s\n", __func__, kv->key.data);
 
-            switch (kv->type) {
-                case GGUF_TYPE_UINT8:   ok = ok && gguf_fread_el (file, &kv->value.uint8,   sizeof(kv->value.uint8),   &offset); break;
-                case GGUF_TYPE_INT8:    ok = ok && gguf_fread_el (file, &kv->value.int8,    sizeof(kv->value.int8),    &offset); break;
-                case GGUF_TYPE_UINT16:  ok = ok && gguf_fread_el (file, &kv->value.uint16,  sizeof(kv->value.uint16),  &offset); break;
-                case GGUF_TYPE_INT16:   ok = ok && gguf_fread_el (file, &kv->value.int16,   sizeof(kv->value.int16),   &offset); break;
-                case GGUF_TYPE_UINT32:  ok = ok && gguf_fread_el (file, &kv->value.uint32,  sizeof(kv->value.uint32),  &offset); break;
-                case GGUF_TYPE_INT32:   ok = ok && gguf_fread_el (file, &kv->value.int32,   sizeof(kv->value.int32),   &offset); break;
-                case GGUF_TYPE_FLOAT32: ok = ok && gguf_fread_el (file, &kv->value.float32, sizeof(kv->value.float32), &offset); break;
-                case GGUF_TYPE_UINT64:  ok = ok && gguf_fread_el (file, &kv->value.uint64,  sizeof(kv->value.uint64),  &offset); break;
-                case GGUF_TYPE_INT64:   ok = ok && gguf_fread_el (file, &kv->value.int64,   sizeof(kv->value.int64),   &offset); break;
-                case GGUF_TYPE_FLOAT64: ok = ok && gguf_fread_el (file, &kv->value.float64, sizeof(kv->value.float64), &offset); break;
-                case GGUF_TYPE_BOOL:    ok = ok && gguf_fread_el (file, &kv->value.int8,    sizeof(kv->value.int8),    &offset); break;
-                case GGUF_TYPE_STRING:  ok = ok && gguf_fread_str(file, &kv->value.str,                                &offset); break;
+            switch (kv.type) {
+                case GGUF_TYPE_UINT8:   ok = ok && gguf_fread_el (file, &kv.value.uint8,   sizeof(kv.value.uint8),   &offset); break;
+                case GGUF_TYPE_INT8:    ok = ok && gguf_fread_el (file, &kv.value.int8,    sizeof(kv.value.int8),    &offset); break;
+                case GGUF_TYPE_UINT16:  ok = ok && gguf_fread_el (file, &kv.value.uint16,  sizeof(kv.value.uint16),  &offset); break;
+                case GGUF_TYPE_INT16:   ok = ok && gguf_fread_el (file, &kv.value.int16,   sizeof(kv.value.int16),   &offset); break;
+                case GGUF_TYPE_UINT32:  ok = ok && gguf_fread_el (file, &kv.value.uint32,  sizeof(kv.value.uint32),  &offset); break;
+                case GGUF_TYPE_INT32:   ok = ok && gguf_fread_el (file, &kv.value.int32,   sizeof(kv.value.int32),   &offset); break;
+                case GGUF_TYPE_FLOAT32: ok = ok && gguf_fread_el (file, &kv.value.float32, sizeof(kv.value.float32), &offset); break;
+                case GGUF_TYPE_UINT64:  ok = ok && gguf_fread_el (file, &kv.value.uint64,  sizeof(kv.value.uint64),  &offset); break;
+                case GGUF_TYPE_INT64:   ok = ok && gguf_fread_el (file, &kv.value.int64,   sizeof(kv.value.int64),   &offset); break;
+                case GGUF_TYPE_FLOAT64: ok = ok && gguf_fread_el (file, &kv.value.float64, sizeof(kv.value.float64), &offset); break;
+                case GGUF_TYPE_BOOL:    ok = ok && gguf_fread_el (file, &kv.value.int8,    sizeof(kv.value.int8),    &offset); break;
+                case GGUF_TYPE_STRING:  ok = ok && gguf_fread_str(file, &kv.value.str,                               &offset); break;
                 case GGUF_TYPE_ARRAY:
                     {
                         {
                             int32_t tmp = -1; // always read enums as int32 regardless of platform
                             ok = ok && gguf_fread_el(file, &tmp, sizeof(tmp), &offset);
-                            kv->value.arr.type = gguf_type(tmp);
+                            kv.value.arr.type = gguf_type(tmp);
                         }
-                        ok = ok && gguf_fread_el(file, &kv->value.arr.n, sizeof(kv->value.arr.n), &offset);
+                        ok = ok && gguf_fread_el(file, &kv.value.arr.n, sizeof(kv.value.arr.n), &offset);
 
-                        switch (kv->value.arr.type) {
+                        switch (kv.value.arr.type) {
                             case GGUF_TYPE_UINT8:
                             case GGUF_TYPE_INT8:
                             case GGUF_TYPE_UINT16:
@@ -332,56 +325,56 @@ struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_p
                             case GGUF_TYPE_BOOL:
                                 {
                                     // prevent integer overflow in the calloc below
-                                    if (kv->value.arr.n >= SIZE_MAX/gguf_type_size(kv->value.arr.type)) {
-                                        fprintf(stderr, "%s: array size is too large (%" PRIu64 ")\n", __func__, kv->value.arr.n);
+                                    if (kv.value.arr.n >= SIZE_MAX/gguf_type_size(kv.value.arr.type)) {
+                                        fprintf(stderr, "%s: array size is too large (%" PRIu64 ")\n", __func__, kv.value.arr.n);
                                         fclose(file);
                                         gguf_free(ctx);
                                         return NULL;
                                     }
 
-                                    kv->value.arr.data = calloc(kv->value.arr.n, gguf_type_size(kv->value.arr.type));
-                                    if (!kv->value.arr.data) {
+                                    kv.value.arr.data = calloc(kv.value.arr.n, gguf_type_size(kv.value.arr.type));
+                                    if (!kv.value.arr.data) {
                                         fprintf(stderr, "%s: failed to allocate memory for array\n", __func__);
                                         fclose(file);
                                         gguf_free(ctx);
                                         return NULL;
                                     }
 
-                                    ok = ok && gguf_fread_el(file, kv->value.arr.data, kv->value.arr.n * gguf_type_size(kv->value.arr.type), &offset);
+                                    ok = ok && gguf_fread_el(file, kv.value.arr.data, kv.value.arr.n * gguf_type_size(kv.value.arr.type), &offset);
                                 } break;
                             case GGUF_TYPE_STRING:
                                 {
                                     // prevent integer overflow in the calloc below
-                                    if (kv->value.arr.n >= SIZE_MAX/sizeof(struct gguf_str)) {
-                                        fprintf(stderr, "%s: array size is too large (%" PRIu64 ")\n", __func__, kv->value.arr.n);
+                                    if (kv.value.arr.n >= SIZE_MAX/sizeof(struct gguf_str)) {
+                                        fprintf(stderr, "%s: array size is too large (%" PRIu64 ")\n", __func__, kv.value.arr.n);
                                         fclose(file);
                                         gguf_free(ctx);
                                         return NULL;
                                     }
 
-                                    kv->value.arr.data = calloc(kv->value.arr.n, sizeof(struct gguf_str));
-                                    if (!kv->value.arr.data) {
+                                    kv.value.arr.data = calloc(kv.value.arr.n, sizeof(struct gguf_str));
+                                    if (!kv.value.arr.data) {
                                         fprintf(stderr, "%s: failed to allocate memory for array\n", __func__);
                                         fclose(file);
                                         gguf_free(ctx);
                                         return NULL;
                                     }
 
-                                    for (uint64_t j = 0; ok && j < kv->value.arr.n; ++j) {
-                                        ok = ok && gguf_fread_str(file, &((struct gguf_str *) kv->value.arr.data)[j], &offset);
+                                    for (uint64_t j = 0; ok && j < kv.value.arr.n; ++j) {
+                                        ok = ok && gguf_fread_str(file, &((struct gguf_str *) kv.value.arr.data)[j], &offset);
                                     }
                                 } break;
                             case GGUF_TYPE_ARRAY:
                             default:
                                 {
-                                    fprintf(stderr, "%s: invalid array type %d\n", __func__, kv->value.arr.type);
+                                    fprintf(stderr, "%s: invalid array type %d\n", __func__, kv.value.arr.type);
                                     ok = false;
                                 } break;
                         }
                     } break;
                 default:
                     {
-                        fprintf(stderr, "%s: invalid type %d\n", __func__, kv->type);
+                        fprintf(stderr, "%s: invalid type %d\n", __func__, kv.type);
                         ok = false;
                     } break;
             }
@@ -638,14 +631,11 @@ void gguf_free(struct gguf_context * ctx) {
         return;
     }
 
-    if (ctx->kv) {
-        // free string memory - not great..
-        for (uint64_t i = 0; i < ctx->header.n_kv; ++i) {
-            gguf_free_kv(&ctx->kv[i]);
-        }
-
-        free(ctx->kv);
+    // free string memory - not great..
+    for (uint64_t i = 0; i < ctx->header.n_kv; ++i) {
+        gguf_free_kv(&ctx->kv[i]);
     }
+
 
     if (ctx->info) {
         free(ctx->info);
@@ -722,8 +712,8 @@ const void * gguf_get_arr_data(const struct gguf_context * ctx, int key_id) {
 const char * gguf_get_arr_str(const struct gguf_context * ctx, int key_id, int i) {
     GGML_ASSERT(key_id >= 0 && key_id < gguf_get_n_kv(ctx));
     GGML_ASSERT(ctx->kv[key_id].type == GGUF_TYPE_ARRAY);
-    struct gguf_kv * kv = &ctx->kv[key_id];
-    struct gguf_str * str = &((struct gguf_str *) kv->value.arr.data)[i];
+    const struct gguf_kv & kv = ctx->kv[key_id];
+    struct gguf_str * str = &((struct gguf_str *) kv.value.arr.data)[i];
     return str->data;
 }
 
@@ -857,8 +847,7 @@ static int gguf_get_or_add_key(struct gguf_context * ctx, const char * key) {
 
     const int n_kv = gguf_get_n_kv(ctx);
 
-    ctx->kv = (struct gguf_kv *) realloc(ctx->kv, (n_kv + 1) * sizeof(struct gguf_kv));
-    GGML_ASSERT(ctx->kv); // detect potential memory leak
+    ctx->kv.resize(n_kv + 1);
     memset(&ctx->kv[n_kv], 0, sizeof(struct gguf_kv));
     ctx->kv[n_kv].key.n    = strlen(key);
     ctx->kv[n_kv].key.data = strdup(key);
@@ -870,13 +859,8 @@ static int gguf_get_or_add_key(struct gguf_context * ctx, const char * key) {
 void gguf_remove_key(struct gguf_context * ctx, const char * key) {
     const int idx = gguf_find_key(ctx, key);
     if (idx >= 0) {
-        const int n_kv = gguf_get_n_kv(ctx);
         gguf_free_kv(&ctx->kv[idx]);
-        for (int i = idx; i < n_kv-1; ++i) {
-            ctx->kv[i] = ctx->kv[i+1];
-        }
-        ctx->kv = (struct gguf_kv *) realloc(ctx->kv, (n_kv - 1) * sizeof(struct gguf_kv));
-        GGML_ASSERT(ctx->kv); // detect potential memory leak
+        ctx->kv.erase(ctx->kv.begin() + idx);
         ctx->header.n_kv--;
     }
 }
@@ -1164,36 +1148,36 @@ static void gguf_write_to_buf(const struct gguf_context * ctx, struct gguf_buf *
 
     // write key-value pairs
     for (uint64_t i = 0; i < ctx->header.n_kv; ++i) {
-        struct gguf_kv * kv = &ctx->kv[i];
+        const struct gguf_kv & kv = ctx->kv[i];
 
-        gguf_bwrite_str(buf, &kv->key);
+        gguf_bwrite_str(buf, &kv.key);
         {
-            const int32_t tmp = kv->type; // always write enums as int32 regardless of platform
+            const int32_t tmp = kv.type; // always write enums as int32 regardless of platform
             gguf_bwrite_el(buf, &tmp, sizeof(tmp));
         }
 
-        switch (kv->type) {
-            case GGUF_TYPE_UINT8:   gguf_bwrite_el( buf, &kv->value.uint8,   sizeof(kv->value.uint8)  ); break;
-            case GGUF_TYPE_INT8:    gguf_bwrite_el (buf, &kv->value.int8,    sizeof(kv->value.int8)   ); break;
-            case GGUF_TYPE_UINT16:  gguf_bwrite_el (buf, &kv->value.uint16,  sizeof(kv->value.uint16) ); break;
-            case GGUF_TYPE_INT16:   gguf_bwrite_el (buf, &kv->value.int16,   sizeof(kv->value.int16)  ); break;
-            case GGUF_TYPE_UINT32:  gguf_bwrite_el (buf, &kv->value.uint32,  sizeof(kv->value.uint32) ); break;
-            case GGUF_TYPE_INT32:   gguf_bwrite_el (buf, &kv->value.int32,   sizeof(kv->value.int32)  ); break;
-            case GGUF_TYPE_FLOAT32: gguf_bwrite_el (buf, &kv->value.float32, sizeof(kv->value.float32)); break;
-            case GGUF_TYPE_UINT64:  gguf_bwrite_el (buf, &kv->value.uint64,  sizeof(kv->value.uint64) ); break;
-            case GGUF_TYPE_INT64:   gguf_bwrite_el (buf, &kv->value.int64,   sizeof(kv->value.int64)  ); break;
-            case GGUF_TYPE_FLOAT64: gguf_bwrite_el (buf, &kv->value.float64, sizeof(kv->value.float64)); break;
-            case GGUF_TYPE_BOOL:    gguf_bwrite_el (buf, &kv->value.int8,    sizeof(kv->value.int8)   ); break;
-            case GGUF_TYPE_STRING:  gguf_bwrite_str(buf, &kv->value.str                               ); break;
+        switch (kv.type) {
+            case GGUF_TYPE_UINT8:   gguf_bwrite_el( buf, &kv.value.uint8,   sizeof(kv.value.uint8)  ); break;
+            case GGUF_TYPE_INT8:    gguf_bwrite_el (buf, &kv.value.int8,    sizeof(kv.value.int8)   ); break;
+            case GGUF_TYPE_UINT16:  gguf_bwrite_el (buf, &kv.value.uint16,  sizeof(kv.value.uint16) ); break;
+            case GGUF_TYPE_INT16:   gguf_bwrite_el (buf, &kv.value.int16,   sizeof(kv.value.int16)  ); break;
+            case GGUF_TYPE_UINT32:  gguf_bwrite_el (buf, &kv.value.uint32,  sizeof(kv.value.uint32) ); break;
+            case GGUF_TYPE_INT32:   gguf_bwrite_el (buf, &kv.value.int32,   sizeof(kv.value.int32)  ); break;
+            case GGUF_TYPE_FLOAT32: gguf_bwrite_el (buf, &kv.value.float32, sizeof(kv.value.float32)); break;
+            case GGUF_TYPE_UINT64:  gguf_bwrite_el (buf, &kv.value.uint64,  sizeof(kv.value.uint64) ); break;
+            case GGUF_TYPE_INT64:   gguf_bwrite_el (buf, &kv.value.int64,   sizeof(kv.value.int64)  ); break;
+            case GGUF_TYPE_FLOAT64: gguf_bwrite_el (buf, &kv.value.float64, sizeof(kv.value.float64)); break;
+            case GGUF_TYPE_BOOL:    gguf_bwrite_el (buf, &kv.value.int8,    sizeof(kv.value.int8)   ); break;
+            case GGUF_TYPE_STRING:  gguf_bwrite_str(buf, &kv.value.str                              ); break;
             case GGUF_TYPE_ARRAY:
                 {
                     {
-                        const int32_t tmp = kv->value.arr.type; // always write enums as int32 regardless of platform
+                        const int32_t tmp = kv.value.arr.type; // always write enums as int32 regardless of platform
                         gguf_bwrite_el(buf, &tmp, sizeof(tmp));
                     }
-                    gguf_bwrite_el(buf, &kv->value.arr.n, sizeof(kv->value.arr.n));
+                    gguf_bwrite_el(buf, &kv.value.arr.n, sizeof(kv.value.arr.n));
 
-                    switch (kv->value.arr.type) {
+                    switch (kv.value.arr.type) {
                         case GGUF_TYPE_UINT8:
                         case GGUF_TYPE_INT8:
                         case GGUF_TYPE_UINT16:
@@ -1206,12 +1190,12 @@ static void gguf_write_to_buf(const struct gguf_context * ctx, struct gguf_buf *
                         case GGUF_TYPE_FLOAT64:
                         case GGUF_TYPE_BOOL:
                             {
-                                gguf_bwrite_el(buf, kv->value.arr.data, kv->value.arr.n * gguf_type_size(kv->value.arr.type));
+                                gguf_bwrite_el(buf, kv.value.arr.data, kv.value.arr.n * gguf_type_size(kv.value.arr.type));
                             } break;
                         case GGUF_TYPE_STRING:
                             {
-                                for (uint64_t j = 0; j < kv->value.arr.n; ++j) {
-                                    gguf_bwrite_str(buf, &((struct gguf_str *) kv->value.arr.data)[j]);
+                                for (uint64_t j = 0; j < kv.value.arr.n; ++j) {
+                                    gguf_bwrite_str(buf, &((struct gguf_str *) kv.value.arr.data)[j]);
                                 }
                             } break;
                         case GGUF_TYPE_ARRAY:
