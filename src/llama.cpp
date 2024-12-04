@@ -8,6 +8,7 @@
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
 #include "ggml-cpp.h"
+#include "gguf.h"
 
 // TODO: replace with ggml API call
 #define QK_K 256

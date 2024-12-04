@@ -7,6 +7,7 @@
 #include "ggml-cpu.h"
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
+#include "gguf.h"
 
 #ifdef GGML_USE_CUDA
 #include "ggml-cuda.h"

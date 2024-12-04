@@ -1,4 +1,5 @@
 #include "ggml.h"
+#include "gguf.h"
 
 #include <cstdio>
 #include <string>

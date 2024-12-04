@@ -213,6 +213,7 @@ add_library(ggml-base
             ../include/ggml-backend.h
             ../include/ggml-cpp.h
             ../include/ggml-opt.h
+            ../include/gguf.h
             ggml.c
             ggml-alloc.c
             ggml-backend.cpp
@@ -222,7 +223,8 @@ add_library(ggml-base
             ggml-quants.c
             ggml-quants.h
             ggml-aarch64.c
-            ggml-aarch64.h)
+            ggml-aarch64.h
+            gguf.cpp)
 
 target_include_directories(ggml-base PRIVATE .)
 
