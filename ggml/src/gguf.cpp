@@ -84,7 +84,6 @@ struct gguf_header {
     char magic[4];
 
     uint32_t version;
-    uint64_t n_tensors; // GGUFv2
 };
 
 struct gguf_tensor_info {
@@ -96,7 +95,7 @@ struct gguf_context {
     struct gguf_header header;
 
     std::vector<struct gguf_kv> kv;
-    struct gguf_tensor_info * info;
+    std::vector<struct gguf_tensor_info> info;
 
     size_t alignment;
     size_t offset;    // offset of `data` from beginning of file
@@ -183,9 +182,6 @@ struct gguf_context * gguf_init_empty(void) {
 
     memcpy(ctx->header.magic, GGUF_MAGIC, sizeof(ctx->header.magic));
     ctx->header.version   = GGUF_VERSION;
-    ctx->header.n_tensors = 0;
-
-    ctx->info = NULL;
 
     ctx->alignment = GGUF_DEFAULT_ALIGNMENT;
     ctx->offset    = 0;
@@ -240,11 +236,14 @@ struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_p
     {
         strncpy(ctx->header.magic, magic, 4);
 
-        ctx->info = NULL;
         ctx->data = NULL;
 
         ok = ok && gguf_fread_el(file, &ctx->header.version,   sizeof(ctx->header.version),   &offset);
-        ok = ok && gguf_fread_el(file, &ctx->header.n_tensors, sizeof(ctx->header.n_tensors), &offset);
+        {
+            uint64_t n_tensors = -1;
+            ok = ok && gguf_fread_el(file, &n_tensors, sizeof(n_tensors), &offset);
+            ctx->info.resize(n_tensors);
+        }
         {
             uint64_t n_kv = -1;
             ok = ok && gguf_fread_el(file, &n_kv, sizeof(n_kv), &offset);
@@ -259,9 +258,6 @@ struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_p
         }
 
         // sanity checks to prevent integer/buffer overflows
-
-        ok = ok && (ctx->header.n_tensors < (SIZE_MAX/2)/sizeof(struct gguf_tensor_info));
-        ok = ok && (ctx->header.n_tensors < (SIZE_MAX/2)/ggml_tensor_overhead());
 
         if (!ok) {
             fprintf(stderr, "%s: failed to read header\n", __func__);
@@ -389,17 +385,10 @@ struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_p
     }
 
     // read the tensor info
-    if (ctx->header.n_tensors > 0) {
-        ctx->info = (struct gguf_tensor_info *) calloc(ctx->header.n_tensors, sizeof(struct gguf_tensor_info));
-        if (!ctx->info) {
-            fprintf(stderr, "%s: failed to allocate memory for tensor info\n", __func__);
-            fclose(file);
-            gguf_free(ctx);
-            return NULL;
-        }
-
-        for (uint64_t i = 0; ok && i < ctx->header.n_tensors; ++i) {
-            struct gguf_tensor_info * info = &ctx->info[i];
+    if (!ctx->info.empty()) {
+        const uint64_t n_tensors = ctx->info.size();
+        for (uint64_t i = 0; ok && i < n_tensors; ++i) {
+            struct gguf_tensor_info & info = ctx->info[i];
 
             // tensor name
             {
@@ -411,12 +400,12 @@ struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_p
                     break;
                 }
                 // the memory was cleared so the copied tensor name is guranteed to be null-terminated
-                ok = ok && gguf_fread_el(file, info->t.name, n, &offset);
+                ok = ok && gguf_fread_el(file, info.t.name, n, &offset);
 
                 // make sure there are no duplicated tensor names
                 for (uint64_t j = 0; ok && j < i; ++j) {
-                    if (strcmp(info->t.name, ctx->info[j].t.name) == 0) {
-                        fprintf(stderr, "%s: duplicated tensor name %s\n", __func__, info->t.name);
+                    if (strcmp(info.t.name, ctx->info[j].t.name) == 0) {
+                        fprintf(stderr, "%s: duplicated tensor name %s\n", __func__, info.t.name);
                         ok = false;
                         break;
                     }
@@ -426,37 +415,37 @@ struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_p
             // tensor shape
             {
                 for (int j = 0; j < GGML_MAX_DIMS; ++j) {
-                    info->t.ne[j] = 1;
+                    info.t.ne[j] = 1;
                 }
 
                 uint32_t n_dims = -1;
                 ok = ok && gguf_fread_el(file, &n_dims, sizeof(n_dims), &offset);
                 if (n_dims > GGML_MAX_DIMS) {
-                    fprintf(stderr, "%s: tensor '%s' has invalid number of dimensions (%" PRIu32 ")\n", __func__, info->t.name, n_dims);
+                    fprintf(stderr, "%s: tensor '%s' has invalid number of dimensions (%" PRIu32 ")\n", __func__, info.t.name, n_dims);
                     ok = false;
                     break;
                 }
 
-                ok = ok && gguf_fread_el(file, info->t.ne, n_dims*sizeof(info->t.ne[0]), &offset);
+                ok = ok && gguf_fread_el(file, info.t.ne, n_dims*sizeof(info.t.ne[0]), &offset);
 
                 // check that all ne are non-negative
                 for (int j = 0; j < GGML_MAX_DIMS; ++j) {
-                    if (info->t.ne[j] < 0) {
+                    if (info.t.ne[j] < 0) {
                         fprintf(stderr, "%s: tensor '%s' has invalid number of elements (%" PRIi64 ")\n",
-                            __func__, info->t.name, info->t.ne[j]);
+                            __func__, info.t.name, info.t.ne[j]);
                         ok = false;
                         break;
                     }
                 }
 
                 // check that the total number of elements is representable
-                if ((INT64_MAX/info->t.ne[1] <= info->t.ne[0]) ||
-                    (INT64_MAX/info->t.ne[2] <= info->t.ne[0]*info->t.ne[1]) ||
-                    (INT64_MAX/info->t.ne[3] <= info->t.ne[0]*info->t.ne[1]*info->t.ne[2])) {
+                if ((INT64_MAX/info.t.ne[1] <= info.t.ne[0]) ||
+                    (INT64_MAX/info.t.ne[2] <= info.t.ne[0]*info.t.ne[1]) ||
+                    (INT64_MAX/info.t.ne[3] <= info.t.ne[0]*info.t.ne[1]*info.t.ne[2])) {
 
                     fprintf(stderr, "%s: total number of elements in tensor '%s' with shape "
                         "(%" PRIi64 ", %" PRIi64 ", %" PRIi64 ", %" PRIi64 ") is >= %" PRIi64 "\n",
-                        __func__, info->t.name, info->t.ne[0], info->t.ne[1], info->t.ne[2], info->t.ne[3], INT64_MAX);
+                        __func__, info.t.name, info.t.ne[0], info.t.ne[1], info.t.ne[2], info.t.ne[3], INT64_MAX);
                     ok = false;
                     break;
                 }
@@ -467,38 +456,38 @@ struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_p
                 {
                     int32_t tmp = -1; // always read enums as int32 regardless of platform
                     ok = ok && gguf_fread_el(file, &tmp, sizeof(tmp), &offset);
-                    info->t.type = ggml_type(tmp);
+                    info.t.type = ggml_type(tmp);
                 }
 
                 // check that tensor type is within defined range
-                if (info->t.type < 0 || info->t.type >= GGML_TYPE_COUNT) {
+                if (info.t.type < 0 || info.t.type >= GGML_TYPE_COUNT) {
                     fprintf(stderr, "%s: tensor '%s' has invalid ggml type %d (%s)\n",
-                        __func__, info->t.name, info->t.type, ggml_type_name(info->t.type));
+                        __func__, info.t.name, info.t.type, ggml_type_name(info.t.type));
                     ok = false;
                     break;
                 }
-                const size_t  type_size = ggml_type_size(info->t.type);
-                const int64_t blck_size = ggml_blck_size(info->t.type);
+                const size_t  type_size = ggml_type_size(info.t.type);
+                const int64_t blck_size = ggml_blck_size(info.t.type);
 
                 // check that row size is divisible by block size
-                if (blck_size == 0 || info->t.ne[0] % blck_size != 0) {
+                if (blck_size == 0 || info.t.ne[0] % blck_size != 0) {
                     fprintf(stderr, "%s: tensor '%s' of type %d (%s) has %" PRId64 " elements per row, "
                         "not a multiple of block size (%" PRId64 ")\n",
-                        __func__, info->t.name, (int) info->t.type, ggml_type_name(info->t.type), info->t.ne[0], blck_size);
+                        __func__, info.t.name, (int) info.t.type, ggml_type_name(info.t.type), info.t.ne[0], blck_size);
                     ok = false;
                     break;
                 }
 
                 // calculate byte offsets given the tensor shape and type
-                info->t.nb[0] = type_size;
-                info->t.nb[1] = info->t.nb[0]*(info->t.ne[0]/blck_size);
+                info.t.nb[0] = type_size;
+                info.t.nb[1] = info.t.nb[0]*(info.t.ne[0]/blck_size);
                 for (int j = 2; j < GGML_MAX_DIMS; ++j) {
-                    info->t.nb[j] = info->t.nb[j - 1]*info->t.ne[j - 1];
+                    info.t.nb[j] = info.t.nb[j - 1]*info.t.ne[j - 1];
                 }
             }
 
             // tensor data offset within buffer
-            ok = ok && gguf_fread_el(file, &info->offset, sizeof(info->offset), &offset);
+            ok = ok && gguf_fread_el(file, &info.offset, sizeof(info.offset), &offset);
         }
 
         if (!ok) {
@@ -532,10 +521,8 @@ struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_p
     // compute the total size of the data section, taking into account the alignment
     {
         ctx->size = 0;
-        for (uint64_t i = 0; i < ctx->header.n_tensors; ++i) {
-            struct gguf_tensor_info * info = &ctx->info[i];
-
-            ctx->size += GGML_PAD(ggml_nbytes(&info->t), ctx->alignment);
+        for (const struct gguf_tensor_info & ti : ctx->info) {
+            ctx->size += GGML_PAD(ggml_nbytes(&ti.t), ctx->alignment);
         }
     }
 
@@ -546,10 +533,11 @@ struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_p
         //   the ggml_tensor structs to the appropriate locations in the binary blob
 
         // compute the exact size needed for the new ggml_context
+        const uint64_t n_tensors = ctx->info.size();
         const size_t mem_size =
             params.no_alloc ?
-            (ctx->header.n_tensors    )*ggml_tensor_overhead() :
-            (ctx->header.n_tensors + 1)*ggml_tensor_overhead() + ctx->size;
+            (n_tensors    )*ggml_tensor_overhead() :
+            (n_tensors + 1)*ggml_tensor_overhead() + ctx->size;
 
         struct ggml_init_params pdata = {
             .mem_size   = mem_size,
@@ -591,7 +579,7 @@ struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_p
         ggml_set_no_alloc(ctx_data, true);
 
         // create the tensors
-        for (uint64_t i = 0; i < ctx->header.n_tensors; ++i) {
+        for (uint64_t i = 0; i < n_tensors; ++i) {
             struct ggml_tensor * cur = ggml_new_tensor(
                 ctx_data, ctx->info[i].t.type, GGML_MAX_DIMS, ctx->info[i].t.ne);
 
@@ -634,11 +622,6 @@ void gguf_free(struct gguf_context * ctx) {
     // free string memory - not great..
     for (struct gguf_kv & kv : ctx->kv) {
         gguf_free_kv(&kv);
-    }
-
-
-    if (ctx->info) {
-        free(ctx->info);
     }
 
     free(ctx);
@@ -803,7 +786,7 @@ const void * gguf_get_val_data(const struct gguf_context * ctx, int key_id) {
 }
 
 int gguf_get_n_tensors(const struct gguf_context * ctx) {
-    return ctx->header.n_tensors;
+    return ctx->info.size();
 }
 
 int gguf_find_tensor(const struct gguf_context * ctx, const char * name) {
@@ -1022,14 +1005,11 @@ void gguf_add_tensor(
         GGML_ABORT("duplicated tensor name");
     }
 
-    const uint64_t idx = ctx->header.n_tensors;
-    ctx->info = (struct gguf_tensor_info *) realloc(ctx->info, (idx + 1)*sizeof(struct gguf_tensor_info));
-    GGML_ASSERT(ctx->info); // detect potential memory leak
-    ctx->info[idx].t = *tensor;
-    ctx->info[idx].offset = idx == 0 ? 0 :
-        ctx->info[idx - 1].offset + GGML_PAD(ggml_nbytes(&ctx->info[idx - 1].t), ctx->alignment);
-
-    ctx->header.n_tensors++;
+    struct gguf_tensor_info ti;
+    ti.t = *tensor;
+    ti.offset = ctx->info.empty() ? 0 :
+        ctx->info.back().offset + GGML_PAD(ggml_nbytes(&ctx->info.back().t), ctx->alignment);
+    ctx->info.push_back(ti);
 }
 
 void gguf_set_tensor_type(struct gguf_context * ctx, const char * name, enum ggml_type type) {
@@ -1051,7 +1031,8 @@ void gguf_set_tensor_type(struct gguf_context * ctx, const char * name, enum ggm
     }
 
     // update offsets
-    for (uint64_t i = idx + 1; i < ctx->header.n_tensors; ++i) {
+    const uint64_t n_tensors = ctx->info.size();
+    for (uint64_t i = idx + 1; i < n_tensors; ++i) {
         ctx->info[i].offset = ctx->info[i - 1].offset + GGML_PAD(ggml_nbytes(&ctx->info[i - 1].t), ctx->alignment);
     }
 }
@@ -1138,12 +1119,13 @@ static void gguf_bwrite_tensor_data(struct gguf_buf * buf, const struct ggml_ten
 }
 
 static void gguf_write_to_buf(const struct gguf_context * ctx, struct gguf_buf * buf, bool only_meta) {
-    const uint64_t n_kv = ctx->kv.size();
+    const uint64_t n_kv      = ctx->kv.size();
+    const uint64_t n_tensors = ctx->info.size();
 
     // write header
     gguf_bwrite_el(buf, &ctx->header.magic,     sizeof(ctx->header.magic));
     gguf_bwrite_el(buf, &ctx->header.version,   sizeof(ctx->header.version));
-    gguf_bwrite_el(buf, &ctx->header.n_tensors, sizeof(ctx->header.n_tensors));
+    gguf_bwrite_el(buf, &n_tensors, sizeof(n_tensors));
     gguf_bwrite_el(buf, &n_kv, sizeof(n_kv));
 
     // write key-value pairs
@@ -1207,26 +1189,26 @@ static void gguf_write_to_buf(const struct gguf_context * ctx, struct gguf_buf *
     }
 
     // write tensor info
-    for (uint64_t i = 0; i < ctx->header.n_tensors; ++i) {
-        struct gguf_tensor_info * info = &ctx->info[i];
+    for (uint64_t i = 0; i < n_tensors; ++i) {
+        const struct gguf_tensor_info & info = ctx->info[i];
 
         struct gguf_str name = {
-            /*n    =*/ strlen(info->t.name),
-            /*data =*/        info->t.name,
+            /*n    =*/ strlen(info.t.name),
+            /*data =*/       (char *)(uintptr_t)info.t.name,
         };
         gguf_bwrite_str(buf, &name);
 
-        const uint32_t n_dims = ggml_n_dims(&info->t);
+        const uint32_t n_dims = ggml_n_dims(&info.t);
         gguf_bwrite_el(buf, &n_dims, sizeof(n_dims));
 
         for (uint32_t j = 0; j < n_dims; ++j) {
-            gguf_bwrite_el(buf, &info->t.ne[j], sizeof(info->t.ne[j]));
+            gguf_bwrite_el(buf, &info.t.ne[j], sizeof(info.t.ne[j]));
         }
         {
-            const int32_t tmp = info->t.type; // always write enums as int32 regardless of platform
+            const int32_t tmp = info.t.type; // always write enums as int32 regardless of platform
             gguf_bwrite_el(buf, &tmp, sizeof(tmp));
         }
-        gguf_bwrite_el(buf, &info->offset, sizeof(info->offset));
+        gguf_bwrite_el(buf, &info.offset, sizeof(info.offset));
     }
 
     // we require the data section to be aligned, so take into account any padding
@@ -1249,20 +1231,20 @@ static void gguf_write_to_buf(const struct gguf_context * ctx, struct gguf_buf *
     size_t offset = 0;
 
     // write tensor data
-    for (uint64_t i = 0; i < ctx->header.n_tensors; ++i) {
-        struct gguf_tensor_info * info = &ctx->info[i];
+    for (uint64_t i = 0; i < n_tensors; ++i) {
+        const struct gguf_tensor_info & info = ctx->info[i];
 
-        const size_t size     = ggml_nbytes(&info->t);
+        const size_t size     = ggml_nbytes(&info.t);
         const size_t size_pad = GGML_PAD(size, ctx->alignment);
 
-        gguf_bwrite_tensor_data(buf, &info->t);
+        gguf_bwrite_tensor_data(buf, &info.t);
 
         const uint8_t pad = 0;
         for (size_t j = size; j < size_pad; ++j) {
             gguf_bwrite_el(buf, &pad, sizeof(pad));
         }
 
-        GGML_ASSERT(offset == info->offset);
+        GGML_ASSERT(offset == info.offset);
 
         offset += size_pad;
     }
