@@ -80,19 +80,13 @@ struct gguf_kv {
     union gguf_value value;
 };
 
-struct gguf_header {
-    char magic[4];
-
-    uint32_t version;
-};
-
 struct gguf_tensor_info {
     struct ggml_tensor t; // for holding the equivalent info
     uint64_t offset;      // offset from start of `data`, must be a multiple of `ALIGNMENT`
 };
 
 struct gguf_context {
-    struct gguf_header header;
+    uint32_t version = GGUF_VERSION;
 
     std::vector<struct gguf_kv> kv;
     std::vector<struct gguf_tensor_info> info;
@@ -180,9 +174,6 @@ struct gguf_context * gguf_init_empty(void) {
         return NULL;
     }
 
-    memcpy(ctx->header.magic, GGUF_MAGIC, sizeof(ctx->header.magic));
-    ctx->header.version   = GGUF_VERSION;
-
     ctx->alignment = GGUF_DEFAULT_ALIGNMENT;
     ctx->offset    = 0;
     ctx->size      = 0;
@@ -205,19 +196,21 @@ struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_p
         return NULL;
     }
 
+    struct gguf_context * ctx = new gguf_context;
+
     // offset from start of file
     size_t offset = 0;
 
-    char magic[4];
-
     // check the magic before making allocations
     {
+        char magic[4];
         gguf_fread_el(file, &magic, sizeof(magic), &offset);
 
         for (uint32_t i = 0; i < sizeof(magic); i++) {
             if (magic[i] != GGUF_MAGIC[i]) {
                 fprintf(stderr, "%s: invalid magic characters '%c%c%c%c'\n", __func__, magic[0], magic[1], magic[2], magic[3]);
                 fclose(file);
+                gguf_free(ctx);
                 return NULL;
             }
         }
@@ -225,36 +218,27 @@ struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_p
 
     bool ok = true;
 
-    struct gguf_context * ctx = (struct gguf_context *) calloc(1, sizeof(struct gguf_context));
-    if (!ctx) {
-        fprintf(stderr, "%s: failed to allocate memory for context\n", __func__);
-        fclose(file);
-        return NULL;
-    }
-
     // read the header
     {
-        strncpy(ctx->header.magic, magic, 4);
-
         ctx->data = NULL;
 
-        ok = ok && gguf_fread_el(file, &ctx->header.version,   sizeof(ctx->header.version),   &offset);
-        {
-            uint64_t n_tensors = -1;
-            ok = ok && gguf_fread_el(file, &n_tensors, sizeof(n_tensors), &offset);
-            ctx->info.resize(n_tensors);
-        }
-        {
-            uint64_t n_kv = -1;
-            ok = ok && gguf_fread_el(file, &n_kv, sizeof(n_kv), &offset);
-            ctx->kv.resize(n_kv);
-        }
+        ok = ok && gguf_fread_el(file, &ctx->version, sizeof(ctx->version), &offset);
 
-        if (ctx->header.version == 1) {
+        if (ctx->version == 1) {
             fprintf(stderr, "%s: GGUFv1 is no longer supported, please use a more up-to-date version\n", __func__);
             fclose(file);
             gguf_free(ctx);
             return NULL;
+        }
+        {
+            uint64_t tmp = -1;
+            ok = ok && gguf_fread_el(file, &tmp, sizeof(tmp), &offset);
+            ctx->info.resize(tmp);
+        }
+        {
+            uint64_t tmp = -1;
+            ok = ok && gguf_fread_el(file, &tmp, sizeof(tmp), &offset);
+            ctx->kv.resize(tmp);
         }
 
         // sanity checks to prevent integer/buffer overflows
@@ -624,7 +608,7 @@ void gguf_free(struct gguf_context * ctx) {
         gguf_free_kv(&kv);
     }
 
-    free(ctx);
+    delete ctx;
 }
 
 const char * gguf_type_name(enum gguf_type type) {
@@ -633,7 +617,7 @@ const char * gguf_type_name(enum gguf_type type) {
 }
 
 int gguf_get_version(const struct gguf_context * ctx) {
-    return ctx->header.version;
+    return ctx->version;
 }
 
 size_t gguf_get_alignment(const struct gguf_context * ctx) {
@@ -1123,10 +1107,10 @@ static void gguf_write_to_buf(const struct gguf_context * ctx, struct gguf_buf *
     const uint64_t n_tensors = ctx->info.size();
 
     // write header
-    gguf_bwrite_el(buf, &ctx->header.magic,     sizeof(ctx->header.magic));
-    gguf_bwrite_el(buf, &ctx->header.version,   sizeof(ctx->header.version));
-    gguf_bwrite_el(buf, &n_tensors, sizeof(n_tensors));
-    gguf_bwrite_el(buf, &n_kv, sizeof(n_kv));
+    gguf_bwrite_el(buf, GGUF_MAGIC,    4);
+    gguf_bwrite_el(buf, &ctx->version, sizeof(ctx->version));
+    gguf_bwrite_el(buf, &n_tensors,    sizeof(n_tensors));
+    gguf_bwrite_el(buf, &n_kv,         sizeof(n_kv));
 
     // write key-value pairs
     for (uint64_t i = 0; i < n_kv; ++i) {
