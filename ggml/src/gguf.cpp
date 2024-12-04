@@ -85,7 +85,6 @@ struct gguf_header {
 
     uint32_t version;
     uint64_t n_tensors; // GGUFv2
-    uint64_t n_kv;      // GGUFv2
 };
 
 struct gguf_tensor_info {
@@ -185,7 +184,6 @@ struct gguf_context * gguf_init_empty(void) {
     memcpy(ctx->header.magic, GGUF_MAGIC, sizeof(ctx->header.magic));
     ctx->header.version   = GGUF_VERSION;
     ctx->header.n_tensors = 0;
-    ctx->header.n_kv      = 0;
 
     ctx->info = NULL;
 
@@ -247,7 +245,11 @@ struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_p
 
         ok = ok && gguf_fread_el(file, &ctx->header.version,   sizeof(ctx->header.version),   &offset);
         ok = ok && gguf_fread_el(file, &ctx->header.n_tensors, sizeof(ctx->header.n_tensors), &offset);
-        ok = ok && gguf_fread_el(file, &ctx->header.n_kv,      sizeof(ctx->header.n_kv),      &offset);
+        {
+            uint64_t n_kv = -1;
+            ok = ok && gguf_fread_el(file, &n_kv, sizeof(n_kv), &offset);
+            ctx->kv.resize(n_kv);
+        }
 
         if (ctx->header.version == 1) {
             fprintf(stderr, "%s: GGUFv1 is no longer supported, please use a more up-to-date version\n", __func__);
@@ -260,7 +262,6 @@ struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_p
 
         ok = ok && (ctx->header.n_tensors < (SIZE_MAX/2)/sizeof(struct gguf_tensor_info));
         ok = ok && (ctx->header.n_tensors < (SIZE_MAX/2)/ggml_tensor_overhead());
-        ok = ok && (ctx->header.n_kv      < (SIZE_MAX/2)/sizeof(struct gguf_kv));
 
         if (!ok) {
             fprintf(stderr, "%s: failed to read header\n", __func__);
@@ -272,8 +273,7 @@ struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_p
 
     // read the KV pairs
     {
-        const uint64_t n_kv = ctx->header.n_kv;
-        ctx->kv.resize(n_kv);
+        const uint64_t n_kv = ctx->kv.size();
 
         for (uint64_t i = 0; ok && i < n_kv; ++i) {
             struct gguf_kv & kv = ctx->kv[i];
@@ -632,8 +632,8 @@ void gguf_free(struct gguf_context * ctx) {
     }
 
     // free string memory - not great..
-    for (uint64_t i = 0; i < ctx->header.n_kv; ++i) {
-        gguf_free_kv(&ctx->kv[i]);
+    for (struct gguf_kv & kv : ctx->kv) {
+        gguf_free_kv(&kv);
     }
 
 
@@ -668,7 +668,7 @@ void * gguf_get_data(const struct gguf_context * ctx) {
 
 // TODO this returns int but the underlying type is uint64
 int gguf_get_n_kv(const struct gguf_context * ctx) {
-    return ctx->header.n_kv;
+    return ctx->kv.size();
 }
 
 int gguf_find_key(const struct gguf_context * ctx, const char * key) {
@@ -845,15 +845,13 @@ static int gguf_get_or_add_key(struct gguf_context * ctx, const char * key) {
         return idx;
     }
 
-    const int n_kv = gguf_get_n_kv(ctx);
+    gguf_kv kv;
+    memset(&kv, 0, sizeof(struct gguf_kv));
+    kv.key.n    = strlen(key);
+    kv.key.data = strdup(key);
+    ctx->kv.push_back(kv);
 
-    ctx->kv.resize(n_kv + 1);
-    memset(&ctx->kv[n_kv], 0, sizeof(struct gguf_kv));
-    ctx->kv[n_kv].key.n    = strlen(key);
-    ctx->kv[n_kv].key.data = strdup(key);
-    ctx->header.n_kv++;
-
-    return n_kv;
+    return ctx->kv.size()-1;
 }
 
 void gguf_remove_key(struct gguf_context * ctx, const char * key) {
@@ -861,7 +859,6 @@ void gguf_remove_key(struct gguf_context * ctx, const char * key) {
     if (idx >= 0) {
         gguf_free_kv(&ctx->kv[idx]);
         ctx->kv.erase(ctx->kv.begin() + idx);
-        ctx->header.n_kv--;
     }
 }
 
@@ -981,7 +978,8 @@ void gguf_set_arr_str(struct gguf_context * ctx, const char * key, const char **
 
 // set or add KV pairs from another context
 void gguf_set_kv(struct gguf_context * ctx, const struct gguf_context * src) {
-    for (uint64_t i = 0; i < src->header.n_kv; ++i) {
+    const uint64_t n_kv = src->kv.size();
+    for (uint64_t i = 0; i < n_kv; ++i) {
         switch (src->kv[i].type) {
             case GGUF_TYPE_UINT8:   gguf_set_val_u8  (ctx, src->kv[i].key.data, src->kv[i].value.uint8);    break;
             case GGUF_TYPE_INT8:    gguf_set_val_i8  (ctx, src->kv[i].key.data, src->kv[i].value.int8);     break;
@@ -1140,14 +1138,16 @@ static void gguf_bwrite_tensor_data(struct gguf_buf * buf, const struct ggml_ten
 }
 
 static void gguf_write_to_buf(const struct gguf_context * ctx, struct gguf_buf * buf, bool only_meta) {
+    const uint64_t n_kv = ctx->kv.size();
+
     // write header
     gguf_bwrite_el(buf, &ctx->header.magic,     sizeof(ctx->header.magic));
     gguf_bwrite_el(buf, &ctx->header.version,   sizeof(ctx->header.version));
     gguf_bwrite_el(buf, &ctx->header.n_tensors, sizeof(ctx->header.n_tensors));
-    gguf_bwrite_el(buf, &ctx->header.n_kv,      sizeof(ctx->header.n_kv));
+    gguf_bwrite_el(buf, &n_kv, sizeof(n_kv));
 
     // write key-value pairs
-    for (uint64_t i = 0; i < ctx->header.n_kv; ++i) {
+    for (uint64_t i = 0; i < n_kv; ++i) {
         const struct gguf_kv & kv = ctx->kv[i];
 
         gguf_bwrite_str(buf, &kv.key);
