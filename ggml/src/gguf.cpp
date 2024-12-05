@@ -78,10 +78,6 @@ struct gguf_kv {
 
     enum  gguf_type  type = gguf_type(-1);
     union gguf_value value;
-
-    gguf_kv() {
-        memset(&value, 0, sizeof(value));
-    }
 };
 
 struct gguf_tensor_info {
@@ -1103,46 +1099,109 @@ static void gguf_bwrite_tensor_data(struct gguf_buf * buf, const struct ggml_ten
     buf->offset += el_size;
 }
 
-static void gguf_write_to_buf(const struct gguf_context * ctx, struct gguf_buf * buf, bool only_meta) {
+struct gguf_writer{
+    std::vector<int8_t> data;
+    bool no_alloc = false; // FIXME
+
+    template <typename T>
+    void write(const T & val) {
+        const int8_t * val8 = reinterpret_cast<const int8_t *>(&val);
+        for (size_t i = 0; i < sizeof(val); ++i) {
+            data.push_back(val8[i]);
+        }
+    }
+
+    void write(const bool & val) {
+        const int8_t val8 = val ? 1 : 0;
+        data.push_back(val8);
+    }
+
+    void write(const struct gguf_str & val) {
+        const int8_t * val_n8    = reinterpret_cast<const int8_t *>(&val.n);
+        const int8_t * val_data8 = reinterpret_cast<const int8_t *>(val.data);
+        for (size_t i = 0; i < sizeof(val.n); ++i) {
+            data.push_back(val_n8[i]);
+        }
+        for (uint64_t i = 0; i < val.n; ++i) {
+            data.push_back(val_data8[i]);
+        }
+    }
+
+    void write(const char * const val) {
+        const uint64_t n = strlen(val);
+
+        const int8_t * val_n8    = reinterpret_cast<const int8_t *>(&n);
+        const int8_t * val_data8 = reinterpret_cast<const int8_t *>(val);
+        for (size_t i = 0; i < sizeof(n); ++i) {
+            data.push_back(val_n8[i]);
+        }
+        for (uint64_t i = 0; i < n; ++i) {
+            data.push_back(val_data8[i]);
+        }
+    }
+
+    void write_tensor_data(const struct ggml_tensor & tensor) {
+        GGML_ASSERT(ggml_is_contiguous(&tensor));
+        const size_t nbytes = ggml_nbytes(&tensor);
+        const size_t offset = data.size();
+        data.resize(offset + nbytes);
+
+        if (no_alloc) {
+            return;
+        }
+
+        if (tensor.buffer) {
+            ggml_backend_tensor_get(&tensor, data.data() + offset, 0, nbytes);
+        } else {
+            GGML_ASSERT(tensor.data);
+            memcpy(data.data() + offset, tensor.data, nbytes);
+        }
+    }
+};
+
+static void gguf_write_to_buf(const struct gguf_context * ctx, struct gguf_writer & gw, const bool only_meta) {
     const uint64_t n_kv      = ctx->kv.size();
     const uint64_t n_tensors = ctx->info.size();
 
     // write header
-    gguf_bwrite_el(buf, GGUF_MAGIC,    4);
-    gguf_bwrite_el(buf, &ctx->version, sizeof(ctx->version));
-    gguf_bwrite_el(buf, &n_tensors,    sizeof(n_tensors));
-    gguf_bwrite_el(buf, &n_kv,         sizeof(n_kv));
+    gw.write(GGUF_MAGIC[0]);
+    gw.write(GGUF_MAGIC[1]);
+    gw.write(GGUF_MAGIC[2]);
+    gw.write(GGUF_MAGIC[3]);
+    gw.write(ctx->version);
+    gw.write(n_tensors);
+    gw.write(n_kv);
 
     // write key-value pairs
     for (uint64_t i = 0; i < n_kv; ++i) {
         const struct gguf_kv & kv = ctx->kv[i];
 
-        gguf_bwrite_str(buf, &kv.key);
+        gw.write(kv.key);
         {
             const int32_t tmp = kv.type; // always write enums as int32 regardless of platform
-            gguf_bwrite_el(buf, &tmp, sizeof(tmp));
+            gw.write(tmp);
         }
 
         switch (kv.type) {
-            case GGUF_TYPE_UINT8:   gguf_bwrite_el( buf, &kv.value.uint8,   sizeof(kv.value.uint8)  ); break;
-            case GGUF_TYPE_INT8:    gguf_bwrite_el (buf, &kv.value.int8,    sizeof(kv.value.int8)   ); break;
-            case GGUF_TYPE_UINT16:  gguf_bwrite_el (buf, &kv.value.uint16,  sizeof(kv.value.uint16) ); break;
-            case GGUF_TYPE_INT16:   gguf_bwrite_el (buf, &kv.value.int16,   sizeof(kv.value.int16)  ); break;
-            case GGUF_TYPE_UINT32:  gguf_bwrite_el (buf, &kv.value.uint32,  sizeof(kv.value.uint32) ); break;
-            case GGUF_TYPE_INT32:   gguf_bwrite_el (buf, &kv.value.int32,   sizeof(kv.value.int32)  ); break;
-            case GGUF_TYPE_FLOAT32: gguf_bwrite_el (buf, &kv.value.float32, sizeof(kv.value.float32)); break;
-            case GGUF_TYPE_UINT64:  gguf_bwrite_el (buf, &kv.value.uint64,  sizeof(kv.value.uint64) ); break;
-            case GGUF_TYPE_INT64:   gguf_bwrite_el (buf, &kv.value.int64,   sizeof(kv.value.int64)  ); break;
-            case GGUF_TYPE_FLOAT64: gguf_bwrite_el (buf, &kv.value.float64, sizeof(kv.value.float64)); break;
-            case GGUF_TYPE_BOOL:    gguf_bwrite_el (buf, &kv.value.int8,    sizeof(kv.value.int8)   ); break;
-            case GGUF_TYPE_STRING:  gguf_bwrite_str(buf, &kv.value.str                              ); break;
+            case GGUF_TYPE_UINT8:   gw.write(kv.value.uint8);   break;
+            case GGUF_TYPE_INT8:    gw.write(kv.value.int8);    break;
+            case GGUF_TYPE_UINT16:  gw.write(kv.value.uint16);  break;
+            case GGUF_TYPE_INT16:   gw.write(kv.value.int16);   break;
+            case GGUF_TYPE_UINT32:  gw.write(kv.value.uint32);  break;
+            case GGUF_TYPE_INT32:   gw.write(kv.value.int32);   break;
+            case GGUF_TYPE_FLOAT32: gw.write(kv.value.float32); break;
+            case GGUF_TYPE_UINT64:  gw.write(kv.value.uint64);  break;
+            case GGUF_TYPE_INT64:   gw.write(kv.value.int64);   break;
+            case GGUF_TYPE_FLOAT64: gw.write(kv.value.float64); break;
+            case GGUF_TYPE_BOOL:    gw.write(kv.value.int8);    break;
+            case GGUF_TYPE_STRING:  gw.write(kv.value.str);     break;
             case GGUF_TYPE_ARRAY:
                 {
                     {
                         const int32_t tmp = kv.value.arr.type; // always write enums as int32 regardless of platform
-                        gguf_bwrite_el(buf, &tmp, sizeof(tmp));
+                        gw.write(tmp);
                     }
-                    gguf_bwrite_el(buf, &kv.value.arr.n, sizeof(kv.value.arr.n));
+                    gw.write(kv.value.arr.n);
 
                     switch (kv.value.arr.type) {
                         case GGUF_TYPE_UINT8:
@@ -1157,12 +1216,15 @@ static void gguf_write_to_buf(const struct gguf_context * ctx, struct gguf_buf *
                         case GGUF_TYPE_FLOAT64:
                         case GGUF_TYPE_BOOL:
                             {
-                                gguf_bwrite_el(buf, kv.value.arr.data, kv.value.arr.n * gguf_type_size(kv.value.arr.type));
+                                const uint8_t * data8 = reinterpret_cast<const uint8_t *>(kv.value.arr.data);
+                                for (uint64_t j = 0; j < kv.value.arr.n * gguf_type_size(kv.value.arr.type); ++j) {
+                                    gw.write(data8[j]);
+                                }
                             } break;
                         case GGUF_TYPE_STRING:
                             {
                                 for (uint64_t j = 0; j < kv.value.arr.n; ++j) {
-                                    gguf_bwrite_str(buf, &((struct gguf_str *) kv.value.arr.data)[j]);
+                                    gw.write(((struct gguf_str *) kv.value.arr.data)[j]);
                                 }
                             } break;
                         case GGUF_TYPE_ARRAY:
@@ -1177,34 +1239,30 @@ static void gguf_write_to_buf(const struct gguf_context * ctx, struct gguf_buf *
     for (uint64_t i = 0; i < n_tensors; ++i) {
         const struct gguf_tensor_info & info = ctx->info[i];
 
-        struct gguf_str name = {
-            /*n    =*/ strlen(info.t.name),
-            /*data =*/       (char *)(uintptr_t)info.t.name,
-        };
-        gguf_bwrite_str(buf, &name);
+        gw.write(info.t.name);
 
         const uint32_t n_dims = ggml_n_dims(&info.t);
-        gguf_bwrite_el(buf, &n_dims, sizeof(n_dims));
+        gw.write(n_dims);
 
         for (uint32_t j = 0; j < n_dims; ++j) {
-            gguf_bwrite_el(buf, &info.t.ne[j], sizeof(info.t.ne[j]));
+            gw.write(info.t.ne[j]);
         }
         {
             const int32_t tmp = info.t.type; // always write enums as int32 regardless of platform
-            gguf_bwrite_el(buf, &tmp, sizeof(tmp));
+            gw.write(tmp);
         }
-        gguf_bwrite_el(buf, &info.offset, sizeof(info.offset));
+        gw.write(info.offset);
     }
 
     // we require the data section to be aligned, so take into account any padding
     {
-        const size_t offset     = buf->offset;
+        const size_t offset     = gw.data.size();
         const size_t offset_pad = GGML_PAD(offset, ctx->alignment);
 
         if (offset_pad != offset) {
-            uint8_t pad = 0;
+            const int8_t pad = 0;
             for (size_t i = 0; i < offset_pad - offset; ++i) {
-                gguf_bwrite_el(buf, &pad, sizeof(pad));
+                gw.write(pad);
             }
         }
     }
@@ -1222,11 +1280,11 @@ static void gguf_write_to_buf(const struct gguf_context * ctx, struct gguf_buf *
         const size_t size     = ggml_nbytes(&info.t);
         const size_t size_pad = GGML_PAD(size, ctx->alignment);
 
-        gguf_bwrite_tensor_data(buf, &info.t);
+        gw.write_tensor_data(info.t);
 
-        const uint8_t pad = 0;
+        const int8_t pad = 0;
         for (size_t j = size; j < size_pad; ++j) {
-            gguf_bwrite_el(buf, &pad, sizeof(pad));
+            gw.write(pad);
         }
 
         GGML_ASSERT(offset == info.offset);
@@ -1241,32 +1299,28 @@ void gguf_write_to_file(const struct gguf_context * ctx, const char * fname, boo
         GGML_ABORT("failed to open file for writing");
     }
 
-    struct gguf_buf buf = gguf_buf_init(16*1024);
+    struct gguf_writer gw;
 
-    gguf_write_to_buf(ctx, &buf, only_meta);
+    gguf_write_to_buf(ctx, gw, only_meta);
 
-    fwrite(buf.data, 1, buf.offset, file); // buf.offset == number of bytes that are in use
-
-    gguf_buf_free(buf);
+    fwrite(gw.data.data(), 1, gw.data.size(), file); // buf.offset == number of bytes that are in use
 
     fclose(file);
 }
 
 size_t gguf_get_meta_size(const struct gguf_context * ctx) {
     // no allocs - only compute size
-    struct gguf_buf buf = gguf_buf_init(0);
+    struct gguf_writer gw;
 
-    gguf_write_to_buf(ctx, &buf, /*only_meta =*/ true);
+    gguf_write_to_buf(ctx, gw, /*only_meta =*/ true);
 
-    return buf.offset;
+    return gw.data.size();
 }
 
 void gguf_get_meta_data(const struct gguf_context * ctx, void * data) {
-    struct gguf_buf buf = gguf_buf_init(16*1024);
+    struct gguf_writer gw;
 
-    gguf_write_to_buf(ctx, &buf, /*only_meta =*/ true);
+    gguf_write_to_buf(ctx, gw, /*only_meta =*/ true);
 
-    memcpy(data, buf.data, buf.offset);
-
-    gguf_buf_free(buf);
+    memcpy(data, gw.data.data(), gw.data.size());
 }
