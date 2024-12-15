@@ -1,5 +1,6 @@
 #include "ggml.h"
 #include "ggml-backend.h"
+#include "ggml-impl.h"
 #include "gguf.h"
 
 #include <cerrno>
@@ -108,7 +109,7 @@ static const std::map<gguf_type, const char *> GGUF_TYPE_NAME = {
 };
 static_assert(GGUF_TYPE_COUNT == 13, "GGUF_TYPE_COUNT != 13");
 
-static size_t gguf_type_size(enum gguf_type type) {
+size_t gguf_type_size(enum gguf_type type) {
     auto it = GGUF_TYPE_SIZE.find(type);
     return it == GGUF_TYPE_SIZE.end() ? 0 : it->second;
 }
@@ -215,13 +216,7 @@ struct gguf_reader {
     FILE * file;
     size_t offset = 0;
 
-    gguf_reader(const std::string & fname) {
-        file = ggml_fopen(fname.c_str(), "rb");
-    }
-
-    ~gguf_reader() {
-        fclose(file);
-    }
+    gguf_reader(FILE * file) : file(file) {}
 
     template <typename T>
     bool read(T & dst) {
@@ -296,13 +291,8 @@ struct gguf_context * gguf_init_empty(void) {
     return new gguf_context;
 }
 
-struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_params params) {
-    struct gguf_reader gr(fname);
-    if (!gr.file) {
-        fprintf(stderr, "%s: failed to open '%s': '%s'\n", __func__, fname, strerror(errno));
-        return NULL;
-    }
-
+struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_params params) {
+    struct gguf_reader gr(file);
     struct gguf_context * ctx = new gguf_context;
 
     // check the magic before making allocations
@@ -802,6 +792,17 @@ struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_p
     return ctx;
 }
 
+struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_params params) {
+    FILE * file = ggml_fopen(fname, "rb");
+    if (!file) {
+        fprintf(stderr, "%s: failed to open '%s': '%s'\n", __func__, fname, strerror(errno));
+        return NULL;
+    }
+    struct gguf_context * result = gguf_init_from_file_impl(file, params);
+    fclose(file);
+    return result;
+}
+
 void gguf_free(struct gguf_context * ctx) {
     if (ctx == NULL) {
         return;
@@ -1190,67 +1191,11 @@ void gguf_set_tensor_data(struct gguf_context * ctx, const char * name, const vo
     ctx->info[idx].t.data = (void *)(uintptr_t)data; // double cast suppresses warning about casting away const
 }
 
-struct gguf_buf {
-    void * data;
-    size_t size;   // size of data
-    size_t offset; // offset within data
-};
-
-static struct gguf_buf gguf_buf_init(size_t size) {
-    struct gguf_buf buf = {
-        /*buf.data   =*/ size == 0 ? NULL : calloc(1, size),
-        /*buf.size   =*/ size,
-        /*buf.offset =*/ 0,
-    };
-
-    return buf;
-}
-
-static void gguf_buf_free(struct gguf_buf buf) {
-    if (buf.data) {
-        free(buf.data);
-    }
-}
-
-static void gguf_buf_grow(struct gguf_buf * buf, size_t size) {
-    if (buf->offset + size > buf->size) {
-        buf->size = 1.5f*(buf->offset + size);
-        if (buf->data) {
-            buf->data = realloc(buf->data, buf->size);
-            GGML_ASSERT(buf->data); // detect potential memory leak
-        }
-    }
-}
-
-static void gguf_bwrite_el(struct gguf_buf * buf, const void * val, size_t el_size) {
-    gguf_buf_grow(buf, el_size);
-
-    if (buf->data) {
-        memcpy((char *) buf->data + buf->offset, val, el_size);
-    }
-    buf->offset += el_size;
-}
-
-static void gguf_bwrite_tensor_data(struct gguf_buf * buf, const struct ggml_tensor * tensor) {
-    GGML_ASSERT(ggml_is_contiguous(tensor));
-    const size_t el_size = ggml_nbytes(tensor);
-    gguf_buf_grow(buf, el_size);
-
-    if (buf->data) {
-        char * dst = (char *) buf->data + buf->offset;
-        if (tensor->buffer) {
-            ggml_backend_tensor_get(tensor, dst, 0, el_size);
-        } else {
-            GGML_ASSERT(tensor->data);
-            memcpy(dst, tensor->data, el_size);
-        }
-    }
-    buf->offset += el_size;
-}
-
 struct gguf_writer{
     std::vector<int8_t> data;
     bool no_alloc = false; // FIXME
+
+    gguf_writer(std::vector<int8_t> & data) : data(data) {}
 
     template <typename T>
     void write(const T & val) {
@@ -1340,7 +1285,9 @@ struct gguf_writer{
     }
 };
 
-static void gguf_write_to_buf(const struct gguf_context * ctx, struct gguf_writer & gw, const bool only_meta) {
+void gguf_write_to_buf(const struct gguf_context * ctx, std::vector<int8_t> & buf, bool only_meta) {
+    struct gguf_writer gw(buf);
+
     const uint64_t n_kv      = ctx->kv.size();
     const uint64_t n_tensors = ctx->info.size();
 
@@ -1469,28 +1416,28 @@ void gguf_write_to_file(const struct gguf_context * ctx, const char * fname, boo
         GGML_ABORT("failed to open file for writing");
     }
 
-    struct gguf_writer gw;
+    std::vector<int8_t> buf;
 
-    gguf_write_to_buf(ctx, gw, only_meta);
+    gguf_write_to_buf(ctx, buf, only_meta);
 
-    fwrite(gw.data.data(), 1, gw.data.size(), file); // buf.offset == number of bytes that are in use
+    fwrite(buf.data(), 1, buf.size(), file); // buf.offset == number of bytes that are in use
 
     fclose(file);
 }
 
 size_t gguf_get_meta_size(const struct gguf_context * ctx) {
     // no allocs - only compute size
-    struct gguf_writer gw;
+    std::vector<int8_t> buf;
 
-    gguf_write_to_buf(ctx, gw, /*only_meta =*/ true);
+    gguf_write_to_buf(ctx, buf, /*only_meta =*/ true);
 
-    return gw.data.size();
+    return buf.size();
 }
 
 void gguf_get_meta_data(const struct gguf_context * ctx, void * data) {
-    struct gguf_writer gw;
+    std::vector<int8_t> buf;
 
-    gguf_write_to_buf(ctx, gw, /*only_meta =*/ true);
+    gguf_write_to_buf(ctx, buf, /*only_meta =*/ true);
 
-    memcpy(data, gw.data.data(), gw.data.size());
+    memcpy(data, buf.data(), buf.size());
 }

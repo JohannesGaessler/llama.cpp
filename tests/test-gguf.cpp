@@ -1060,9 +1060,9 @@ static std::pair<int, int> test_roundtrip(ggml_backend_dev_t dev, const unsigned
         bbuf       = result.buffer;
     }
 
-    struct gguf_buf gbuf = gguf_buf_init(16 * 1024);
-    gguf_write_to_buf(gguf_ctx_0, &gbuf, only_meta);
-    helper_write(gbuf.data, gbuf.offset, file);
+    std::vector<int8_t> gbuf;
+    gguf_write_to_buf(gguf_ctx_0, gbuf, only_meta);
+    helper_write(gbuf.data(), gbuf.size(), file);
     rewind(file);
 
     struct ggml_context * ctx_1 = nullptr;
@@ -1151,7 +1151,6 @@ static std::pair<int, int> test_roundtrip(ggml_backend_dev_t dev, const unsigned
     ggml_free(ctx_1);
     gguf_free(gguf_ctx_0);
     gguf_free(gguf_ctx_1);
-    gguf_buf_free(gbuf);
     ggml_backend_free(backend);
     GGML_ASSERT(fclose(file) == 0);
 
