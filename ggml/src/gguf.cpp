@@ -6,6 +6,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <inttypes.h>
@@ -308,6 +309,10 @@ struct gguf_context * gguf_init_empty(void) {
 }
 
 struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_params params) {
+    GGML_ASSERT(fseek(file, 0, SEEK_END) == 0);
+    const size_t file_size = ftell(file);
+    rewind(file);
+
     struct gguf_reader gr(file);
     struct gguf_context * ctx = new gguf_context;
 
@@ -732,11 +737,9 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
         return NULL;
     }
 
-    ctx->alignment = GGUF_DEFAULT_ALIGNMENT;
-
-    int alignment_idx = gguf_find_key(ctx, "general.alignment");
-    if (alignment_idx != -1) {
-        ctx->alignment = gguf_get_val_u32(ctx, alignment_idx);
+    {
+        const int alignment_idx = gguf_find_key(ctx, "general.alignment");
+        ctx->alignment = alignment_idx == -1 ? GGUF_DEFAULT_ALIGNMENT : gguf_get_val_u32(ctx, alignment_idx);
     }
 
     // we require the data section to be aligned, so take into account any padding
@@ -755,7 +758,15 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
     // compute the total size of the data section, taking into account the alignment
     {
         ctx->size = 0;
-        for (const struct gguf_tensor_info & ti : ctx->info) {
+        for (size_t i = 0; i < ctx->info.size(); ++i) {
+            const gguf_tensor_info & ti = ctx->info[i];
+            if (ti.offset != ctx->size) {
+                fprintf(stderr, "%s: tensor '%s' has offset %zu, expected %zu\n",
+                    __func__, ti.t.name, ti.offset, ctx->size);
+                fprintf(stderr, "%s: failed to read tensor data\n", __func__);
+                gguf_free(ctx);
+                return NULL;
+            }
             ctx->size += GGML_PAD(ggml_nbytes(&ti.t), ctx->alignment);
         }
     }
