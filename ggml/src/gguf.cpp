@@ -330,8 +330,12 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
         if (ok && gr.read(ctx->version)) {
             if (ctx->version == 1) {
                 fprintf(stderr, "%s: GGUFv1 is no longer supported, please use a more up-to-date version\n", __func__);
-                gguf_free(ctx);
-                return NULL;
+                ok = false;
+            }
+            if (ctx->version > GGUF_VERSION) {
+                fprintf(stderr, "%s: this GGUF file is version %" PRIu32 " but this software only supports up to version %d\n",
+                    __func__, ctx->version, GGUF_VERSION);
+                ok = false;
             }
         } else {
             ok = false;

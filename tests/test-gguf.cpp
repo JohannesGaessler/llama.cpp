@@ -627,7 +627,7 @@ static std::pair<int, int> test_handcrafted_file(const unsigned int seed) {
     const std::vector<handcrafted_file_type> hfts = {
         HANDCRAFTED_HEADER_BAD_MAGIC,
         HANDCRAFTED_HEADER_BAD_VERSION_1,
-        // HANDCRAFTED_FILE_TYPE_BAD_VERSION_FUTURE, // FIXME
+        HANDCRAFTED_HEADER_BAD_VERSION_FUTURE,
         HANDCRAFTED_HEADER_BAD_N_KV,
         HANDCRAFTED_HEADER_BAD_N_TENSORS,
         HANDCRAFTED_HEADER_EMPTY,
