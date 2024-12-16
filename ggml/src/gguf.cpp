@@ -9,6 +9,8 @@
 #include <cstring>
 #include <inttypes.h>
 #include <map>
+#include <new>
+#include <stdexcept>
 #include <stdint.h>
 #include <string>
 #include <vector>
@@ -275,7 +277,13 @@ struct gguf_reader {
         if (!read(size)) {
             return false;
         }
-        dst.resize(size);
+        try {
+            dst.resize(size);
+        } catch(const std::length_error &) {
+            return false;
+        } catch(const std::bad_alloc &) {
+            return false;
+        }
         const size_t n = fread(dst.data(), 1, size, file);
         offset += n;
         return n == dst.length();
@@ -330,16 +338,16 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
         }
 
         if (ok && gr.read(n_tensors)) {
-            if (n_tensors > SIZE_MAX) {
-                fprintf(stderr, "%s: number of tensors too large: %" PRIu64, __func__, n_tensors);
+            if (n_tensors > SIZE_MAX/sizeof(gguf_tensor_info)) {
+                fprintf(stderr, "%s: number of tensors too large: %" PRIu64 "\n", __func__, n_tensors);
                 ok = false;
             }
         } else {
             ok = false;
         }
         if (ok && gr.read(n_kv)) {
-            if (n_kv > SIZE_MAX) {
-                fprintf(stderr, "%s: number of tensors too large: %" PRIu64, __func__, n_tensors);
+            if (n_kv > SIZE_MAX/sizeof(gguf_kv)) {
+                fprintf(stderr, "%s: number of key value pairs too large: %" PRIu64 "\n", __func__, n_kv);
                 ok = false;
             }
         } else {
@@ -887,7 +895,6 @@ enum gguf_type gguf_get_arr_type(const struct gguf_context * ctx, int key_id) {
 
 const void * gguf_get_arr_data(const struct gguf_context * ctx, int key_id) {
     GGML_ASSERT(key_id >= 0 && key_id < gguf_get_n_kv(ctx));
-    GGML_ASSERT(ctx->kv[key_id].get_type() == GGUF_TYPE_ARRAY);
     return ctx->kv[key_id].arr.data();
 }
 
@@ -899,8 +906,14 @@ const char * gguf_get_arr_str(const struct gguf_context * ctx, int key_id, int i
 
 int gguf_get_arr_n(const struct gguf_context * ctx, int key_id) {
     GGML_ASSERT(key_id >= 0 && key_id < gguf_get_n_kv(ctx));
-    GGML_ASSERT(ctx->kv[key_id].get_type() == GGUF_TYPE_ARRAY);
-    return ctx->kv[key_id].arr.size();
+
+    if (ctx->kv[key_id].type == GGUF_TYPE_STRING) {
+        return ctx->kv[key_id].arr_string.size();
+    }
+
+    const size_t type_size = gguf_type_size(ctx->kv[key_id].type);
+    GGML_ASSERT(ctx->kv[key_id].arr.size() % type_size == 0);
+    return ctx->kv[key_id].arr.size() / type_size;
 }
 
 uint8_t gguf_get_val_u8(const struct gguf_context * ctx, int key_id) {
@@ -1015,18 +1028,22 @@ int gguf_find_tensor(const struct gguf_context * ctx, const char * name) {
 }
 
 size_t gguf_get_tensor_offset(const struct gguf_context * ctx, int i) {
+    GGML_ASSERT(i >= 0 && i < int(ctx->info.size()));
     return ctx->info[i].offset;
 }
 
 const char * gguf_get_tensor_name(const struct gguf_context * ctx, int i) {
+    GGML_ASSERT(i >= 0 && i < int(ctx->info.size()));
     return ctx->info[i].t.name;
 }
 
 enum ggml_type gguf_get_tensor_type(const struct gguf_context * ctx, int i) {
+    GGML_ASSERT(i >= 0 && i < int(ctx->info.size()));
     return ctx->info[i].t.type;
 }
 
 size_t gguf_get_tensor_size(const struct gguf_context * ctx, int i) {
+    GGML_ASSERT(i >= 0 && i < int(ctx->info.size()));
     return ggml_nbytes(&ctx->info[i].t);
 }
 

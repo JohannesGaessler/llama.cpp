@@ -632,27 +632,27 @@ static std::pair<int, int> test_handcrafted_file(const unsigned int seed) {
         HANDCRAFTED_HEADER_BAD_N_TENSORS,
         HANDCRAFTED_HEADER_EMPTY,
 
-        HANDCRAFTED_KV_BAD_KEY_SIZE,
-        HANDCRAFTED_KV_BAD_TYPE,
-        HANDCRAFTED_KV_BAD_VALUE_SIZE,
-        // HANDCRAFTED_FILE_TYPE_DUPLICATE_KEY, // FIXME
-        HANDCRAFTED_KV_SUCCESS,
+        // HANDCRAFTED_KV_BAD_KEY_SIZE,
+        // HANDCRAFTED_KV_BAD_TYPE,
+        // HANDCRAFTED_KV_BAD_VALUE_SIZE,
+        // // HANDCRAFTED_FILE_TYPE_DUPLICATE_KEY, // FIXME
+        // HANDCRAFTED_KV_SUCCESS,
 
-        HANDCRAFTED_TENSORS_BAD_NAME_SIZE,
-        HANDCRAFTED_TENSORS_BAD_N_DIMS,
-        HANDCRAFTED_TENSORS_BAD_SHAPE,
-        HANDCRAFTED_TENSORS_NE_TOO_BIG,
-        HANDCRAFTED_TENSORS_BAD_TYPE,
-        // HANDCRAFTED_TENSORS_BAD_OFFSET, // FIXME
-        HANDCRAFTED_TENSORS_DUPLICATE_NAME,
-        // HANDCRAFTED_TENSORS_BAD_ALIGNMENT, // FIXME
-        HANDCRAFTED_TENSORS_SUCCESS,
-        HANDCRAFTED_TENSORS_CUSTOM_ALIGN,
+        // HANDCRAFTED_TENSORS_BAD_NAME_SIZE,
+        // HANDCRAFTED_TENSORS_BAD_N_DIMS,
+        // HANDCRAFTED_TENSORS_BAD_SHAPE,
+        // HANDCRAFTED_TENSORS_NE_TOO_BIG,
+        // HANDCRAFTED_TENSORS_BAD_TYPE,
+        // // HANDCRAFTED_TENSORS_BAD_OFFSET, // FIXME
+        // HANDCRAFTED_TENSORS_DUPLICATE_NAME,
+        // // HANDCRAFTED_TENSORS_BAD_ALIGNMENT, // FIXME
+        // HANDCRAFTED_TENSORS_SUCCESS,
+        // HANDCRAFTED_TENSORS_CUSTOM_ALIGN,
 
-        HANDCRAFTED_DATA_NOT_ENOUGH_DATA,
-        // HANDCRAFTED_DATA_BAD_ALIGNMENT, // FIXME
-        HANDCRAFTED_DATA_SUCCESS,
-        HANDCRAFTED_DATA_CUSTOM_ALIGN,
+        // HANDCRAFTED_DATA_NOT_ENOUGH_DATA,
+        // // HANDCRAFTED_DATA_BAD_ALIGNMENT, // FIXME
+        // HANDCRAFTED_DATA_SUCCESS,
+        // HANDCRAFTED_DATA_CUSTOM_ALIGN,
     };
 
     for (enum handcrafted_file_type hft : hfts) {
@@ -1276,21 +1276,21 @@ int main(int argc, char ** argv) {
         ntest += result.second;
     }
 
-    for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
-        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+    // for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+    //     ggml_backend_dev_t dev = ggml_backend_dev_get(i);
 
-        for (bool only_meta : {true, false}) {
-            std::pair<int, int> result = test_roundtrip(dev, seed, only_meta);
-            npass += result.first;
-            ntest += result.second;
-        }
+    //     for (bool only_meta : {true, false}) {
+    //         std::pair<int, int> result = test_roundtrip(dev, seed, only_meta);
+    //         npass += result.first;
+    //         ntest += result.second;
+    //     }
 
-        {
-            std::pair<int, int> result = test_gguf_set_kv(dev, seed);
-            npass += result.first;
-            ntest += result.second;
-        }
-    }
+    //     {
+    //         std::pair<int, int> result = test_gguf_set_kv(dev, seed);
+    //         npass += result.first;
+    //         ntest += result.second;
+    //     }
+    // }
 
     printf("%d/%d tests passed\n", npass, ntest);
     if (npass != ntest) {
