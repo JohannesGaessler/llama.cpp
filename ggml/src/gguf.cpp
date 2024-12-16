@@ -619,110 +619,117 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
     }
 
     // read the tensor info
-    if (n_tensors == 0) {
-        for (uint64_t i = 0; ok && i < n_tensors; ++i) {
-            struct gguf_tensor_info info;
+    for (uint64_t i = 0; ok && i < n_tensors; ++i) {
+        struct gguf_tensor_info info;
 
-            // tensor name
-            {
-                std::string name;
-                ok = ok && gr.read(name);
-                if (name.length() >= GGML_MAX_NAME) {
-                    fprintf(stderr, "%s: tensor name %" PRIu64 " is too long: %zu >= %d\n", __func__, i, name.length(), GGML_MAX_NAME);
-                    ok = false;
-                    break;
-                }
-                ggml_set_name(&info.t, name.c_str());
-
-                // make sure there are no duplicated tensor names
-                for (uint64_t j = 0; ok && j < i; ++j) {
-                    if (strcmp(info.t.name, ctx->info[j].t.name) == 0) {
-                        fprintf(stderr, "%s: duplicated tensor name %s\n", __func__, info.t.name);
-                        ok = false;
-                        break;
-                    }
-                }
+        // tensor name
+        {
+            std::string name;
+            ok = ok && gr.read(name);
+            if (name.length() >= GGML_MAX_NAME) {
+                fprintf(stderr, "%s: tensor name %" PRIu64 " is too long: %zu >= %d\n", __func__, i, name.length(), GGML_MAX_NAME);
+                ok = false;
+                break;
             }
+            ggml_set_name(&info.t, name.c_str());
 
-            // tensor shape
-            {
-                uint32_t n_dims = -1;
-                ok = ok && gr.read(n_dims);
-                if (n_dims > GGML_MAX_DIMS) {
-                    fprintf(stderr, "%s: tensor '%s' has invalid number of dimensions (%" PRIu32 ")\n", __func__, info.t.name, n_dims);
-                    ok = false;
-                    break;
-                }
-                for (uint32_t j = 0; ok && j < GGML_MAX_DIMS; ++j) {
-                    info.t.ne[j] = 1;
-                    if (j < n_dims) {
-                        ok = ok && gr.read(info.t.ne[j]);
-                    }
-
-                    // check that all ne are non-negative
-                    if (info.t.ne[j] < 0) {
-                        fprintf(stderr, "%s: tensor '%s' dimension %" PRIu32 " has invalid number of elements (%" PRIi64 ")\n",
-                            __func__, info.t.name, j, info.t.ne[j]);
-                        ok = false;
-                        break;
-                    }
-                }
-
-                // check that the total number of elements is representable
-                if ((INT64_MAX/info.t.ne[1] <= info.t.ne[0]) ||
-                    (INT64_MAX/info.t.ne[2] <= info.t.ne[0]*info.t.ne[1]) ||
-                    (INT64_MAX/info.t.ne[3] <= info.t.ne[0]*info.t.ne[1]*info.t.ne[2])) {
-
-                    fprintf(stderr, "%s: total number of elements in tensor '%s' with shape "
-                        "(%" PRIi64 ", %" PRIi64 ", %" PRIi64 ", %" PRIi64 ") is >= %" PRIi64 "\n",
-                        __func__, info.t.name, info.t.ne[0], info.t.ne[1], info.t.ne[2], info.t.ne[3], INT64_MAX);
+            // make sure there are no duplicated tensor names
+            for (uint64_t j = 0; ok && j < i; ++j) {
+                if (strcmp(info.t.name, ctx->info[j].t.name) == 0) {
+                    fprintf(stderr, "%s: duplicated tensor name '%s'\n", __func__, info.t.name);
                     ok = false;
                     break;
                 }
             }
-
-            // tensor type
-            {
-                ok = ok && gr.read(info.t.type);
-
-                // check that tensor type is within defined range
-                if (info.t.type < 0 || info.t.type >= GGML_TYPE_COUNT) {
-                    fprintf(stderr, "%s: tensor '%s' has invalid ggml type %d (%s)\n",
-                        __func__, info.t.name, info.t.type, ggml_type_name(info.t.type));
-                    ok = false;
-                    break;
-                }
-                const size_t  type_size = ggml_type_size(info.t.type);
-                const int64_t blck_size = ggml_blck_size(info.t.type);
-
-                // check that row size is divisible by block size
-                if (blck_size == 0 || info.t.ne[0] % blck_size != 0) {
-                    fprintf(stderr, "%s: tensor '%s' of type %d (%s) has %" PRId64 " elements per row, "
-                        "not a multiple of block size (%" PRId64 ")\n",
-                        __func__, info.t.name, (int) info.t.type, ggml_type_name(info.t.type), info.t.ne[0], blck_size);
-                    ok = false;
-                    break;
-                }
-
-                // calculate byte offsets given the tensor shape and type
-                info.t.nb[0] = type_size;
-                info.t.nb[1] = info.t.nb[0]*(info.t.ne[0]/blck_size);
-                for (int j = 2; j < GGML_MAX_DIMS; ++j) {
-                    info.t.nb[j] = info.t.nb[j - 1]*info.t.ne[j - 1];
-                }
-            }
-
-            // tensor data offset within buffer
-            ok = ok && gr.read(info.offset);
-
-            ctx->info.push_back(info);
         }
-
         if (!ok) {
-            fprintf(stderr, "%s: failed to read tensor info\n", __func__);
-            gguf_free(ctx);
-            return NULL;
+            break;
         }
+
+        // tensor shape
+        {
+            uint32_t n_dims = -1;
+            ok = ok && gr.read(n_dims);
+            if (n_dims > GGML_MAX_DIMS) {
+                fprintf(stderr, "%s: tensor '%s' has invalid number of dimensions: %" PRIu32 "\n", __func__, info.t.name, n_dims);
+                ok = false;
+                break;
+            }
+            for (uint32_t j = 0; ok && j < GGML_MAX_DIMS; ++j) {
+                info.t.ne[j] = 1;
+                if (j < n_dims) {
+                    ok = ok && gr.read(info.t.ne[j]);
+                }
+
+                // check that all ne are non-negative
+                if (info.t.ne[j] < 0) {
+                    fprintf(stderr, "%s: tensor '%s' dimension %" PRIu32 " has invalid number of elements: %" PRIi64 "\n",
+                        __func__, info.t.name, j, info.t.ne[j]);
+                    ok = false;
+                    break;
+                }
+            }
+
+            // check that the total number of elements is representable
+            if (ok && ((INT64_MAX/info.t.ne[1] <= info.t.ne[0]) ||
+                       (INT64_MAX/info.t.ne[2] <= info.t.ne[0]*info.t.ne[1]) ||
+                       (INT64_MAX/info.t.ne[3] <= info.t.ne[0]*info.t.ne[1]*info.t.ne[2]))) {
+
+                fprintf(stderr, "%s: total number of elements in tensor '%s' with shape "
+                    "(%" PRIi64 ", %" PRIi64 ", %" PRIi64 ", %" PRIi64 ") is >= %" PRIi64 "\n",
+                    __func__, info.t.name, info.t.ne[0], info.t.ne[1], info.t.ne[2], info.t.ne[3], INT64_MAX);
+                ok = false;
+                break;
+            }
+        }
+        if (!ok) {
+            break;
+        }
+
+        // tensor type
+        {
+            ok = ok && gr.read(info.t.type);
+
+            // check that tensor type is within defined range
+            if (info.t.type < 0 || info.t.type >= GGML_TYPE_COUNT) {
+                fprintf(stderr, "%s: tensor '%s' has invalid ggml type %d (%s)\n",
+                    __func__, info.t.name, info.t.type, ggml_type_name(info.t.type));
+                ok = false;
+                break;
+            }
+            const size_t  type_size = ggml_type_size(info.t.type);
+            const int64_t blck_size = ggml_blck_size(info.t.type);
+
+            // check that row size is divisible by block size
+            if (blck_size == 0 || info.t.ne[0] % blck_size != 0) {
+                fprintf(stderr, "%s: tensor '%s' of type %d (%s) has %" PRId64 " elements per row, "
+                    "not a multiple of block size (%" PRId64 ")\n",
+                    __func__, info.t.name, (int) info.t.type, ggml_type_name(info.t.type), info.t.ne[0], blck_size);
+                ok = false;
+                break;
+            }
+
+            // calculate byte offsets given the tensor shape and type
+            info.t.nb[0] = type_size;
+            info.t.nb[1] = info.t.nb[0]*(info.t.ne[0]/blck_size);
+            for (int j = 2; j < GGML_MAX_DIMS; ++j) {
+                info.t.nb[j] = info.t.nb[j - 1]*info.t.ne[j - 1];
+            }
+        }
+        if (!ok) {
+            break;
+        }
+
+        // tensor data offset within buffer
+        ok = ok && gr.read(info.offset);
+
+        ctx->info.push_back(info);
+    }
+
+    if (!ok) {
+        fprintf(stderr, "%s: failed to read tensor info\n", __func__);
+        gguf_free(ctx);
+        return NULL;
     }
 
     ctx->alignment = GGUF_DEFAULT_ALIGNMENT;
