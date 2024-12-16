@@ -4,6 +4,7 @@
 #include "gguf.h"
 
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -155,6 +156,12 @@ struct gguf_kv {
         arr_string.push_back(value);
     }
 
+    gguf_kv(const std::string & key, const std::vector<std::string> & value)
+            : key(key), type(GGUF_TYPE_STRING) {
+        GGML_ASSERT(!key.empty());
+        arr_string = value;
+    }
+
     const std::string & get_key() const {
         return key;
     }
@@ -229,7 +236,7 @@ struct gguf_reader {
     }
 
     template <typename T>
-    bool read(std::vector<T> & dst) {
+    bool read_vec(std::vector<T> & dst) {
         {
             uint64_t n = -1;
             if (!read(n)) {
@@ -374,6 +381,16 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
             gguf_type   type = gguf_type(-1);
 
             ok = ok && gr.read(key);
+            for (size_t j = 0; ok && j < ctx->kv.size(); ++j) {
+                if (key == ctx->kv[j].key) {
+                    fprintf(stderr, "%s: duplicate key: %s\n", __func__, key.c_str());
+                    ok = false;
+                }
+            }
+            if (!ok) {
+                break;
+            }
+
             ok = ok && gr.read(type);
             if (type == GGUF_TYPE_ARRAY) {
                 gguf_type type_arr = gguf_type(-1);
@@ -382,7 +399,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
                 switch (type_arr) {
                     case GGUF_TYPE_UINT8: {
                         std::vector<uint8_t> value;
-                        if (!gr.read(value)) {
+                        if (!gr.read_vec(value)) {
                             ok = false;
                             break;
                         }
@@ -390,7 +407,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
                     } break;
                     case GGUF_TYPE_INT8: {
                         std::vector<int8_t> value;
-                        if (!gr.read(value)) {
+                        if (!gr.read_vec(value)) {
                             ok = false;
                             break;
                         }
@@ -398,7 +415,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
                     } break;
                     case GGUF_TYPE_UINT16: {
                         std::vector<uint16_t> value;
-                        if (!gr.read(value)) {
+                        if (!gr.read_vec(value)) {
                             ok = false;
                             break;
                         }
@@ -406,7 +423,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
                     } break;
                     case GGUF_TYPE_INT16: {
                         std::vector<int16_t> value;
-                        if (!gr.read(value)) {
+                        if (!gr.read_vec(value)) {
                             ok = false;
                             break;
                         }
@@ -414,7 +431,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
                     } break;
                     case GGUF_TYPE_UINT32: {
                         std::vector<uint32_t> value;
-                        if (!gr.read(value)) {
+                        if (!gr.read_vec(value)) {
                             ok = false;
                             break;
                         }
@@ -422,7 +439,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
                     } break;
                     case GGUF_TYPE_INT32: {
                         std::vector<int32_t> value;
-                        if (!gr.read(value)) {
+                        if (!gr.read_vec(value)) {
                             ok = false;
                             break;
                         }
@@ -430,7 +447,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
                     } break;
                     case GGUF_TYPE_FLOAT32: {
                         std::vector<float> value;
-                        if (!gr.read(value)) {
+                        if (!gr.read_vec(value)) {
                             ok = false;
                             break;
                         }
@@ -438,7 +455,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
                     } break;
                     case GGUF_TYPE_UINT64: {
                         std::vector<uint64_t> value;
-                        if (!gr.read(value)) {
+                        if (!gr.read_vec(value)) {
                             ok = false;
                             break;
                         }
@@ -446,7 +463,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
                     } break;
                     case GGUF_TYPE_INT64: {
                         std::vector<int64_t> value;
-                        if (!gr.read(value)) {
+                        if (!gr.read_vec(value)) {
                             ok = false;
                             break;
                         }
@@ -454,7 +471,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
                     } break;
                     case GGUF_TYPE_FLOAT64: {
                         std::vector<double> value;
-                        if (!gr.read(value)) {
+                        if (!gr.read_vec(value)) {
                             ok = false;
                             break;
                         }
@@ -462,7 +479,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
                     } break;
                     case GGUF_TYPE_BOOL: {
                         std::vector<int8_t> value;
-                        if (!gr.read(value)) {
+                        if (!gr.read_vec(value)) {
                             ok = false;
                             break;
                         }
@@ -470,7 +487,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
                     } break;
                     case GGUF_TYPE_STRING: {
                         std::vector<std::string> value;
-                        if (!gr.read(value)) {
+                        if (!gr.read_vec(value)) {
                             ok = false;
                             break;
                         }
@@ -899,12 +916,13 @@ enum gguf_type gguf_get_arr_type(const struct gguf_context * ctx, int key_id) {
 
 const void * gguf_get_arr_data(const struct gguf_context * ctx, int key_id) {
     GGML_ASSERT(key_id >= 0 && key_id < gguf_get_n_kv(ctx));
+    GGML_ASSERT(ctx->kv[key_id].get_type() != GGUF_TYPE_STRING);
     return ctx->kv[key_id].arr.data();
 }
 
 const char * gguf_get_arr_str(const struct gguf_context * ctx, int key_id, int i) {
     GGML_ASSERT(key_id >= 0 && key_id < gguf_get_n_kv(ctx));
-    GGML_ASSERT(ctx->kv[key_id].get_type() == GGUF_TYPE_ARRAY);
+    GGML_ASSERT(ctx->kv[key_id].get_type() == GGUF_TYPE_STRING);
     return ctx->kv[key_id].arr_string[i].c_str();
 }
 

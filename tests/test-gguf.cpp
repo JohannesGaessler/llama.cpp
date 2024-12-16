@@ -461,10 +461,12 @@ static bool handcrafted_check_kv(const gguf_context * gguf_ctx, const unsigned i
             const uint64_t n = strlen(str);
             const uint64_t n_expected = rng() % sizeof(data);
             if (n != n_expected) {
+                printf("%s: 10\n", __func__);
                 ok = false;
                 continue;
             }
             if (!std::equal(str, str + n, data8)) {
+                printf("%s: 15\n", __func__);
                 ok = false;
             }
             continue;
@@ -477,6 +479,7 @@ static bool handcrafted_check_kv(const gguf_context * gguf_ctx, const unsigned i
             if (type_arr == GGUF_TYPE_STRING) {
                 const uint64_t nstr_expected = rng() % (16 + 1);
                 if (arr_n != nstr_expected) {
+                    printf("%s: 20\n", __func__);
                     ok = false;
                     continue;
                 }
@@ -486,11 +489,13 @@ static bool handcrafted_check_kv(const gguf_context * gguf_ctx, const unsigned i
                     const uint64_t n_expected = rng() % (sizeof(uint32_t) + 1);
 
                     if (n != n_expected) {
+                        printf("%s: 30\n", __func__);
                         ok = false;
                         continue;
                     }
                     const char * str_expected = reinterpret_cast<const char *>(&data[istr]);
                     if (strncmp(str, str_expected, n) != 0) {
+                        printf("%s: 40\n", __func__);
                         ok = false;
                         continue;
                     }
@@ -500,25 +505,37 @@ static bool handcrafted_check_kv(const gguf_context * gguf_ctx, const unsigned i
 
             const uint64_t arr_n_expected = (rng() % sizeof(data)) / type_size;
             if (arr_n != arr_n_expected) {
+                printf("%s: 50\n", __func__);
                 ok = false;
                 continue;
             }
 
             const char * data_gguf = reinterpret_cast<const char *>(gguf_get_arr_data(gguf_ctx, id));
             if (!std::equal(data8, data8 + arr_n*type_size, data_gguf)) {
+                printf("%s: 60\n", __func__);
                 ok = false;
             }
             continue;
         }
 
         const char * data_gguf = reinterpret_cast<const char *>(gguf_get_val_data(gguf_ctx, id));
+
+        if (type == GGUF_TYPE_BOOL) {
+            if (bool(*data8) != bool(*data_gguf)) {
+                ok = false;
+            }
+            continue;
+        }
+
         if (!std::equal(data8, data8 + gguf_type_size(type), data_gguf)) {
+            printf("%s: 70\n", __func__);
             ok = false;
         }
     }
 
     const uint32_t expected_alignment = alignment_defined ? GGUF_DEFAULT_ALIGNMENT + 1 : GGUF_DEFAULT_ALIGNMENT;
     if (gguf_get_alignment(gguf_ctx) != expected_alignment) {
+        printf("%s: 80\n", __func__);
         ok = false;
     }
 
@@ -632,11 +649,11 @@ static std::pair<int, int> test_handcrafted_file(const unsigned int seed) {
         HANDCRAFTED_HEADER_BAD_N_TENSORS,
         HANDCRAFTED_HEADER_EMPTY,
 
-        // HANDCRAFTED_KV_BAD_KEY_SIZE,
-        // HANDCRAFTED_KV_BAD_TYPE,
-        // HANDCRAFTED_KV_BAD_VALUE_SIZE,
-        // // HANDCRAFTED_FILE_TYPE_DUPLICATE_KEY, // FIXME
-        // HANDCRAFTED_KV_SUCCESS,
+        HANDCRAFTED_KV_BAD_KEY_SIZE,
+        HANDCRAFTED_KV_BAD_TYPE,
+        HANDCRAFTED_KV_BAD_VALUE_SIZE,
+        HANDCRAFTED_KV_DUPLICATE_KEY,
+        HANDCRAFTED_KV_SUCCESS,
 
         // HANDCRAFTED_TENSORS_BAD_NAME_SIZE,
         // HANDCRAFTED_TENSORS_BAD_N_DIMS,
