@@ -671,10 +671,10 @@ static std::pair<int, int> test_handcrafted_file(const unsigned int seed) {
         HANDCRAFTED_TENSORS_SUCCESS,
         HANDCRAFTED_TENSORS_CUSTOM_ALIGN,
 
-        // HANDCRAFTED_DATA_NOT_ENOUGH_DATA,
-        // // HANDCRAFTED_DATA_BAD_ALIGNMENT, // FIXME
-        // HANDCRAFTED_DATA_SUCCESS,
-        // HANDCRAFTED_DATA_CUSTOM_ALIGN,
+        HANDCRAFTED_DATA_NOT_ENOUGH_DATA,
+        HANDCRAFTED_DATA_BAD_ALIGNMENT,
+        HANDCRAFTED_DATA_SUCCESS,
+        HANDCRAFTED_DATA_CUSTOM_ALIGN,
     };
 
     for (enum handcrafted_file_type hft : hfts) {
@@ -722,7 +722,7 @@ static std::pair<int, int> test_handcrafted_file(const unsigned int seed) {
             ntest++;
         }
 
-        if (false && expect_context_not_null(hft)) { // FIXME
+        if (expect_context_not_null(hft)) {
             FILE * file_eb = get_handcrafted_file(seed, hft, /*extra_bytes =*/ 1);
             struct gguf_context * gguf_ctx_eb = gguf_init_from_file_impl(file_eb, gguf_params);
 
@@ -1082,8 +1082,7 @@ static std::pair<int, int> test_roundtrip(ggml_backend_dev_t dev, const unsigned
         bbuf       = result.buffer;
     }
 
-    std::vector<int8_t> gbuf;
-    gguf_write_to_buf(gguf_ctx_0, gbuf, only_meta);
+    std::vector<int8_t> gbuf = gguf_write_to_buf(gguf_ctx_0, only_meta);
     helper_write(gbuf.data(), gbuf.size(), file);
     rewind(file);
 
@@ -1298,21 +1297,21 @@ int main(int argc, char ** argv) {
         ntest += result.second;
     }
 
-    // for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
-    //     ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+    for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
 
-    //     for (bool only_meta : {true, false}) {
-    //         std::pair<int, int> result = test_roundtrip(dev, seed, only_meta);
-    //         npass += result.first;
-    //         ntest += result.second;
-    //     }
+        for (bool only_meta : {true, false}) {
+            std::pair<int, int> result = test_roundtrip(dev, seed, only_meta);
+            npass += result.first;
+            ntest += result.second;
+        }
 
-    //     {
-    //         std::pair<int, int> result = test_gguf_set_kv(dev, seed);
-    //         npass += result.first;
-    //         ntest += result.second;
-    //     }
-    // }
+        // {
+        //     std::pair<int, int> result = test_gguf_set_kv(dev, seed);
+        //     npass += result.first;
+        //     ntest += result.second;
+        // }
+    }
 
     printf("%d/%d tests passed\n", npass, ntest);
     if (npass != ntest) {

@@ -1274,8 +1274,6 @@ struct gguf_writer{
     std::vector<int8_t> data;
     bool no_alloc = false; // FIXME
 
-    gguf_writer(std::vector<int8_t> & data) : data(data) {}
-
     template <typename T>
     void write(const T & val) {
         const int8_t * val8 = reinterpret_cast<const int8_t *>(&val);
@@ -1364,8 +1362,8 @@ struct gguf_writer{
     }
 };
 
-void gguf_write_to_buf(const struct gguf_context * ctx, std::vector<int8_t> & buf, bool only_meta) {
-    struct gguf_writer gw(buf);
+std::vector<int8_t> gguf_write_to_buf(const struct gguf_context * ctx, bool only_meta) {
+    struct gguf_writer gw;
 
     const uint64_t n_kv      = ctx->kv.size();
     const uint64_t n_tensors = ctx->info.size();
@@ -1464,7 +1462,7 @@ void gguf_write_to_buf(const struct gguf_context * ctx, std::vector<int8_t> & bu
     }
 
     if (only_meta) {
-        return;
+        return gw.data;
     }
 
     size_t offset = 0;
@@ -1487,6 +1485,8 @@ void gguf_write_to_buf(const struct gguf_context * ctx, std::vector<int8_t> & bu
 
         offset += size_pad;
     }
+
+    return gw.data;
 }
 
 void gguf_write_to_file(const struct gguf_context * ctx, const char * fname, bool only_meta) {
@@ -1495,9 +1495,7 @@ void gguf_write_to_file(const struct gguf_context * ctx, const char * fname, boo
         GGML_ABORT("failed to open file for writing");
     }
 
-    std::vector<int8_t> buf;
-
-    gguf_write_to_buf(ctx, buf, only_meta);
+    std::vector<int8_t> buf = gguf_write_to_buf(ctx, only_meta);
 
     fwrite(buf.data(), 1, buf.size(), file); // buf.offset == number of bytes that are in use
 
@@ -1506,17 +1504,13 @@ void gguf_write_to_file(const struct gguf_context * ctx, const char * fname, boo
 
 size_t gguf_get_meta_size(const struct gguf_context * ctx) {
     // no allocs - only compute size
-    std::vector<int8_t> buf;
-
-    gguf_write_to_buf(ctx, buf, /*only_meta =*/ true);
+    std::vector<int8_t> buf = gguf_write_to_buf(ctx, /*only_meta =*/ true);
 
     return buf.size();
 }
 
 void gguf_get_meta_data(const struct gguf_context * ctx, void * data) {
-    std::vector<int8_t> buf;
-
-    gguf_write_to_buf(ctx, buf, /*only_meta =*/ true);
+    std::vector<int8_t> buf = gguf_write_to_buf(ctx, /*only_meta =*/ true);
 
     memcpy(data, buf.data(), buf.size());
 }

@@ -563,5 +563,5 @@ static inline ggml_bf16_t ggml_compute_fp32_to_bf16(float s) {
 // expose GGUF internals for test code
 GGML_API size_t gguf_type_size(enum gguf_type type);
 GGML_API struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_params params);
-GGML_API void gguf_write_to_buf(const struct gguf_context * ctx, std::vector<int8_t> & data, bool only_meta);
+GGML_API std::vector<int8_t> gguf_write_to_buf(const struct gguf_context * ctx, bool only_meta);
 #endif // __cplusplus
