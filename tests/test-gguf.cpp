@@ -466,12 +466,10 @@ static bool handcrafted_check_kv(const gguf_context * gguf_ctx, const unsigned i
             const uint64_t n = strlen(str);
             const uint64_t n_expected = rng() % sizeof(data);
             if (n != n_expected) {
-                printf("%s: 10\n", __func__);
                 ok = false;
                 continue;
             }
             if (!std::equal(str, str + n, data8)) {
-                printf("%s: 15\n", __func__);
                 ok = false;
             }
             continue;
@@ -484,7 +482,6 @@ static bool handcrafted_check_kv(const gguf_context * gguf_ctx, const unsigned i
             if (type_arr == GGUF_TYPE_STRING) {
                 const uint64_t nstr_expected = rng() % (16 + 1);
                 if (arr_n != nstr_expected) {
-                    printf("%s: 20\n", __func__);
                     ok = false;
                     continue;
                 }
@@ -494,13 +491,11 @@ static bool handcrafted_check_kv(const gguf_context * gguf_ctx, const unsigned i
                     const uint64_t n_expected = rng() % (sizeof(uint32_t) + 1);
 
                     if (n != n_expected) {
-                        printf("%s: 30\n", __func__);
                         ok = false;
                         continue;
                     }
                     const char * str_expected = reinterpret_cast<const char *>(&data[istr]);
                     if (strncmp(str, str_expected, n) != 0) {
-                        printf("%s: 40\n", __func__);
                         ok = false;
                         continue;
                     }
@@ -510,14 +505,12 @@ static bool handcrafted_check_kv(const gguf_context * gguf_ctx, const unsigned i
 
             const uint64_t arr_n_expected = (rng() % sizeof(data)) / type_size;
             if (arr_n != arr_n_expected) {
-                printf("%s: 50\n", __func__);
                 ok = false;
                 continue;
             }
 
             const char * data_gguf = reinterpret_cast<const char *>(gguf_get_arr_data(gguf_ctx, id));
             if (!std::equal(data8, data8 + arr_n*type_size, data_gguf)) {
-                printf("%s: 60\n", __func__);
                 ok = false;
             }
             continue;
@@ -533,14 +526,12 @@ static bool handcrafted_check_kv(const gguf_context * gguf_ctx, const unsigned i
         }
 
         if (!std::equal(data8, data8 + gguf_type_size(type), data_gguf)) {
-            printf("%s: 70\n", __func__);
             ok = false;
         }
     }
 
     const uint32_t expected_alignment = alignment_defined ? GGUF_DEFAULT_ALIGNMENT + 1 : GGUF_DEFAULT_ALIGNMENT;
     if (gguf_get_alignment(gguf_ctx) != expected_alignment) {
-        printf("%s: 80\n", __func__);
         ok = false;
     }
 
@@ -711,7 +702,7 @@ static std::pair<int, int> test_handcrafted_file(const unsigned int seed) {
         }
         ntest++;
 
-        if (false && hft >= offset_has_data && !expect_context_not_null(hft)) { // FIXME
+        if (hft >= offset_has_data && !expect_context_not_null(hft)) {
             printf("%s:   - no_dangling_ggml_context_pointer: ", __func__);
             if (ctx) {
                 printf("\033[1;31mFAIL\033[0m\n");
@@ -810,10 +801,6 @@ static struct random_gguf_context_result get_random_gguf_context(ggml_backend_t 
     for (int i = 0; i < 256; ++i) {
         const std::string key = "my_key_" + std::to_string(rng() % 1024);
         const enum gguf_type type = gguf_type(rng() % GGUF_TYPE_COUNT);
-
-        if (type == GGUF_TYPE_STRING || type == GGUF_TYPE_ARRAY) {
-            continue; // FIXME memory leak
-        }
 
         switch (type) {
             case GGUF_TYPE_UINT8:   gguf_set_val_u8  (gguf_ctx, key.c_str(), rng() % (1 <<  7));             break;
@@ -927,12 +914,14 @@ static bool all_kv_in_other(const gguf_context * ctx, const gguf_context * other
 
         const int idx_other = gguf_find_key(other, name);
         if (idx_other < 0) {
+            printf("%s: 10\n", __func__);
             ok = false;
             continue;
         }
 
         const gguf_type type = gguf_get_kv_type(ctx, id);
         if (type != gguf_get_kv_type(other, idx_other)) {
+            printf("%s: 20\n", __func__);
             ok = false;
             continue;
         }
@@ -940,12 +929,14 @@ static bool all_kv_in_other(const gguf_context * ctx, const gguf_context * other
         if (type == GGUF_TYPE_ARRAY) {
             const int arr_n = gguf_get_arr_n(ctx, id);
             if (arr_n != gguf_get_arr_n(other, idx_other)) {
+                printf("%s: 30\n", __func__);
                 ok = false;
                 continue;
             }
 
             const gguf_type type_arr = gguf_get_arr_type(ctx, id);
             if (type_arr != gguf_get_arr_type(other, idx_other)) {
+                printf("%s: 40\n", __func__);
                 ok = false;
                 continue;
             }
@@ -955,6 +946,7 @@ static bool all_kv_in_other(const gguf_context * ctx, const gguf_context * other
                     const std::string str       = gguf_get_arr_str(ctx,   id,       arr_i);
                     const std::string str_other = gguf_get_arr_str(other, idx_other, arr_i);
                     if (str != str_other) {
+                        printf("%s: 50\n", __func__);
                         ok = false;
                     }
                 }
@@ -964,6 +956,7 @@ static bool all_kv_in_other(const gguf_context * ctx, const gguf_context * other
             const char * data       = reinterpret_cast<const char *>(gguf_get_arr_data(ctx,   id));
             const char * data_other = reinterpret_cast<const char *>(gguf_get_arr_data(other, idx_other));
             if (!std::equal(data, data + arr_n*gguf_type_size(type_arr), data_other)) {
+                printf("%s: 60\n", __func__);
                 ok = false;
             }
             continue;
@@ -973,6 +966,7 @@ static bool all_kv_in_other(const gguf_context * ctx, const gguf_context * other
             const std::string str       = gguf_get_val_str(ctx,   id);
             const std::string str_other = gguf_get_val_str(other, idx_other);
             if (str != str_other) {
+                printf("%s: 70\n", __func__);
                 ok = false;
             }
             continue;
@@ -981,6 +975,7 @@ static bool all_kv_in_other(const gguf_context * ctx, const gguf_context * other
         const char * data       = reinterpret_cast<const char *>(gguf_get_val_data(ctx,   id));
         const char * data_other = reinterpret_cast<const char *>(gguf_get_val_data(other, idx_other));
         if (!std::equal(data, data + gguf_type_size(type), data_other)) {
+            printf("%s: 80\n", __func__);
             ok = false;
         }
     }
@@ -1060,10 +1055,6 @@ static std::pair<int, int> test_roundtrip(ggml_backend_dev_t dev, const unsigned
 #else
     GGML_ASSERT(file);
 #endif // _WIN32
-
-    if (ggml_backend_dev_type(dev) != GGML_BACKEND_DEVICE_TYPE_CPU) {
-        return std::make_pair(0, 0); // FIXME
-    }
 
     ggml_backend_t backend = ggml_backend_dev_init(dev, nullptr);
     printf("%s: device=%s, backend=%s, only_meta=%s\n",

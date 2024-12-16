@@ -484,6 +484,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
                             break;
                         }
                         ctx->kv.emplace_back(key, value);
+                        ctx->kv.back().type = GGUF_TYPE_BOOL;
                     } break;
                     case GGUF_TYPE_STRING: {
                         std::vector<std::string> value;
@@ -930,12 +931,15 @@ const char * gguf_get_key(const struct gguf_context * ctx, int key_id) {
 
 enum gguf_type gguf_get_kv_type(const struct gguf_context * ctx, int key_id) {
     GGML_ASSERT(key_id >= 0 && key_id < gguf_get_n_kv(ctx));
-    return ctx->kv[key_id].get_type();
+    if (ctx->kv[key_id].get_ne() == 1) {
+        return ctx->kv[key_id].get_type();
+    }
+    return GGUF_TYPE_ARRAY;
 }
 
 enum gguf_type gguf_get_arr_type(const struct gguf_context * ctx, int key_id) {
     GGML_ASSERT(key_id >= 0 && key_id < gguf_get_n_kv(ctx));
-    GGML_ASSERT(ctx->kv[key_id].get_type() == GGUF_TYPE_ARRAY);
+    GGML_ASSERT(ctx->kv[key_id].get_ne() != 1);
     return ctx->kv[key_id].get_type();
 }
 
@@ -1185,37 +1189,51 @@ void gguf_set_arr_str(struct gguf_context * ctx, const char * key, const char **
 void gguf_set_kv(struct gguf_context * ctx, const struct gguf_context * src) {
     const uint64_t n_kv = src->kv.size();
     for (uint64_t i = 0; i < n_kv; ++i) {
+        const struct gguf_kv & kv = src->kv[i];
+        const size_t ne = src->kv[i].get_ne();
+
+        if (ne == 1) {
+            switch (src->kv[i].get_type()) {
+                case GGUF_TYPE_UINT8:   gguf_set_val_u8  (ctx, kv.get_key().c_str(), kv.get_val<uint8_t>());       break;
+                case GGUF_TYPE_INT8:    gguf_set_val_i8  (ctx, kv.get_key().c_str(), kv.get_val<int8_t>());        break;
+                case GGUF_TYPE_UINT16:  gguf_set_val_u16 (ctx, kv.get_key().c_str(), kv.get_val<uint16_t>());      break;
+                case GGUF_TYPE_INT16:   gguf_set_val_i16 (ctx, kv.get_key().c_str(), kv.get_val<int16_t>());       break;
+                case GGUF_TYPE_UINT32:  gguf_set_val_u32 (ctx, kv.get_key().c_str(), kv.get_val<uint32_t>());      break;
+                case GGUF_TYPE_INT32:   gguf_set_val_i32 (ctx, kv.get_key().c_str(), kv.get_val<int32_t>());       break;
+                case GGUF_TYPE_FLOAT32: gguf_set_val_f32 (ctx, kv.get_key().c_str(), kv.get_val<float>());         break;
+                case GGUF_TYPE_UINT64:  gguf_set_val_u64 (ctx, kv.get_key().c_str(), kv.get_val<uint64_t>());      break;
+                case GGUF_TYPE_INT64:   gguf_set_val_i64 (ctx, kv.get_key().c_str(), kv.get_val<int64_t>());       break;
+                case GGUF_TYPE_FLOAT64: gguf_set_val_f64 (ctx, kv.get_key().c_str(), kv.get_val<double>());        break;
+                case GGUF_TYPE_BOOL:    gguf_set_val_bool(ctx, kv.get_key().c_str(), kv.get_val_bool());           break;
+                case GGUF_TYPE_STRING:  gguf_set_val_str (ctx, kv.get_key().c_str(), kv.get_val_string().c_str()); break;
+                case GGUF_TYPE_ARRAY:
+                default: GGML_ABORT("invalid type");
+            }
+            continue;
+        }
+
         switch (src->kv[i].get_type()) {
-            case GGUF_TYPE_UINT8:   gguf_set_val_u8  (ctx, src->kv[i].get_key().c_str(), src->kv[i].get_val<uint8_t>());       break;
-            case GGUF_TYPE_INT8:    gguf_set_val_i8  (ctx, src->kv[i].get_key().c_str(), src->kv[i].get_val<int8_t>());        break;
-            case GGUF_TYPE_UINT16:  gguf_set_val_u16 (ctx, src->kv[i].get_key().c_str(), src->kv[i].get_val<uint16_t>());      break;
-            case GGUF_TYPE_INT16:   gguf_set_val_i16 (ctx, src->kv[i].get_key().c_str(), src->kv[i].get_val<int16_t>());       break;
-            case GGUF_TYPE_UINT32:  gguf_set_val_u32 (ctx, src->kv[i].get_key().c_str(), src->kv[i].get_val<uint32_t>());      break;
-            case GGUF_TYPE_INT32:   gguf_set_val_i32 (ctx, src->kv[i].get_key().c_str(), src->kv[i].get_val<int32_t>());       break;
-            case GGUF_TYPE_FLOAT32: gguf_set_val_f32 (ctx, src->kv[i].get_key().c_str(), src->kv[i].get_val<float>());         break;
-            case GGUF_TYPE_UINT64:  gguf_set_val_u64 (ctx, src->kv[i].get_key().c_str(), src->kv[i].get_val<uint64_t>());      break;
-            case GGUF_TYPE_INT64:   gguf_set_val_i64 (ctx, src->kv[i].get_key().c_str(), src->kv[i].get_val<int64_t>());       break;
-            case GGUF_TYPE_FLOAT64: gguf_set_val_f64 (ctx, src->kv[i].get_key().c_str(), src->kv[i].get_val<double>());        break;
-            case GGUF_TYPE_BOOL:    gguf_set_val_bool(ctx, src->kv[i].get_key().c_str(), src->kv[i].get_val_bool());           break;
-            case GGUF_TYPE_STRING:  gguf_set_val_str (ctx, src->kv[i].get_key().c_str(), src->kv[i].get_val_string().c_str()); break;
-            // FIXME
-            // case GGUF_TYPE_ARRAY:
-            //     {
-            //         if (src->kv[i].get_type_arr() == GGUF_TYPE_STRING) {
-            //             const uint64_t n = src->kv[i].arr_string.size();
-            //             const char ** data = (const char **) calloc(n, sizeof(char *));
-            //             for (uint64_t j = 0; j < n; ++j) {
-            //                 data[j] = src->kv[i].arr_string[i].c_str();
-            //             }
-            //             gguf_set_arr_str(ctx, src->kv[i].get_key().c_str(), data, n);
-            //             free((void *)data);
-            //         } else if (src->kv[i].get_type_arr() == GGUF_TYPE_ARRAY) {
-            //             GGML_ABORT("nested arrays not supported");
-            //         } else {
-            //             gguf_set_arr_data(ctx, src->kv[i].get_key().c_str(), src->kv[i].get_type_arr(),
-            //                 src->kv[i].arr.data(), src->kv[i].arr.size()/gguf_type_size(src->kv[i].get_type()));
-            //         }
-            //     } break;
+            case GGUF_TYPE_UINT8:
+            case GGUF_TYPE_INT8:
+            case GGUF_TYPE_UINT16:
+            case GGUF_TYPE_INT16:
+            case GGUF_TYPE_UINT32:
+            case GGUF_TYPE_INT32:
+            case GGUF_TYPE_FLOAT32:
+            case GGUF_TYPE_UINT64:
+            case GGUF_TYPE_INT64:
+            case GGUF_TYPE_FLOAT64:
+            case GGUF_TYPE_BOOL: {
+                gguf_set_arr_data(ctx, kv.get_key().c_str(), kv.get_type(), kv.arr.data(), ne);
+            } break;
+            case GGUF_TYPE_STRING: {
+                std::vector<const char *> tmp(ne);
+                for (size_t j = 0; j < ne; ++j) {
+                    tmp[j] = kv.arr_string[j].c_str();
+                }
+                gguf_set_arr_str(ctx, kv.get_key().c_str(), tmp.data(), ne);
+            } break;
+            case GGUF_TYPE_ARRAY:
             default: GGML_ABORT("invalid type");
         }
     }
