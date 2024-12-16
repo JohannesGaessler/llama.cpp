@@ -1306,11 +1306,11 @@ int main(int argc, char ** argv) {
             ntest += result.second;
         }
 
-        // {
-        //     std::pair<int, int> result = test_gguf_set_kv(dev, seed);
-        //     npass += result.first;
-        //     ntest += result.second;
-        // }
+        {
+            std::pair<int, int> result = test_gguf_set_kv(dev, seed);
+            npass += result.first;
+            ntest += result.second;
+        }
     }
 
     printf("%d/%d tests passed\n", npass, ntest);
