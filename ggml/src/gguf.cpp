@@ -4,6 +4,7 @@
 #include "gguf.h"
 
 #include <cerrno>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <inttypes.h>
@@ -310,27 +311,40 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
     }
 
     bool ok = true;
-    uint64_t n_kv = -1;
+
+    uint64_t n_kv      = -1;
+    uint64_t n_tensors = -1;
 
     // read the header
     {
         ctx->data = NULL;
 
-        ok = ok && gr.read(ctx->version);
-
-        if (ctx->version == 1) {
-            fprintf(stderr, "%s: GGUFv1 is no longer supported, please use a more up-to-date version\n", __func__);
-            gguf_free(ctx);
-            return NULL;
+        if (ok && gr.read(ctx->version)) {
+            if (ctx->version == 1) {
+                fprintf(stderr, "%s: GGUFv1 is no longer supported, please use a more up-to-date version\n", __func__);
+                gguf_free(ctx);
+                return NULL;
+            }
+        } else {
+            ok = false;
         }
-        {
-            uint64_t tmp = -1;
-            ok = ok && gr.read(tmp);
-            ctx->info.resize(tmp); // FIXME failure handling
-        }
-        ok = ok && gr.read(n_kv);
 
-        // sanity checks to prevent integer/buffer overflows
+        if (ok && gr.read(n_tensors)) {
+            if (n_tensors > SIZE_MAX) {
+                fprintf(stderr, "%s: number of tensors too large: %" PRIu64, __func__, n_tensors);
+                ok = false;
+            }
+        } else {
+            ok = false;
+        }
+        if (ok && gr.read(n_kv)) {
+            if (n_kv > SIZE_MAX) {
+                fprintf(stderr, "%s: number of tensors too large: %" PRIu64, __func__, n_tensors);
+                ok = false;
+            }
+        } else {
+            ok = false;
+        }
 
         if (!ok) {
             fprintf(stderr, "%s: failed to read header\n", __func__);
@@ -576,10 +590,9 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
     }
 
     // read the tensor info
-    if (!ctx->info.empty()) {
-        const uint64_t n_tensors = ctx->info.size();
+    if (n_tensors == 0) {
         for (uint64_t i = 0; ok && i < n_tensors; ++i) {
-            struct gguf_tensor_info & info = ctx->info[i];
+            struct gguf_tensor_info info;
 
             // tensor name
             {
@@ -672,6 +685,8 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
 
             // tensor data offset within buffer
             ok = ok && gr.read(info.offset);
+
+            ctx->info.push_back(info);
         }
 
         if (!ok) {
