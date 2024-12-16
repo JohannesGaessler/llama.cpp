@@ -148,6 +148,7 @@ static FILE * get_handcrafted_file(const unsigned int seed, const enum handcraft
     FILE * file = tmpfile();
 
     std::mt19937 rng(seed);
+    uint32_t alignment = GGUF_DEFAULT_ALIGNMENT;
 
     if (hft == HANDCRAFTED_HEADER_BAD_MAGIC) {
         const char bad_magic[4] = {'F', 'U', 'G', 'G'};
@@ -195,6 +196,11 @@ static FILE * get_handcrafted_file(const unsigned int seed, const enum handcraft
     }
 
     if (hft < offset_has_kv) {
+        while (ftell(file) % alignment != 0) {
+            const char pad = 0;
+            helper_write(&pad, sizeof(pad), file);
+        }
+
         for (int i = 0; i < extra_bytes; ++i) {
             const char tmp = 0;
             helper_write(&tmp, sizeof(tmp), file);
@@ -278,11 +284,16 @@ static FILE * get_handcrafted_file(const unsigned int seed, const enum handcraft
         const int32_t type = gguf_type(GGUF_TYPE_UINT32);
         helper_write(&type, sizeof(type), file);
 
-        const uint32_t alignment = GGUF_DEFAULT_ALIGNMENT + 1;
+        alignment += 1;
         helper_write(&alignment, sizeof(alignment), file);
     }
 
     if (hft < offset_has_tensors) {
+        while (ftell(file) % alignment != 0) {
+            const char pad = 0;
+            helper_write(&pad, sizeof(pad), file);
+        }
+
         for (int i = 0; i < extra_bytes; ++i) {
             const char tmp = 0;
             helper_write(&tmp, sizeof(tmp), file);
@@ -291,11 +302,8 @@ static FILE * get_handcrafted_file(const unsigned int seed, const enum handcraft
         return file;
     }
 
-    uint32_t alignment = GGUF_DEFAULT_ALIGNMENT;
     if (hft == HANDCRAFTED_TENSORS_BAD_ALIGNMENT || hft == HANDCRAFTED_DATA_BAD_ALIGNMENT) {
         alignment -= 1;
-    } else if (hft == HANDCRAFTED_TENSORS_CUSTOM_ALIGN || hft == HANDCRAFTED_DATA_CUSTOM_ALIGN) {
-        alignment += 1;
     }
 
     uint64_t offset = 0;
@@ -364,12 +372,9 @@ static FILE * get_handcrafted_file(const unsigned int seed, const enum handcraft
         offset += GGML_PAD(ggml_row_size(type, ne), alignment);
     }
 
-    const uint32_t alignment_overshoot = ftell(file) % alignment;
-    if (alignment_overshoot != 0) {
-        for (size_t i = alignment_overshoot; i < alignment; ++i) {
-            const char pad = 0;
-            helper_write(&pad, sizeof(pad), file);
-        }
+    while (ftell(file) % alignment != 0) {
+        const char pad = 0;
+        helper_write(&pad, sizeof(pad), file);
     }
 
     if (hft >= offset_has_data) {
@@ -662,7 +667,7 @@ static std::pair<int, int> test_handcrafted_file(const unsigned int seed) {
         HANDCRAFTED_TENSORS_BAD_TYPE,
         HANDCRAFTED_TENSORS_BAD_OFFSET,
         HANDCRAFTED_TENSORS_DUPLICATE_NAME,
-        // HANDCRAFTED_TENSORS_BAD_ALIGNMENT, // FIXME
+        HANDCRAFTED_TENSORS_BAD_ALIGNMENT,
         HANDCRAFTED_TENSORS_SUCCESS,
         HANDCRAFTED_TENSORS_CUSTOM_ALIGN,
 

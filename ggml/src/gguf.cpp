@@ -3,7 +3,6 @@
 #include "ggml-impl.h"
 #include "gguf.h"
 
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -309,10 +308,6 @@ struct gguf_context * gguf_init_empty(void) {
 }
 
 struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_params params) {
-    GGML_ASSERT(fseek(file, 0, SEEK_END) == 0);
-    const size_t file_size = ftell(file);
-    rewind(file);
-
     struct gguf_reader gr(file);
     struct gguf_context * ctx = new gguf_context;
 
@@ -769,6 +764,18 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
             }
             ctx->size += GGML_PAD(ggml_nbytes(&ti.t), ctx->alignment);
         }
+    }
+
+    GGML_ASSERT(fseek(file, 0, SEEK_END) == 0);
+    const size_t file_size = ftell(file);
+    GGML_ASSERT(fseek(file, ctx->offset, SEEK_SET) == 0);
+
+    const bool only_meta = file_size == ctx->offset;
+    if (!only_meta && file_size != ctx->offset + ctx->size) {
+        fprintf(stderr, "%s: GGUF file has size %zu but was expecting %zu or %zu for with or without tensor data\n",
+                __func__, file_size, ctx->offset, ctx->offset + ctx->size);
+        gguf_free(ctx);
+        return NULL;
     }
 
     // load the tensor data only if requested
