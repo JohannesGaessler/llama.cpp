@@ -4406,10 +4406,11 @@ namespace GGUFMeta {
         public:
         static constexpr gguf_type gt = GGUF_TYPE_ARRAY;
         static ArrayInfo getter(const gguf_context *ctx, const int k) {
+            const enum gguf_type arr_type = gguf_get_arr_type(ctx, k);
             return ArrayInfo {
-                gguf_get_arr_type(ctx, k),
+                arr_type,
                 size_t(gguf_get_arr_n(ctx, k)),
-                gguf_get_arr_data(ctx, k),
+                arr_type == GGUF_TYPE_STRING ? nullptr : gguf_get_arr_data(ctx, k),
             };
         }
     };
