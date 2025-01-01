@@ -1303,6 +1303,7 @@ bool gguf_write_to_file(const struct gguf_context * ctx, const char * fname, boo
         return false;
     }
 
+    gguf_write_to_buf(ctx, fout, only_meta);
     return fout.good();
 }
 
