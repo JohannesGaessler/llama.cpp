@@ -54,6 +54,7 @@ static __global__ void mul_mat_vec(
 #endif // FP16_AVAILABLE
         }
     } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
+#ifdef BF162_AVAILABLE
         const nv_bfloat162 * x2 = (const nv_bfloat162 *) x;
         nv_bfloat162 sumb2 = make_bfloat162(0.0f, 0.0f);
 
@@ -63,6 +64,17 @@ static __global__ void mul_mat_vec(
         }
 
         sumf = __low2float(sumb2) + __high2float(sumb2);
+#else
+        const int * x2 = (const int *) x;
+        sumf = 0.0f;
+
+        for (int64_t col2 = tid; col2 < ncols2; col2 += block_size) {
+            const int    tmpx = x2[col2];
+            const float2 tmpy = y2[col2];
+            sumf += float(reinterpret_cast<const nv_bfloat16 *>(&tmpx)[0]) * tmpy.x;
+            sumf += float(reinterpret_cast<const nv_bfloat16 *>(&tmpx)[1]) * tmpy.y;
+        }
+#endif // BF162_AVAILABLE
     } else {
         static_assert(std::is_same<T, void>::value, "unsupported type");
     }
