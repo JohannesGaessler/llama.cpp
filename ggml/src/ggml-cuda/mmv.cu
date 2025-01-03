@@ -239,12 +239,12 @@ void ggml_cuda_op_mul_mat_vec(
 
     switch (src0->type) {
         case GGML_TYPE_F16: {
-            const half * src0_d = (const half *) src0->data;
+            const half * src0_d = (const half *) src0_dd_i;
             mul_mat_vec_cuda(src0_d, src1_ddf_i, dst_dd_i, ne00, row_diff, stride_row,
                 nchannels_x, nchannels_y, channel_stride_x, channel_stride_y, channel_stride_dst, prec, stream);
         } break;
         case GGML_TYPE_BF16: {
-            const nv_bfloat16 * src0_d = (const nv_bfloat16 *) src0->data;
+            const nv_bfloat16 * src0_d = (const nv_bfloat16 *) src0_dd_i;
             mul_mat_vec_cuda(src0_d, src1_ddf_i, dst_dd_i, ne00, row_diff, stride_row,
                 nchannels_x, nchannels_y, channel_stride_x, channel_stride_y, channel_stride_dst, prec, stream);
         } break;
