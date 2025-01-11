@@ -1133,13 +1133,10 @@ void llm_load_vocab(llama_model_loader & ml, llama_model & model) {
 
     // determine vocab type
     {
-        std::string tokenizer_model;
-        std::string tokenizer_pre;
+        ml.get_key(LLM_KV_TOKENIZER_MODEL, vocab.tokenizer_model);
+        ml.get_key(LLM_KV_TOKENIZER_PRE,   vocab.tokenizer_pre, false);
 
-        ml.get_key(LLM_KV_TOKENIZER_MODEL, tokenizer_model);
-        ml.get_key(LLM_KV_TOKENIZER_PRE,   tokenizer_pre, false);
-
-        if (tokenizer_model == "no_vocab" || tokenizer_model == "none") {
+        if (vocab.tokenizer_model == "no_vocab" || vocab.tokenizer_model == "none") {
             vocab.type = LLAMA_VOCAB_TYPE_NONE;
 
             // default special tokens
@@ -1160,7 +1157,7 @@ void llm_load_vocab(llama_model_loader & ml, llama_model & model) {
             return;
         }
 
-        if (tokenizer_model == "llama") {
+        if (vocab.tokenizer_model == "llama") {
             vocab.type = LLAMA_VOCAB_TYPE_SPM;
 
             // default special tokens
@@ -1171,7 +1168,7 @@ void llm_load_vocab(llama_model_loader & ml, llama_model & model) {
             vocab.special_pad_id  = LLAMA_TOKEN_NULL;
             vocab.special_cls_id  = LLAMA_TOKEN_NULL;
             vocab.special_mask_id = LLAMA_TOKEN_NULL;
-        } else if (tokenizer_model == "bert") {
+        } else if (vocab.tokenizer_model == "bert") {
             vocab.type = LLAMA_VOCAB_TYPE_WPM;
 
             // default special tokens
@@ -1182,7 +1179,7 @@ void llm_load_vocab(llama_model_loader & ml, llama_model & model) {
             vocab.special_pad_id  = 0;
             vocab.special_cls_id  = 101;
             vocab.special_mask_id = 103;
-        } else if (tokenizer_model == "gpt2") {
+        } else if (vocab.tokenizer_model == "gpt2") {
             vocab.type = LLAMA_VOCAB_TYPE_BPE;
 
             // read bpe merges and populate bpe ranks
@@ -1217,7 +1214,7 @@ void llm_load_vocab(llama_model_loader & ml, llama_model & model) {
             vocab.special_pad_id  = LLAMA_TOKEN_NULL;
             vocab.special_cls_id  = LLAMA_TOKEN_NULL;
             vocab.special_mask_id = LLAMA_TOKEN_NULL;
-        } else if (tokenizer_model == "t5") {
+        } else if (vocab.tokenizer_model == "t5") {
             vocab.type = LLAMA_VOCAB_TYPE_UGM;
 
             // default special tokens
@@ -1246,7 +1243,7 @@ void llm_load_vocab(llama_model_loader & ml, llama_model & model) {
                 }
 #endif
             }
-        } else if (tokenizer_model == "rwkv") {
+        } else if (vocab.tokenizer_model == "rwkv") {
             vocab.type = LLAMA_VOCAB_TYPE_RWKV;
 
             // default special tokens
@@ -1256,14 +1253,14 @@ void llm_load_vocab(llama_model_loader & ml, llama_model & model) {
             vocab.special_sep_id = LLAMA_TOKEN_NULL;
             vocab.special_pad_id = LLAMA_TOKEN_NULL;
         } else {
-            throw std::runtime_error(format("unknown tokenizer: '%s'", tokenizer_model.c_str()));
+            throw std::runtime_error(format("unknown tokenizer: '%s'", vocab.tokenizer_model.c_str()));
         }
 
         // for now, only BPE models have pre-tokenizers
         if (vocab.type == LLAMA_VOCAB_TYPE_BPE) {
             vocab.tokenizer_add_space_prefix = false;
             vocab.tokenizer_clean_spaces = true;
-            if (tokenizer_pre.empty()) {
+            if (vocab.tokenizer_pre.empty()) {
                 LLAMA_LOG_WARN("%s: missing pre-tokenizer type, using: 'default'\n", __func__);
                 LLAMA_LOG_WARN("%s:                                             \n", __func__);
                 LLAMA_LOG_WARN("%s: ************************************        \n", __func__);
@@ -1272,122 +1269,118 @@ void llm_load_vocab(llama_model_loader & ml, llama_model & model) {
                 LLAMA_LOG_WARN("%s: ************************************        \n", __func__);
                 LLAMA_LOG_WARN("%s:                                             \n", __func__);
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
-            } else if (tokenizer_pre == "default") {
+            } else if (vocab.tokenizer_pre == "default") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
             } else if (
-                    tokenizer_pre == "llama3"   ||
-                    tokenizer_pre == "llama-v3" ||
-                    tokenizer_pre == "llama-bpe"||
-                    tokenizer_pre == "falcon3") {
+                    vocab.tokenizer_pre == "llama3"    ||
+                    vocab.tokenizer_pre == "llama-v3"  ||
+                    vocab.tokenizer_pre == "llama-bpe" ||
+                    vocab.tokenizer_pre == "falcon3") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_LLAMA3;
                 vocab.tokenizer_ignore_merges = true;
                 vocab.tokenizer_add_bos = true;
             } else if (
-                    tokenizer_pre == "deepseek-llm") {
+                    vocab.tokenizer_pre == "deepseek-llm") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_DEEPSEEK_LLM;
                 vocab.tokenizer_clean_spaces = false;
             } else if (
-                    tokenizer_pre == "deepseek-coder") {
+                    vocab.tokenizer_pre == "deepseek-coder") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_DEEPSEEK_CODER;
                 vocab.tokenizer_clean_spaces = false;
             } else if (
-                    tokenizer_pre == "deepseek-v3") {
-                vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_DEEPSEEK3_LLM;
-                vocab.tokenizer_clean_spaces = false;
-            } else if (
-                    tokenizer_pre == "falcon") {
+                    vocab.tokenizer_pre == "falcon") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_FALCON;
             } else if (
-                    tokenizer_pre == "mpt") {
+                    vocab.tokenizer_pre == "mpt") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_MPT;
             } else if (
-                    tokenizer_pre == "starcoder") {
+                    vocab.tokenizer_pre == "starcoder") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_STARCODER;
             } else if (
-                    tokenizer_pre == "gpt-2"   ||
-                    tokenizer_pre == "phi-2"   ||
-                    tokenizer_pre == "jina-es" ||
-                    tokenizer_pre == "jina-de" ||
-                    tokenizer_pre == "gigachat"   ||
-                    tokenizer_pre == "jina-v1-en" ||
-                    tokenizer_pre == "jina-v2-es" ||
-                    tokenizer_pre == "jina-v2-de" ||
-                    tokenizer_pre == "jina-v2-code" ||
-                    tokenizer_pre == "roberta-bpe") {
+                    vocab.tokenizer_pre == "gpt-2"   ||
+                    vocab.tokenizer_pre == "phi-2"   ||
+                    vocab.tokenizer_pre == "jina-es" ||
+                    vocab.tokenizer_pre == "jina-de" ||
+                    vocab.tokenizer_pre == "gigachat"   ||
+                    vocab.tokenizer_pre == "jina-v1-en" ||
+                    vocab.tokenizer_pre == "jina-v2-es" ||
+                    vocab.tokenizer_pre == "jina-v2-de" ||
+                    vocab.tokenizer_pre == "jina-v2-code" ||
+                    vocab.tokenizer_pre == "roberta-bpe") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_GPT2;
             } else if (
-                    tokenizer_pre == "refact") {
+                    vocab.tokenizer_pre == "refact") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_REFACT;
             } else if (
-                tokenizer_pre == "command-r") {
+                vocab.tokenizer_pre == "command-r") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_COMMAND_R;
                 vocab.tokenizer_clean_spaces = false;
             } else if (
-                tokenizer_pre == "qwen2") {
+                vocab.tokenizer_pre == "qwen2") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_QWEN2;
                 vocab.tokenizer_clean_spaces = false;
             } else if (
-                tokenizer_pre == "stablelm2") {
+                vocab.tokenizer_pre == "stablelm2") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_STABLELM2;
             } else if (
-                tokenizer_pre == "olmo") {
+                vocab.tokenizer_pre == "olmo") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_OLMO;
             } else if (
-                tokenizer_pre == "dbrx") {
+                vocab.tokenizer_pre == "dbrx") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_DBRX;
             } else if (
-                tokenizer_pre == "smaug-bpe") {
+                vocab.tokenizer_pre == "smaug-bpe") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_SMAUG;
             } else if (
-                tokenizer_pre == "poro-chat") {
+                vocab.tokenizer_pre == "poro-chat") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_PORO;
                 vocab.tokenizer_clean_spaces = false;
             } else if (
-                tokenizer_pre == "chatglm-bpe") {
+                vocab.tokenizer_pre == "chatglm-bpe") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_CHATGLM4;
                 vocab.special_bos_id = LLAMA_TOKEN_NULL;
             } else if (
-                tokenizer_pre == "viking") {
+                vocab.tokenizer_pre == "viking") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_VIKING;
                 vocab.tokenizer_clean_spaces = false;
             } else if (
-                tokenizer_pre == "jais") {
+                vocab.tokenizer_pre == "jais") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_JAIS;
             } else if (
-                tokenizer_pre == "tekken") {
+                vocab.tokenizer_pre == "tekken") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_TEKKEN;
                 vocab.tokenizer_clean_spaces = false;
                 vocab.tokenizer_ignore_merges = true;
                 vocab.tokenizer_add_bos = true;
             } else if (
-                tokenizer_pre == "smollm") {
+                vocab.tokenizer_pre == "smollm") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_SMOLLM;
                 vocab.tokenizer_clean_spaces = false;
             } else if (
-                tokenizer_pre == "codeshell") {
+                vocab.tokenizer_pre == "codeshell") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_CODESHELL;
             } else if (
-                tokenizer_pre == "bloom") {
+                vocab.tokenizer_pre == "bloom") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_BLOOM;
             } else if (
-                tokenizer_pre == "gpt3-finnish") {
+                vocab.tokenizer_pre == "gpt3-finnish") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_GPT3_FINNISH;
             } else if (
-                tokenizer_pre == "exaone") {
+                vocab.tokenizer_pre == "exaone") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_EXAONE;
             } else if (
-                tokenizer_pre == "chameleon") {
+                vocab.tokenizer_pre == "chameleon") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_CHAMELEON;
                 vocab.tokenizer_add_bos = true;
                 vocab.tokenizer_clean_spaces = false;
             } else if (
-                tokenizer_pre == "minerva-7b") {
+                vocab.tokenizer_pre == "minerva-7b") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_MINERVA;
             } else if (
-                tokenizer_pre == "megrez") {
+                vocab.tokenizer_pre == "megrez") {
                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_QWEN2;
             } else {
-                throw std::runtime_error(format("unknown pre-tokenizer type: '%s'", tokenizer_pre.c_str()));
+                throw std::runtime_error(format("unknown pre-tokenizer type: '%s'", vocab.tokenizer_pre.c_str()));
             }
         } else if (vocab.type == LLAMA_VOCAB_TYPE_SPM) {
             vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
