@@ -7,6 +7,7 @@
 #include "llama-sampling.h"
 #include "llama-kv-cache.h"
 #include "llama-model-loader.h"
+#include "llama-model-saver.h"
 #include "llama-model.h"
 
 #include "ggml.h"
@@ -11093,7 +11094,7 @@ static int llama_prepare_ubatch(
 // return positive int on warning
 // return negative int on error
 //
-static int llama_decode_internal(
+static int llama_decode_impl(
          llama_context & lctx,
            llama_batch   inp_batch) {
 
@@ -11105,7 +11106,7 @@ static int llama_decode_internal(
     }
 
     // temporary allocate memory for the input batch if needed
-    llama_batch_allocr batch_allocr(lctx, inp_batch);
+    llama_batch_allocr batch_allocr(inp_batch, inp_batch.pos ? -1 : lctx.kv_self.max_pos() + 1);
     const llama_batch & batch = batch_allocr.batch;
 
     const auto & model   = lctx.model;
@@ -12058,6 +12059,13 @@ struct llama_model * llama_model_load_from_file(
     }
 
     return model;
+}
+
+void llama_save_model_to_file(const struct llama_model * model, const char * path_model) {
+    llama_model_saver ms(*model);
+    ms.add_kv_from_model();
+    ms.add_tensors_from_model();
+    ms.save(path_model);
 }
 
 struct llama_context * llama_new_context_with_model(

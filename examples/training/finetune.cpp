@@ -62,8 +62,8 @@ int main(int argc, char ** argv) {
 
     // load the model and apply lora adapter, if any
     common_init_result llama_init = common_init_from_params(params);
-    llama_model * model = llama_init.model;
-    llama_context * ctx = llama_init.context;
+    llama_model_ptr   & model = llama_init.model;
+    llama_context_ptr & ctx   = llama_init.context;
 
     if (model == NULL) {
         LOG_ERR("%s: unable to load model\n", __func__);
@@ -78,8 +78,8 @@ int main(int argc, char ** argv) {
 
     constexpr float val_split = 0.05f;
 
-    std::vector<llama_token> tokens = common_tokenize(ctx, params.prompt, true);
-    ggml_opt_dataset_t dataset = common_opt_dataset_init(ctx, tokens, llama_n_ctx(ctx)/2);
+    std::vector<llama_token> tokens = common_tokenize(ctx.get(), params.prompt, true);
+    ggml_opt_dataset_t dataset = common_opt_dataset_init(ctx.get(), tokens, llama_n_ctx(ctx.get())/2);
 
     struct ggml_opt_optimizer_params optimizer_params = ggml_opt_get_default_optimizer_params(nullptr);
     optimizer_params.adamw.alpha = 1e-6f; // learning rate
@@ -91,15 +91,15 @@ int main(int argc, char ** argv) {
         /*get_opt_pars    =*/ ggml_opt_get_constant_optimizer_params,
         /*get_opt_pars_ud =*/ &optimizer_params,
     };
-    llama_opt_init(ctx, model, lopt_params);
+    llama_opt_init(ctx.get(), model.get(), lopt_params);
 
     const int64_t idata_split = ggml_opt_dataset_ndata(dataset) * (1.0f - val_split);
 
     ggml_opt_result_t result_train = ggml_opt_result_init();
     ggml_opt_result_t result_eval  = ggml_opt_result_init();
 
-    for (int epoch = 0; epoch < 10; ++epoch) {
-        llama_opt_epoch(ctx, dataset, result_train, result_eval, idata_split,
+    for (int epoch = 0; epoch < 2; ++epoch) {
+        llama_opt_epoch(ctx.get(), dataset, result_train, result_eval, idata_split,
             ggml_opt_epoch_callback_progress_bar, ggml_opt_epoch_callback_progress_bar);
         fprintf(stderr, "\n");
 
@@ -109,10 +109,7 @@ int main(int argc, char ** argv) {
     ggml_opt_result_free(result_train);
     ggml_opt_result_free(result_eval);
 
-    llama_save_model_to_file(model, "finetuned-model.gguf");
-
-    llama_free(ctx);
-    llama_free_model(model);
+    llama_save_model_to_file(model.get(), "finetuned-model.gguf");
 
     llama_backend_free();
 
