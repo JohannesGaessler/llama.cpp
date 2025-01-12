@@ -2094,6 +2094,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
         case GGML_OP_RMS_NORM:
             ggml_cuda_op_rms_norm(ctx, dst);
             break;
+        case GGML_OP_RMS_NORM_BACK:
+            ggml_cuda_op_rms_norm_back(ctx, dst);
+            break;
         case GGML_OP_MUL_MAT:
             if (dst->src[0]->ne[3] != dst->src[1]->ne[3]) {
                 GGML_LOG_ERROR("%s: cannot compute %s: src0->ne[3] = %" PRId64 ", src1->ne[3] = %" PRId64 " - fallback to CPU\n", __func__, dst->name, dst->src[0]->ne[3], dst->src[1]->ne[3]);
@@ -2976,6 +2979,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
             } break;
         case GGML_OP_NORM:
         case GGML_OP_RMS_NORM:
+        case GGML_OP_RMS_NORM_BACK:
             return ggml_is_contiguous(op->src[0]) && op->ne[0] % WARP_SIZE == 0;
             break;
         case GGML_OP_NONE:

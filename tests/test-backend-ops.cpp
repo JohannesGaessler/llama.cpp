@@ -1588,6 +1588,35 @@ struct test_rms_norm : public test_case {
     }
 };
 
+// GGML_OP_RMS_NORM_BACK
+struct test_rms_norm_back : public test_case {
+    const ggml_type type;
+    const std::array<int64_t, 4> ne;
+    float eps;
+
+    std::string vars() override {
+        return VARS_TO_STR3(type, ne, eps);
+    }
+
+    test_rms_norm_back(ggml_type type = GGML_TYPE_F32,
+            std::array<int64_t, 4> ne = {64, 5, 4, 3},
+            float eps = 1e-6f)
+        : type(type), ne(ne), eps(eps) {}
+
+    ggml_tensor * build_graph(ggml_context * ctx) override {
+        ggml_tensor * a = ggml_new_tensor(ctx, type, 4, ne.data());
+        ggml_set_name(a, "a");
+
+        ggml_tensor * b = ggml_new_tensor(ctx, type, 4, ne.data());
+        ggml_set_name(b, "b");
+
+        ggml_tensor * out = ggml_rms_norm_back(ctx, a, b, eps);
+        ggml_set_name(out, "out");
+
+        return out;
+    }
+};
+
 // GGML_OP_SSM_CONV
 struct test_ssm_conv : public test_case {
     const ggml_type type;
@@ -3648,8 +3677,9 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     test_cases.emplace_back(new test_scale());
 
     for (float eps : {1e-6f, 1e-5f, 1e-3f, 1e-1f}) {
-        test_cases.emplace_back(new test_norm(GGML_TYPE_F32, {64, 5, 4, 3}, eps));
-        test_cases.emplace_back(new test_rms_norm(GGML_TYPE_F32, {64, 5, 4, 3}, eps));
+        test_cases.emplace_back(new test_norm         (GGML_TYPE_F32, {64, 5, 4, 3}, eps));
+        test_cases.emplace_back(new test_rms_norm     (GGML_TYPE_F32, {64, 5, 4, 3}, eps));
+        test_cases.emplace_back(new test_rms_norm_back(GGML_TYPE_F32, {64, 5, 4, 3}, eps));
     }
 
     test_cases.emplace_back(new test_ssm_conv(GGML_TYPE_F32, {4, 1536, 1, 1}, {4, 1536, 1, 1}));
