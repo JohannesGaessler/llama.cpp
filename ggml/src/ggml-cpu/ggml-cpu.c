@@ -6988,8 +6988,6 @@ static void ggml_compute_forward_rms_norm_f32(
     float eps;
     memcpy(&eps, dst->op_params, sizeof(float));
 
-    GGML_ASSERT(eps > 0.0f);
-
     // TODO: optimize
     for (int64_t i03 = 0; i03 < ne03; i03++) {
         for (int64_t i02 = 0; i02 < ne02; i02++) {
@@ -7186,6 +7184,7 @@ static void ggml_compute_forward_rms_norm_back_f32(
                 ggml_vec_scale_f32(ne00, dx, (float)(-sum_xdz)/sum_eps);
                 ggml_vec_acc_f32  (ne00, dx, dz);
                 ggml_vec_scale_f32(ne00, dx, rrms);
+                // dx[i00] = (-x*sum_xdz/sum_eps + dz) / sqrtf(mean_eps)
             }
         }
     }

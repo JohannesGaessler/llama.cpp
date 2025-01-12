@@ -98,14 +98,14 @@ static __global__ void group_norm_f32(const float * x, float * dst, const int gr
 }
 
 template <int block_size>
-static __global__ void rms_norm_f32(const float * x_scale, const float * x_val, float * dst, const int ncols, const float eps) {
+static __global__ void rms_norm_f32(const float * x, float * dst, const int ncols, const float eps) {
     const int row = blockIdx.x*blockDim.y + threadIdx.y;
     const int tid = threadIdx.x;
 
     float tmp = 0.0f; // partial sum for thread in warp
 
     for (int col = tid; col < ncols; col += block_size) {
-        const float xi = x_scale[row*ncols + col];
+        const float xi = x[row*ncols + col];
         tmp += xi * xi;
     }
 
@@ -128,7 +128,53 @@ static __global__ void rms_norm_f32(const float * x_scale, const float * x_val, 
     const float scale = rsqrtf(mean + eps);
 
     for (int col = tid; col < ncols; col += block_size) {
-        dst[row*ncols + col] = scale * x_val[row*ncols + col];
+        dst[row*ncols + col] = scale * x[row*ncols + col];
+    }
+}
+
+template <int block_size>
+static __global__ void rms_norm_back_f32(const float * x, const float * grad, float * dst, const int ncols, const float eps) {
+    const int row = blockIdx.x*blockDim.y + threadIdx.y;
+    const int tid = threadIdx.x;
+
+    float sum_xx = 0.0f; // sum for squares of x, equivalent to forward pass
+    float sum_xg = 0.0f; // sum for x * gradient, needed because the gradients of all values influence gradients of x
+
+    for (int col = tid; col < ncols; col += block_size) {
+        const float xi = x[row*ncols + col];
+        sum_xx += xi * xi;
+        sum_xg += xi * grad[row*ncols + col];
+    }
+
+    // sum up partial sums
+    sum_xx = warp_reduce_sum(sum_xx);
+    sum_xg = warp_reduce_sum(sum_xg);
+    if constexpr (block_size > WARP_SIZE) {
+        static_assert(block_size == 1024, "unexpected block_size");
+        __shared__ float s_sum_xx[32];
+        __shared__ float s_sum_xg[32];
+        const int warp_id = threadIdx.x / WARP_SIZE;
+        const int lane_id = threadIdx.x % WARP_SIZE;
+        if (lane_id == 0) {
+            s_sum_xx[warp_id] = sum_xx;
+            s_sum_xg[warp_id] = sum_xg;
+        }
+        __syncthreads();
+
+        sum_xx = s_sum_xx[lane_id];
+        sum_xx = warp_reduce_sum(sum_xx);
+
+        sum_xg = s_sum_xg[lane_id];
+        sum_xg = warp_reduce_sum(sum_xg);
+    }
+
+    const float mean_eps = sum_xx / ncols + eps;
+    const float sum_eps  = sum_xx + ncols*eps;
+
+    const float scale = rsqrtf(mean_eps);
+
+    for (int col = tid; col < ncols; col += block_size) {
+        dst[row*ncols + col] = scale * (grad[row*ncols + col] - x[row*ncols + col] * sum_xg/sum_eps);
     }
 }
 
@@ -157,10 +203,10 @@ static void rms_norm_f32_cuda(const float * x, float * dst, const int ncols, con
     GGML_ASSERT(ncols % WARP_SIZE == 0);
     if (ncols < 1024) {
         const dim3 block_dims(WARP_SIZE, 1, 1);
-        rms_norm_f32<WARP_SIZE><<<nrows, block_dims, 0, stream>>>(x, x, dst, ncols, eps);
+        rms_norm_f32<WARP_SIZE><<<nrows, block_dims, 0, stream>>>(x, dst, ncols, eps);
     } else {
         const dim3 block_dims(1024, 1, 1);
-        rms_norm_f32<1024><<<nrows, block_dims, 0, stream>>>(x, x, dst, ncols, eps);
+        rms_norm_f32<1024><<<nrows, block_dims, 0, stream>>>(x, dst, ncols, eps);
     }
 }
 
@@ -168,10 +214,10 @@ static void rms_norm_back_f32_cuda(const float * x, const float * grad, float * 
     GGML_ASSERT(ncols % WARP_SIZE == 0);
     if (ncols < 1024) {
         const dim3 block_dims(WARP_SIZE, 1, 1);
-        rms_norm_f32<WARP_SIZE><<<nrows, block_dims, 0, stream>>>(x, grad, dst, ncols, eps);
+        rms_norm_back_f32<WARP_SIZE><<<nrows, block_dims, 0, stream>>>(x, grad, dst, ncols, eps);
     } else {
         const dim3 block_dims(1024, 1, 1);
-        rms_norm_f32<1024><<<nrows, block_dims, 0, stream>>>(x, grad, dst, ncols, eps);
+        rms_norm_back_f32<1024><<<nrows, block_dims, 0, stream>>>(x, grad, dst, ncols, eps);
     }
 }
 
