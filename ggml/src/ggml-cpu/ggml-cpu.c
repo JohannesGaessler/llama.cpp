@@ -8933,14 +8933,17 @@ static void ggml_compute_forward_soft_max(
 }
 
 
-// ggml_compute_forward_soft_max_back
+// ggml_compute_forward_soft_max_ext_back
 
-static void ggml_compute_forward_soft_max_back_f32(
+static void ggml_compute_forward_soft_max_ext_back_f32(
         const struct ggml_compute_params * params,
         struct ggml_tensor * dst) {
 
     const struct ggml_tensor * src0 = dst->src[0];
     const struct ggml_tensor * src1 = dst->src[1];
+    const struct ggml_tensor * mask = dst->src[2];
+
+    GGML_ASSERT(!mask);
 
     GGML_ASSERT(ggml_is_contiguous(src0));
     GGML_ASSERT(ggml_is_contiguous(src1));
@@ -9010,7 +9013,7 @@ static void ggml_compute_forward_soft_max_back_f32(
     }
 }
 
-static void ggml_compute_forward_soft_max_back(
+static void ggml_compute_forward_soft_max_ext_back(
         const struct ggml_compute_params * params,
         struct ggml_tensor * dst) {
 
@@ -9019,7 +9022,7 @@ static void ggml_compute_forward_soft_max_back(
     switch (src0->type) {
         case GGML_TYPE_F32:
             {
-                ggml_compute_forward_soft_max_back_f32(params, dst);
+                ggml_compute_forward_soft_max_ext_back_f32(params, dst);
             } break;
         default:
             {
@@ -12854,7 +12857,7 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             } break;
         case GGML_OP_SOFT_MAX_BACK:
             {
-                ggml_compute_forward_soft_max_back(params, tensor);
+                ggml_compute_forward_soft_max_ext_back(params, tensor);
             } break;
         case GGML_OP_ROPE:
             {

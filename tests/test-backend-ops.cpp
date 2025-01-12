@@ -2333,6 +2333,44 @@ struct test_soft_max : public test_case {
     }
 };
 
+// GGML_OP_SOFT_MAX_BACK
+struct test_soft_max_back : public test_case {
+    const ggml_type type;
+    const std::array<int64_t, 4> ne;
+    const bool mask;
+    const float scale;
+    const float max_bias;
+
+    std::string vars() override {
+        return VARS_TO_STR5(type, ne, mask, scale, max_bias);
+    }
+
+    test_soft_max_back(ggml_type type = GGML_TYPE_F32,
+            std::array<int64_t, 4> ne = {10, 5, 4, 3},
+            bool mask = false,
+            float scale = 1.0f,
+            float max_bias = 0.0f)
+        : type(type), ne(ne), mask(mask), scale(scale), max_bias(max_bias) {}
+
+    ggml_tensor * build_graph(ggml_context * ctx) override {
+        ggml_tensor * a = ggml_new_tensor(ctx, type, 4, ne.data());
+        ggml_set_name(a, "a");
+
+        ggml_tensor * b = ggml_new_tensor(ctx, type, 4, ne.data());
+        ggml_set_name(a, "a");
+
+        ggml_tensor * mask = nullptr;
+        if (this->mask) {
+            mask = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, ne[0], ne[1]);
+            ggml_set_name(mask, "mask");
+        }
+
+        ggml_tensor * out = ggml_soft_max_ext_back(ctx, a, b, mask, scale, max_bias);
+        ggml_set_name(out, "out");
+
+        return out;
+    }
+};
 
 // GGML_OP_ROPE
 struct test_rope : public test_case {
@@ -3983,10 +4021,24 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
             }
         }
     }
-    test_cases.emplace_back(new test_soft_max(GGML_TYPE_F32, {16, 2, 32, 1}, true, 0.1f, 0.0f));
+    test_cases.emplace_back(new test_soft_max(GGML_TYPE_F32, {16, 2, 32, 1}, true,  0.1f, 0.0f));
     test_cases.emplace_back(new test_soft_max(GGML_TYPE_F32, {16, 2, 32, 1}, false, 0.1f, 0.0f));
     test_cases.emplace_back(new test_soft_max(GGML_TYPE_F32, {32, 2, 32, 1}, true,  0.1f, 0.0f));
     test_cases.emplace_back(new test_soft_max(GGML_TYPE_F32, {32, 2, 32, 1}, true,  0.1f, 8.0f));
+
+    for (bool mask : {false, true}) {
+        for (float max_bias : {0.0f, 8.0f}) {
+            if (!mask && max_bias > 0.0f) continue;
+            for (float scale : {1.0f, 0.1f}) {
+                for (int64_t ne0 : {16, 1024}) {
+                    for (int64_t ne1 : {16, 1024}) {
+                        test_cases.emplace_back(new test_soft_max_back(GGML_TYPE_F32, {ne0,   ne1,   1, 1}, mask, scale, max_bias));
+                        test_cases.emplace_back(new test_soft_max_back(GGML_TYPE_F32, {ne0-1, ne1-1, 1, 1}, mask, scale, max_bias));
+                    }
+                }
+            }
+        }
+    }
 
     {
         bool all = true;
