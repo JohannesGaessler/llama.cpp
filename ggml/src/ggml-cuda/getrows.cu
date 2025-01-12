@@ -203,6 +203,8 @@ void ggml_cuda_op_get_rows_back(ggml_backend_cuda_context & ctx, ggml_tensor * d
     const ggml_tensor * src0 = dst->src[0]; // gradients of forward pass output
     const ggml_tensor * src1 = dst->src[1]; // src1 in forward pass
 
+    GGML_TENSOR_BINARY_OP_LOCALS
+
     const float   * src0_d = (const float   *) src0->data;
     const int32_t * src1_d = (const int32_t *) src1->data;
     float         * dst_d  = (float         *) dst->data;
@@ -217,11 +219,13 @@ void ggml_cuda_op_get_rows_back(ggml_backend_cuda_context & ctx, ggml_tensor * d
     GGML_ASSERT(ggml_is_contiguous(src1));
     GGML_ASSERT(ggml_is_contiguous(dst));
 
-    const int64_t ne00 = src0->ne[0];
+    GGML_ASSERT(ne02*ne03 == 1);
+    GGML_ASSERT(ne12*ne13 == 1);
+    GGML_ASSERT(ne2*ne3 == 1);
 
     const dim3 block_dims(CUDA_GET_ROWS_BACK_BLOCK_SIZE, 1, 1);
     const int block_num_x = (ne00 + CUDA_GET_ROWS_BACK_BLOCK_SIZE - 1) / CUDA_GET_ROWS_BACK_BLOCK_SIZE;
-    const dim3 block_nums(block_num_x, ggml_nrows(dst), 1);
+    const dim3 block_nums(block_num_x, ne1, 1);
 
-    k_get_rows_back_float<<<block_nums, block_dims, 0, stream>>>(src0_d, src1_d, dst_d, ne00, ggml_nrows(src0));
+    k_get_rows_back_float<<<block_nums, block_dims, 0, stream>>>(src0_d, src1_d, dst_d, ne00, ne10);
 }
