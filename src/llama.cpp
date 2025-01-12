@@ -11105,7 +11105,7 @@ static int llama_decode_impl(
         return -1;
     }
 
-    // temporary allocate memory for the input batch if needed
+    // temporarily allocate memory for the input batch if needed
     llama_batch_allocr batch_allocr(inp_batch, inp_batch.pos ? -1 : lctx.kv_self.max_pos() + 1);
     const llama_batch & batch = batch_allocr.batch;
 
