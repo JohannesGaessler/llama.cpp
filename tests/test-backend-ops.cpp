@@ -1589,6 +1589,10 @@ struct test_rms_norm : public test_case {
         }
     }
 
+    float grad_eps() override {
+        return 1.0f;
+    }
+
     bool grad_precise() override {
         return true;
     }
