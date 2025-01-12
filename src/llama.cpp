@@ -12846,7 +12846,7 @@ void llama_opt_init(struct llama_context * lctx, struct llama_model * model, str
     llama_opt_param_filter param_filter = lopt_params.param_filter;
     void * param_filter_ud              = lopt_params.param_filter_ud;
 
-    llama_set_param(model->tok_embd,        param_filter, param_filter_ud);
+    // llama_set_param(model->tok_embd,        param_filter, param_filter_ud); // FIXME
     llama_set_param(model->type_embd,       param_filter, param_filter_ud);
     llama_set_param(model->pos_embd,        param_filter, param_filter_ud);
     llama_set_param(model->tok_norm,        param_filter, param_filter_ud);

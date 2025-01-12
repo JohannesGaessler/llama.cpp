@@ -504,6 +504,11 @@ static void ggml_opt_build(ggml_opt_context_t opt_ctx) {
             struct ggml_tensor * m        = opt_ctx->grad_m[i];
             struct ggml_tensor * v        = opt_ctx->grad_v[i];
             struct ggml_tensor * opt_step = ggml_opt_step_adamw(opt_ctx->ctx_compute, node, grad, m, v, opt_ctx->adamw_params);
+
+            ggml_set_name(m,        (std::string("AdamW m for ")    + std::string(node->name)).c_str());
+            ggml_set_name(v,        (std::string("AdamW v for ")    + std::string(node->name)).c_str());
+            ggml_set_name(opt_step, (std::string("AdamW step for ") + std::string(node->name)).c_str());
+
             ggml_build_forward_expand(opt_ctx->gb_opt, opt_step);
         }
     }
