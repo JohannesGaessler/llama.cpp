@@ -1130,6 +1130,59 @@ struct test_get_rows : public test_case {
     }
 };
 
+// GGML_OP_GET_ROWS_BACK
+struct test_get_rows_back : public test_case {
+    const ggml_type type;
+    const int n; // cols
+    const int m; // rows
+    const int r; // rows to get
+    const int b; // batch size
+    const bool v; // view (non-contiguous src1)
+
+    std::string vars() override {
+        return VARS_TO_STR6(type, n, m, r, b, v);
+    }
+
+    test_get_rows_back(ggml_type type = GGML_TYPE_F32, int n = 10, int m = 5, int r = 3, int b = 1, bool v = false)
+        : type(type), n(n), m(m), r(r), b(b), v(v) {}
+
+    ggml_tensor * build_graph(ggml_context * ctx) override {
+        ggml_tensor * in_forward = ggml_new_tensor_3d(ctx, type, n, m, b);
+        ggml_set_name(in_forward, "in_forward");
+
+        ggml_tensor * rows = ggml_new_tensor_2d(ctx, GGML_TYPE_I32, r, b);
+        ggml_set_name(rows, "rows");
+        if (v) {
+            rows = ggml_view_2d(ctx, rows, r/2, b, rows->nb[1], 0);
+            ggml_set_name(rows, "view_of_rows");
+        }
+
+        ggml_tensor * grad = ggml_new_tensor_3d(ctx, type, n, r, b);
+        ggml_set_name(grad, "grad");
+
+        ggml_tensor * out = ggml_get_rows_back(ctx, grad, rows, in_forward);
+        ggml_set_name(out, "out");
+
+        return out;
+    }
+
+    void initialize_tensors(ggml_context * ctx) override {
+        for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != NULL; t = ggml_get_next_tensor(ctx, t)) {
+            if (t->type == GGML_TYPE_I32) {
+                if (ggml_is_view_op(t->op)) { continue; }
+                // rows
+                std::vector<int> data(r*b);
+                for (int i = 0; i < r*b; i++) {
+                    data[i] = rand() % m;
+                }
+                ggml_backend_tensor_set(t, data.data(), 0, r * b * sizeof(int));
+            } else {
+                init_tensor_uniform(t);
+            }
+        }
+    }
+};
+
 // GGML_OP_ARGMAX
 struct test_argmax : public test_case {
     const ggml_type type;
@@ -3533,18 +3586,21 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         }
     }
 
-    test_cases.emplace_back(new test_get_rows(GGML_TYPE_F32, 1, 8, 2, 1, false));
+    test_cases.emplace_back(new test_get_rows     (GGML_TYPE_F32, 1, 8, 2, 1, false));
+    test_cases.emplace_back(new test_get_rows_back(GGML_TYPE_F32, 1, 8, 2, 1, false));
     for (ggml_type type : all_types) {
-        for (int b : {1, 7}) {
-            for (bool v : {false, true}) {
+        for (bool v : {false, true}) {
+            for (int b : {1, 7}) {
                 test_cases.emplace_back(new test_get_rows(type, 256, 5, 4, b, v));
             }
+            test_cases.emplace_back(new test_get_rows_back(type, 256, 5, 4, 1, v));
         }
     }
-    for (int b : {1, 7}) {
-        for (bool v : {false, true}) {
+    for (bool v : {false, true}) {
+        for (int b : {1, 7}) {
             test_cases.emplace_back(new test_get_rows(GGML_TYPE_I32, 256, 5, 4, b, v));
         }
+        test_cases.emplace_back(new test_get_rows_back(GGML_TYPE_I32, 256, 5, 4, 1, v));
     }
 
     for (ggml_type type_input : {GGML_TYPE_F32}) {
