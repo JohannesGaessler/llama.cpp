@@ -102,10 +102,13 @@ static __global__ void rms_norm_f32(const float * x, float * dst, const int ncol
     const int row = blockIdx.x*blockDim.y + threadIdx.y;
     const int tid = threadIdx.x;
 
+    x   += row*ncols;
+    dst += row*ncols;
+
     float tmp = 0.0f; // partial sum for thread in warp
 
     for (int col = tid; col < ncols; col += block_size) {
-        const float xi = x[row*ncols + col];
+        const float xi = x[col];
         tmp += xi * xi;
     }
 
@@ -128,7 +131,7 @@ static __global__ void rms_norm_f32(const float * x, float * dst, const int ncol
     const float scale = rsqrtf(mean + eps);
 
     for (int col = tid; col < ncols; col += block_size) {
-        dst[row*ncols + col] = scale * x[row*ncols + col];
+        dst[col] = scale * x[col];
     }
 }
 
@@ -137,13 +140,17 @@ static __global__ void rms_norm_back_f32(const float * x, const float * grad, fl
     const int row = blockIdx.x*blockDim.y + threadIdx.y;
     const int tid = threadIdx.x;
 
+    x    += row*ncols;
+    grad += row*ncols;
+    dst  += row*ncols;
+
     float sum_xx = 0.0f; // sum for squares of x, equivalent to forward pass
-    float sum_xg = 0.0f; // sum for x * gradient, needed because the gradients of all values influence gradients of x
+    float sum_xg = 0.0f; // sum for x * gradient, needed because RMS norm mixes inputs
 
     for (int col = tid; col < ncols; col += block_size) {
-        const float xi = x[row*ncols + col];
+        const float xi = x[col];
         sum_xx += xi * xi;
-        sum_xg += xi * grad[row*ncols + col];
+        sum_xg += xi * grad[col];
     }
 
     // sum up partial sums
@@ -171,10 +178,11 @@ static __global__ void rms_norm_back_f32(const float * x, const float * grad, fl
     const float mean_eps = sum_xx / ncols + eps;
     const float sum_eps  = sum_xx + ncols*eps;
 
-    const float scale = rsqrtf(mean_eps);
+    const float scale_grad = rsqrtf(mean_eps);
+    const float scale_x    = -scale_grad * sum_xg/sum_eps;
 
     for (int col = tid; col < ncols; col += block_size) {
-        dst[row*ncols + col] = scale * (grad[row*ncols + col] - x[row*ncols + col] * sum_xg/sum_eps);
+        dst[col] = scale_grad*grad[col] + scale_x*x[col];
     }
 }
 
