@@ -119,7 +119,6 @@ static __global__ void soft_max_f32(
     }
 }
 
-template <typename T>
 static __global__ void soft_max_back_f32(
         const float * x, const float * grad, float * dst, const int ncols, const float scale) {
     const int tid  = threadIdx.x;
