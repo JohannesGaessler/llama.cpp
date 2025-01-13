@@ -119,7 +119,7 @@ static __global__ void soft_max_f32(
 
 template <typename T>
 static __global__ void soft_max_back_f32(
-        const float * x, const float * grad, const T * mask, float * dst, const int ncols, const int nrows_y) {
+        const float * x, const float * grad, const T * mask, float * dst, const int ncols, const int nrows_y, const float scale) {
     const int tid  = threadIdx.x;
     const int rowx = blockIdx.x;
     // const int rowy = rowx % nrows_y; // broadcast the mask in the row dimension
@@ -140,7 +140,7 @@ static __global__ void soft_max_back_f32(
     for (int col = tid; col < ncols; col += WARP_SIZE) {
         const int64_t ix = (int64_t)rowx*ncols + col;
 
-        dst[ix] = (grad[ix] - xgdot) * x[ix];
+        dst[ix] = scale * (grad[ix] - xgdot) * x[ix];
     }
 }
 
@@ -198,11 +198,12 @@ static void soft_max_f32_cuda(const float * x, const T * mask, float * dst, cons
 
 template<typename T>
 static void soft_max_back_f32_cuda(
-        const float * x, const float * grad, const T * mask, float * dst, const int ncols_x, const int nrows_x, const int nrows_y, cudaStream_t stream) {
+        const float * x, const float * grad, const T * mask, float * dst,
+        const int ncols_x, const int nrows_x, const int nrows_y, const float scale, cudaStream_t stream) {
     const dim3 block_dims(WARP_SIZE, 1, 1);
     const dim3 block_nums(nrows_x,   1, 1);
 
-    soft_max_back_f32<<<block_nums, block_dims, 0, stream>>>(x, grad, mask, dst, ncols_x, nrows_y);
+    soft_max_back_f32<<<block_nums, block_dims, 0, stream>>>(x, grad, mask, dst, ncols_x, nrows_y, scale);
 }
 
 void ggml_cuda_op_soft_max(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
@@ -271,14 +272,13 @@ void ggml_cuda_op_soft_max_back(ggml_backend_cuda_context & ctx, ggml_tensor * d
     memcpy(&scale,    (const float *) dst->op_params + 0, sizeof(float));
     memcpy(&max_bias, (const float *) dst->op_params + 1, sizeof(float));
 
-    GGML_ASSERT(scale    == 1.0f);
     GGML_ASSERT(max_bias == 0.0f);
 
     const bool mask_f16 = (mask && mask->type == GGML_TYPE_F16);
 
     if (mask_f16) {
-        soft_max_back_f32_cuda(src1_d, src0_d, (const half  *) mask_d, dst_d, ne00, nrows_x, nrows_y, stream);
+        soft_max_back_f32_cuda(src1_d, src0_d, (const half  *) mask_d, dst_d, ne00, nrows_x, nrows_y, scale, stream);
     } else {
-        soft_max_back_f32_cuda(src1_d, src0_d, (const float *) mask_d, dst_d, ne00, nrows_x, nrows_y, stream);
+        soft_max_back_f32_cuda(src1_d, src0_d, (const float *) mask_d, dst_d, ne00, nrows_x, nrows_y, scale, stream);
     }
 }

@@ -1389,7 +1389,6 @@ extern "C" {
             struct ggml_context * ctx,
             struct ggml_tensor  * a,
             struct ggml_tensor  * b,
-            struct ggml_tensor  * mask,
             float                 scale,
             float                 max_bias);
 
@@ -1398,7 +1397,6 @@ extern "C" {
             struct ggml_context * ctx,
             struct ggml_tensor  * a,
             struct ggml_tensor  * b,
-            struct ggml_tensor  * mask,
             float                 scale,
             float                 max_bias);
 

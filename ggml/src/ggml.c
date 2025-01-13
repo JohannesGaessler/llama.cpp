@@ -3459,7 +3459,6 @@ static struct ggml_tensor * ggml_soft_max_ext_back_impl(
         struct ggml_context * ctx,
         struct ggml_tensor  * a,
         struct ggml_tensor  * b,
-        struct ggml_tensor  * mask,
         float                 scale,
         float                 max_bias,
         bool                  inplace) {
@@ -3468,7 +3467,6 @@ static struct ggml_tensor * ggml_soft_max_ext_back_impl(
     result->op     = GGML_OP_SOFT_MAX_BACK;
     result->src[0] = a;
     result->src[1] = b;
-    result->src[2] = mask;
 
     memcpy((float *) result->op_params + 0, &scale,    sizeof(float));
     memcpy((float *) result->op_params + 1, &max_bias, sizeof(float));
@@ -3480,20 +3478,18 @@ struct ggml_tensor * ggml_soft_max_ext_back(
         struct ggml_context * ctx,
         struct ggml_tensor  * a,
         struct ggml_tensor  * b,
-        struct ggml_tensor  * mask,
         float                 scale,
         float                 max_bias) {
-    return ggml_soft_max_ext_back_impl(ctx, a, b, mask, scale, max_bias, false);
+    return ggml_soft_max_ext_back_impl(ctx, a, b, scale, max_bias, false);
 }
 
 struct ggml_tensor * ggml_soft_max_ext_back_inplace(
         struct ggml_context * ctx,
         struct ggml_tensor  * a,
         struct ggml_tensor  * b,
-        struct ggml_tensor  * mask,
         float                 scale,
         float                 max_bias) {
-    return ggml_soft_max_ext_back_impl(ctx, a, b, mask, scale, max_bias, true);
+    return ggml_soft_max_ext_back_impl(ctx, a, b, scale, max_bias, true);
 }
 
 // ggml_rope
@@ -5601,7 +5597,7 @@ static void ggml_compute_backward(
                 memcpy(&scale,    (const float *) tensor->op_params + 0, sizeof(float));
                 memcpy(&max_bias, (const float *) tensor->op_params + 1, sizeof(float));
 
-                ggml_add_or_set(ctx, cgraph, isrc0, ggml_soft_max_ext_back(ctx, grad, tensor, src1, scale, max_bias));
+                ggml_add_or_set(ctx, cgraph, isrc0, ggml_soft_max_ext_back(ctx, grad, tensor, scale, max_bias));
             }
             GGML_ASSERT((!src1 || !src1_needs_grads) && "backward pass for softmax mask not implemented");
         } break;

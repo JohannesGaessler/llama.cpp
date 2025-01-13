@@ -409,13 +409,11 @@ static bool ggml_backend_cpu_device_supports_op(ggml_backend_dev_t dev, const st
             if (op->src[0]->type != GGML_TYPE_F32 || op->src[1]->type != GGML_TYPE_F32) {
                 return false;
             }
-            float scale    = 1.0f;
             float max_bias = 0.0f;
 
-            memcpy(&scale,    (const float *) op->op_params + 0, sizeof(float));
             memcpy(&max_bias, (const float *) op->op_params + 1, sizeof(float));
 
-            return scale == 1.0f && max_bias == 0.0f;
+            return max_bias == 0.0f;
         }
         case GGML_OP_IM2COL_BACK:
             return src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_F32;
