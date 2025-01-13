@@ -193,7 +193,6 @@ static void soft_max_f32_cuda(const float * x, const T * mask, float * dst, cons
     }
 }
 
-template<typename T>
 static void soft_max_back_f32_cuda(
         const float * x, const float * grad, float * dst,
         const int ncols, const int nrows, const float scale, cudaStream_t stream) {
