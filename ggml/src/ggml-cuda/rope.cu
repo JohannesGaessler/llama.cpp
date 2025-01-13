@@ -16,7 +16,7 @@ static __device__ float rope_yarn_ramp(const float low, const float high, const 
 
 // YaRN algorithm based on LlamaYaRNScaledRotaryEmbedding.py from https://github.com/jquesnelle/yarn
 // MIT licensed. Copyright (c) 2023 Jeffrey Quesnelle and Bowen Peng.
-template<typename T, bool forward>
+template<bool forward, typename T>
 static __device__ void rope_yarn(
     float theta_extrap, float freq_scale, rope_corr_dims corr_dims, int64_t i0, float ext_factor, float mscale,
     float * cos_theta, float * sin_theta) {
