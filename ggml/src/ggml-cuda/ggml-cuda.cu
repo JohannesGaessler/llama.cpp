@@ -3030,8 +3030,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
         }
         case GGML_OP_ROPE:
         case GGML_OP_ROPE_BACK:
-            return op->src[0]->nb[0] == ggml_type_size(op->src[0]->type) &&
-                op->src[0]->ne[3]*op->src[0]->nb[3] == ggml_nbytes(op->src[0]);
+            return op->src[0]->nb[0] == ggml_type_size(op->src[0]->type);
         case GGML_OP_IM2COL:
         case GGML_OP_POOL_2D:
         case GGML_OP_SUM:
