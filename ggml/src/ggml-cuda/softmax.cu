@@ -1,5 +1,7 @@
 #include "common.cuh"
+#include "ggml.h"
 #include "softmax.cuh"
+#include <cstdint>
 
 template <typename T>
 static __device__ __forceinline__ float t2f32(T val) {
@@ -195,7 +197,7 @@ static void soft_max_f32_cuda(const float * x, const T * mask, float * dst, cons
 template<typename T>
 static void soft_max_back_f32_cuda(
         const float * x, const float * grad, float * dst,
-        const int ncols, const float scale, cudaStream_t stream) {
+        const int ncols, const int nrows, const float scale, cudaStream_t stream) {
     const dim3 block_dims(WARP_SIZE, 1, 1);
     const dim3 block_nums(nrows,     1, 1);
 
@@ -254,6 +256,9 @@ void ggml_cuda_op_soft_max_back(ggml_backend_cuda_context & ctx, ggml_tensor * d
     GGML_ASSERT(src1->type == GGML_TYPE_F32);
     GGML_ASSERT( dst->type == GGML_TYPE_F32);
 
+    const int64_t ncols = src0->ne[0];
+    const int64_t nrows = ggml_nrows(src0);
+
     float scale    = 1.0f;
     float max_bias = 0.0f;
 
@@ -262,5 +267,5 @@ void ggml_cuda_op_soft_max_back(ggml_backend_cuda_context & ctx, ggml_tensor * d
 
     GGML_ASSERT(max_bias == 0.0f);
 
-    soft_max_back_f32_cuda(src1_d, src0_d, dst_d, src0->ne[0], scale, stream);
+    soft_max_back_f32_cuda(src1_d, src0_d, dst_d, ncols, nrows, scale, stream);
 }
