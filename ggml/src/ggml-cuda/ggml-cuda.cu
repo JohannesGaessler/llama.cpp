@@ -3021,13 +3021,9 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
         case GGML_OP_SOFT_MAX:
             return true;
         case GGML_OP_SOFT_MAX_BACK: {
-            float scale    = 1.0f;
             float max_bias = 0.0f;
-
-            memcpy(&scale,    (const float *) op->op_params + 0, sizeof(float));
             memcpy(&max_bias, (const float *) op->op_params + 1, sizeof(float));
-
-            return scale == 1.0f && max_bias == 0.0f;
+            return max_bias == 0.0f;
         }
         case GGML_OP_ROPE:
             return ggml_is_contiguous(op->src[0]);
