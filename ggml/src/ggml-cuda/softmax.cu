@@ -131,7 +131,7 @@ static __global__ void soft_max_back_f32(
         // const int64_t iy = (int64_t)rowy*ncols + col;
 
         const float val = x[ix]*grad[ix];
-        // xgdot += val * (!mask || isfinite(float(mask[iy])));
+        xgdot += val * (!mask || isfinite(float(mask[iy])));
         xgdot += val;
     }
 

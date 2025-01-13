@@ -8943,8 +8943,6 @@ static void ggml_compute_forward_soft_max_ext_back_f32(
     const struct ggml_tensor * src1 = dst->src[1];
     const struct ggml_tensor * mask = dst->src[2];
 
-    GGML_ASSERT(!mask);
-
     GGML_ASSERT(ggml_is_contiguous(src0));
     GGML_ASSERT(ggml_is_contiguous(src1));
     GGML_ASSERT(ggml_is_contiguous(dst));

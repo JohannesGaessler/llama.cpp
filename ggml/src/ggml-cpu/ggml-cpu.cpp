@@ -409,9 +409,6 @@ static bool ggml_backend_cpu_device_supports_op(ggml_backend_dev_t dev, const st
             if (op->src[0]->type != GGML_TYPE_F32 || op->src[1]->type != GGML_TYPE_F32) {
                 return false;
             }
-            if (op->src[2]) {
-                return false;
-            }
             float scale    = 1.0f;
             float max_bias = 0.0f;
 
