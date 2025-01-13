@@ -18,8 +18,8 @@ static __device__ float rope_yarn_ramp(const float low, const float high, const 
 // MIT licensed. Copyright (c) 2023 Jeffrey Quesnelle and Bowen Peng.
 template<bool forward>
 static __device__ void rope_yarn(
-    float theta_extrap, float freq_scale, rope_corr_dims corr_dims, int64_t i0, float ext_factor, float mscale,
-    float * cos_theta, float * sin_theta) {
+        const float theta_extrap, const float freq_scale, const rope_corr_dims corr_dims, const int64_t i0, const float ext_factor,
+        float mscale, float & cos_theta, float & sin_theta) {
     // Get n-d rotational scaling corrected for extrapolation
     float theta_interp = freq_scale * theta_extrap;
     float theta = theta_interp;
@@ -30,17 +30,18 @@ static __device__ void rope_yarn(
         // Get n-d magnitude scaling corrected for interpolation
         mscale *= 1.0f + 0.1f * logf(1.0f / freq_scale);
     }
-    *cos_theta = cosf(theta) * mscale;
-    *sin_theta = sinf(theta) * mscale;
+    cos_theta = cosf(theta) * mscale;
+    sin_theta = sinf(theta) * mscale;
     if (!forward) {
-        *sin_theta *= -1.0f;
+        sin_theta *= -1.0f;
     }
 }
 
 template<bool forward, bool has_ff, typename T>
 static __global__ void rope_norm(
-    const T * x, T * dst, int ne0, int ne1, int s1, int s2, int n_dims, const int32_t * pos, float freq_scale,
-    float ext_factor, float attn_factor, rope_corr_dims corr_dims, float theta_scale, const float * freq_factors) {
+        const T * __restrict__ x, T * __restrict__ dst, const int ne0, const int ne1, const int s1, const int s2, const int n_dims,
+        const int32_t * __restrict__ pos, const float freq_scale, const float ext_factor, const float attn_factor,
+        const rope_corr_dims corr_dims, const float theta_scale, const float * __restrict__ freq_factors) {
     const int i0 = 2*(blockDim.y*blockIdx.y + threadIdx.y);
 
     if (i0 >= ne0) {
@@ -71,7 +72,7 @@ static __global__ void rope_norm(
     float cos_theta;
     float sin_theta;
 
-    rope_yarn<forward>(theta_base/freq_factor, freq_scale, corr_dims, i0, ext_factor, attn_factor, &cos_theta, &sin_theta);
+    rope_yarn<forward>(theta_base/freq_factor, freq_scale, corr_dims, i0, ext_factor, attn_factor, cos_theta, sin_theta);
 
     const float x0 = x[ix + 0];
     const float x1 = x[ix + 1];
@@ -82,8 +83,9 @@ static __global__ void rope_norm(
 
 template<bool forward, bool has_ff, typename T>
 static __global__ void rope_neox(
-        const T * x, T * dst, int ne0, int ne1, int s1, int s2, int n_dims, const int32_t * pos, float freq_scale, float ext_factor,
-        float attn_factor, rope_corr_dims corr_dims, float theta_scale, const float * freq_factors) {
+        const T * __restrict__ x, T * __restrict__ dst, const int ne0, const int ne1, const int s1, const int s2, const int n_dims,
+        const int32_t * __restrict__ pos, const float freq_scale, const float ext_factor, const float attn_factor,
+        const rope_corr_dims corr_dims, const float theta_scale, const float * __restrict__ freq_factors) {
     const int i0 = 2*(blockDim.y*blockIdx.y + threadIdx.y);
 
     if (i0 >= ne0) {
@@ -114,7 +116,7 @@ static __global__ void rope_neox(
     float cos_theta;
     float sin_theta;
 
-    rope_yarn<forward>(theta_base/freq_factor, freq_scale, corr_dims, i0, ext_factor, attn_factor, &cos_theta, &sin_theta);
+    rope_yarn<forward>(theta_base/freq_factor, freq_scale, corr_dims, i0, ext_factor, attn_factor, cos_theta, sin_theta);
 
     const float x0 = x[ix + 0];
     const float x1 = x[ix + n_dims/2];
@@ -125,8 +127,9 @@ static __global__ void rope_neox(
 
 template<bool forward, bool has_ff, typename T>
 static __global__ void rope_multi(
-    const T * x, T * dst, int ne0, int ne1, int ne2, int s1, int s2, int n_dims, const int32_t * pos, float freq_scale, float ext_factor,
-    float attn_factor, rope_corr_dims corr_dims, float theta_scale, const float * freq_factors, mrope_sections sections) {
+        const T * __restrict__ x, T * __restrict__ dst, const int ne0, const int ne1, const int ne2, const int s1, const int s2,
+        const int n_dims, const int32_t * __restrict__ pos, const float freq_scale, const float ext_factor, const float attn_factor,
+        const rope_corr_dims corr_dims, const float theta_scale, const float * __restrict__ freq_factors, const mrope_sections sections) {
     const int i0 = 2*(blockDim.y*blockIdx.y + threadIdx.y);
 
     if (i0 >= ne0) {
@@ -173,7 +176,7 @@ static __global__ void rope_multi(
     float cos_theta;
     float sin_theta;
 
-    rope_yarn<forward>(theta_base/freq_factor, freq_scale, corr_dims, i0, ext_factor, attn_factor, &cos_theta, &sin_theta);
+    rope_yarn<forward>(theta_base/freq_factor, freq_scale, corr_dims, i0, ext_factor, attn_factor, cos_theta, sin_theta);
 
     const float x0 = x[ix + 0];
     const float x1 = x[ix + n_dims/2];
@@ -184,8 +187,9 @@ static __global__ void rope_multi(
 
 template<bool forward, bool has_ff, typename T>
 static __global__ void rope_vision(
-        const T * x, T * dst, int ne0, int ne1, int ne2, int s1, int s2, int n_dims, const int32_t * pos, float freq_scale, float ext_factor,
-        float attn_factor, rope_corr_dims corr_dims, float theta_scale, const float * freq_factors, mrope_sections sections) {
+        const T * __restrict__ x, T * __restrict__ dst, const int ne0, const int ne1, const int ne2, const int s1, const int s2, const int n_dims,
+        const int32_t * __restrict__ pos, const float freq_scale, const float ext_factor, const float attn_factor, const rope_corr_dims corr_dims,
+        const float theta_scale, const float * __restrict__ freq_factors, const mrope_sections sections) {
     const int i0 = 2*(blockDim.y*blockIdx.y + threadIdx.y);
 
     if (i0 >= ne0) {
@@ -219,7 +223,7 @@ static __global__ void rope_vision(
     float cos_theta;
     float sin_theta;
 
-    rope_yarn<forward>(theta_base/freq_factor, freq_scale, corr_dims, i0, ext_factor, attn_factor, &cos_theta, &sin_theta);
+    rope_yarn<forward>(theta_base/freq_factor, freq_scale, corr_dims, i0, ext_factor, attn_factor, cos_theta, sin_theta);
 
     const float x0 = x[ix + 0];
     const float x1 = x[ix + n_dims];
@@ -230,9 +234,10 @@ static __global__ void rope_vision(
 
 template<bool forward, typename T>
 static void rope_norm_cuda(
-    const T * x, T * dst, int ne0, int ne1, int s1, int s2, int n_dims, int nr, const int32_t * pos, float freq_scale,
-    float freq_base, float ext_factor, float attn_factor, rope_corr_dims corr_dims, const float * freq_factors, cudaStream_t stream) {
-    GGML_ASSERT(ne0 % 2 == 0);
+        const T * __restrict__ x, T * __restrict__ dst, const int ne0, const int ne1, const int s1, const int s2, const int n_dims, const int nr,
+        const int32_t * __restrict__ pos, const float freq_scale, const float freq_base, const float ext_factor, const float attn_factor,
+        const rope_corr_dims corr_dims, const float * __restrict__ freq_factors, cudaStream_t stream) {
+        GGML_ASSERT(ne0 % 2 == 0);
     const dim3 block_dims(1, CUDA_ROPE_BLOCK_SIZE, 1);
     const int n_blocks_x = (ne0 + 2*CUDA_ROPE_BLOCK_SIZE - 1) / (2*CUDA_ROPE_BLOCK_SIZE);
     const dim3 block_nums(nr, n_blocks_x, 1);
@@ -252,8 +257,9 @@ static void rope_norm_cuda(
 
 template<bool forward, typename T>
 static void rope_neox_cuda(
-        const T * x, T * dst, int ne0, int ne1, int s1, int s2, int n_dims, int nr, const int32_t * pos, float freq_scale, float freq_base,
-        float ext_factor, float attn_factor, rope_corr_dims corr_dims, const float * freq_factors, cudaStream_t stream) {
+        const T * __restrict__ x, T * __restrict__ dst, const int ne0, const int ne1, const int s1, const int s2, const int n_dims, const int nr,
+        const int32_t * __restrict__ pos, const float freq_scale, const float freq_base, const float ext_factor, const float attn_factor,
+        const rope_corr_dims corr_dims, const float * __restrict__ freq_factors, cudaStream_t stream) {
     GGML_ASSERT(ne0 % 2 == 0);
     const dim3 block_dims(1, CUDA_ROPE_BLOCK_SIZE, 1);
     const int n_blocks_x = (ne0 + 2*CUDA_ROPE_BLOCK_SIZE - 1) / (2*CUDA_ROPE_BLOCK_SIZE);
@@ -274,8 +280,9 @@ static void rope_neox_cuda(
 
 template<bool forward, typename T>
 static void rope_multi_cuda(
-        const T * x, T * dst, int ne0, int ne1, int ne2, int s1, int s2, int n_dims, int nr, const int32_t * pos, float freq_scale, float freq_base,
-        float ext_factor, float attn_factor, rope_corr_dims corr_dims, const float * freq_factors, mrope_sections sections, cudaStream_t stream) {
+        const T * __restrict__ x, T * __restrict__ dst, const int ne0, const int ne1, const int ne2, const int s1, const int s2, const int n_dims, const int nr,
+        const int32_t * __restrict__ pos, const float freq_scale, const float freq_base, const float ext_factor, const float attn_factor,
+        const rope_corr_dims corr_dims, const float * __restrict__ freq_factors, const mrope_sections sections, cudaStream_t stream) {
     GGML_ASSERT(ne0 % 2 == 0);
     const dim3 block_dims(1, CUDA_ROPE_BLOCK_SIZE, 1);
     const int n_blocks_x = (ne0 + 2*CUDA_ROPE_BLOCK_SIZE - 1) / (2*CUDA_ROPE_BLOCK_SIZE);
@@ -296,8 +303,9 @@ static void rope_multi_cuda(
 
 template<bool forward, typename T>
 static void rope_vision_cuda(
-        const T * x, T * dst, int ne0, int ne1, int ne2, int s1, int s2, int n_dims, int nr, const int32_t * pos, float freq_scale, float freq_base,
-        float ext_factor, float attn_factor, rope_corr_dims corr_dims, const float * freq_factors, mrope_sections sections, cudaStream_t stream) {
+        const T * __restrict__ x, T * __restrict__ dst, const int ne0, const int ne1, const int ne2, const int s1, const int s2, const int n_dims, const int nr,
+        const int32_t * __restrict__ pos, const float freq_scale, const float freq_base, const float ext_factor, const float attn_factor,
+        const rope_corr_dims corr_dims, const float * __restrict__ freq_factors, const mrope_sections sections, cudaStream_t stream) {
     GGML_ASSERT(ne0 % 2 == 0);
     const dim3 block_dims(1, CUDA_ROPE_BLOCK_SIZE, 1);
     const int n_blocks_x = (ne0 + 2*CUDA_ROPE_BLOCK_SIZE - 1) / (2*CUDA_ROPE_BLOCK_SIZE);
