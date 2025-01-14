@@ -12815,6 +12815,9 @@ void llama_perf_context_reset(struct llama_context * ctx) {
 bool llama_opt_param_filter_all(const struct ggml_tensor * tensor, void * userdata) {
     GGML_UNUSED(tensor);
     GGML_UNUSED(userdata);
+    if (strcmp(tensor->name, "rope_freqs.weight") == 0) {
+        return false; // FIXME
+    }
     return true;
 }
 
