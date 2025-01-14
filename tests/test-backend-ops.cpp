@@ -3149,6 +3149,10 @@ struct test_cross_entropy_loss : public test_case {
     bool grad_precise() override {
         return true;
     }
+
+    int64_t grad_nmax() override {
+        return 100000;
+    }
 };
 
 // GGML_OP_OPT_STEP_ADAMW
@@ -4137,7 +4141,9 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         }
     }
 
-    test_cases.emplace_back(new test_cross_entropy_loss());
+    test_cases.emplace_back(new test_cross_entropy_loss(GGML_TYPE_F32, {   10, 5, 4, 3}));
+    test_cases.emplace_back(new test_cross_entropy_loss(GGML_TYPE_F32, {30000, 1, 1, 1}));
+
     test_cases.emplace_back(new test_opt_step_adamw(GGML_TYPE_F32, {10, 5, 4, 3}));
 
     // these tests are disabled to save execution time, but they can be handy for debugging

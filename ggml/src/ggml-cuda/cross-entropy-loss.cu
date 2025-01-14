@@ -38,29 +38,45 @@ static __global__ void cross_entropy_loss_f32(const float * logits, const float 
     dst[blockIdx.x] = loss;
 }
 
-static __global__ void cross_entropy_loss_back_f32(const float * logits, const float * labels, const float * loss, float * dst, const int nclasses) {
+template <bool shmem>
+static __global__ void cross_entropy_loss_back_f32(
+        const float * __restrict__ logits, const float * __restrict__ labels, const float * __restrict__ loss,
+        float * __restrict__ dst, const int nclasses) {
     extern __shared__ float tmp[];
+
+    logits += blockIdx.x*nclasses;
+    labels += blockIdx.x*nclasses;
+    dst    += blockIdx.x*nclasses;
 
     float maxval = -INFINITY;
     for (int i = threadIdx.x; i < nclasses; i += WARP_SIZE) {
-        const float val = logits[blockIdx.x*nclasses + i];
+        const float val = logits[i];
         maxval = fmaxf(maxval, val);
-        tmp[i] = val;
+
+        if (shmem) {
+            tmp[i] = val;
+        }
     }
     maxval = warp_reduce_max(maxval);
 
     float sum = 0.0f;
     for (int i = threadIdx.x; i < nclasses; i += WARP_SIZE) {
-        const float val = expf(tmp[i] - maxval);
+        const float val = expf((shmem ? tmp[i] : logits[i]) - maxval);
         sum += val;
-        tmp[i] = val;
+
+        if (shmem) {
+            tmp[i] = val;
+        } else {
+            dst[i] = val;
+        }
     }
     sum = warp_reduce_sum(sum);
     const float sm_scale = 1.0f/sum;
 
     const float d_by_nrows = *loss/gridDim.x;
     for (int i = threadIdx.x; i < nclasses; i += WARP_SIZE) {
-        dst[blockIdx.x*nclasses + i] = (tmp[i]*sm_scale - labels[blockIdx.x*nclasses + i])*d_by_nrows;
+        const float val = shmem ? tmp[i] : dst[i];
+        dst[i] = (val*sm_scale - labels[i])*d_by_nrows;
     }
 }
 
@@ -130,5 +146,19 @@ void ggml_cuda_cross_entropy_loss_back(ggml_backend_cuda_context & ctx, ggml_ten
     const dim3 blocks_num(nrows, 1, 1);
     const int shmem = ne00*sizeof(float);
 
-    cross_entropy_loss_back_f32<<<blocks_num, blocks_dim, shmem, stream>>>(src0_d, src1_d, opt0_d, dst_d, ne00);
+    const int id    = ggml_cuda_get_device();
+    const int smpbo = ggml_cuda_info().devices[id].smpbo;
+
+    if (shmem <= smpbo) {
+#if !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__))
+        static bool shmem_limit_raised[GGML_CUDA_MAX_DEVICES] = {false};
+        if (!shmem_limit_raised[id]) {
+            CUDA_CHECK(cudaFuncSetAttribute(cross_entropy_loss_back_f32<true>, cudaFuncAttributeMaxDynamicSharedMemorySize, smpbo));
+            shmem_limit_raised[id] = true;
+        }
+#endif // !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__))
+        cross_entropy_loss_back_f32<true><<<blocks_num, blocks_dim, shmem, stream>>>(src0_d, src1_d, opt0_d, dst_d, ne00);
+    } else {
+        cross_entropy_loss_back_f32<false><<<blocks_num, blocks_dim, 0, stream>>>(src0_d, src1_d, opt0_d, dst_d, ne00);
+    }
 }
