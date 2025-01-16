@@ -22,9 +22,9 @@ void ggml_cuda_out_prod(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     GGML_ASSERT(ne2 == src1->ne[2]);
     GGML_ASSERT(ne3 == src1->ne[3]);
 
-    const char * src0_d = (const char *) src0->data;
-    const char * src1_d = (const char *) src1->data;
-    char       *  dst_d = (char       *)  dst->data;
+    const float * src0_d = (const float *) src0->data;
+    const float * src1_d = (const float *) src1->data;
+    float       *  dst_d = (float       *)  dst->data;
 
     cudaStream_t   stream = ctx.stream();
     cublasHandle_t handle = ctx.cublas_handle();
@@ -39,6 +39,14 @@ void ggml_cuda_out_prod(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const int64_t           ldb            = (src1_T ?        nb10 :        nb11) /  sizeof(float);
     GGML_ASSERT(                             (src1_T ?        nb11 :        nb10) == sizeof(float));
 
+    // data strides in dimensions 2/3
+    const size_t s02 = nb02 / sizeof(float);
+    const size_t s03 = nb03 / sizeof(float);
+    const size_t s12 = nb12 / sizeof(float);
+    const size_t s13 = nb13 / sizeof(float);
+    const size_t s2  = nb2  / sizeof(float);
+    const size_t s3  = nb3  / sizeof(float);
+
     // dps == dst per src0, used for group query attention
     const int64_t dps2 = ne2 / ne02;
     const int64_t dps3 = ne3 / ne03;
@@ -49,9 +57,9 @@ void ggml_cuda_out_prod(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
             CUBLAS_CHECK(
                 cublasSgemm(handle, CUBLAS_OP_N, src1_cublas_op,
                         ne0, ne1, ne01,
-                        &alpha, (const float *) (src0_d + (i3/dps3)*nb03 + (i2/dps2)*nb02), ne00,
-                                (const float *) (src1_d +  i3      *nb13 +  i2      *nb12), ldb,
-                        &beta,  (float       *) (dst_d  +  i3      *nb3  +  i2      *nb2),  ne0));
+                        &alpha, src0_d + (i3/dps3)*s03 + (i2/dps2)*s02, ne00,
+                                src1_d +  i3      *s13 +  i2      *s12, ldb,
+                        &beta,  dst_d  +  i3      *s3  +  i2      *s2,  ne0));
         }
     }
 }

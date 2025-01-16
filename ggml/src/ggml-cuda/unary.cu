@@ -51,16 +51,17 @@ static __global__ void silu_f32(const float * x, float * dst, const int k) {
     dst[i] = x[i] / (1.0f + expf(-x[i]));
 }
 
-static __global__ void silu_back_f32(const float * x, const float * grad, float * dst, const int k) {
+static __global__ void silu_back_f32(
+        const float * grad, const float * xf, float * dst, const int k) {
     const int i = blockDim.x*blockIdx.x + threadIdx.x;
 
     if (i >= k) {
         return;
     }
 
-    const float xi = x[i];
-    const float s = 1.0f / (1.0f + expf(-xi));
-    dst[i] = grad[i] * s * (1.0f + xi * (1.0f - s));
+    const float xfi = xf[i];
+    const float s = 1.0f / (1.0f + expf(-xfi));
+    dst[i] = grad[i] * s * (1.0f + xfi * (1.0f - s));
 }
 
 static __global__ void tanh_f32(const float * x, float * dst, int k) {
@@ -185,9 +186,9 @@ static void silu_f32_cuda(const float * x, float * dst, const int k, cudaStream_
     silu_f32<<<num_blocks, CUDA_SILU_BLOCK_SIZE, 0, stream>>>(x, dst, k);
 }
 
-static void silu_back_f32_cuda(const float * x, const float * grad, float * dst, const int k, cudaStream_t stream) {
+static void silu_back_f32_cuda(const float * grad, const float * x, float * dst, const int k, cudaStream_t stream) {
     const int num_blocks = (k + CUDA_SILU_BACK_BLOCK_SIZE - 1) / CUDA_SILU_BLOCK_SIZE;
-    silu_back_f32<<<num_blocks, CUDA_SILU_BACK_BLOCK_SIZE, 0, stream>>>(x, grad, dst, k);
+    silu_back_f32<<<num_blocks, CUDA_SILU_BACK_BLOCK_SIZE, 0, stream>>>(grad, x, dst, k);
 }
 
 static void tanh_f32_cuda(const float * x, float * dst, const int k, cudaStream_t stream) {
