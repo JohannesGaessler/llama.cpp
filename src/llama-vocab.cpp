@@ -1204,6 +1204,9 @@ struct fragment_buffer_variant {
 struct llama_vocab::impl {
     uint32_t n_token_types = 0; // for BERT-style token types
 
+    std::string tokenizer_model;
+    std::string tokenizer_pre;
+
     enum llama_vocab_type     type     = LLAMA_VOCAB_TYPE_SPM;
     enum llama_vocab_pre_type pre_type = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
 
@@ -1334,9 +1337,6 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
 
     // determine vocab type
     {
-        std::string tokenizer_model;
-        std::string tokenizer_pre;
-
         ml.get_key(LLM_KV_TOKENIZER_MODEL, tokenizer_model);
         ml.get_key(LLM_KV_TOKENIZER_PRE,   tokenizer_pre, false);
 
@@ -2720,6 +2720,14 @@ llama_vocab::~llama_vocab() {
 
 void llama_vocab::load(llama_model_loader & ml, const LLM_KV & kv) {
     pimpl->load(ml, kv);
+}
+
+std::string llama_vocab::get_tokenizer_model() const {
+    return pimpl->tokenizer_model;
+}
+
+std::string llama_vocab::get_tokenizer_pre() const {
+    return pimpl->tokenizer_pre;
 }
 
 enum llama_vocab_type llama_vocab::get_type() const {

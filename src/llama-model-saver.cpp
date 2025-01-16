@@ -207,8 +207,8 @@ void llama_model_saver::add_kv_from_model() {
 
     add_kv(LLM_KV_WKV_HEAD_SIZE,                     hparams.wkv_head_size);
 
-    add_kv(LLM_KV_TOKENIZER_MODEL,                   vocab.type_name());
-    // add_kv(LLM_KV_TOKENIZER_PRE,                     vocab.tokenizer_pre); // FIXME
+    add_kv(LLM_KV_TOKENIZER_MODEL,                   vocab.get_tokenizer_model());
+    add_kv(LLM_KV_TOKENIZER_PRE,                     vocab.get_tokenizer_pre());
     add_kv(LLM_KV_TOKENIZER_LIST,                    tokens);
     add_kv(LLM_KV_TOKENIZER_TOKEN_TYPE,              token_types);
     add_kv(LLM_KV_TOKENIZER_TOKEN_TYPE_COUNT,        vocab.n_token_types());
