@@ -187,7 +187,7 @@ void llama_model_saver::add_kv_from_model() {
     add_kv(LLM_KV_ROPE_DIMENSION_COUNT,              hparams.n_rot);
     add_kv(LLM_KV_ROPE_FREQ_BASE,                    hparams.rope_freq_base_train);
     // add_kv(LLM_KV_ROPE_SCALE_LINEAR,                 hparams.rope_freq_scale_train == 1.0f ? 0.0f : 1.0f/hparams.rope_freq_scale_train);
-    // add_kv(LLM_KV_ROPE_SCALING_TYPE,                 LLAMA_ROPE_SCALING_TYPES.at(hparams.rope_scaling_type_train)); // FIXME
+    add_kv(LLM_KV_ROPE_SCALING_TYPE,                 llama_rope_scaling_type_name(hparams.rope_scaling_type_train));
     add_kv(LLM_KV_ROPE_SCALING_FACTOR,               hparams.rope_freq_scale_train == 1.0f ? 0.0f : 1.0f/hparams.rope_freq_scale_train);
     add_kv(LLM_KV_ROPE_SCALING_ATTN_FACTOR,          hparams.rope_attn_factor);
     add_kv(LLM_KV_ROPE_SCALING_ORIG_CTX_LEN,         hparams.n_ctx_orig_yarn);
@@ -207,7 +207,7 @@ void llama_model_saver::add_kv_from_model() {
 
     add_kv(LLM_KV_WKV_HEAD_SIZE,                     hparams.wkv_head_size);
 
-    // add_kv(LLM_KV_TOKENIZER_MODEL,                   vocab.tokenizer_model); // FIXME
+    add_kv(LLM_KV_TOKENIZER_MODEL,                   vocab.type_name());
     // add_kv(LLM_KV_TOKENIZER_PRE,                     vocab.tokenizer_pre); // FIXME
     add_kv(LLM_KV_TOKENIZER_LIST,                    tokens);
     add_kv(LLM_KV_TOKENIZER_TOKEN_TYPE,              token_types);
