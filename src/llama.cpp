@@ -10187,6 +10187,9 @@ static void llama_set_param(struct ggml_tensor * tensor, llama_opt_param_filter 
     if (!param_filter(tensor, userdata)) {
         return;
     }
+    if (strcmp(tensor->name, "rope_freqs.weight") == 0) {
+        return; // FIXME
+    }
     ggml_set_param(tensor);
 }
 
