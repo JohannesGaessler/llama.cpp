@@ -7,6 +7,8 @@
 #include "llama-model.h"
 #include "llama-vocab.h"
 
+#include <string>
+
 llama_model_saver::llama_model_saver(const struct llama_model & model) : model(model), llm_kv(model.arch) {
     gguf_ctx = gguf_init_empty();
 }
@@ -243,7 +245,9 @@ void llama_model_saver::add_kv_from_model() {
 }
 
 void llama_model_saver::add_tensors_from_model() {
-    add_tensor(model.tok_embd);
+    if (std::string(model.output->name) != std::string(model.tok_embd->name)) {
+        add_tensor(model.tok_embd); // some models use the same tensor for tok_embd and output
+    }
     add_tensor(model.type_embd);
     add_tensor(model.pos_embd);
     add_tensor(model.tok_norm);
