@@ -101,31 +101,31 @@ void llama_model_saver::add_kv_from_model() {
     const llama_hparams & hparams = model.hparams;
     const llama_vocab   & vocab   = model.vocab;
 
-    const int32_t n_vocab = vocab.n_vocab;
+    const int32_t n_vocab = vocab.n_tokens();
     std::vector<std::string> tokens(n_vocab);
     std::vector<float>       scores(n_vocab);
     std::vector<int32_t>     token_types(n_vocab);
 
-    for (int32_t i = 0; i < n_vocab; ++i) {
-        const llama_vocab::token_data & token_data = vocab.id_to_token[i];
+    for (int32_t id = 0; id < n_vocab; ++id) {
+        const llama_vocab::token_data & token_data = vocab.get_token_data(id);
 
-        tokens[i] = token_data.text;
-        scores[i] = token_data.score;
+        tokens[id] = token_data.text;
+        scores[id] = token_data.score;
 
         switch(token_data.attr) {
-            case LLAMA_TOKEN_ATTR_UNKNOWN:      token_types[i] = LLAMA_TOKEN_TYPE_UNKNOWN;      break;
-            case LLAMA_TOKEN_ATTR_UNUSED:       token_types[i] = LLAMA_TOKEN_TYPE_UNUSED;       break;
-            case LLAMA_TOKEN_ATTR_NORMAL:       token_types[i] = LLAMA_TOKEN_TYPE_NORMAL;       break;
-            case LLAMA_TOKEN_ATTR_CONTROL:      token_types[i] = LLAMA_TOKEN_TYPE_CONTROL;      break;
-            case LLAMA_TOKEN_ATTR_USER_DEFINED: token_types[i] = LLAMA_TOKEN_TYPE_USER_DEFINED; break;
-            case LLAMA_TOKEN_ATTR_BYTE:         token_types[i] = LLAMA_TOKEN_TYPE_BYTE;         break;
+            case LLAMA_TOKEN_ATTR_UNKNOWN:      token_types[id] = LLAMA_TOKEN_TYPE_UNKNOWN;      break;
+            case LLAMA_TOKEN_ATTR_UNUSED:       token_types[id] = LLAMA_TOKEN_TYPE_UNUSED;       break;
+            case LLAMA_TOKEN_ATTR_NORMAL:       token_types[id] = LLAMA_TOKEN_TYPE_NORMAL;       break;
+            case LLAMA_TOKEN_ATTR_CONTROL:      token_types[id] = LLAMA_TOKEN_TYPE_CONTROL;      break;
+            case LLAMA_TOKEN_ATTR_USER_DEFINED: token_types[id] = LLAMA_TOKEN_TYPE_USER_DEFINED; break;
+            case LLAMA_TOKEN_ATTR_BYTE:         token_types[id] = LLAMA_TOKEN_TYPE_BYTE;         break;
             case LLAMA_TOKEN_ATTR_UNDEFINED:
-            default:                            token_types[i] = LLAMA_TOKEN_TYPE_UNDEFINED;    break;
+            default:                            token_types[id] = LLAMA_TOKEN_TYPE_UNDEFINED;    break;
         }
     }
 
     // add_kv(LLM_KV_GENERAL_TYPE,                      ???);
-    add_kv(LLM_KV_GENERAL_ARCHITECTURE,              llama_model_arch_name(model));
+    add_kv(LLM_KV_GENERAL_ARCHITECTURE,              model.arch_name());
     // add_kv(LLM_KV_GENERAL_QUANTIZATION_VERSION,      ???);
     // add_kv(LLM_KV_GENERAL_ALIGNMENT,                 ???);
     add_kv(LLM_KV_GENERAL_NAME,                      model.name);
@@ -137,7 +137,7 @@ void llama_model_saver::add_kv_from_model() {
     // add_kv(LLM_KV_GENERAL_SOURCE_URL,                ???);
     // add_kv(LLM_KV_GENERAL_SOURCE_HF_REPO,            ???);
 
-    add_kv(LLM_KV_VOCAB_SIZE,                        hparams.n_vocab);
+    add_kv(LLM_KV_VOCAB_SIZE,                        vocab.n_tokens());
     add_kv(LLM_KV_CONTEXT_LENGTH,                    hparams.n_ctx_train);
     add_kv(LLM_KV_EMBEDDING_LENGTH,                  hparams.n_embd);
     add_kv(LLM_KV_BLOCK_COUNT,                       hparams.n_layer);
@@ -201,36 +201,36 @@ void llama_model_saver::add_kv_from_model() {
 
     add_kv(LLM_KV_WKV_HEAD_SIZE,                     hparams.wkv_head_size);
 
-    add_kv(LLM_KV_TOKENIZER_MODEL,                   vocab.tokenizer_model);
-    add_kv(LLM_KV_TOKENIZER_PRE,                     vocab.tokenizer_pre);
+    // add_kv(LLM_KV_TOKENIZER_MODEL,                   vocab.tokenizer_model); // FIXME
+    // add_kv(LLM_KV_TOKENIZER_PRE,                     vocab.tokenizer_pre); // FIXME
     add_kv(LLM_KV_TOKENIZER_LIST,                    tokens);
     add_kv(LLM_KV_TOKENIZER_TOKEN_TYPE,              token_types);
-    add_kv(LLM_KV_TOKENIZER_TOKEN_TYPE_COUNT,        hparams.n_vocab_type);
+    add_kv(LLM_KV_TOKENIZER_TOKEN_TYPE_COUNT,        vocab.n_token_types());
     add_kv(LLM_KV_TOKENIZER_SCORES,                  scores);
     // add_kv(LLM_KV_TOKENIZER_MERGES,                  ???);
     // FIXME llama_token is type i32 but when reading in a GGUF file u32 is expected
-    add_kv(LLM_KV_TOKENIZER_BOS_ID,                  uint32_t(vocab.special_bos_id));
-    add_kv(LLM_KV_TOKENIZER_EOS_ID,                  uint32_t(vocab.special_eos_id));
-    add_kv(LLM_KV_TOKENIZER_EOT_ID,                  uint32_t(vocab.special_eot_id));
-    add_kv(LLM_KV_TOKENIZER_EOM_ID,                  uint32_t(vocab.special_eom_id));
-    add_kv(LLM_KV_TOKENIZER_UNK_ID,                  uint32_t(vocab.special_unk_id));
-    add_kv(LLM_KV_TOKENIZER_SEP_ID,                  uint32_t(vocab.special_sep_id));
-    add_kv(LLM_KV_TOKENIZER_PAD_ID,                  uint32_t(vocab.special_pad_id));
-    add_kv(LLM_KV_TOKENIZER_CLS_ID,                  uint32_t(vocab.special_cls_id));
-    add_kv(LLM_KV_TOKENIZER_MASK_ID,                 uint32_t(vocab.special_mask_id));
-    add_kv(LLM_KV_TOKENIZER_ADD_BOS,                 vocab.tokenizer_add_bos);
-    add_kv(LLM_KV_TOKENIZER_ADD_EOS,                 vocab.tokenizer_add_eos);
-    add_kv(LLM_KV_TOKENIZER_ADD_PREFIX,              vocab.tokenizer_add_space_prefix);
-    add_kv(LLM_KV_TOKENIZER_REMOVE_EXTRA_WS,         vocab.tokenizer_remove_extra_whitespaces);
-    add_kv(LLM_KV_TOKENIZER_PRECOMPILED_CHARSMAP,    vocab.precompiled_charsmap);
+    add_kv(LLM_KV_TOKENIZER_BOS_ID,                  uint32_t(vocab.token_bos()));
+    add_kv(LLM_KV_TOKENIZER_EOS_ID,                  uint32_t(vocab.token_eos()));
+    add_kv(LLM_KV_TOKENIZER_EOT_ID,                  uint32_t(vocab.token_eot()));
+    add_kv(LLM_KV_TOKENIZER_EOM_ID,                  uint32_t(vocab.token_eom()));
+    add_kv(LLM_KV_TOKENIZER_UNK_ID,                  uint32_t(vocab.token_unk()));
+    add_kv(LLM_KV_TOKENIZER_SEP_ID,                  uint32_t(vocab.token_sep()));
+    add_kv(LLM_KV_TOKENIZER_PAD_ID,                  uint32_t(vocab.token_pad()));
+    // add_kv(LLM_KV_TOKENIZER_CLS_ID,                  uint32_t(vocab.special_cls_id)); // FIXME
+    // add_kv(LLM_KV_TOKENIZER_MASK_ID,                 uint32_t(vocab.special_mask_id)); // FIXME
+    add_kv(LLM_KV_TOKENIZER_ADD_BOS,                 vocab.get_add_bos());
+    add_kv(LLM_KV_TOKENIZER_ADD_EOS,                 vocab.get_add_eos());
+    add_kv(LLM_KV_TOKENIZER_ADD_PREFIX,              vocab.get_add_space_prefix());
+    add_kv(LLM_KV_TOKENIZER_REMOVE_EXTRA_WS,         vocab.get_remove_extra_whitespaces());
+    // add_kv(LLM_KV_TOKENIZER_PRECOMPILED_CHARSMAP,    vocab.precompiled_charsmap); // FIXME
     // add_kv(LLM_KV_TOKENIZER_HF_JSON,                 ???);
     // add_kv(LLM_KV_TOKENIZER_RWKV,                    ???);
-    add_kv(LLM_KV_TOKENIZER_FIM_PRE_ID,              uint32_t(vocab.special_fim_pre_id));
-    add_kv(LLM_KV_TOKENIZER_FIM_SUF_ID,              uint32_t(vocab.special_fim_suf_id));
-    add_kv(LLM_KV_TOKENIZER_FIM_MID_ID,              uint32_t(vocab.special_fim_mid_id));
-    add_kv(LLM_KV_TOKENIZER_FIM_PAD_ID,              uint32_t(vocab.special_fim_pad_id));
-    add_kv(LLM_KV_TOKENIZER_FIM_REP_ID,              uint32_t(vocab.special_fim_rep_id));
-    add_kv(LLM_KV_TOKENIZER_FIM_SEP_ID,              uint32_t(vocab.special_fim_sep_id));
+    add_kv(LLM_KV_TOKENIZER_FIM_PRE_ID,              uint32_t(vocab.token_fim_pre()));
+    add_kv(LLM_KV_TOKENIZER_FIM_SUF_ID,              uint32_t(vocab.token_fim_suf()));
+    add_kv(LLM_KV_TOKENIZER_FIM_MID_ID,              uint32_t(vocab.token_fim_mid()));
+    add_kv(LLM_KV_TOKENIZER_FIM_PAD_ID,              uint32_t(vocab.token_fim_pad()));
+    add_kv(LLM_KV_TOKENIZER_FIM_REP_ID,              uint32_t(vocab.token_fim_rep()));
+    add_kv(LLM_KV_TOKENIZER_FIM_SEP_ID,              uint32_t(vocab.token_fim_sep()));
 
     // LoRA support not implemented
     // add_kv(LLM_KV_ADAPTER_TYPE,                      ???);

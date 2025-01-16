@@ -8450,7 +8450,7 @@ static int llama_prepare_sbatch(
     GGML_ASSERT((!batch.token && batch.embd) || (batch.token && !batch.embd)); // NOLINT
     if (batch.token) {
         for (uint32_t i = 0; i < n_tokens_all; ++i) {
-            if (batch.token[i] < 0 || (uint32_t)batch.token[i] >= model.vocab.n_vocab) {
+            if (batch.token[i] < 0 || (uint32_t)batch.token[i] >= model.vocab.n_tokens()) {
                 LLAMA_LOG_ERROR("%s: invalid token[%d] = %d\n", __func__, i, batch.token[i]);
                 return -1;
             }
@@ -10243,7 +10243,7 @@ static void llama_opt_epoch_iter(
         const int64_t                    ndata_in_loop,
         const int64_t                    t_loop_start) {
     GGML_ASSERT(lctx->opt_ctx);
-    const uint32_t n_ctx    = llama_n_ctx_train(&lctx->model);
+    const uint32_t n_ctx    = llama_model_n_ctx_train(&lctx->model);
     const uint32_t n_batch  = std::min(llama_n_batch(lctx),  n_ctx);
     const uint32_t n_ubatch = std::min(llama_n_ubatch(lctx), n_batch);
 
