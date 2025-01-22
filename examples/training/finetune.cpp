@@ -62,7 +62,7 @@ int main(int argc, char ** argv) {
     ggml_opt_dataset_t dataset = common_opt_dataset_init(ctx.get(), tokens, llama_n_ctx(ctx.get())/2);
 
     struct ggml_opt_optimizer_params optimizer_params = ggml_opt_get_default_optimizer_params(nullptr);
-    optimizer_params.adamw.alpha = 1e-6f; // learning rate
+    optimizer_params.adamw.alpha = 1e-7f; // learning rate
 
     struct llama_opt_params lopt_params {
         /*n_ctx_train     =*/ 0,
