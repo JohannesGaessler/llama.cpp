@@ -2952,6 +2952,16 @@ int llama_vocab::find_bpe_rank(const std::string & token_left, const std::string
     return it->second;
 }
 
+std::vector<std::string> llama_vocab::get_bpe_merges() const {
+    std::vector<std::string> result(pimpl->bpe_ranks.size());
+
+    for (const auto & pair : pimpl->bpe_ranks) {
+        result[pair.second] = pair.first.first + " " + pair.first.second;
+    }
+
+    return result;
+}
+
 int32_t llama_vocab::tokenize(
                   const char * text,
                      int32_t   text_len,

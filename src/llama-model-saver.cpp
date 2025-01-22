@@ -213,7 +213,7 @@ void llama_model_saver::add_kv_from_model() {
     add_kv(LLM_KV_TOKENIZER_TOKEN_TYPE,              token_types);
     add_kv(LLM_KV_TOKENIZER_TOKEN_TYPE_COUNT,        vocab.n_token_types());
     add_kv(LLM_KV_TOKENIZER_SCORES,                  scores);
-    // add_kv(LLM_KV_TOKENIZER_MERGES,                  ???);
+    add_kv(LLM_KV_TOKENIZER_MERGES,                  vocab.get_bpe_merges());
     // FIXME llama_token is type i32 but when reading in a GGUF file u32 is expected
     add_kv(LLM_KV_TOKENIZER_BOS_ID,                  uint32_t(vocab.token_bos()));
     add_kv(LLM_KV_TOKENIZER_EOS_ID,                  uint32_t(vocab.token_eos()));
