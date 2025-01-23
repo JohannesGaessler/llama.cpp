@@ -5991,7 +5991,7 @@ static void ggml_compute_forward_repeat_back_f32(
     GGML_ASSERT(nb0  == sizeof(float));
     GGML_ASSERT(nb00 == sizeof(float));
 
-    const bool gqa = dst->op_params[0] == 1;
+    const bool adjacent = dst->op_params[0] != 0;
 
     if (ggml_is_contiguous(dst)) {
         ggml_vec_set_f32(ne0*ne1*ne2*ne3, dst->data, 0);
@@ -6007,7 +6007,7 @@ static void ggml_compute_forward_repeat_back_f32(
         }
     }
 
-    if (gqa) {
+    if (adjacent) {
         for (int i3 = 0; i3 < nr3; i3++) {
         for (int k3 = 0; k3 < ne3; k3++) {
         for (int i2 = 0; i2 < nr2; i2++) {
@@ -6017,7 +6017,7 @@ static void ggml_compute_forward_repeat_back_f32(
         for (int i0 = 0; i0 < nr0; i0++) {
             ggml_vec_acc_f32(ne0,
                 (float *) ((char *)  dst->data + (         k3)*nb3  + (         k2)*nb2  + (         k1)*nb1),
-                (float *) ((char *) src0->data + (k3*nr3 + i3)*nb03 + (k2*nr2 + i2)*nb02 + (i1*ne1 + k1)*nb01 + (i0*ne0)*nb00));
+                (float *) ((char *) src0->data + (k3*nr3 + i3)*nb03 + (k2*nr2 + i2)*nb02 + (k1*nr1 + i1)*nb01 + (i0*ne0)*nb00));
         }
         }
         }

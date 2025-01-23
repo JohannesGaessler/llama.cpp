@@ -934,7 +934,7 @@ extern "C" {
             struct ggml_context * ctx,
             struct ggml_tensor  * a,
             struct ggml_tensor  * b,
-            bool                  gqa_mode); // use memory pattern for backward pass of mat. mul. with group-query attention
+            bool                  adjacent); // sum up values that are adjacent in input instead of repeated with same stride
 
     // concat a and b along dim
     // used in stable-diffusion

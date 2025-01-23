@@ -111,8 +111,8 @@ static __global__ void k_repeat_back(
     T sum = 0;
     if (adjacent) {
         for (int64_t i2 = tid2*nr2; i2 < (tid2 + 1)*nr2; ++i2) {
-            for (int64_t i1 = tid1; i1 < ne01; i1 += ne1) {
-                for (int64_t i0 = tid0; i0 < ne00; i0 += ne0) {
+            for (int64_t i1 = tid1*nr1; i1 < (tid1 + 1)*nr1; ++i1) {
+                for (int64_t i0 = tid0*nr0; i0 < (tid0 + 1)*nr0; ++i0) {
                     sum += src[i2*ne01*ne00 + i1*ne00 + i0];
                 }
             }

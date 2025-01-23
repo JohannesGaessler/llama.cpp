@@ -2306,14 +2306,15 @@ struct ggml_tensor * ggml_repeat_back(
         struct ggml_context * ctx,
         struct ggml_tensor  * a,
         struct ggml_tensor  * b,
-        bool                  gqa_mode) {
+        bool                  adjacent) {
     GGML_ASSERT(ggml_can_repeat(b, a));
 
     struct ggml_tensor * result = ggml_new_tensor(ctx, a->type, GGML_MAX_DIMS, b->ne);
 
     result->op     = GGML_OP_REPEAT_BACK;
     result->src[0] = a;
-    result->op_params[0] = gqa_mode ? 1 : 0;
+
+    result->op_params[0] = adjacent ? 1 : 0;
 
     return result;
 }

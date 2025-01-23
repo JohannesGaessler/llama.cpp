@@ -1307,10 +1307,10 @@ struct test_repeat_back : public test_case {
     const ggml_type type;
     const std::array<int64_t, 4> ne;
     const std::array<int, 4> nr;
-    const bool gqa_mode;
+    const bool adjacent;
 
     std::string vars() override {
-        return VARS_TO_STR4(type, ne, nr, gqa_mode);
+        return VARS_TO_STR4(type, ne, nr, adjacent);
     }
 
     size_t op_size(ggml_tensor * t) override {
@@ -1320,8 +1320,8 @@ struct test_repeat_back : public test_case {
     test_repeat_back(ggml_type type = GGML_TYPE_F32,
             std::array<int64_t, 4> ne = {10, 5, 4, 3},
             std::array<int, 4> nr = {2, 2, 2, 2},
-            bool gqa_mode = false)
-        : type(type), ne(ne), nr(nr), gqa_mode(gqa_mode) {}
+            bool adjacent = false)
+        : type(type), ne(ne), nr(nr), adjacent(adjacent) {}
 
     ggml_tensor * build_graph(ggml_context * ctx) override {
         ggml_tensor * src = ggml_new_tensor_4d(ctx, type, ne[0]*nr[0], ne[1]*nr[1], ne[2]*nr[2], ne[3]*nr[3]);
@@ -1330,7 +1330,7 @@ struct test_repeat_back : public test_case {
         ggml_tensor * target = ggml_new_tensor(ctx, type, 4, ne.data());
         ggml_set_name(target, "target");
 
-        ggml_tensor * out = ggml_repeat_back(ctx, src, target, gqa_mode);
+        ggml_tensor * out = ggml_repeat_back(ctx, src, target, adjacent);
         ggml_set_name(out, "out");
 
         return out;
@@ -3830,14 +3830,14 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     }
 
     for (int ne3 : {1, 3}) { // CUDA backward pass only supports ne3 == 1
-        for (bool gqa_mode : {false, true}) {
-            test_cases.emplace_back(new test_repeat_back(GGML_TYPE_F32, {10, 5, 4, ne3}, {1, 1, 1, 1}, gqa_mode));
-            test_cases.emplace_back(new test_repeat_back(GGML_TYPE_F32, {10, 5, 4, ne3}, {2, 1, 1, 1}, gqa_mode));
-            test_cases.emplace_back(new test_repeat_back(GGML_TYPE_F32, {10, 5, 4, ne3}, {1, 2, 1, 1}, gqa_mode));
-            test_cases.emplace_back(new test_repeat_back(GGML_TYPE_F32, {10, 5, 4, ne3}, {1, 1, 2, 1}, gqa_mode));
-            test_cases.emplace_back(new test_repeat_back(GGML_TYPE_F32, {10, 5, 4, ne3}, {1, 1, 1, 2}, gqa_mode));
-            test_cases.emplace_back(new test_repeat_back(GGML_TYPE_I32, {10, 5, 4, ne3}, {2, 1, 1, 1}, gqa_mode));
-            test_cases.emplace_back(new test_repeat_back(GGML_TYPE_I16, {10, 5, 4, ne3}, {1, 1, 1, 2}, gqa_mode));
+        for (bool adjacent : {false, true}) {
+            test_cases.emplace_back(new test_repeat_back(GGML_TYPE_F32, {10, 5, 4, ne3}, {1, 1, 1, 1}, adjacent));
+            test_cases.emplace_back(new test_repeat_back(GGML_TYPE_F32, {10, 5, 4, ne3}, {2, 1, 1, 1}, adjacent));
+            test_cases.emplace_back(new test_repeat_back(GGML_TYPE_F32, {10, 5, 4, ne3}, {1, 2, 1, 1}, adjacent));
+            test_cases.emplace_back(new test_repeat_back(GGML_TYPE_F32, {10, 5, 4, ne3}, {1, 1, 2, 1}, adjacent));
+            test_cases.emplace_back(new test_repeat_back(GGML_TYPE_F32, {10, 5, 4, ne3}, {1, 1, 1, 2}, adjacent));
+            test_cases.emplace_back(new test_repeat_back(GGML_TYPE_I32, {10, 5, 4, ne3}, {2, 1, 1, 1}, adjacent));
+            test_cases.emplace_back(new test_repeat_back(GGML_TYPE_I16, {10, 5, 4, ne3}, {1, 1, 1, 2}, adjacent));
         }
     }
 
