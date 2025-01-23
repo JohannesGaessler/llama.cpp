@@ -96,7 +96,6 @@ static __global__ void k_repeat_back(
     const T * __restrict__ src, T * __restrict__ dst, const int64_t ne00, const int64_t ne01, const int64_t ne02,
     const int64_t ne0, const int64_t ne1, const int64_t ne2) {
 
-    const int64_t nr0 = ne00 / ne0;
     const int64_t nr1 = ne01 / ne1;
     const int64_t nr2 = ne02 / ne2;
 
@@ -112,7 +111,7 @@ static __global__ void k_repeat_back(
     if (adjacent) {
         for (int64_t i2 = tid2*nr2; i2 < (tid2 + 1)*nr2; ++i2) {
             for (int64_t i1 = tid1*nr1; i1 < (tid1 + 1)*nr1; ++i1) {
-                for (int64_t i0 = tid0*nr0; i0 < (tid0 + 1)*nr0; ++i0) {
+                for (int64_t i0 = tid0; i0 < ne00; i0 += ne0) {
                     sum += src[i2*ne01*ne00 + i1*ne00 + i0];
                 }
             }
