@@ -1883,7 +1883,7 @@ struct test_mul_mat : public test_case {
             a = ggml_new_tensor_4d(ctx, type_a, ne_a[per[0]], ne_a[per[1]], ne_a[per[2]], ne_a[per[3]]);
             b = ggml_new_tensor_4d(ctx, type_b, ne_b[per[0]], ne_b[per[1]], ne_b[per[2]], ne_b[per[3]]);
             if (!ggml_is_quantized(type_a)) {
-                // ggml_set_param(a); // FIXME
+                ggml_set_param(a);
                 ggml_set_param(b);
             }
             ggml_set_name(a, "a");
@@ -1897,7 +1897,7 @@ struct test_mul_mat : public test_case {
             a = ggml_new_tensor_4d(ctx, type_a, k, m, bs[0],       bs[1]);
             b = ggml_new_tensor_4d(ctx, type_b, k, n, bs[0]*nr[0], bs[1]*nr[1]);
             if (!ggml_is_quantized(type_a)) {
-                // ggml_set_param(a); // FIXME
+                ggml_set_param(a);
                 ggml_set_param(b);
             }
             ggml_set_name(a, "a");

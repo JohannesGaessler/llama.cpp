@@ -2313,7 +2313,7 @@ struct ggml_tensor * ggml_repeat_back(
 
     result->op     = GGML_OP_REPEAT_BACK;
     result->src[0] = a;
-    result->op_params[1] = gqa_mode ? 1 : 0;
+    result->op_params[0] = gqa_mode ? 1 : 0;
 
     return result;
 }
@@ -5434,6 +5434,8 @@ static void ggml_compute_backward(
             // src1.shape   [n,p,qq,rr]
 
             if (src0_needs_grads) {
+                GGML_ASSERT(grad->ne[2] == src1->ne[2]);
+                GGML_ASSERT(grad->ne[3] == src1->ne[3]);
                 struct ggml_tensor * tmp =
                     ggml_out_prod(ctx, // [n,m,qq,rr]
                         src1,          // [n,p,qq,rr]
