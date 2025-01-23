@@ -8593,24 +8593,6 @@ static int llama_decode_impl(
     const auto & hparams = model.hparams;
     const auto & cparams = lctx.cparams;
 
-// <<<<<<< HEAD
-//     GGML_ASSERT((!batch.token && batch.embd) || (batch.token && !batch.embd)); // NOLINT
-
-//     if (batch.token) {
-//         for (uint32_t i = 0; i < n_tokens_all; ++i) {
-//             if (batch.token[i] < 0 || (uint32_t) batch.token[i] >= model.vocab.n_tokens()) {
-//                 LLAMA_LOG_ERROR("%s: invalid token[%d] = %d\n", __func__, i, batch.token[i]);
-//                 return -1;
-//             }
-//         }
-//     }
-
-//     GGML_ASSERT(n_tokens_all <= cparams.n_batch);
-
-//     GGML_ASSERT((cparams.causal_attn || cparams.n_ubatch >= n_tokens_all) && "non-causal attention requires n_ubatch >= n_tokens");
-
-// =======
-// >>>>>>> db13f929 (llama/ggml: add LLM training support)
     if (lctx.t_compute_start_us == 0) {
         lctx.t_compute_start_us = ggml_time_us();
     }
@@ -8826,7 +8808,6 @@ static int llama_decode_impl(
 
     return 0;
 }
-
 
 // encode a batch of tokens by evaluating the encoder part of the transformer
 //
@@ -9582,7 +9563,7 @@ struct llama_model * llama_model_load_from_splits(
     return llama_model_load_from_file_impl(splits.front(), splits, params);
 }
 
-void llama_save_model_to_file(const struct llama_model * model, const char * path_model) {
+void llama_model_save_to_file(const struct llama_model * model, const char * path_model) {
     llama_model_saver ms(*model);
     ms.add_kv_from_model();
     ms.add_tensors_from_model();

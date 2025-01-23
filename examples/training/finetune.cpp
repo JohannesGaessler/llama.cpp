@@ -89,7 +89,7 @@ int main(int argc, char ** argv) {
     ggml_opt_result_free(result_train);
     ggml_opt_result_free(result_eval);
 
-    llama_save_model_to_file(model.get(), "finetuned-model.gguf");
+    llama_model_save_to_file(model.get(), "finetuned-model.gguf");
 
     llama_backend_free();
 
