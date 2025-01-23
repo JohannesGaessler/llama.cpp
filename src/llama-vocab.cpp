@@ -1,5 +1,7 @@
 #include "llama-vocab.h"
 
+#include "ggml.h"
+#include "gguf.h"
 #include "llama-impl.h"
 #include "llama-model-loader.h"
 
@@ -1431,7 +1433,10 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
 
             const int precompiled_charsmap_keyidx = gguf_find_key(ctx, kv(LLM_KV_TOKENIZER_PRECOMPILED_CHARSMAP).c_str());
             if (precompiled_charsmap_keyidx != -1) {
-                size_t n_precompiled_charsmap = gguf_get_arr_n(ctx, precompiled_charsmap_keyidx);
+                const gguf_type pc_type = gguf_get_arr_type(ctx, precompiled_charsmap_keyidx);
+                GGML_ASSERT(pc_type == GGUF_TYPE_INT8 || pc_type == GGUF_TYPE_UINT8);
+
+                const size_t n_precompiled_charsmap = gguf_get_arr_n(ctx, precompiled_charsmap_keyidx);
                 const char * pc = (const char *) gguf_get_arr_data(ctx, precompiled_charsmap_keyidx);
                 precompiled_charsmap.assign(pc, pc + n_precompiled_charsmap);
 #ifdef IS_BIG_ENDIAN
@@ -2960,6 +2965,10 @@ std::vector<std::string> llama_vocab::get_bpe_merges() const {
     }
 
     return result;
+}
+
+std::vector<char> llama_vocab::get_precompiled_charsmap() const {
+    return pimpl->precompiled_charsmap;
 }
 
 int32_t llama_vocab::tokenize(

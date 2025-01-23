@@ -184,17 +184,19 @@ void llama_model_saver::add_kv_from_model() {
     add_kv(LLM_KV_ATTENTION_SLIDING_WINDOW,          hparams.n_swa);
     add_kv(LLM_KV_ATTENTION_SCALE,                   hparams.f_attention_scale);
 
+    const float rope_scaling_factor = hparams.rope_freq_scale_train == 1.0f ? 0.0f : 1.0f/hparams.rope_freq_scale_train;
+
     add_kv(LLM_KV_ROPE_DIMENSION_COUNT,              hparams.n_rot);
     add_kv(LLM_KV_ROPE_FREQ_BASE,                    hparams.rope_freq_base_train);
-    // add_kv(LLM_KV_ROPE_SCALE_LINEAR,                 hparams.rope_freq_scale_train == 1.0f ? 0.0f : 1.0f/hparams.rope_freq_scale_train);
+    // add_kv(LLM_KV_ROPE_SCALE_LINEAR,                 rope_scaling_factor); // old name
     add_kv(LLM_KV_ROPE_SCALING_TYPE,                 llama_rope_scaling_type_name(hparams.rope_scaling_type_train));
-    add_kv(LLM_KV_ROPE_SCALING_FACTOR,               hparams.rope_freq_scale_train == 1.0f ? 0.0f : 1.0f/hparams.rope_freq_scale_train);
+    add_kv(LLM_KV_ROPE_SCALING_FACTOR,               rope_scaling_factor);
     add_kv(LLM_KV_ROPE_SCALING_ATTN_FACTOR,          hparams.rope_attn_factor);
     add_kv(LLM_KV_ROPE_SCALING_ORIG_CTX_LEN,         hparams.n_ctx_orig_yarn);
     add_kv(LLM_KV_ROPE_SCALING_FINETUNED,            hparams.rope_finetuned);
     add_kv(LLM_KV_ROPE_SCALING_YARN_LOG_MUL,         hparams.rope_yarn_log_mul);
 
-    // split files are not supported
+    // TODO: implement split file support
     // add_kv(LLM_KV_SPLIT_NO,                          ???);
     // add_kv(LLM_KV_SPLIT_COUNT,                       ???);
     // add_kv(LLM_KV_SPLIT_TENSORS_COUNT,               ???);
@@ -214,7 +216,7 @@ void llama_model_saver::add_kv_from_model() {
     add_kv(LLM_KV_TOKENIZER_TOKEN_TYPE_COUNT,        vocab.n_token_types());
     add_kv(LLM_KV_TOKENIZER_SCORES,                  scores);
     add_kv(LLM_KV_TOKENIZER_MERGES,                  vocab.get_bpe_merges());
-    // FIXME llama_token is type i32 but when reading in a GGUF file u32 is expected
+    // FIXME llama_token is type i32 but when reading in a GGUF file u32 is expected, not an issue for writing though
     add_kv(LLM_KV_TOKENIZER_BOS_ID,                  uint32_t(vocab.token_bos()));
     add_kv(LLM_KV_TOKENIZER_EOS_ID,                  uint32_t(vocab.token_eos()));
     add_kv(LLM_KV_TOKENIZER_EOT_ID,                  uint32_t(vocab.token_eot()));
@@ -222,13 +224,13 @@ void llama_model_saver::add_kv_from_model() {
     add_kv(LLM_KV_TOKENIZER_UNK_ID,                  uint32_t(vocab.token_unk()));
     add_kv(LLM_KV_TOKENIZER_SEP_ID,                  uint32_t(vocab.token_sep()));
     add_kv(LLM_KV_TOKENIZER_PAD_ID,                  uint32_t(vocab.token_pad()));
-    // add_kv(LLM_KV_TOKENIZER_CLS_ID,                  uint32_t(vocab.special_cls_id)); // FIXME
-    // add_kv(LLM_KV_TOKENIZER_MASK_ID,                 uint32_t(vocab.special_mask_id)); // FIXME
+    // add_kv(LLM_KV_TOKENIZER_CLS_ID,                  uint32_t(vocab.token_bos())); // deprecated
+    // add_kv(LLM_KV_TOKENIZER_MASK_ID,                 ???);
     add_kv(LLM_KV_TOKENIZER_ADD_BOS,                 vocab.get_add_bos());
     add_kv(LLM_KV_TOKENIZER_ADD_EOS,                 vocab.get_add_eos());
     add_kv(LLM_KV_TOKENIZER_ADD_PREFIX,              vocab.get_add_space_prefix());
     add_kv(LLM_KV_TOKENIZER_REMOVE_EXTRA_WS,         vocab.get_remove_extra_whitespaces());
-    // add_kv(LLM_KV_TOKENIZER_PRECOMPILED_CHARSMAP,    vocab.precompiled_charsmap); // FIXME
+    add_kv(LLM_KV_TOKENIZER_PRECOMPILED_CHARSMAP,    vocab.get_precompiled_charsmap());
     // add_kv(LLM_KV_TOKENIZER_HF_JSON,                 ???);
     // add_kv(LLM_KV_TOKENIZER_RWKV,                    ???);
     add_kv(LLM_KV_TOKENIZER_FIM_PRE_ID,              uint32_t(vocab.token_fim_pre()));
@@ -238,7 +240,7 @@ void llama_model_saver::add_kv_from_model() {
     add_kv(LLM_KV_TOKENIZER_FIM_REP_ID,              uint32_t(vocab.token_fim_rep()));
     add_kv(LLM_KV_TOKENIZER_FIM_SEP_ID,              uint32_t(vocab.token_fim_sep()));
 
-    // LoRA support not implemented
+    // TODO: implement LoRA support
     // add_kv(LLM_KV_ADAPTER_TYPE,                      ???);
     // add_kv(LLM_KV_ADAPTER_LORA_ALPHA,                ???);
 
