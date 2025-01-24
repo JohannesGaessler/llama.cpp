@@ -44,7 +44,7 @@ static __global__ void flash_attn_tile_ext_f16(
         const int ne1,
         const int ne2,
         const int ne3) {
-#ifdef FP16_AVAILABLE
+// #ifdef FP16_AVAILABLE
     // Skip unused kernel variants for faster compilation:
     if (use_logit_softcap && !(D == 128 || D == 256)) {
         NO_DEVICE_CODE;
@@ -278,9 +278,9 @@ static __global__ void flash_attn_tile_ext_f16(
             dst_meta[(ic0 + j_VKQ)*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = make_float2(kqmax[j_VKQ_0/nwarps], kqsum_j);
         }
     }
-#else
-   NO_DEVICE_CODE;
-#endif // FP16_AVAILABLE
+// #else
+//    NO_DEVICE_CODE;
+// #endif // FP16_AVAILABLE
 }
 
 template <int cols_per_block, int parallel_blocks, bool use_logit_softcap>
