@@ -1,11 +1,14 @@
 #include "common.cuh"
 
-struct mma_int_A_I16K4 {
+template <typename T>
+struct mma_A_I16K4 {
+    static_assert(sizeof(T) == 4, "bad type size");
+
     static constexpr int I  = 16;
     static constexpr int K  = 4;
     static constexpr int ne = 2;
 
-    int x[ne] = {0};
+    T x[ne];
 
     static __device__ __forceinline__ int get_i(const int l) {
         const int ret = (l%2) * (I/2) + threadIdx.x / K;
@@ -21,9 +24,9 @@ struct mma_int_A_I16K4 {
         return ret;
     }
 
-    __device__ __forceinline__ void load(const int * __restrict__ xs0, const int & stride) {
+    __device__ __forceinline__ void load(const T * __restrict__ xs0, const int & stride) {
 #if defined(INT8_MMA_AVAILABLE)
-        const int * xs = xs0 + (threadIdx.x%I)*stride;
+        const T * xs = xs0 + (threadIdx.x%I)*stride;
         asm("ldmatrix.sync.aligned.m8n8.x2.b16 {%0, %1}, [%2];"
             : "+r"(x[0]), "+r"(x[1])
             : "l"(xs));
@@ -36,12 +39,15 @@ struct mma_int_A_I16K4 {
     }
 };
 
-struct mma_int_A_I16K8 {
+template <typename T>
+struct mma_A_I16K8 {
+    static_assert(sizeof(T) == 4, "bad type size");
+
     static constexpr int I  = 16;
     static constexpr int K  = 8;
     static constexpr int ne = 4;
 
-    int x[ne] = {0};
+    T x[ne] = {0};
 
     static __device__ __forceinline__ int get_i(const int l) {
         const int ret = (l%2) * (I/2) + threadIdx.x / (K/2);
@@ -57,7 +63,7 @@ struct mma_int_A_I16K8 {
         return ret;
     }
 
-    __device__ __forceinline__ void load(const int * __restrict__ xs0, const int & stride) {
+    __device__ __forceinline__ void load(const T * __restrict__ xs0, const int & stride) {
 #if defined(INT8_MMA_AVAILABLE)
         const int * xs = xs0 + (threadIdx.x%I)*stride + (threadIdx.x/I)*(K/2);
         asm("ldmatrix.sync.aligned.m8n8.x4.b16 {%0, %1, %2, %3}, [%4];"
@@ -70,18 +76,17 @@ struct mma_int_A_I16K8 {
         }
 #endif // defined(INT8_MMA_AVAILABLE)
     }
-
-    __device__ __forceinline__ void load_low(const int * __restrict__ xs0, const int & stride) {
-        ((mma_int_A_I16K4 *) x)[0].load(xs0, stride);
-    }
 };
 
-struct mma_int_B_J8K4 {
+template <typename T>
+struct mma_B_J8K4 {
+    static_assert(sizeof(T) == 4, "bad type size");
+
     static constexpr int J  = 8;
     static constexpr int K  = 4;
     static constexpr int ne = 1;
 
-    int x[ne] = {0};
+    T x[ne] = {0};
 
     static __device__ __forceinline__ int get_j(const int /* l */) {
         const int ret = threadIdx.x / K;
@@ -97,7 +102,7 @@ struct mma_int_B_J8K4 {
         return ret;
     }
 
-    __device__ __forceinline__ void load(const int * __restrict__ xs0, const int & stride) {
+    __device__ __forceinline__ void load(const T * __restrict__ xs0, const int & stride) {
 #if defined(INT8_MMA_AVAILABLE) && false // Loading as 4 byte values is faster
         const int * xs = xs0 + (threadIdx.x%J)*stride;
         asm("ldmatrix.sync.aligned.m8n8.x1.b16 {%0}, [%1];"
@@ -112,12 +117,15 @@ struct mma_int_B_J8K4 {
     }
 };
 
-struct mma_int_B_J8K8 {
+template <typename T>
+struct mma_B_J8K8 {
+    static_assert(sizeof(T) == 4, "bad type size");
+
     static constexpr int J  = 8;
     static constexpr int K  = 8;
     static constexpr int ne = 2;
 
-    int x[ne] = {0};
+    T x[ne] = {0};
 
     static __device__ __forceinline__ int get_j(const int /* l */) {
         const int ret = threadIdx.x / (K/2);
@@ -133,7 +141,7 @@ struct mma_int_B_J8K8 {
         return ret;
     }
 
-    __device__ __forceinline__ void load(const int * __restrict__ xs0, const int & stride) {
+    __device__ __forceinline__ void load(const T * __restrict__ xs0, const int & stride) {
 #if defined(INT8_MMA_AVAILABLE) && false // Loading as 4 byte values is faster
         const int * xs = xs0 + (threadIdx.x%J)*stride + ((threadIdx.x/J)*(K/2)) % K;
         asm("ldmatrix.sync.aligned.m8n8.x2.b16 {%0, %1}, [%2];"
@@ -148,12 +156,15 @@ struct mma_int_B_J8K8 {
     }
 };
 
-struct mma_int_C_I16J8 {
+template <typename T>
+struct mma_C_I16J8 {
+    static_assert(sizeof(T) == 4, "bad type size");
+
     static constexpr int I  = 16;
     static constexpr int J  = 8;
     static constexpr int ne = 4;
 
-    int x[ne] = {0};
+    T x[ne] = {0};
 
     static __device__ __forceinline__ int get_i(const int l) {
         const int ret = (l/2) * (I/2) + threadIdx.x / (J/2);
@@ -169,7 +180,7 @@ struct mma_int_C_I16J8 {
         return ret;
     }
 
-    __device__ __forceinline__ void mma_K4(const mma_int_A_I16K4 & mma_A, const mma_int_B_J8K4 & mma_B) {
+    __device__ __forceinline__ void mma(const mma_A_I16K4<int> & mma_A, const mma_B_J8K4<int> & mma_B) {
 #ifdef INT8_MMA_AVAILABLE
 #if __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
         asm("mma.sync.aligned.m16n8k16.row.col.s32.s8.s8.s32 {%0, %1, %2, %3}, {%4, %5}, {%6}, {%0, %1, %2, %3};"
@@ -191,7 +202,7 @@ struct mma_int_C_I16J8 {
 #endif // INT8_MMA_AVAILABLE
     }
 
-    __device__ __forceinline__ void mma_K8(const mma_int_A_I16K8 & mma_A, const mma_int_B_J8K8 & mma_B) {
+    __device__ __forceinline__ void mma(const mma_A_I16K8<int> & mma_A, const mma_B_J8K8<int> & mma_B) {
 #ifdef INT8_MMA_AVAILABLE
 #if __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
         asm("mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9}, {%0, %1, %2, %3};"
