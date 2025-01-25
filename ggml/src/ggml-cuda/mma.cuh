@@ -64,10 +64,11 @@ struct mma_A_I16K8 {
     }
 
     __device__ __forceinline__ void load(const T * __restrict__ xs0, const int & stride) {
-#if defined(INT8_MMA_AVAILABLE)
-        const int * xs = xs0 + (threadIdx.x%I)*stride + (threadIdx.x/I)*(K/2);
+#if defined(INT8_MMA_AVAILABLE) && false
+        int * xi = (int * ) x;
+        const int * xs = (const int *) xs0 + (threadIdx.x%I)*stride + (threadIdx.x/I)*(K/2);
         asm("ldmatrix.sync.aligned.m8n8.x4.b16 {%0, %1, %2, %3}, [%4];"
-            : "+r"(x[0]), "+r"(x[1]), "+r"(x[2]), "+r"(x[3])
+            : "+r"(xi[0]), "+r"(xi[1]), "+r"(xi[2]), "+r"(xi[3])
             : "l"(xs));
 #else
 #pragma unroll
@@ -259,8 +260,8 @@ struct mma_C_I16J8<half2> {
         int * Axi = (int *) mma_A.x;
         int * Bxi = (int *) mma_B.x;
         int * xi  = (int *) x;
-        asm("mma.sync.aligned.m16n8k32.row.col.f16.f16.f16.f16 {%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9}, {%0, %1, %2, %3};"
-            : "+r"(xi[0]), "+r"(xi[1]), "+r"(xi[2]), "+r"(xi[3])
+        asm("mma.sync.aligned.m16n8k16.row.col.f16.f16.f16.f16 {%0, %1}, {%2, %3, %4, %5}, {%6, %7}, {%0, %1};"
+            : "+r"(xi[0]), "+r"(xi[1])
             : "r"(Axi[0]), "r"(Axi[1]), "r"(Axi[2]), "r"(Axi[3]), "r"(Bxi[0]), "r"(Bxi[1]));
 #else
         GGML_UNUSED(mma_A);

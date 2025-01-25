@@ -1,4 +1,5 @@
 #include "common.cuh"
+#include "mma.cuh"
 #include "fattn-common.cuh"
 
 #ifdef FP16_MMA_AVAILABLE
@@ -69,6 +70,10 @@ static __global__ void flash_attn_ext_f16(
     typedef nvcuda::wmma::fragment<nvcuda::wmma::accumulator, frag_m, frag_n, 16, KQ_acc_t>                      frag_c_KQ;
     typedef nvcuda::wmma::fragment<nvcuda::wmma::accumulator, frag_m, frag_n, 16, half>                          frag_c_VKQ;
 
+    typedef mma_A_I16K8<half2> mma_A;
+    typedef mma_B_J8K8<half2>  mma_B;
+    typedef mma_C_I16J8<half2> mma_C;
+
     constexpr int KQ_stride_tc  = nwarps*frag_m; // Number of KQ rows calculated in parallel.
     constexpr int VKQ_ratio = KQ_stride_tc/VKQ_stride; // Number of parallel VKQ accumulators needed to keep all warps busy.
     static_assert(VKQ_ratio <= nwarps, "VKQ_ratio must be <= nwarps.");
@@ -94,7 +99,7 @@ static __global__ void flash_attn_ext_f16(
 
     const half2 logit_softcap_2 = make_half2(logit_softcap, logit_softcap);
 
-    frag_b Q_b[D/16][ncols/frag_n];
+    mma_B Q_B[(D/2)/mma_B::K][ncols/mma_B::J];
 
     // A single buffer for temporarily holding tiles of KQ and VKQ parts:
     constexpr int mem_KQ = ncols*kqs_padded*kqar;
@@ -154,10 +159,10 @@ static __global__ void flash_attn_ext_f16(
 
     // Load Q into tensor core fragments/registers since it will be used frequently:
 #pragma unroll
-    for (int i0 = 0; i0 < D; i0 += 16) {
+    for (int i0 = 0; i0 < D/2; i0 += mma_B::K) {
 #pragma unroll
-        for (int j0 = 0; j0 < ncols; j0 += frag_n) {
-            nvcuda::wmma::load_matrix_sync(Q_b[i0/16][j0/frag_n], KQ + j0*D_padded + i0, D_padded);
+        for (int j0 = 0; j0 < ncols; j0 += mma_B::J) {
+            Q_B[i0/mma_B::K][j0/mma_B::J].load(KQ2 + j0*(D_padded/2) + i0, D_padded/2);
         }
     }
 
@@ -167,24 +172,27 @@ static __global__ void flash_attn_ext_f16(
     for (int k_VKQ_0 = ip*FATTN_KQ_STRIDE; k_VKQ_0 < ne11; k_VKQ_0 += parallel_blocks*FATTN_KQ_STRIDE) {
         // Calculate tile of KQ:
 #pragma unroll
-        for (int i_KQ_0 = 0; i_KQ_0 < FATTN_KQ_STRIDE; i_KQ_0 += KQ_stride_tc) {
-            frag_c_KQ KQ_c[ncols/frag_n];
+        for (int i_KQ_0 = 0; i_KQ_0 < FATTN_KQ_STRIDE; i_KQ_0 += nwarps*mma_A::I) {
+            mma_C KQ_C[ncols/mma_B::J];
 #pragma unroll
-            for (int j = 0; j < ncols/frag_n; ++j) {
-                nvcuda::wmma::fill_fragment(KQ_c[j], 0.0f);
-            }
+            for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += mma_A::K) {
+                mma_A K_A;
+                K_A.load(((const half2 *)(K_h + (k_VKQ_0 + i_KQ_0 + threadIdx.y*mma_A::I)*stride_KV)) + k_KQ_0, stride_KV/2);
 #pragma unroll
-            for (int k_KQ_0 = 0; k_KQ_0 < D; k_KQ_0 += 16) {
-                frag_a_K K_a;
-                nvcuda::wmma::load_matrix_sync(K_a, K_h + (k_VKQ_0 + i_KQ_0 + frag_m*threadIdx.y)*stride_KV + k_KQ_0, stride_KV);
-#pragma unroll
-                for (int j = 0; j < ncols/frag_n; ++j) {
-                    nvcuda::wmma::mma_sync(KQ_c[j], K_a, Q_b[k_KQ_0/16][j], KQ_c[j]);
+                for (int j = 0; j < ncols/mma_B::J; ++j) {
+                    KQ_C[j].mma(K_A, Q_B[k_KQ_0/mma_A::K][j]);
                 }
             }
 #pragma unroll
-            for (int j0 = 0; j0 < ncols; j0 += frag_n) {
-                nvcuda::wmma::store_matrix_sync((KQ_acc_t *) KQ + j0*kqs_padded + i_KQ_0 + frag_m*threadIdx.y, KQ_c[j0/frag_n], kqs_padded, nvcuda::wmma::mem_col_major);
+            for (int j0 = 0; j0 < ncols; j0 += mma_B::J) {
+#pragma unroll
+                for (int l = 0; l < mma_C::ne; ++l) {
+                    ((KQ_acc_t *) KQ)[(j0 + 2*mma_C::get_j(l) + 0)*kqs_padded + i_KQ_0 + threadIdx.y*mma_A::I + mma_C::get_i(l)]
+                        = __low2half(KQ_C[j0/mma_B::J].x[l]);
+                    ((KQ_acc_t *) KQ)[(j0 + 2*mma_C::get_j(l) + 1)*kqs_padded + i_KQ_0 + threadIdx.y*mma_A::I + mma_C::get_i(l)]
+                        = __high2half(KQ_C[j0/mma_B::J].x[l]);
+
+                }
             }
         }
 
