@@ -177,7 +177,7 @@ static __global__ void flash_attn_ext_f16(
 #pragma unroll
             for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += mma_A::K) {
                 mma_A K_A;
-                K_A.load(((const half2 *)(K_h + (k_VKQ_0 + i_KQ_0 + threadIdx.y*mma_A::I)*stride_KV)) + k_KQ_0, stride_KV/2);
+                K_A.load_generic(((const half2 *)(K_h + (k_VKQ_0 + i_KQ_0 + threadIdx.y*mma_A::I)*stride_KV)) + k_KQ_0, stride_KV/2);
 #pragma unroll
                 for (int j = 0; j < ncols/mma_B::J; ++j) {
                     KQ_C[j].mma(K_A, Q_B[k_KQ_0/mma_A::K][j]);

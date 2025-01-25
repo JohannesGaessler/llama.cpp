@@ -63,18 +63,24 @@ struct mma_A_I16K8 {
         return ret;
     }
 
-    __device__ __forceinline__ void load(const T * __restrict__ xs0, const int & stride) {
-#if defined(INT8_MMA_AVAILABLE) && false
+    __device__ __forceinline__ void load_generic(const T * __restrict__ xs0, const int & stride) {
+#pragma unroll
+        for (int l = 0; l < ne; ++l) {
+            x[l] = xs0[get_i(l)*stride + get_k(l)];
+        }
+    }
+
+    __device__ __forceinline__ void load_ldmatrix(const T * __restrict__ xs0, const int & stride) {
+#if defined(INT8_MMA_AVAILABLE)
         int * xi = (int * ) x;
         const int * xs = (const int *) xs0 + (threadIdx.x%I)*stride + (threadIdx.x/I)*(K/2);
         asm("ldmatrix.sync.aligned.m8n8.x4.b16 {%0, %1, %2, %3}, [%4];"
             : "+r"(xi[0]), "+r"(xi[1]), "+r"(xi[2]), "+r"(xi[3])
             : "l"(xs));
 #else
-#pragma unroll
-        for (int l = 0; l < ne; ++l) {
-            x[l] = xs0[get_i(l)*stride + get_k(l)];
-        }
+        GGML_UNUSED(xs0);
+        GGML_UNUSED(stride);
+        NO_DEVICE_CODE;
 #endif // defined(INT8_MMA_AVAILABLE)
     }
 };
