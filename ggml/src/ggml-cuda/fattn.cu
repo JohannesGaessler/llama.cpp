@@ -322,7 +322,7 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
         return;
     }
 
-    if (true) {
+    if (!fp16_mma_available(cc)) {
         if (Q->ne[1] <= 8) {
             ggml_cuda_flash_attn_ext_vec_f16(ctx, dst);
         } else {

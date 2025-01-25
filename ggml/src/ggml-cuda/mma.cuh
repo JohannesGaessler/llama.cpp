@@ -231,3 +231,41 @@ struct mma_C_I16J8<int> {
 #endif // INT8_MMA_AVAILABLE
     }
 };
+
+template <>
+struct mma_C_I16J8<half2> {
+    static constexpr int I  = 16;
+    static constexpr int J  = 4;
+    static constexpr int ne = 2;
+
+    half2 x[ne] = {{0.0f, 0.0f}};
+
+    static __device__ __forceinline__ int get_i(const int l) {
+        const int ret = l * (I/2) + threadIdx.x / J;
+        GGML_CUDA_ASSUME(ret >= 0);
+        GGML_CUDA_ASSUME(ret <  I);
+        return ret;
+    }
+
+    static __device__ __forceinline__ int get_j(const int /* l */) {
+        const int ret = threadIdx.x % J;
+        GGML_CUDA_ASSUME(ret >= 0);
+        GGML_CUDA_ASSUME(ret <  J);
+        return ret;
+    }
+
+    __device__ __forceinline__ void mma(const mma_A_I16K8<half2> & mma_A, const mma_B_J8K8<half2> & mma_B) {
+#ifdef FP16_MMA_AVAILABLE
+        int * Axi = (int *) mma_A.x;
+        int * Bxi = (int *) mma_B.x;
+        int * xi  = (int *) x;
+        asm("mma.sync.aligned.m16n8k32.row.col.f16.f16.f16.f16 {%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9}, {%0, %1, %2, %3};"
+            : "+r"(xi[0]), "+r"(xi[1]), "+r"(xi[2]), "+r"(xi[3])
+            : "r"(Axi[0]), "r"(Axi[1]), "r"(Axi[2]), "r"(Axi[3]), "r"(Bxi[0]), "r"(Bxi[1]));
+#else
+        GGML_UNUSED(mma_A);
+        GGML_UNUSED(mma_B);
+        NO_DEVICE_CODE;
+#endif // FP16_MMA_AVAILABLE
+    }
+};
