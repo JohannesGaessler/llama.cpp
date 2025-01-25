@@ -47,7 +47,7 @@ struct mma_A_I16K8 {
     static constexpr int K  = 8;
     static constexpr int ne = 4;
 
-    T x[ne] = {0};
+    T x[ne];
 
     static __device__ __forceinline__ int get_i(const int l) {
         const int ret = (l%2) * (I/2) + threadIdx.x / (K/2);
@@ -86,7 +86,7 @@ struct mma_B_J8K4 {
     static constexpr int K  = 4;
     static constexpr int ne = 1;
 
-    T x[ne] = {0};
+    T x[ne];
 
     static __device__ __forceinline__ int get_j(const int /* l */) {
         const int ret = threadIdx.x / K;
@@ -125,7 +125,7 @@ struct mma_B_J8K8 {
     static constexpr int K  = 8;
     static constexpr int ne = 2;
 
-    T x[ne] = {0};
+    T x[ne];
 
     static __device__ __forceinline__ int get_j(const int /* l */) {
         const int ret = threadIdx.x / (K/2);
@@ -157,14 +157,15 @@ struct mma_B_J8K8 {
 };
 
 template <typename T>
-struct mma_C_I16J8 {
-    static_assert(sizeof(T) == 4, "bad type size");
+struct mma_C_I16J8 {};
 
+template <>
+struct mma_C_I16J8<int> {
     static constexpr int I  = 16;
     static constexpr int J  = 8;
     static constexpr int ne = 4;
 
-    T x[ne] = {0};
+    int x[ne] = {0};
 
     static __device__ __forceinline__ int get_i(const int l) {
         const int ret = (l/2) * (I/2) + threadIdx.x / (J/2);
