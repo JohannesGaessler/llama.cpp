@@ -76,7 +76,7 @@ static __global__ void flash_attn_ext_f16(
 
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
     const float * Q_f   = (const float *) (Q + nb02* blockIdx.y              + nb01*ic0);
-    const half  * K_h   = (const half  *) (K + nb12*(blockIdx.y / gqa_ratio));
+    const half2 * K_h2  = (const half2 *) (K + nb12*(blockIdx.y / gqa_ratio));
     const half  * V_h   = (const half  *) (V + nb12*(blockIdx.y / gqa_ratio)); // K and V have same shape
     const half  * maskh = (const half  *)  mask + (nb31/sizeof(half))* ic0;
     const half2 * mask2 = (const half2 *)  mask + (nb31/sizeof(half))*(ic0/2);
@@ -168,7 +168,7 @@ static __global__ void flash_attn_ext_f16(
 #pragma unroll
             for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += mma_A::K) {
                 mma_A K_A;
-                K_A.load_generic(((const half2 *)(K_h + (k_VKQ_0 + i_KQ_0 + threadIdx.y*mma_A::I)*stride_KV)) + k_KQ_0, stride_KV/2);
+                K_A.load_generic(K_h2 + (k_VKQ_0 + i_KQ_0 + threadIdx.y*mma_A::I)*(stride_KV/2) + k_KQ_0, stride_KV/2);
 #pragma unroll
                 for (int j = 0; j < ncols/mma_B::J; ++j) {
                     KQ_C[j].mma(K_A, Q_B[k_KQ_0/mma_A::K][j]);
