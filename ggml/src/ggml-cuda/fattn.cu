@@ -15,7 +15,7 @@ static void ggml_cuda_flash_attn_ext_wmma_f16(ggml_backend_cuda_context & ctx, g
 
     const enum ggml_prec prec = ggml_flash_attn_ext_get_prec(KQV);
 
-    if (prec != GGML_PREC_DEFAULT) {
+    if (prec != GGML_PREC_DEFAULT || true) {
         if (Q->ne[1] <= 32 || Q->ne[0] > 128) {
             constexpr int cols_per_block = 16;
             switch (Q->ne[0]) {

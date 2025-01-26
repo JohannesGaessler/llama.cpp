@@ -97,17 +97,13 @@ static __global__ void flash_attn_ext_f16(
     constexpr int mem_KQ = ncols*kqs_padded*kqar;
     constexpr int mem_VKQ_parts = VKQ_ratio*ncols*D_padded;
     __shared__ half KQ[mem_KQ >= mem_VKQ_parts ? mem_KQ : mem_VKQ_parts];
-    float * KQ_f = (float *) KQ;
     half2 * KQ2 = (half2 *) KQ;
 
-    float    KQ_rowsum_f[ncols/nwarps] = {0.0f};
-    float       KQ_max_f[ncols/nwarps];
-    float KQ_max_scale_f[ncols/nwarps] = {0.0f};
+    __shared__ float hack[3][nwarps*mma_C_KQ::J];
 
-#pragma unroll
-    for (int j = 0; j < ncols/nwarps; ++j) {
-        KQ_max_f[j] = -FLT_MAX/2.0f;
-    }
+    float2    KQ_rowsum_f = {0.0f, 0.0f};
+    float2       KQ_max_f = {-FLT_MAX/2.0f, -FLT_MAX/2.0f};
+    float2 KQ_max_scale_f = {0.0f, 0.0f};
 
     half2    KQ_rowsum_h2[ncols/nwarps] = {{0.0f, 0.0f}};
     half2       KQ_max_h2[ncols/nwarps];
@@ -159,83 +155,103 @@ static __global__ void flash_attn_ext_f16(
 
     // Iterate over ne11 == previous tokens:
     for (int k_VKQ_0 = ip*FATTN_KQ_STRIDE; k_VKQ_0 < ne11; k_VKQ_0 += parallel_blocks*FATTN_KQ_STRIDE) {
+        mma_C_KQ KQ_C[FATTN_KQ_STRIDE/mma_A::I];
+
         // Calculate tile of KQ:
 #pragma unroll
         for (int i_KQ_0 = 0; i_KQ_0 < FATTN_KQ_STRIDE; i_KQ_0 += mma_A::I) {
-            mma_C_KQ KQ_C;
 #pragma unroll
             for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += mma_A::K) {
                 mma_A K_A;
                 K_A.load_generic(K_h2 + (k_VKQ_0 + i_KQ_0)*(stride_KV/2) + k_KQ_0, stride_KV/2);
-                KQ_C.mma(K_A, Q_B[k_KQ_0/mma_A::K]);
-            }
-#pragma unroll
-            for (int l = 0; l < mma_C_KQ::ne; ++l) {
-                if constexpr (std::is_same<KQ_acc_t, float>::value) {
-                    KQ_f[(threadIdx.y*mma_C_KQ::J + mma_C_KQ::get_j(l))*kqs_padded + i_KQ_0 + mma_C_KQ::get_i(l)] = KQ_C.x[l];
-                } else {
-                    KQ[(2*(threadIdx.y*mma_C_KQ::J + mma_C_KQ::get_j(l)) + 0)*kqs_padded + i_KQ_0 + mma_C_KQ::get_i(l)] =  __low2half(KQ_C.x[l]);
-                    KQ[(2*(threadIdx.y*mma_C_KQ::J + mma_C_KQ::get_j(l)) + 1)*kqs_padded + i_KQ_0 + mma_C_KQ::get_i(l)] = __high2half(KQ_C.x[l]);
-                }
+                KQ_C[i_KQ_0/mma_A::I].mma(K_A, Q_B[k_KQ_0/mma_A::K]);
             }
         }
 
-        __syncthreads();
+        //FIXME logit softcap
 
         // Calculate softmax for each KQ column using the current max. value.
         // The divisor is stored in KQ_rowsum and will be applied at the end.
+        if constexpr (std::is_same<KQ_acc_t, float>::value) {
+            float2 KQ_max_new = KQ_max_f;
 #pragma unroll
-        for (int j0 = 0; j0 < ncols; j0 += nwarps) {
-            const int j = j0 + threadIdx.y;
-
-            if (std::is_same<KQ_acc_t, float>::value) {
-                float KQ_f_tmp[FATTN_KQ_STRIDE / WARP_SIZE];
+            for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += mma_C_KQ::I) {
 #pragma unroll
-                for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += WARP_SIZE) {
-                    const int k = k0 + threadIdx.x;
+                for (int l = 0; l < mma_C_KQ::ne; ++l) {
+                    const int k = k0 + mma_C_KQ::get_i(l);
+                    const int j = threadIdx.y*mma_C_KQ::J + mma_C_KQ::get_j(l);
 
-                    KQ_f_tmp[k0/WARP_SIZE] = KQ_f[j*kqs_padded + k];
-
-                    if (use_logit_softcap) {
-                        KQ_f_tmp[k0/WARP_SIZE] = logit_softcap*tanhf(KQ_f_tmp[k0/WARP_SIZE]);
+                    KQ_C[k0/mma_C_KQ::I].x[l] += mask ? __half2float(slopeh*maskh[j*(nb31/sizeof(half)) + k_VKQ_0 + k]) : 0.0f;
+                    if (l % 2 == 0) {
+                        KQ_max_new.x = max(KQ_max_new.x, KQ_C[k0/mma_C_KQ::I].x[l]);
+                    } else {
+                        KQ_max_new.y = max(KQ_max_new.y, KQ_C[k0/mma_C_KQ::I].x[l]);
                     }
                 }
-
-                float KQ_max_new = KQ_max_f[j0/nwarps];
+            }
 #pragma unroll
-                for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += WARP_SIZE) {
-                    const int k = k0 + threadIdx.x;
+            for (int offset = 16; offset > 2; offset >>= 1) {
+                KQ_max_new.x = fmaxf(KQ_max_new.x, __shfl_xor_sync(0xFFFFFFFF, KQ_max_new.x, offset, WARP_SIZE));
+                KQ_max_new.y = fmaxf(KQ_max_new.y, __shfl_xor_sync(0xFFFFFFFF, KQ_max_new.y, offset, WARP_SIZE));
+            }
 
-                    KQ_f_tmp[k0/WARP_SIZE] += mask ? __half2float(slopeh*maskh[j*(nb31/sizeof(half)) + k_VKQ_0 + k]) : 0.0f;
-                    KQ_max_new = max(KQ_max_new, KQ_f_tmp[k0/WARP_SIZE]);
+            {
+                const float2 diff = make_float2(KQ_max_f.x - KQ_max_new.x, KQ_max_f.y - KQ_max_new.y);
+                KQ_max_scale_f = make_float2(expf(diff.x), expf(diff.y));
+                if (diff.x <= SOFTMAX_FTZ_THRESHOLD) {
+                    KQ_max_scale_f.x = 0.0f;
                 }
-                KQ_max_new = warp_reduce_max(KQ_max_new);
-
-                const float diff = KQ_max_f[j0/nwarps] - KQ_max_new;
-                KQ_max_scale_f[j0/nwarps] = expf(diff);
-                if (diff <= SOFTMAX_FTZ_THRESHOLD) {
-                    KQ_max_scale_f[j0/nwarps] = 0.0f;
+                if (diff.y <= SOFTMAX_FTZ_THRESHOLD) {
+                    KQ_max_scale_f.y = 0.0f;
                 }
-                KQ_max_f[j0/nwarps] = KQ_max_new;
+                KQ_max_f = KQ_max_new;
+            }
 
-                float KQ_rowsum_add = 0.0f;
+            float2 KQ_rowsum_add = make_float2(0.0f, 0.0f);
 #pragma unroll
-                for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += WARP_SIZE) {
-                    const int k = k0 + threadIdx.x;
-
-                    const float diff = KQ_f_tmp[k0/WARP_SIZE] - KQ_max_f[j0/nwarps];
-                    KQ_f_tmp[k0/WARP_SIZE] = expf(diff);
+            for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += mma_C_KQ::I) {
+#pragma unroll
+                for (int l = 0; l < mma_C_KQ::ne; ++l) {
+                    const float KQ_max_l = l % 2 == 0 ? KQ_max_f.x : KQ_max_f.y;
+                    const float diff = KQ_C[k0/mma_C_KQ::I].x[l] - KQ_max_l;
+                    KQ_C[k0/mma_C_KQ::I].x[l] = expf(diff);
                     if (diff <= SOFTMAX_FTZ_THRESHOLD) {
-                        KQ_f_tmp[k0/WARP_SIZE] = 0.0f;
+                        KQ_C[k0/mma_C_KQ::I].x[l] = 0.0f;
                     }
-                    KQ_rowsum_add += KQ_f_tmp[k0/WARP_SIZE];
-                    KQ[j*(kqar*kqs_padded) + k] = KQ_f_tmp[k0/WARP_SIZE];
-                }
-                KQ_rowsum_add = warp_reduce_sum(KQ_rowsum_add);
 
-                // Scale previous KQ_rowsum to account for a potential increase in KQ_max:
-                KQ_rowsum_f[j0/nwarps] = KQ_max_scale_f[j0/nwarps]*KQ_rowsum_f[j0/nwarps] + KQ_rowsum_add;
-            } else {
+                    if (l % 2 == 0) {
+                        KQ_rowsum_add.x += KQ_C[k0/mma_C_KQ::I].x[l];
+                    } else {
+                        KQ_rowsum_add.y += KQ_C[k0/mma_C_KQ::I].x[l];
+                    }
+
+                    KQ[(threadIdx.y*mma_C_KQ::J + mma_C_KQ::get_j(l))*(kqar*kqs_padded) + k0 + mma_C_KQ::get_i(l)]
+                        = KQ_C[k0/mma_C_KQ::I].x[l];
+                }
+            }
+#pragma unroll
+            for (int offset = 16; offset > 2; offset >>= 1) {
+                KQ_rowsum_add.x += __shfl_xor_sync(0xFFFFFFFF, KQ_rowsum_add.x, offset, WARP_SIZE);
+                KQ_rowsum_add.y += __shfl_xor_sync(0xFFFFFFFF, KQ_rowsum_add.y, offset, WARP_SIZE);
+            }
+
+            // Scale previous KQ_rowsum to account for a potential increase in KQ_max:
+            KQ_rowsum_f.x = KQ_max_scale_f.x*KQ_rowsum_f.x + KQ_rowsum_add.x;
+            KQ_rowsum_f.y = KQ_max_scale_f.y*KQ_rowsum_f.y + KQ_rowsum_add.y;
+
+            if (threadIdx.x < mma_C_KQ::J/2) {
+                hack[0][threadIdx.y*mma_C_KQ::J + 2*threadIdx.x + 0] = KQ_max_f.x;
+                hack[0][threadIdx.y*mma_C_KQ::J + 2*threadIdx.x + 1] = KQ_max_f.y;
+                hack[1][threadIdx.y*mma_C_KQ::J + 2*threadIdx.x + 0] = KQ_rowsum_f.x;
+                hack[1][threadIdx.y*mma_C_KQ::J + 2*threadIdx.x + 1] = KQ_rowsum_f.y;
+                hack[2][threadIdx.y*mma_C_KQ::J + 2*threadIdx.x + 0] = KQ_max_scale_f.x;
+                hack[2][threadIdx.y*mma_C_KQ::J + 2*threadIdx.x + 1] = KQ_max_scale_f.y;
+            }
+        } else {
+#pragma unroll
+            for (int j0 = 0; j0 < ncols; j0 += nwarps) {
+                const int j = j0 + threadIdx.y;
+
                 half2 KQ2_tmp[FATTN_KQ_STRIDE/(2*WARP_SIZE)];
 #pragma unroll
                 for (int k0 = 0; k0 < FATTN_KQ_STRIDE/2; k0 += WARP_SIZE) {
@@ -350,7 +366,8 @@ static __global__ void flash_attn_ext_f16(
 
             half2 VKQ_scale;
             if (std::is_same<KQ_acc_t, float>::value) {
-                VKQ_scale = make_half2(KQ_max_scale_f[j0/nwarps], KQ_max_scale_f[j0/nwarps]);
+                const float tmp = hack[2][j];
+                VKQ_scale = make_half2(tmp, tmp);
             } else {
                 VKQ_scale = KQ_max_scale_h2[j0/nwarps];
             }
@@ -384,7 +401,7 @@ static __global__ void flash_attn_ext_f16(
 
         float KQ_rowsum_j;
         if (std::is_same<KQ_acc_t, float>::value) {
-            KQ_rowsum_j = KQ_rowsum_f[j0/nwarps];
+            KQ_rowsum_j = hack[1][j_VKQ];
         } else {
             KQ_rowsum_j = __low2float(KQ_rowsum_h2[j0/nwarps]) + __high2float(KQ_rowsum_h2[j0/nwarps]);
         }
@@ -408,7 +425,7 @@ static __global__ void flash_attn_ext_f16(
 
         float2 dst_meta_val;
         if (std::is_same<KQ_acc_t, float>::value) {
-            dst_meta_val.x = KQ_max_f[j0/nwarps];
+            dst_meta_val.x = hack[0][j_VKQ];
         } else {
             dst_meta_val.x = __low2float(KQ_max_h2[j0/nwarps]);
         }
