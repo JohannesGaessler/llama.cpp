@@ -91,7 +91,18 @@ static __global__ void flash_attn_ext_f16(
 
     const half2 logit_softcap_2 = make_half2(logit_softcap, logit_softcap);
 
-    mma_B Q_B[(D/2)/mma_B::K];
+    mma_B Q_B[D/(2*mma_B::K)];
+#pragma unroll
+    for (int k0 = 0; k0 < D; k0 += 2*mma_B::K) {
+#pragma unroll
+        for (int l = 0; l < mma_B::ne; ++l) {
+            const int j = threadIdx.y*mma_B::J + mma_B::get_j(l);
+
+            Q_B[k0/(2*mma_B::K)].x[l] = ic0 + j < ne01 ?
+                make_half2(scale * Q_f[j*stride_Q + k0 + 2*mma_B::get_k(l) + 0], scale * Q_f[j*stride_Q + k0 + 2*mma_B::get_k(l) + 1]) :
+                make_half2(0.0f, 0.0f);
+        }
+    }
 
     // A single buffer for temporarily holding tiles of KQ and VKQ parts:
     constexpr int mem_KQ = ncols*kqs_padded*kqar;
@@ -128,30 +139,6 @@ static __global__ void flash_attn_ext_f16(
             VKQ2[j*(D_padded/2) + i] = make_half2(0.0f, 0.0f);
         }
     }
-
-    // Convert Q to half and apply scale, temporarily store in KQ:
-#pragma unroll
-    for (int j0 = 0; j0 < ncols; j0 += nwarps) {
-        const int j = j0 + threadIdx.y;
-#pragma unroll
-        for (int i0 = 0; i0 < D; i0 += WARP_SIZE) {
-            const int i = i0 + threadIdx.x;
-            if (i0 + WARP_SIZE > D && i >= D) {
-                break;
-            }
-            KQ[j*D_padded + i] = ic0 + j < ne01 ? Q_f[j*stride_Q + i] * scale : 0.0f;
-        }
-    }
-
-    __syncthreads();
-
-    // Load Q into tensor core fragments/registers since it will be used frequently:
-#pragma unroll
-    for (int i0 = 0; i0 < D/2; i0 += mma_B::K) {
-        Q_B[i0/mma_B::K].load(KQ2 + threadIdx.y*(mma_B::J * D_padded/2) + i0, D_padded/2);
-    }
-
-    __syncthreads();
 
     // Iterate over ne11 == previous tokens:
     for (int k_VKQ_0 = ip*FATTN_KQ_STRIDE; k_VKQ_0 < ne11; k_VKQ_0 += parallel_blocks*FATTN_KQ_STRIDE) {
