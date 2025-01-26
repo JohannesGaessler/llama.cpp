@@ -61,9 +61,10 @@ static __global__ void flash_attn_ext_f16(
 
     static_assert(D <= FATTN_KQ_STRIDE, "D must be <= FATTN_KQ_STRIDE.");
 
-    typedef mma_A_I16K8<half2> mma_A;
-    typedef mma_B_J8K8<half2>  mma_B;
-    typedef mma_C_I16J8<half2> mma_C;
+    typedef mma_A_I16K8<half2>    mma_A;
+    typedef mma_B_J8K8<half2>     mma_B;
+    typedef mma_C_I16J8<KQ_acc_t> mma_C_KQ;
+    typedef mma_C_I16J8<half2>    mma_C_VKQ;
 
     constexpr int KQ_stride_tc = nwarps*mma_A::I; // Number of KQ rows calculated in parallel.
     constexpr int VKQ_ratio = KQ_stride_tc/VKQ_stride; // Number of parallel VKQ accumulators needed to keep all warps busy.
@@ -72,7 +73,7 @@ static __global__ void flash_attn_ext_f16(
     // Pad internal representation of KQ, KQV to reduce shared memory bank conflicts:
     constexpr int D_padded = D + 8;
     constexpr int kqs_padded = FATTN_KQ_STRIDE + 8;
-    constexpr int kqar = sizeof(KQ_acc_t)/sizeof(half);
+    constexpr int kqar = std::is_same<KQ_acc_t, float>::value ? 2 : 1;
 
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
     const float * Q_f   = (const float *) (Q + nb02* blockIdx.y              + nb01*ic0);
@@ -164,7 +165,7 @@ static __global__ void flash_attn_ext_f16(
         // Calculate tile of KQ:
 #pragma unroll
         for (int i_KQ_0 = 0; i_KQ_0 < FATTN_KQ_STRIDE; i_KQ_0 += nwarps*mma_A::I) {
-            mma_C KQ_C[ncols/mma_B::J];
+            mma_C_KQ KQ_C[ncols/mma_B::J];
 #pragma unroll
             for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += mma_A::K) {
                 mma_A K_A;
@@ -177,11 +178,16 @@ static __global__ void flash_attn_ext_f16(
 #pragma unroll
             for (int j0 = 0; j0 < ncols; j0 += mma_B::J) {
 #pragma unroll
-                for (int l = 0; l < mma_C::ne; ++l) {
-                    ((KQ_acc_t *) KQ)[(j0 + 2*mma_C::get_j(l) + 0)*kqs_padded + i_KQ_0 + threadIdx.y*mma_A::I + mma_C::get_i(l)]
-                        = __low2half(KQ_C[j0/mma_B::J].x[l]);
-                    ((KQ_acc_t *) KQ)[(j0 + 2*mma_C::get_j(l) + 1)*kqs_padded + i_KQ_0 + threadIdx.y*mma_A::I + mma_C::get_i(l)]
-                        = __high2half(KQ_C[j0/mma_B::J].x[l]);
+                for (int l = 0; l < mma_C_KQ::ne; ++l) {
+                    if constexpr (std::is_same<KQ_acc_t, float>::value) {
+                        KQ_f[(j0 + mma_C_KQ::get_j(l))*kqs_padded + i_KQ_0 + threadIdx.y*mma_A::I + mma_C_KQ::get_i(l)]
+                            = KQ_C[j0/mma_B::J].x[l];
+                    } else {
+                        KQ[(j0 + 2*mma_C_KQ::get_j(l) + 0)*kqs_padded + i_KQ_0 + threadIdx.y*mma_A::I + mma_C_KQ::get_i(l)]
+                            = __low2half(KQ_C[j0/mma_B::J].x[l]);
+                        KQ[(j0 + 2*mma_C_KQ::get_j(l) + 1)*kqs_padded + i_KQ_0 + threadIdx.y*mma_A::I + mma_C_KQ::get_i(l)]
+                            = __high2half(KQ_C[j0/mma_B::J].x[l]);
+                    }
 
                 }
             }
@@ -307,7 +313,7 @@ static __global__ void flash_attn_ext_f16(
             }
         }
 
-        mma_C VKQ_C[D/VKQ_stride][ncols/(2*mma_C::J)];
+        mma_C_VKQ VKQ_C[D/VKQ_stride][ncols/(2*mma_C_VKQ::J)];
 #pragma unroll
         for (int i_VKQ_0 = 0; i_VKQ_0 < D; i_VKQ_0 += VKQ_stride) {
             const int i_VKQ = i_VKQ_0 + (threadIdx.y/VKQ_ratio)*mma_A::I;
@@ -326,7 +332,7 @@ static __global__ void flash_attn_ext_f16(
                         V_h[(k_VKQ + 2*mma_A::get_k(l) + 1)*stride_KV + i_VKQ + mma_A::get_i(l)]);
                 }
 #pragma unroll
-                for (int j = 0; j < ncols/(2*mma_C::J); ++j) {
+                for (int j = 0; j < ncols/(2*mma_C_VKQ::J); ++j) {
                     VKQ_C[i_VKQ_0/VKQ_stride][j].mma(A, KQ_B[k0/(VKQ_ratio*2*mma_A::K)][j]);
                 }
             }
@@ -338,13 +344,13 @@ static __global__ void flash_attn_ext_f16(
 #pragma unroll
         for (int i_KQ_0 = 0; i_KQ_0 < D; i_KQ_0 += VKQ_stride) {
 #pragma unroll
-            for (int j0 = 0; j0 < ncols; j0 += 2*mma_C::J) {
+            for (int j0 = 0; j0 < ncols; j0 += 2*mma_C_VKQ::J) {
 #pragma unroll
-                for (int l = 0; l < mma_C::ne; ++l) {
-                    KQ[offset_k + (j0 + 2*mma_C::get_j(l) + 0)*D_padded + i_KQ_0 + (threadIdx.y/VKQ_ratio)*mma_C::I + mma_C::get_i(l)]
-                        = __low2half(VKQ_C[i_KQ_0/VKQ_stride][j0/(2*mma_C::J)].x[l]);
-                    KQ[offset_k + (j0 + 2*mma_C::get_j(l) + 1)*D_padded + i_KQ_0 + (threadIdx.y/VKQ_ratio)*mma_C::I + mma_C::get_i(l)]
-                        = __high2half(VKQ_C[i_KQ_0/VKQ_stride][j0/(2*mma_C::J)].x[l]);
+                for (int l = 0; l < mma_C_VKQ::ne; ++l) {
+                    KQ[offset_k + (j0 + 2*mma_C_VKQ::get_j(l) + 0)*D_padded + i_KQ_0 + (threadIdx.y/VKQ_ratio)*mma_C_VKQ::I + mma_C_VKQ::get_i(l)]
+                        = __low2half(VKQ_C[i_KQ_0/VKQ_stride][j0/(2*mma_C_VKQ::J)].x[l]);
+                    KQ[offset_k + (j0 + 2*mma_C_VKQ::get_j(l) + 1)*D_padded + i_KQ_0 + (threadIdx.y/VKQ_ratio)*mma_C_VKQ::I + mma_C_VKQ::get_i(l)]
+                        = __high2half(VKQ_C[i_KQ_0/VKQ_stride][j0/(2*mma_C_VKQ::J)].x[l]);
                 }
             }
         }
@@ -528,21 +534,21 @@ extern DECL_FATTN_WMMA_F16_CASE(112, 32, float);
 extern DECL_FATTN_WMMA_F16_CASE(128, 32, float);
 // extern DECL_FATTN_WMMA_F16_CASE(256, 16, float);
 
-extern DECL_FATTN_WMMA_F16_CASE( 64,  8, half);
-extern DECL_FATTN_WMMA_F16_CASE( 96,  8, half);
-extern DECL_FATTN_WMMA_F16_CASE(128,  8, half);
-extern DECL_FATTN_WMMA_F16_CASE(256,  8, half);
+extern DECL_FATTN_WMMA_F16_CASE( 64,  8, half2);
+extern DECL_FATTN_WMMA_F16_CASE( 96,  8, half2);
+extern DECL_FATTN_WMMA_F16_CASE(128,  8, half2);
+extern DECL_FATTN_WMMA_F16_CASE(256,  8, half2);
 
-extern DECL_FATTN_WMMA_F16_CASE( 64, 16, half);
-extern DECL_FATTN_WMMA_F16_CASE( 80, 16, half);
-extern DECL_FATTN_WMMA_F16_CASE( 96, 16, half);
-extern DECL_FATTN_WMMA_F16_CASE(112, 16, half);
-extern DECL_FATTN_WMMA_F16_CASE(128, 16, half);
-extern DECL_FATTN_WMMA_F16_CASE(256, 16, half);
+extern DECL_FATTN_WMMA_F16_CASE( 64, 16, half2);
+extern DECL_FATTN_WMMA_F16_CASE( 80, 16, half2);
+extern DECL_FATTN_WMMA_F16_CASE( 96, 16, half2);
+extern DECL_FATTN_WMMA_F16_CASE(112, 16, half2);
+extern DECL_FATTN_WMMA_F16_CASE(128, 16, half2);
+extern DECL_FATTN_WMMA_F16_CASE(256, 16, half2);
 
-extern DECL_FATTN_WMMA_F16_CASE( 64, 32, half);
-extern DECL_FATTN_WMMA_F16_CASE( 80, 32, half);
-extern DECL_FATTN_WMMA_F16_CASE( 96, 32, half);
-extern DECL_FATTN_WMMA_F16_CASE(112, 32, half);
-extern DECL_FATTN_WMMA_F16_CASE(128, 32, half);
-extern DECL_FATTN_WMMA_F16_CASE(256, 16, half);
+extern DECL_FATTN_WMMA_F16_CASE( 64, 32, half2);
+extern DECL_FATTN_WMMA_F16_CASE( 80, 32, half2);
+extern DECL_FATTN_WMMA_F16_CASE( 96, 32, half2);
+extern DECL_FATTN_WMMA_F16_CASE(112, 32, half2);
+extern DECL_FATTN_WMMA_F16_CASE(128, 32, half2);
+extern DECL_FATTN_WMMA_F16_CASE(256, 16, half2);
