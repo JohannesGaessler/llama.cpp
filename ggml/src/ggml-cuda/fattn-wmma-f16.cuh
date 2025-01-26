@@ -91,7 +91,7 @@ static __global__ void flash_attn_ext_f16(
 
     const half2 logit_softcap_2 = make_half2(logit_softcap, logit_softcap);
 
-    mma_B Q_B[(D/2)/mma_B::K][ncols/mma_B::J];
+    mma_B Q_B[(D/2)/mma_B::K];
 
     // A single buffer for temporarily holding tiles of KQ and VKQ parts:
     constexpr int mem_KQ = ncols*kqs_padded*kqar;
@@ -152,10 +152,7 @@ static __global__ void flash_attn_ext_f16(
     // Load Q into tensor core fragments/registers since it will be used frequently:
 #pragma unroll
     for (int i0 = 0; i0 < D/2; i0 += mma_B::K) {
-#pragma unroll
-        for (int j0 = 0; j0 < ncols; j0 += mma_B::J) {
-            Q_B[i0/mma_B::K][j0/mma_B::J].load(KQ2 + j0*(D_padded/2) + i0, D_padded/2);
-        }
+        Q_B[i0/mma_B::K].load(KQ2 + threadIdx.y*(mma_B::J * D_padded/2) + i0, D_padded/2);
     }
 
     __syncthreads();
@@ -164,31 +161,21 @@ static __global__ void flash_attn_ext_f16(
     for (int k_VKQ_0 = ip*FATTN_KQ_STRIDE; k_VKQ_0 < ne11; k_VKQ_0 += parallel_blocks*FATTN_KQ_STRIDE) {
         // Calculate tile of KQ:
 #pragma unroll
-        for (int i_KQ_0 = 0; i_KQ_0 < FATTN_KQ_STRIDE; i_KQ_0 += nwarps*mma_A::I) {
-            mma_C_KQ KQ_C[ncols/mma_B::J];
+        for (int i_KQ_0 = 0; i_KQ_0 < FATTN_KQ_STRIDE; i_KQ_0 += mma_A::I) {
+            mma_C_KQ KQ_C;
 #pragma unroll
             for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += mma_A::K) {
                 mma_A K_A;
-                K_A.load_generic(K_h2 + (k_VKQ_0 + i_KQ_0 + threadIdx.y*mma_A::I)*(stride_KV/2) + k_KQ_0, stride_KV/2);
-#pragma unroll
-                for (int j = 0; j < ncols/mma_B::J; ++j) {
-                    KQ_C[j].mma(K_A, Q_B[k_KQ_0/mma_A::K][j]);
-                }
+                K_A.load_generic(K_h2 + (k_VKQ_0 + i_KQ_0)*(stride_KV/2) + k_KQ_0, stride_KV/2);
+                KQ_C.mma(K_A, Q_B[k_KQ_0/mma_A::K]);
             }
 #pragma unroll
-            for (int j0 = 0; j0 < ncols; j0 += mma_B::J) {
-#pragma unroll
-                for (int l = 0; l < mma_C_KQ::ne; ++l) {
-                    if constexpr (std::is_same<KQ_acc_t, float>::value) {
-                        KQ_f[(j0 + mma_C_KQ::get_j(l))*kqs_padded + i_KQ_0 + threadIdx.y*mma_A::I + mma_C_KQ::get_i(l)]
-                            = KQ_C[j0/mma_B::J].x[l];
-                    } else {
-                        KQ[(j0 + 2*mma_C_KQ::get_j(l) + 0)*kqs_padded + i_KQ_0 + threadIdx.y*mma_A::I + mma_C_KQ::get_i(l)]
-                            = __low2half(KQ_C[j0/mma_B::J].x[l]);
-                        KQ[(j0 + 2*mma_C_KQ::get_j(l) + 1)*kqs_padded + i_KQ_0 + threadIdx.y*mma_A::I + mma_C_KQ::get_i(l)]
-                            = __high2half(KQ_C[j0/mma_B::J].x[l]);
-                    }
-
+            for (int l = 0; l < mma_C_KQ::ne; ++l) {
+                if constexpr (std::is_same<KQ_acc_t, float>::value) {
+                    KQ_f[(threadIdx.y*mma_C_KQ::J + mma_C_KQ::get_j(l))*kqs_padded + i_KQ_0 + mma_C_KQ::get_i(l)] = KQ_C.x[l];
+                } else {
+                    KQ[(2*(threadIdx.y*mma_C_KQ::J + mma_C_KQ::get_j(l)) + 0)*kqs_padded + i_KQ_0 + mma_C_KQ::get_i(l)] =  __low2half(KQ_C.x[l]);
+                    KQ[(2*(threadIdx.y*mma_C_KQ::J + mma_C_KQ::get_j(l)) + 1)*kqs_padded + i_KQ_0 + mma_C_KQ::get_i(l)] = __high2half(KQ_C.x[l]);
                 }
             }
         }
@@ -460,11 +447,12 @@ static_assert(get_VKQ_stride( 80, 4, 16) ==  16, "Test failed.");
 template <int D, int cols_per_block, typename KQ_acc_t>
 void ggml_cuda_flash_attn_ext_wmma_f16_case(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     typedef mma_A_I16K8<half2> mma_A;
+    typedef mma_B_J8K8<half2>  mma_B;
 
     const ggml_tensor * KQV = dst;
     const ggml_tensor * Q   = dst->src[0];
 
-    constexpr int nwarps = 4;
+    constexpr int nwarps = cols_per_block / mma_B::J;
 
     const int blocks_num_pb1 = ((Q->ne[1] + cols_per_block - 1) / cols_per_block)*Q->ne[2]*Q->ne[3];
     const int nsm = ggml_cuda_info().devices[ggml_cuda_get_device()].nsm;
