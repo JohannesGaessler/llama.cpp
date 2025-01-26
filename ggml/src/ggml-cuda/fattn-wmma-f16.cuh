@@ -317,8 +317,14 @@ static __global__ void flash_attn_ext_f16(
                 const int k_VKQ = k_VKQ_0 + k0 + (threadIdx.y % VKQ_ratio)*(2*mma_A::K);
 
                 mma_A A;
-                A.load_generic((const half2 *)(V_h + k_VKQ*stride_KV + i_VKQ), stride_KV/2);
-                A.transpose();
+                // A.load_generic((const half2 *)(V_h + k_VKQ*stride_KV + i_VKQ), stride_KV/2);
+                // A.transpose();
+#pragma unroll
+                for (int l = 0; l < mma_A::ne; ++l) {
+                    A.x[l] = make_half2(
+                        V_h[(k_VKQ + 2*mma_A::get_k(l) + 0)*stride_KV + i_VKQ + mma_A::get_i(l)],
+                        V_h[(k_VKQ + 2*mma_A::get_k(l) + 1)*stride_KV + i_VKQ + mma_A::get_i(l)]);
+                }
 #pragma unroll
                 for (int j = 0; j < ncols/(2*mma_C::J); ++j) {
                     VKQ_C[i_VKQ_0/VKQ_stride][j].mma(A, KQ_B[k0/(VKQ_ratio*2*mma_A::K)][j]);
