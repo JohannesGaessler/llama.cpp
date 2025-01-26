@@ -66,21 +66,12 @@ static __global__ void flash_attn_ext_f16(
     typedef mma_C_I16J8<KQ_acc_t> mma_C_KQ;
     typedef mma_C_I16J8<half2>    mma_C_VKQ;
 
-    constexpr int KQ_stride_tc = nwarps*mma_A::I; // Number of KQ rows calculated in parallel.
-    constexpr int VKQ_ratio = KQ_stride_tc/VKQ_stride; // Number of parallel VKQ accumulators needed to keep all warps busy.
-    static_assert(VKQ_ratio <= nwarps, "VKQ_ratio must be <= nwarps.");
-
-    // Pad internal representation of KQ, KQV to reduce shared memory bank conflicts:
-    constexpr int D_padded = D + 8;
-    constexpr int kqs_padded = FATTN_KQ_STRIDE + 8;
-    constexpr int kqar = std::is_same<KQ_acc_t, float>::value ? 2 : 1;
-
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
     const float * Q_f   = (const float *) (Q + nb02* blockIdx.y              + nb01*ic0);
     const half2 * K_h2  = (const half2 *) (K + nb12*(blockIdx.y / gqa_ratio));
     const half  * V_h   = (const half  *) (V + nb12*(blockIdx.y / gqa_ratio)); // K and V have same shape
     const half  * maskh = (const half  *)  mask + (nb31/sizeof(half))* ic0;
-    const half2 * mask2 = (const half2 *)  mask + (nb31/sizeof(half))*(ic0/2);
+    // const half2 * mask2 = (const half2 *)  mask + (nb31/sizeof(half))*(ic0/2);
 
     const int stride_Q  = nb01 / sizeof(float);
     const int stride_KV = nb11 / sizeof(half);
@@ -104,41 +95,29 @@ static __global__ void flash_attn_ext_f16(
         }
     }
 
-    // A single buffer for temporarily holding tiles of KQ and VKQ parts:
-    constexpr int mem_KQ = ncols*kqs_padded*kqar;
-    constexpr int mem_VKQ_parts = VKQ_ratio*ncols*D_padded;
-    __shared__ half KQ[mem_KQ >= mem_VKQ_parts ? mem_KQ : mem_VKQ_parts];
-    half2 * KQ2 = (half2 *) KQ;
+//     half2    KQ_rowsum_h2[ncols/nwarps] = {{0.0f, 0.0f}};
+//     half2       KQ_max_h2[ncols/nwarps];
+//     half2 KQ_max_scale_h2[ncols/nwarps] = {{0.0f, 0.0f}};
 
-    __shared__ float hack[3][nwarps*mma_C_KQ::J];
+// #pragma unroll
+//     for (int j = 0; j < ncols/nwarps; ++j) {
+//         KQ_max_h2[j] = make_half2(-HALF_MAX_HALF, -HALF_MAX_HALF);
+//     }
+
+    mma_C_VKQ VKQ_C[D/mma_C_VKQ::I];
 
     float2    KQ_rowsum_f = {0.0f, 0.0f};
     float2       KQ_max_f = {-FLT_MAX/2.0f, -FLT_MAX/2.0f};
     float2 KQ_max_scale_f = {0.0f, 0.0f};
 
-    half2    KQ_rowsum_h2[ncols/nwarps] = {{0.0f, 0.0f}};
-    half2       KQ_max_h2[ncols/nwarps];
-    half2 KQ_max_scale_h2[ncols/nwarps] = {{0.0f, 0.0f}};
+//     half2    KQ_rowsum_h2[ncols/nwarps] = {{0.0f, 0.0f}};
+//     half2       KQ_max_h2[ncols/nwarps];
+//     half2 KQ_max_scale_h2[ncols/nwarps] = {{0.0f, 0.0f}};
 
-#pragma unroll
-    for (int j = 0; j < ncols/nwarps; ++j) {
-        KQ_max_h2[j] = make_half2(-HALF_MAX_HALF, -HALF_MAX_HALF);
-    }
-
-    __shared__ half VKQ[ncols*D_padded]; // Accumulator for final VKQ slice.
-    half2 * VKQ2 = (half2 *) VKQ;
-#pragma unroll
-    for (int j0 = 0; j0 < ncols; j0 += nwarps) {
-        const int j = j0 + threadIdx.y;
-#pragma unroll
-        for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
-            const int i = i0 + threadIdx.x;
-            if (i0 + WARP_SIZE > D/2 && i >= D/2) {
-                break;
-            }
-            VKQ2[j*(D_padded/2) + i] = make_half2(0.0f, 0.0f);
-        }
-    }
+// #pragma unroll
+//     for (int j = 0; j < ncols/nwarps; ++j) {
+//         KQ_max_h2[j] = make_half2(-HALF_MAX_HALF, -HALF_MAX_HALF);
+//     }
 
     // Iterate over ne11 == previous tokens:
     for (int k_VKQ_0 = ip*FATTN_KQ_STRIDE; k_VKQ_0 < ne11; k_VKQ_0 += parallel_blocks*FATTN_KQ_STRIDE) {
@@ -211,9 +190,6 @@ static __global__ void flash_attn_ext_f16(
                     } else {
                         KQ_rowsum_add.y += KQ_C[k0/mma_C_KQ::I].x[l];
                     }
-
-                    KQ[(threadIdx.y*mma_C_KQ::J + mma_C_KQ::get_j(l))*(kqar*kqs_padded) + k0 + mma_C_KQ::get_i(l)]
-                        = KQ_C[k0/mma_C_KQ::I].x[l];
                 }
             }
 #pragma unroll
@@ -226,199 +202,146 @@ static __global__ void flash_attn_ext_f16(
             KQ_rowsum_f.x = KQ_max_scale_f.x*KQ_rowsum_f.x + KQ_rowsum_add.x;
             KQ_rowsum_f.y = KQ_max_scale_f.y*KQ_rowsum_f.y + KQ_rowsum_add.y;
 
-            if (threadIdx.x < mma_C_KQ::J/2) {
-                hack[0][threadIdx.y*mma_C_KQ::J + 2*threadIdx.x + 0] = KQ_max_f.x;
-                hack[0][threadIdx.y*mma_C_KQ::J + 2*threadIdx.x + 1] = KQ_max_f.y;
-                hack[1][threadIdx.y*mma_C_KQ::J + 2*threadIdx.x + 0] = KQ_rowsum_f.x;
-                hack[1][threadIdx.y*mma_C_KQ::J + 2*threadIdx.x + 1] = KQ_rowsum_f.y;
-                hack[2][threadIdx.y*mma_C_KQ::J + 2*threadIdx.x + 0] = KQ_max_scale_f.x;
-                hack[2][threadIdx.y*mma_C_KQ::J + 2*threadIdx.x + 1] = KQ_max_scale_f.y;
+            const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale_f.x, KQ_max_scale_f.y);
+#pragma unroll
+            for (int i = 0; i < D/mma_C_VKQ::I; ++i) {
+#pragma unroll
+                for (int l = 0; l < mma_C_VKQ::ne; ++l) {
+                    VKQ_C[i].x[l] *= KQ_max_scale_h2;
+                }
             }
         } else {
-#pragma unroll
-            for (int j0 = 0; j0 < ncols; j0 += nwarps) {
-                const int j = j0 + threadIdx.y;
+// #pragma unroll
+//             for (int j0 = 0; j0 < ncols; j0 += nwarps) {
+//                 const int j = j0 + threadIdx.y;
 
-                half2 KQ2_tmp[FATTN_KQ_STRIDE/(2*WARP_SIZE)];
-#pragma unroll
-                for (int k0 = 0; k0 < FATTN_KQ_STRIDE/2; k0 += WARP_SIZE) {
-                    const int k = k0 + threadIdx.x;
+//                 half2 KQ2_tmp[FATTN_KQ_STRIDE/(2*WARP_SIZE)];
+// #pragma unroll
+//                 for (int k0 = 0; k0 < FATTN_KQ_STRIDE/2; k0 += WARP_SIZE) {
+//                     const int k = k0 + threadIdx.x;
 
-                    KQ2_tmp[k0/WARP_SIZE] = KQ2[j*(kqs_padded/2) + k];
+//                     KQ2_tmp[k0/WARP_SIZE] = KQ2[j*(kqs_padded/2) + k];
 
-                    if (use_logit_softcap) {
-                        // There is no dedicated tangens hyperbolicus function for half2.
-                        KQ2_tmp[k0/WARP_SIZE] = h2exp(KQ2_tmp[k0/WARP_SIZE]*make_half2(2.0f, 2.0f));
-                        KQ2_tmp[k0/WARP_SIZE] = (KQ2_tmp[k0/WARP_SIZE] - make_half2(1.0f, 1.0f))
-                                               /(KQ2_tmp[k0/WARP_SIZE] + make_half2(1.0f, 1.0f));
+//                     if (use_logit_softcap) {
+//                         // There is no dedicated tangens hyperbolicus function for half2.
+//                         KQ2_tmp[k0/WARP_SIZE] = h2exp(KQ2_tmp[k0/WARP_SIZE]*make_half2(2.0f, 2.0f));
+//                         KQ2_tmp[k0/WARP_SIZE] = (KQ2_tmp[k0/WARP_SIZE] - make_half2(1.0f, 1.0f))
+//                                                /(KQ2_tmp[k0/WARP_SIZE] + make_half2(1.0f, 1.0f));
 
-                        KQ2_tmp[k0/WARP_SIZE] *= logit_softcap_2;
-                    }
-                }
+//                         KQ2_tmp[k0/WARP_SIZE] *= logit_softcap_2;
+//                     }
+//                 }
 
-                half2 KQ_max_new = KQ_max_h2[j0/nwarps];
-#pragma unroll
-                for (int k0 = 0; k0 < FATTN_KQ_STRIDE/2; k0 += WARP_SIZE) {
-                    const int k = k0 + threadIdx.x;
+//                 half2 KQ_max_new = KQ_max_h2[j0/nwarps];
+// #pragma unroll
+//                 for (int k0 = 0; k0 < FATTN_KQ_STRIDE/2; k0 += WARP_SIZE) {
+//                     const int k = k0 + threadIdx.x;
 
-                    KQ2_tmp[k0/WARP_SIZE] += mask ? slope2*mask2[(j*ne11 + k_VKQ_0)/2 + k] : make_half2(0.0f, 0.0f);
-                    KQ_max_new = ggml_cuda_hmax2(KQ_max_new, KQ2_tmp[k0/WARP_SIZE]);
-                }
-                KQ_max_new = __half2half2(warp_reduce_max(ggml_cuda_hmax(__low2half(KQ_max_new), __high2half(KQ_max_new))));
-                const half2 diff = KQ_max_h2[j0/nwarps] - KQ_max_new;
-                KQ_max_scale_h2[j0/nwarps] = h2exp(diff);
-                const uint32_t ftz_mask = __hgt2_mask(diff, make_half2(SOFTMAX_FTZ_THRESHOLD, SOFTMAX_FTZ_THRESHOLD));
-                *((uint32_t *) &KQ_max_scale_h2[j0/nwarps]) &= ftz_mask;
-                KQ_max_h2[j0/nwarps] = KQ_max_new;
+//                     KQ2_tmp[k0/WARP_SIZE] += mask ? slope2*mask2[(j*ne11 + k_VKQ_0)/2 + k] : make_half2(0.0f, 0.0f);
+//                     KQ_max_new = ggml_cuda_hmax2(KQ_max_new, KQ2_tmp[k0/WARP_SIZE]);
+//                 }
+//                 KQ_max_new = __half2half2(warp_reduce_max(ggml_cuda_hmax(__low2half(KQ_max_new), __high2half(KQ_max_new))));
+//                 const half2 diff = KQ_max_h2[j0/nwarps] - KQ_max_new;
+//                 KQ_max_scale_h2[j0/nwarps] = h2exp(diff);
+//                 const uint32_t ftz_mask = __hgt2_mask(diff, make_half2(SOFTMAX_FTZ_THRESHOLD, SOFTMAX_FTZ_THRESHOLD));
+//                 *((uint32_t *) &KQ_max_scale_h2[j0/nwarps]) &= ftz_mask;
+//                 KQ_max_h2[j0/nwarps] = KQ_max_new;
 
-                half2 KQ_rowsum_add = make_half2(0.0f, 0.0f);
-#pragma unroll
-                for (int k0 = 0; k0 < FATTN_KQ_STRIDE/2; k0 += WARP_SIZE) {
-                    const int k = k0 + threadIdx.x;
+//                 half2 KQ_rowsum_add = make_half2(0.0f, 0.0f);
+// #pragma unroll
+//                 for (int k0 = 0; k0 < FATTN_KQ_STRIDE/2; k0 += WARP_SIZE) {
+//                     const int k = k0 + threadIdx.x;
 
-                    const half2 diff = KQ2_tmp[k0/WARP_SIZE] - KQ_max_h2[j0/nwarps];
-                    KQ2_tmp[k0/WARP_SIZE] = h2exp(diff);
-                    const uint32_t ftz_mask = __hgt2_mask(diff, make_half2(SOFTMAX_FTZ_THRESHOLD, SOFTMAX_FTZ_THRESHOLD));
-                    *((uint32_t *) &KQ2_tmp[k0/WARP_SIZE]) &= ftz_mask;
-                    KQ_rowsum_add += KQ2_tmp[k0/WARP_SIZE];
-                    KQ2[j*(kqs_padded/2) + k] = KQ2_tmp[k0/WARP_SIZE];
-                }
-                KQ_rowsum_add = warp_reduce_sum(KQ_rowsum_add);
+//                     const half2 diff = KQ2_tmp[k0/WARP_SIZE] - KQ_max_h2[j0/nwarps];
+//                     KQ2_tmp[k0/WARP_SIZE] = h2exp(diff);
+//                     const uint32_t ftz_mask = __hgt2_mask(diff, make_half2(SOFTMAX_FTZ_THRESHOLD, SOFTMAX_FTZ_THRESHOLD));
+//                     *((uint32_t *) &KQ2_tmp[k0/WARP_SIZE]) &= ftz_mask;
+//                     KQ_rowsum_add += KQ2_tmp[k0/WARP_SIZE];
+//                     KQ2[j*(kqs_padded/2) + k] = KQ2_tmp[k0/WARP_SIZE];
+//                 }
+//                 KQ_rowsum_add = warp_reduce_sum(KQ_rowsum_add);
 
-                // Scale previous KQ_rowsum to account for a potential increase in KQ_max:
-                KQ_rowsum_h2[j0/nwarps] = KQ_max_scale_h2[j0/nwarps]*KQ_rowsum_h2[j0/nwarps] + KQ_rowsum_add;
-            }
+//                 // Scale previous KQ_rowsum to account for a potential increase in KQ_max:
+//                 KQ_rowsum_h2[j0/nwarps] = KQ_max_scale_h2[j0/nwarps]*KQ_rowsum_h2[j0/nwarps] + KQ_rowsum_add;
+//             }
+            NO_DEVICE_CODE;
         }
 
-        __syncthreads();
-
-        mma_B KQ_B[FATTN_KQ_STRIDE/(VKQ_ratio*2*mma_B::K)][ncols/mma_B::J];
+        mma_B B[FATTN_KQ_STRIDE/(2*mma_B::K)];
 #pragma unroll
-        for (int j0 = 0; j0 < ncols; j0 += mma_B::J) {
-#pragma unroll
-            for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += VKQ_ratio*2*mma_B::K) {
-                KQ_B[k0/(VKQ_ratio*2*mma_B::K)][j0/mma_B::J].load(
-                    (const half2 *)(KQ + j0*(kqar*kqs_padded) + k0 + (threadIdx.y % VKQ_ratio)*(2*mma_B::K)),
-                    kqar*kqs_padded/2);
-            }
+        for (int k = 0; k < FATTN_KQ_STRIDE/(2*mma_B::K); ++k) {
+            B[k] = KQ_C[k].to_mma_B();
         }
 
-        mma_C_VKQ VKQ_C[D/VKQ_stride][ncols/(2*mma_C_VKQ::J)];
 #pragma unroll
-        for (int i_VKQ_0 = 0; i_VKQ_0 < D; i_VKQ_0 += VKQ_stride) {
-            const int i_VKQ = i_VKQ_0 + (threadIdx.y/VKQ_ratio)*mma_A::I;
-
+        for (int i_VKQ_0 = 0; i_VKQ_0 < D; i_VKQ_0 += mma_C_VKQ::I) {
 #pragma unroll
-            for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += VKQ_ratio*(2*mma_A::K)) {
-                const int k_VKQ = k_VKQ_0 + k0 + (threadIdx.y % VKQ_ratio)*(2*mma_A::K);
-
+            for (int k0 = 0; k0 < FATTN_KQ_STRIDE/2; k0 += mma_A::K) {
                 mma_A A;
                 // A.load_generic((const half2 *)(V_h + k_VKQ*stride_KV + i_VKQ), stride_KV/2);
                 // A.transpose();
 #pragma unroll
                 for (int l = 0; l < mma_A::ne; ++l) {
                     A.x[l] = make_half2(
-                        V_h[(k_VKQ + 2*mma_A::get_k(l) + 0)*stride_KV + i_VKQ + mma_A::get_i(l)],
-                        V_h[(k_VKQ + 2*mma_A::get_k(l) + 1)*stride_KV + i_VKQ + mma_A::get_i(l)]);
+                        V_h[(k_VKQ_0 + 2*(k0 + mma_A::get_k(l)) + 0)*stride_KV + i_VKQ_0 + mma_A::get_i(l)],
+                        V_h[(k_VKQ_0 + 2*(k0 + mma_A::get_k(l)) + 1)*stride_KV + i_VKQ_0 + mma_A::get_i(l)]);
                 }
-#pragma unroll
-                for (int j = 0; j < ncols/(2*mma_C_VKQ::J); ++j) {
-                    VKQ_C[i_VKQ_0/VKQ_stride][j].mma(A, KQ_B[k0/(VKQ_ratio*2*mma_A::K)][j]);
-                }
+
+                VKQ_C[i_VKQ_0/mma_C_VKQ::I].mma(A, B[k0/mma_A::K]);
             }
         }
-
-        __syncthreads();
-
-        const int offset_k = (threadIdx.y % VKQ_ratio) * (ncols*D_padded);
-#pragma unroll
-        for (int i_KQ_0 = 0; i_KQ_0 < D; i_KQ_0 += VKQ_stride) {
-#pragma unroll
-            for (int j0 = 0; j0 < ncols; j0 += 2*mma_C_VKQ::J) {
-#pragma unroll
-                for (int l = 0; l < mma_C_VKQ::ne; ++l) {
-                    KQ[offset_k + (j0 + 2*mma_C_VKQ::get_j(l) + 0)*D_padded + i_KQ_0 + (threadIdx.y/VKQ_ratio)*mma_C_VKQ::I + mma_C_VKQ::get_i(l)]
-                        = __low2half(VKQ_C[i_KQ_0/VKQ_stride][j0/(2*mma_C_VKQ::J)].x[l]);
-                    KQ[offset_k + (j0 + 2*mma_C_VKQ::get_j(l) + 1)*D_padded + i_KQ_0 + (threadIdx.y/VKQ_ratio)*mma_C_VKQ::I + mma_C_VKQ::get_i(l)]
-                        = __high2half(VKQ_C[i_KQ_0/VKQ_stride][j0/(2*mma_C_VKQ::J)].x[l]);
-                }
-            }
-        }
-
-        __syncthreads();
-
-#pragma unroll
-        for (int j0 = 0; j0 < ncols; j0 += nwarps) {
-            const int j = j0 + threadIdx.y;
-
-            half2 VKQ_scale;
-            if (std::is_same<KQ_acc_t, float>::value) {
-                const float tmp = hack[2][j];
-                VKQ_scale = make_half2(tmp, tmp);
-            } else {
-                VKQ_scale = KQ_max_scale_h2[j0/nwarps];
-            }
-
-#pragma unroll
-            for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
-                const int i = i0 + threadIdx.x;
-                if (i0 + WARP_SIZE > D/2 && i >= D/2) {
-                    break;
-                }
-
-                half2 VKQ_add = make_half2(0.0f, 0.0f);
-#pragma unroll
-                for (int l = 0; l < VKQ_ratio; ++l) {
-                    VKQ_add += KQ2[l*(ncols*D_padded/2) + j*(D_padded/2) + i];
-                }
-                VKQ2[j*(D_padded/2) + i] = VKQ_scale*VKQ2[j*(D_padded/2) + i] + VKQ_add;
-            }
-        }
-
-        __syncthreads();
     }
 
-#pragma unroll
-    for (int j0 = 0; j0 < ncols; j0 += nwarps) {
-        const int j_VKQ = j0 + threadIdx.y;
-        if (ic0 + j_VKQ >= ne01) {
-            return;
-        }
-        const int j_dst = (ic0 + j_VKQ)*parallel_blocks + ip;
-
-        float KQ_rowsum_j;
-        if (std::is_same<KQ_acc_t, float>::value) {
-            KQ_rowsum_j = hack[1][j_VKQ];
-        } else {
-            KQ_rowsum_j = __low2float(KQ_rowsum_h2[j0/nwarps]) + __high2float(KQ_rowsum_h2[j0/nwarps]);
-        }
+    const int j_VKQ_0 = threadIdx.y*(2*mma_C_VKQ::J) + 2*mma_C_VKQ::get_j(-1);
+    if (j_VKQ_0 + 0 >= ne01) {
+        return;
+    }
+    const int j_dst_0 = (ic0 + j_VKQ_0)*parallel_blocks + ip;
 
 #pragma unroll
-        for (int i0 = 0; i0 < D; i0 += WARP_SIZE) {
-            const int i = i0 + threadIdx.x;
-            if (i0 + WARP_SIZE > D && i >= D) {
-                break;
-            }
-            float dst_val = VKQ[j_VKQ*D_padded + i];
+    for (int i0 = 0; i0 < D; i0 += mma_C_VKQ::I) {
+#pragma unroll
+        for (int l = 0; l < mma_C_VKQ::ne; ++l) {
+            const int i = i0 + mma_C_VKQ::get_i(l);
+
+            float dst_val = __low2float(VKQ_C[i0/mma_C_VKQ::I].x[l]);
             if (parallel_blocks == 1) {
-                dst_val /= KQ_rowsum_j;
+                dst_val /= KQ_rowsum_f.x;
             }
-            dst[j_dst*gridDim.y*D + blockIdx.y*D + i] = dst_val;
+            dst[(j_dst_0 + 0*parallel_blocks)*gridDim.y*D + blockIdx.y*D + i] = dst_val;
         }
-
-        if (parallel_blocks == 1 || threadIdx.x != 0) {
-            continue;
-        }
-
-        float2 dst_meta_val;
-        if (std::is_same<KQ_acc_t, float>::value) {
-            dst_meta_val.x = hack[0][j_VKQ];
-        } else {
-            dst_meta_val.x = __low2float(KQ_max_h2[j0/nwarps]);
-        }
-        dst_meta_val.y = KQ_rowsum_j;
-        dst_meta[(ic0 + j_VKQ)*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = dst_meta_val;
     }
+
+    if (j_VKQ_0 + 1 < ne01) {
+#pragma unroll
+        for (int i0 = 0; i0 < D; i0 += mma_C_VKQ::I) {
+#pragma unroll
+            for (int l = 0; l < mma_C_VKQ::ne; ++l) {
+                const int i = i0 + mma_C_VKQ::get_i(l);
+
+                float dst_val = __high2float(VKQ_C[i0/mma_C_VKQ::I].x[l]);
+                if (parallel_blocks == 1) {
+                    dst_val /= KQ_rowsum_f.y;
+                }
+                dst[(j_dst_0 + 1*parallel_blocks)*gridDim.y*D + blockIdx.y*D + i] = dst_val;
+            }
+        }
+    }
+
+    if (parallel_blocks == 1 || threadIdx.x != 0) {
+        return;
+    }
+    // printf("parallel\n");
+
+    dst_meta[(ic0 + j_VKQ_0 + 0)*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip]
+        = make_float2(KQ_max_f.x, KQ_rowsum_f.x);
+
+    if (j_VKQ_0 + 1 >= ne01) {
+        return;
+    }
+
+    dst_meta[(ic0 + j_VKQ_0 + 1)*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip]
+        = make_float2(KQ_max_f.y, KQ_rowsum_f.y);
 #else
    NO_DEVICE_CODE;
 #endif // FP16_MMA_AVAILABLE
@@ -512,35 +435,35 @@ void ggml_cuda_flash_attn_ext_wmma_f16_case(ggml_backend_cuda_context & ctx, ggm
     template void ggml_cuda_flash_attn_ext_wmma_f16_case                              \
     <D, cols_per_block, KQ_acc_t>(ggml_backend_cuda_context & ctx, ggml_tensor * dst) \
 
-extern DECL_FATTN_WMMA_F16_CASE( 64, 16, float);
-extern DECL_FATTN_WMMA_F16_CASE( 80, 16, float);
-extern DECL_FATTN_WMMA_F16_CASE( 96, 16, float);
-extern DECL_FATTN_WMMA_F16_CASE(112, 16, float);
+// extern DECL_FATTN_WMMA_F16_CASE( 64, 16, float);
+// extern DECL_FATTN_WMMA_F16_CASE( 80, 16, float);
+// extern DECL_FATTN_WMMA_F16_CASE( 96, 16, float);
+// extern DECL_FATTN_WMMA_F16_CASE(112, 16, float);
 extern DECL_FATTN_WMMA_F16_CASE(128, 16, float);
-extern DECL_FATTN_WMMA_F16_CASE(256, 16, float);
+// extern DECL_FATTN_WMMA_F16_CASE(256, 16, float);
 
-extern DECL_FATTN_WMMA_F16_CASE( 64, 32, float);
-extern DECL_FATTN_WMMA_F16_CASE( 80, 32, float);
-extern DECL_FATTN_WMMA_F16_CASE( 96, 32, float);
-extern DECL_FATTN_WMMA_F16_CASE(112, 32, float);
+// extern DECL_FATTN_WMMA_F16_CASE( 64, 32, float);
+// extern DECL_FATTN_WMMA_F16_CASE( 80, 32, float);
+// extern DECL_FATTN_WMMA_F16_CASE( 96, 32, float);
+// extern DECL_FATTN_WMMA_F16_CASE(112, 32, float);
 extern DECL_FATTN_WMMA_F16_CASE(128, 32, float);
 // extern DECL_FATTN_WMMA_F16_CASE(256, 16, float);
 
-extern DECL_FATTN_WMMA_F16_CASE( 64,  8, half2);
-extern DECL_FATTN_WMMA_F16_CASE( 96,  8, half2);
+// extern DECL_FATTN_WMMA_F16_CASE( 64,  8, half2);
+// extern DECL_FATTN_WMMA_F16_CASE( 96,  8, half2);
 extern DECL_FATTN_WMMA_F16_CASE(128,  8, half2);
-extern DECL_FATTN_WMMA_F16_CASE(256,  8, half2);
+// extern DECL_FATTN_WMMA_F16_CASE(256,  8, half2);
 
-extern DECL_FATTN_WMMA_F16_CASE( 64, 16, half2);
-extern DECL_FATTN_WMMA_F16_CASE( 80, 16, half2);
-extern DECL_FATTN_WMMA_F16_CASE( 96, 16, half2);
-extern DECL_FATTN_WMMA_F16_CASE(112, 16, half2);
+// extern DECL_FATTN_WMMA_F16_CASE( 64, 16, half2);
+// extern DECL_FATTN_WMMA_F16_CASE( 80, 16, half2);
+// extern DECL_FATTN_WMMA_F16_CASE( 96, 16, half2);
+// extern DECL_FATTN_WMMA_F16_CASE(112, 16, half2);
 extern DECL_FATTN_WMMA_F16_CASE(128, 16, half2);
-extern DECL_FATTN_WMMA_F16_CASE(256, 16, half2);
+// extern DECL_FATTN_WMMA_F16_CASE(256, 16, half2);
 
 extern DECL_FATTN_WMMA_F16_CASE( 64, 32, half2);
 extern DECL_FATTN_WMMA_F16_CASE( 80, 32, half2);
 extern DECL_FATTN_WMMA_F16_CASE( 96, 32, half2);
 extern DECL_FATTN_WMMA_F16_CASE(112, 32, half2);
 extern DECL_FATTN_WMMA_F16_CASE(128, 32, half2);
-extern DECL_FATTN_WMMA_F16_CASE(256, 16, half2);
+// extern DECL_FATTN_WMMA_F16_CASE(256, 16, half2);

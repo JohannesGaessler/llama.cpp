@@ -267,7 +267,7 @@ struct mma_C_I16J8<half2> {
     static constexpr int J  = 4;
     static constexpr int ne = 2;
 
-    half2 x[ne] = {{0.0f, 0.0f}};
+    half2 x[ne] = {{0.0f, 0.0f}, {0.0f, 0.0f}};
 
     static __device__ __forceinline__ int get_i(const int l) {
         const int ret = l * (I/2) + threadIdx.x / J;
@@ -297,6 +297,24 @@ struct mma_C_I16J8<half2> {
         NO_DEVICE_CODE;
 #endif // FP16_MMA_AVAILABLE
     }
+
+    __device__ __forceinline__ mma_B_J8K8<half2> to_mma_B() {
+        mma_B_J8K8<half2> mma_B;
+        mma_B.x[0] = x[0];
+        mma_B.x[1] = x[1];
+
+#ifdef MOVMATRIX_AVAILABLE
+        int * Bxi  = (int *) mma_B.x;
+        asm("movmatrix.sync.aligned.m8n8.trans.b16 %0, %0;"
+            : "+r"(Bxi[0]) : );
+        asm("movmatrix.sync.aligned.m8n8.trans.b16 %0, %0;"
+            : "+r"(Bxi[1]) : );
+#else
+        NO_DEVICE_CODE;
+#endif // MOVMATRIX_AVAILABLE
+
+        return mma_B;
+    }
 };
 
 template <>
@@ -305,7 +323,7 @@ struct mma_C_I16J8<float> {
     static constexpr int J  = 8;
     static constexpr int ne = 4;
 
-    float x[ne] = {0.0f};
+    float x[ne] = {0.0f, 0.0f, 0.0f, 0.0f};
 
     static __device__ __forceinline__ int get_i(const int l) {
         const int ret = (l/2) * (I/2) + threadIdx.x / (J/2);
@@ -334,5 +352,23 @@ struct mma_C_I16J8<float> {
         GGML_UNUSED(mma_B);
         NO_DEVICE_CODE;
 #endif // FP16_MMA_AVAILABLE
+    }
+
+    __device__ __forceinline__ mma_B_J8K8<half2> to_mma_B() {
+        mma_B_J8K8<half2> mma_B;
+        mma_B.x[0] = make_half2(x[0], x[1]);
+        mma_B.x[1] = make_half2(x[2], x[3]);
+
+#ifdef MOVMATRIX_AVAILABLE
+        int * Bxi  = (int *) mma_B.x;
+        asm("movmatrix.sync.aligned.m8n8.trans.b16 %0, %0;"
+            : "+r"(Bxi[0]) : );
+        asm("movmatrix.sync.aligned.m8n8.trans.b16 %0, %0;"
+            : "+r"(Bxi[1]) : );
+#else
+        NO_DEVICE_CODE;
+#endif // MOVMATRIX_AVAILABLE
+
+        return mma_B;
     }
 };
