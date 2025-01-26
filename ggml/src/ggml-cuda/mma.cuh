@@ -1,5 +1,9 @@
 #include "common.cuh"
 
+#if !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__)) && __CUDA_ARCH__ >= GGML_CUDA_CC_TURING
+#define MOVMATRIX_AVAILABLE
+#endif // !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__)) && __CUDA_ARCH__ >= GGML_CUDA_CC_TURING
+
 template <typename T>
 struct mma_A_I16K4 {
     static_assert(sizeof(T) == 4, "bad type size");
@@ -68,6 +72,29 @@ struct mma_A_I16K8 {
         for (int l = 0; l < ne; ++l) {
             x[l] = xs0[get_i(l)*stride + get_k(l)];
         }
+    }
+
+    __device__ __forceinline__ void load_generic_transposed(const T * __restrict__ xs0, const int & stride) {
+#pragma unroll
+        for (int l = 0; l < ne; ++l) {
+            x[l] = xs0[get_k(l)*stride + get_i(l)];
+        }
+
+#ifdef MOVMATRIX_AVAILABLE
+        int * xi  = (int *) x;
+        asm("movmatrix.sync.aligned.m8n8.trans.b16 %0, %1;"
+            : "+r"(xi[0]), "+r"(xi[0]) : );
+        int tmp = 0;
+        asm("movmatrix.sync.aligned.m8n8.trans.b16 %0, %1;"
+            : "+r"(tmp), "+r"(xi[1]) : );
+        asm("movmatrix.sync.aligned.m8n8.trans.b16 %0, %1;"
+            : "+r"(xi[1]), "+r"(xi[2]) : );
+        xi[2] = tmp;
+        asm("movmatrix.sync.aligned.m8n8.trans.b16 %0, %1;"
+            : "+r"(xi[3]), "+r"(xi[3]) : );
+#else
+        NO_DEVICE_CODE;
+#endif // MOVMATRIX_AVAILABLE
     }
 
     __device__ __forceinline__ void load_ldmatrix(const T * __restrict__ xs0, const int & stride) {

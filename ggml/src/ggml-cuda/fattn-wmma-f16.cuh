@@ -60,21 +60,12 @@ static __global__ void flash_attn_ext_f16(
     const int ip  =        blockIdx.x % parallel_blocks;  // Index in group of blocks running for the same column in parallel.
 
     static_assert(D <= FATTN_KQ_STRIDE, "D must be <= FATTN_KQ_STRIDE.");
-    static_assert(ncols == 8 || ncols % 16 == 0, "ncols must be 8 or a multiple of 16.");
-    constexpr int frag_m = ncols == 8 ? 32 : 16;
-    constexpr int frag_n = ncols == 8 ?  8 : 16;
-    static_assert(D % frag_m == 0, "If ncols == 8 then D % frag_m must be 0.");
-    typedef nvcuda::wmma::fragment<nvcuda::wmma::matrix_a,    frag_m, frag_n, 16, half, nvcuda::wmma::row_major> frag_a_K;
-    typedef nvcuda::wmma::fragment<nvcuda::wmma::matrix_a,    frag_m, frag_n, 16, half, nvcuda::wmma::col_major> frag_a_V;
-    typedef nvcuda::wmma::fragment<nvcuda::wmma::matrix_b,    frag_m, frag_n, 16, half, nvcuda::wmma::col_major> frag_b;
-    typedef nvcuda::wmma::fragment<nvcuda::wmma::accumulator, frag_m, frag_n, 16, KQ_acc_t>                      frag_c_KQ;
-    typedef nvcuda::wmma::fragment<nvcuda::wmma::accumulator, frag_m, frag_n, 16, half>                          frag_c_VKQ;
 
     typedef mma_A_I16K8<half2> mma_A;
     typedef mma_B_J8K8<half2>  mma_B;
     typedef mma_C_I16J8<half2> mma_C;
 
-    constexpr int KQ_stride_tc  = nwarps*frag_m; // Number of KQ rows calculated in parallel.
+    constexpr int KQ_stride_tc = nwarps*mma_A::I; // Number of KQ rows calculated in parallel.
     constexpr int VKQ_ratio = KQ_stride_tc/VKQ_stride; // Number of parallel VKQ accumulators needed to keep all warps busy.
     static_assert(VKQ_ratio <= nwarps, "VKQ_ratio must be <= nwarps.");
 
@@ -305,36 +296,37 @@ static __global__ void flash_attn_ext_f16(
 
         __syncthreads();
 
-        frag_b KQ_b[FATTN_KQ_STRIDE/(VKQ_ratio*16)][ncols/frag_n];
+        mma_B KQ_B[FATTN_KQ_STRIDE/(VKQ_ratio*2*mma_B::K)][ncols/mma_B::J];
 #pragma unroll
-        for (int j0 = 0; j0 < ncols; j0 += frag_n) {
+        for (int j0 = 0; j0 < ncols; j0 += mma_B::J) {
 #pragma unroll
-            for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += VKQ_ratio*16) {
-                const int k = k0 + (threadIdx.y % VKQ_ratio)*16;
-                nvcuda::wmma::load_matrix_sync(
-                    KQ_b[k0/(VKQ_ratio*16)][j0/frag_n],
-                    KQ + j0*(kqar*kqs_padded) + k,
-                    kqar*kqs_padded);
+            for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += VKQ_ratio*2*mma_B::K) {
+                KQ_B[k0/(VKQ_ratio*2*mma_B::K)][j0/mma_B::J].load(
+                    (const half2 *)(KQ + j0*(kqar*kqs_padded) + k0 + (threadIdx.y % VKQ_ratio)*(2*mma_B::K)),
+                    kqar*kqs_padded/2);
             }
         }
 
-        frag_c_VKQ VKQ_c[D/VKQ_stride][ncols/frag_n];
+        mma_C VKQ_C[D/VKQ_stride][ncols/(2*mma_C::J)];
 #pragma unroll
         for (int i_VKQ_0 = 0; i_VKQ_0 < D; i_VKQ_0 += VKQ_stride) {
-#pragma unroll
-            for (int j = 0; j < ncols/frag_n; ++j) {
-                nvcuda::wmma::fill_fragment(VKQ_c[i_VKQ_0/VKQ_stride][j], 0.0f);
-            }
+            const int i_VKQ = i_VKQ_0 + (threadIdx.y/VKQ_ratio)*mma_A::I;
 
 #pragma unroll
-            for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += VKQ_ratio*16) {
-                const int k = k0 + (threadIdx.y % VKQ_ratio)*16;
+            for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += VKQ_ratio*(2*mma_A::K)) {
+                const int k_VKQ = k_VKQ_0 + k0 + (threadIdx.y % VKQ_ratio)*(2*mma_A::K);
 
-                frag_a_V v_a;
-                nvcuda::wmma::load_matrix_sync(v_a, V_h + (k_VKQ_0 + k)*stride_KV + i_VKQ_0 + frag_m*(threadIdx.y/VKQ_ratio), stride_KV);
+                mma_A A;
+                // A.load_generic_transposed((const half2 *)(V_h + k_VKQ*stride_KV + i_VKQ), stride_KV/2);
 #pragma unroll
-                for (int j = 0; j < ncols/frag_n; ++j) {
-                    nvcuda::wmma::mma_sync(VKQ_c[i_VKQ_0/VKQ_stride][j], v_a, KQ_b[k0/(VKQ_ratio*16)][j], VKQ_c[i_VKQ_0/VKQ_stride][j]);
+                for (int l = 0; l < mma_A::ne; ++l) {
+                    A.x[l] = make_half2(
+                        V_h[(k_VKQ + 2*mma_A::get_k(l) + 0)*stride_KV + i_VKQ + mma_A::get_i(l)],
+                        V_h[(k_VKQ + 2*mma_A::get_k(l) + 1)*stride_KV + i_VKQ + mma_A::get_i(l)]);
+                }
+#pragma unroll
+                for (int j = 0; j < ncols/(2*mma_C::J); ++j) {
+                    VKQ_C[i_VKQ_0/VKQ_stride][j].mma(A, KQ_B[k0/(VKQ_ratio*2*mma_A::K)][j]);
                 }
             }
         }
@@ -345,11 +337,14 @@ static __global__ void flash_attn_ext_f16(
 #pragma unroll
         for (int i_KQ_0 = 0; i_KQ_0 < D; i_KQ_0 += VKQ_stride) {
 #pragma unroll
-            for (int j0 = 0; j0 < ncols; j0 += frag_n) {
-                nvcuda::wmma::store_matrix_sync(
-                    KQ + offset_k + j0*D_padded + i_KQ_0 + frag_m*(threadIdx.y/VKQ_ratio),
-                    VKQ_c[i_KQ_0/VKQ_stride][j0/frag_n],
-                    D_padded, nvcuda::wmma::mem_col_major);
+            for (int j0 = 0; j0 < ncols; j0 += 2*mma_C::J) {
+#pragma unroll
+                for (int l = 0; l < mma_C::ne; ++l) {
+                    KQ[offset_k + (j0 + 2*mma_C::get_j(l) + 0)*D_padded + i_KQ_0 + (threadIdx.y/VKQ_ratio)*mma_C::I + mma_C::get_i(l)]
+                        = __low2half(VKQ_C[i_KQ_0/VKQ_stride][j0/(2*mma_C::J)].x[l]);
+                    KQ[offset_k + (j0 + 2*mma_C::get_j(l) + 1)*D_padded + i_KQ_0 + (threadIdx.y/VKQ_ratio)*mma_C::I + mma_C::get_i(l)]
+                        = __high2half(VKQ_C[i_KQ_0/VKQ_stride][j0/(2*mma_C::J)].x[l]);
+                }
             }
         }
 
@@ -445,24 +440,25 @@ constexpr int get_VKQ_stride(int D, int nwarps, int frag_m) {
     return (get_max_power_of_2(D/frag_m) < nwarps ? get_max_power_of_2(D/frag_m) : nwarps)*frag_m;
 }
 
-static_assert(get_VKQ_stride(128, 1, 32) ==  32, "Test failed.");
-static_assert(get_VKQ_stride(128, 2, 32) ==  64, "Test failed.");
-static_assert(get_VKQ_stride(128, 4, 32) == 128, "Test failed.");
-static_assert(get_VKQ_stride( 64, 1, 32) ==  32, "Test failed.");
-static_assert(get_VKQ_stride( 64, 2, 32) ==  64, "Test failed.");
-static_assert(get_VKQ_stride( 64, 4, 32) ==  64, "Test failed.");
+static_assert(get_VKQ_stride(128, 1, 16) ==  16, "Test failed.");
+static_assert(get_VKQ_stride(128, 2, 16) ==  32, "Test failed.");
+static_assert(get_VKQ_stride(128, 4, 16) ==  64, "Test failed.");
+static_assert(get_VKQ_stride( 64, 1, 16) ==  16, "Test failed.");
+static_assert(get_VKQ_stride( 64, 2, 16) ==  32, "Test failed.");
+static_assert(get_VKQ_stride( 64, 4, 16) ==  64, "Test failed.");
 static_assert(get_VKQ_stride( 80, 1, 16) ==  16, "Test failed.");
 static_assert(get_VKQ_stride( 80, 2, 16) ==  16, "Test failed.");
 static_assert(get_VKQ_stride( 80, 4, 16) ==  16, "Test failed.");
 
 template <int D, int cols_per_block, typename KQ_acc_t>
 void ggml_cuda_flash_attn_ext_wmma_f16_case(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    typedef mma_A_I16K8<half2> mma_A;
+
     const ggml_tensor * KQV = dst;
     const ggml_tensor * Q   = dst->src[0];
 
     constexpr int nwarps = 4;
 
-    constexpr int frag_m = cols_per_block == 8 && D % 32 == 0 ? 32 : 16;
     const int blocks_num_pb1 = ((Q->ne[1] + cols_per_block - 1) / cols_per_block)*Q->ne[2]*Q->ne[3];
     const int nsm = ggml_cuda_info().devices[ggml_cuda_get_device()].nsm;
 
@@ -475,11 +471,11 @@ void ggml_cuda_flash_attn_ext_wmma_f16_case(ggml_backend_cuda_context & ctx, ggm
         if (logit_softcap == 0.0f) {
             constexpr bool use_logit_softcap = false;
             fattn_kernel = flash_attn_ext_f16<
-                D, cols_per_block, nwarps, get_VKQ_stride(D, nwarps, frag_m), parallel_blocks, KQ_acc_t, use_logit_softcap>;
+                D, cols_per_block, nwarps, get_VKQ_stride(D, nwarps, mma_A::I), parallel_blocks, KQ_acc_t, use_logit_softcap>;
         } else {
             constexpr bool use_logit_softcap = true;
             fattn_kernel = flash_attn_ext_f16<
-                D, cols_per_block, nwarps, get_VKQ_stride(D, nwarps, frag_m), parallel_blocks, KQ_acc_t, use_logit_softcap>;
+                D, cols_per_block, nwarps, get_VKQ_stride(D, nwarps, mma_A::I), parallel_blocks, KQ_acc_t, use_logit_softcap>;
         }
         launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block, true, true);
         return;
@@ -490,11 +486,11 @@ void ggml_cuda_flash_attn_ext_wmma_f16_case(ggml_backend_cuda_context & ctx, ggm
         if (logit_softcap == 0.0f) {
             constexpr bool use_logit_softcap = false;
             fattn_kernel = flash_attn_ext_f16<
-                D, cols_per_block, nwarps, get_VKQ_stride(D, nwarps, frag_m), parallel_blocks, KQ_acc_t, use_logit_softcap>;
+                D, cols_per_block, nwarps, get_VKQ_stride(D, nwarps, mma_A::I), parallel_blocks, KQ_acc_t, use_logit_softcap>;
         } else {
             constexpr bool use_logit_softcap = true;
             fattn_kernel = flash_attn_ext_f16<
-                D, cols_per_block, nwarps, get_VKQ_stride(D, nwarps, frag_m), parallel_blocks, KQ_acc_t, use_logit_softcap>;
+                D, cols_per_block, nwarps, get_VKQ_stride(D, nwarps, mma_A::I), parallel_blocks, KQ_acc_t, use_logit_softcap>;
         }
         launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block, true, true);
         return;
@@ -504,11 +500,11 @@ void ggml_cuda_flash_attn_ext_wmma_f16_case(ggml_backend_cuda_context & ctx, ggm
     if (logit_softcap == 0.0f) {
         constexpr bool use_logit_softcap = false;
         fattn_kernel = flash_attn_ext_f16<
-            D, cols_per_block, nwarps, get_VKQ_stride(D, nwarps, frag_m), parallel_blocks, KQ_acc_t, use_logit_softcap>;
+            D, cols_per_block, nwarps, get_VKQ_stride(D, nwarps, mma_A::I), parallel_blocks, KQ_acc_t, use_logit_softcap>;
     } else {
         constexpr bool use_logit_softcap = true;
         fattn_kernel = flash_attn_ext_f16<
-            D, cols_per_block, nwarps, get_VKQ_stride(D, nwarps, frag_m), parallel_blocks, KQ_acc_t, use_logit_softcap>;
+            D, cols_per_block, nwarps, get_VKQ_stride(D, nwarps, mma_A::I), parallel_blocks, KQ_acc_t, use_logit_softcap>;
     }
     launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block, true, true);
 }
