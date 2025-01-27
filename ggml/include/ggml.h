@@ -933,8 +933,7 @@ extern "C" {
     GGML_API struct ggml_tensor * ggml_repeat_back(
             struct ggml_context * ctx,
             struct ggml_tensor  * a,
-            struct ggml_tensor  * b,
-            bool                  adjacent); // sum up values that are adjacent in dims > 0 instead of repeated with same stride
+            struct ggml_tensor  * b); // sum up values that are adjacent in dims > 0 instead of repeated with same stride
 
     // concat a and b along dim
     // used in stable-diffusion
