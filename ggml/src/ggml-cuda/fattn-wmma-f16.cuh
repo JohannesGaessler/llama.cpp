@@ -69,7 +69,7 @@ static __global__ void flash_attn_ext_f16(
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
     const float * Q_f   = (const float *) (Q + nb02* blockIdx.y              + nb01*ic0);
     const half2 * K_h2  = (const half2 *) (K + nb12*(blockIdx.y / gqa_ratio));
-    const half  * V_h   = (const half  *) (V + nb12*(blockIdx.y / gqa_ratio)); // K and V have same shape
+    const half2 * V_h2  = (const half2 *) (V + nb12*(blockIdx.y / gqa_ratio)); // K and V have same shape
     const half  * maskh = (const half  *)  mask + (nb31/sizeof(half))* ic0;
     // const half2 * mask2 = (const half2 *)  mask + (nb31/sizeof(half))*(ic0/2);
 
@@ -293,22 +293,31 @@ static __global__ void flash_attn_ext_f16(
         }
 
 #pragma unroll
+        for (int k_V_0 = 0; k_V_0 < KQ_stride; k_V_0 += nwarps) {
+            const int k_V = k_V_0 + threadIdx.y;
+
+#pragma unroll
+            for (int i_V_0 = 0; i_V_0 < D/2; i_V_0 += WARP_SIZE) {
+                const int i_V = i_V_0 + threadIdx.x;
+
+                tile_KV[k_V*D2_padded + i_V] = V_h2[(k_VKQ_0 + k_V)*(stride_KV/2) + i_V];
+            }
+        }
+
+        __syncthreads();
+
+#pragma unroll
         for (int i_VKQ_0 = 0; i_VKQ_0 < D; i_VKQ_0 += mma_C_VKQ::I) {
 #pragma unroll
             for (int k0 = 0; k0 < KQ_stride/2; k0 += mma_A::K) {
                 mma_A A;
-                // A.load_generic((const half2 *)(V_h + k_VKQ*stride_KV + i_VKQ), stride_KV/2);
-                // A.transpose();
-#pragma unroll
-                for (int l = 0; l < mma_A::ne; ++l) {
-                    A.x[l] = make_half2(
-                        V_h[(k_VKQ_0 + 2*(k0 + mma_A::get_k(l)) + 0)*stride_KV + i_VKQ_0 + mma_A::get_i(l)],
-                        V_h[(k_VKQ_0 + 2*(k0 + mma_A::get_k(l)) + 1)*stride_KV + i_VKQ_0 + mma_A::get_i(l)]);
-                }
-
+                A.load_ldmatrix(tile_KV + 2*k0*D2_padded + i_VKQ_0/2, D2_padded);
+                A.transpose();
                 VKQ_C[i_VKQ_0/mma_C_VKQ::I].mma(A, B[k0/mma_A::K]);
             }
         }
+
+        __syncthreads();
     }
 
     const int j_VKQ_0 = threadIdx.y*(2*mma_C_VKQ::J) + 2*mma_C_VKQ::get_j(-1);
