@@ -73,6 +73,9 @@ static __global__ void flash_attn_ext_f16(
     const half  * maskh = (const half  *)  mask + (nb31/sizeof(half))* ic0;
     // const half2 * mask2 = (const half2 *)  mask + (nb31/sizeof(half))*(ic0/2);
 
+    const int D2_padded = D/2 + 4;
+    extern __shared__ half2 tile_KV[];
+
     const int stride_Q  = nb01 / sizeof(float);
     const int stride_KV = nb11 / sizeof(half);
 
@@ -123,16 +126,32 @@ static __global__ void flash_attn_ext_f16(
     for (int k_VKQ_0 = ip*KQ_stride; k_VKQ_0 < ne11; k_VKQ_0 += parallel_blocks*KQ_stride) {
         mma_C_KQ KQ_C[KQ_stride/mma_A::I];
 
+#pragma unroll
+        for (int i_KQ_0 = 0; i_KQ_0 < KQ_stride; i_KQ_0 += nwarps) {
+            const int i_KQ = i_KQ_0 + threadIdx.y;
+
+#pragma unroll
+            for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += WARP_SIZE) {
+                const int k_KQ = k_KQ_0 + threadIdx.x;
+
+                tile_KV[i_KQ*D2_padded + k_KQ] = K_h2[(k_VKQ_0 + i_KQ)*(stride_KV/2) + k_KQ];
+            }
+        }
+
+        __syncthreads();
+
         // Calculate tile of KQ:
 #pragma unroll
         for (int i_KQ_0 = 0; i_KQ_0 < KQ_stride; i_KQ_0 += mma_A::I) {
 #pragma unroll
             for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += mma_A::K) {
                 mma_A K_A;
-                K_A.load_generic(K_h2 + (k_VKQ_0 + i_KQ_0)*(stride_KV/2) + k_KQ_0, stride_KV/2);
+                K_A.load_ldmatrix(tile_KV + i_KQ_0*D2_padded + k_KQ_0, D2_padded);
                 KQ_C[i_KQ_0/mma_A::I].mma(K_A, Q_B[k_KQ_0/mma_A::K]);
             }
         }
+
+        __syncthreads();
 
         //FIXME logit softcap
 
@@ -355,8 +374,9 @@ void ggml_cuda_flash_attn_ext_wmma_f16_case(ggml_backend_cuda_context & ctx, ggm
     const ggml_tensor * KQV = dst;
     const ggml_tensor * Q   = dst->src[0];
 
-    constexpr int nwarps    = cols_per_block / mma_B::J;
-    constexpr int KQ_stride = 32;
+    constexpr int    nwarps        = cols_per_block / mma_B::J;
+    constexpr int    KQ_stride     = 32;
+    constexpr size_t nbytes_shared = KQ_stride * (D + 8) * sizeof(half);
 
     const int blocks_num_pb1 = ((Q->ne[1] + cols_per_block - 1) / cols_per_block)*Q->ne[2]*Q->ne[3];
     const int nsm = ggml_cuda_info().devices[ggml_cuda_get_device()].nsm;
@@ -376,7 +396,7 @@ void ggml_cuda_flash_attn_ext_wmma_f16_case(ggml_backend_cuda_context & ctx, ggm
             fattn_kernel = flash_attn_ext_f16<
                 D, cols_per_block, nwarps, KQ_stride, parallel_blocks, KQ_acc_t, use_logit_softcap>;
         }
-        launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block, true, true);
+        launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block, nbytes_shared, true, true);
         return;
     }
     if (2*blocks_num_pb1 < 2*nsm) {
@@ -391,7 +411,7 @@ void ggml_cuda_flash_attn_ext_wmma_f16_case(ggml_backend_cuda_context & ctx, ggm
             fattn_kernel = flash_attn_ext_f16<
                 D, cols_per_block, nwarps, KQ_stride, parallel_blocks, KQ_acc_t, use_logit_softcap>;
         }
-        launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block, true, true);
+        launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block, nbytes_shared, true, true);
         return;
     }
     constexpr int parallel_blocks = 1;
@@ -405,7 +425,7 @@ void ggml_cuda_flash_attn_ext_wmma_f16_case(ggml_backend_cuda_context & ctx, ggm
         fattn_kernel = flash_attn_ext_f16<
             D, cols_per_block, nwarps, KQ_stride, parallel_blocks, KQ_acc_t, use_logit_softcap>;
     }
-    launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block, true, true);
+    launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block, nbytes_shared, true, true);
 }
 
 #define DECL_FATTN_WMMA_F16_CASE(D, cols_per_block, KQ_acc_t)                         \

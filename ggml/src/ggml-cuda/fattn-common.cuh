@@ -585,7 +585,7 @@ static void on_no_fattn_vec_case(const int D) {
 template <int D, int parallel_blocks>
 void launch_fattn(
     ggml_backend_cuda_context & ctx, ggml_tensor * dst, fattn_kernel_t fattn_kernel,
-    const int nwarps, const int cols_per_block, const bool need_f16_K, const bool need_f16_V
+    const int nwarps, const int cols_per_block, const size_t nbytes_shared, const bool need_f16_K, const bool need_f16_V
 ) {
     const ggml_tensor * Q = dst->src[0];
     const ggml_tensor * K = dst->src[1];
@@ -657,7 +657,6 @@ void launch_fattn(
 
     const dim3 block_dim(WARP_SIZE, nwarps, 1);
     const dim3 blocks_num(parallel_blocks*((Q->ne[1] + cols_per_block - 1) / cols_per_block), Q->ne[2], Q->ne[3]);
-    const int  shmem = 0;
 
     float scale         = 1.0f;
     float max_bias      = 0.0f;
@@ -677,7 +676,7 @@ void launch_fattn(
     const float m0 = powf(2.0f, -(max_bias       ) / n_head_log2);
     const float m1 = powf(2.0f, -(max_bias / 2.0f) / n_head_log2);
 
-    fattn_kernel<<<blocks_num, block_dim, shmem, main_stream>>>(
+    fattn_kernel<<<blocks_num, block_dim, nbytes_shared, main_stream>>>(
         (const char *) Q->data,
         K_data,
         V_data,
