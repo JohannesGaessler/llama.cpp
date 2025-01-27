@@ -455,6 +455,8 @@ extern DECL_FATTN_WMMA_F16_CASE(128, 16, float);
 extern DECL_FATTN_WMMA_F16_CASE(128, 32, float);
 // extern DECL_FATTN_WMMA_F16_CASE(256, 16, float);
 
+extern DECL_FATTN_WMMA_F16_CASE(128, 64, float);
+
 // extern DECL_FATTN_WMMA_F16_CASE( 64,  8, half2);
 // extern DECL_FATTN_WMMA_F16_CASE( 96,  8, half2);
 extern DECL_FATTN_WMMA_F16_CASE(128,  8, half2);

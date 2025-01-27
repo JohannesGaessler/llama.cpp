@@ -41,8 +41,33 @@ static void ggml_cuda_flash_attn_ext_wmma_f16(ggml_backend_cuda_context & ctx, g
                     GGML_ABORT("fatal error");
                     break;
             }
-        } else {
+        } else if (Q->ne[1] <= 64) {
             constexpr int cols_per_block = 32;
+            switch (Q->ne[0]) {
+                // case 64:
+                //     ggml_cuda_flash_attn_ext_wmma_f16_case< 64, cols_per_block, float>(ctx, dst);
+                //     break;
+                // case 80:
+                //     ggml_cuda_flash_attn_ext_wmma_f16_case< 80, cols_per_block, float>(ctx, dst);
+                //     break;
+                // case 96:
+                //     ggml_cuda_flash_attn_ext_wmma_f16_case< 96, cols_per_block, float>(ctx, dst);
+                //     break;
+                // case 112:
+                //     ggml_cuda_flash_attn_ext_wmma_f16_case<112, cols_per_block, float>(ctx, dst);
+                //     break;
+                case 128:
+                    ggml_cuda_flash_attn_ext_wmma_f16_case<128, cols_per_block, float>(ctx, dst);
+                    break;
+                // case 256:
+                //     ggml_cuda_flash_attn_ext_wmma_f16_case<128, cols_per_block, float>(ctx, dst);
+                //     break;
+                default:
+                    GGML_ABORT("fatal error");
+                    break;
+            }
+        } else {
+            constexpr int cols_per_block = 64;
             switch (Q->ne[0]) {
                 // case 64:
                 //     ggml_cuda_flash_attn_ext_wmma_f16_case< 64, cols_per_block, float>(ctx, dst);
@@ -120,7 +145,35 @@ static void ggml_cuda_flash_attn_ext_wmma_f16(ggml_backend_cuda_context & ctx, g
         return;
     }
 
-    constexpr int cols_per_block = 32;
+    if (Q->ne[1] <= 64) {
+        constexpr int cols_per_block = 32;
+        switch (Q->ne[0]) {
+            // case 64:
+            //     ggml_cuda_flash_attn_ext_wmma_f16_case< 64, cols_per_block, half2>(ctx, dst);
+            //     break;
+            // case 80:
+            //     ggml_cuda_flash_attn_ext_wmma_f16_case< 80, cols_per_block, half2>(ctx, dst);
+            //     break;
+            // case 96:
+            //     ggml_cuda_flash_attn_ext_wmma_f16_case< 96, cols_per_block, half2>(ctx, dst);
+            //     break;
+            // case 112:
+            //     ggml_cuda_flash_attn_ext_wmma_f16_case<112, cols_per_block, half2>(ctx, dst);
+            //     break;
+            case 128:
+                ggml_cuda_flash_attn_ext_wmma_f16_case<128, cols_per_block, half2>(ctx, dst);
+                break;
+            // case 256:
+            //     ggml_cuda_flash_attn_ext_wmma_f16_case<256, cols_per_block, half2>(ctx, dst);
+            //     break;
+            default:
+                GGML_ABORT("fatal error");
+                break;
+        }
+        return;
+    }
+
+    constexpr int cols_per_block = 64;
     switch (Q->ne[0]) {
         // case 64:
         //     ggml_cuda_flash_attn_ext_wmma_f16_case< 64, cols_per_block, half2>(ctx, dst);

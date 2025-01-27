@@ -58,7 +58,7 @@ for vkq_size in [16, 32]:
                     f.write(SOURCE_FATTN_VEC.format(vkq_size=vkq_size, head_size=head_size, type_k=type_k, type_v=type_v))
 
 for kq_acc_t in ["half2", "float"]:
-    for cols_per_block in [8, 16, 32]:
+    for cols_per_block in [8, 16, 32, 64]:
         if kq_acc_t == "float" and cols_per_block == 8:
             continue
 
