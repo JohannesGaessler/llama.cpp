@@ -384,7 +384,7 @@ void ggml_cuda_flash_attn_ext_wmma_f16_case(ggml_backend_cuda_context & ctx, ggm
     const ggml_tensor * Q   = dst->src[0];
 
     constexpr int    nwarps        = cols_per_block / mma_B::J;
-    constexpr int    KQ_stride     = 32;
+    constexpr int    KQ_stride     = 64;
     constexpr size_t nbytes_shared = KQ_stride * (D + 8) * sizeof(half);
 
     const int blocks_num_pb1 = ((Q->ne[1] + cols_per_block - 1) / cols_per_block)*Q->ne[2]*Q->ne[3];
