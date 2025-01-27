@@ -6,8 +6,8 @@
 #include <mma.h>
 #endif // FP16_MMA_AVAILABLE
 
-// D == head size, VKQ_stride == num VKQ rows calculated in parallel:
-template<int D, int ncols, int nwarps, int VKQ_stride, int parallel_blocks, typename KQ_acc_t, bool use_logit_softcap>
+// D == head size, KQ_stride == num KQ rows processed in parallel
+template<int D, int ncols, int nwarps, int KQ_stride, int parallel_blocks, typename KQ_acc_t, bool use_logit_softcap>
 #if !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__))
 __launch_bounds__(nwarps*WARP_SIZE, 1)
 #endif // !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__))
@@ -54,12 +54,12 @@ static __global__ void flash_attn_ext_f16(
         return;
     }
 
+    static_assert(FATTN_KQ_STRIDE % KQ_stride == 0, "bad KQ_stride");
+
     //In this kernel Q, K, V are matrices while i, j, k are matrix indices.
 
     const int ic0 = ncols*(blockIdx.x / parallel_blocks); // Index of the first Q/QKV column to work on.
     const int ip  =        blockIdx.x % parallel_blocks;  // Index in group of blocks running for the same column in parallel.
-
-    static_assert(D <= FATTN_KQ_STRIDE, "D must be <= FATTN_KQ_STRIDE.");
 
     typedef mma_A_I16K8<half2>    mma_A;
     typedef mma_B_J8K8<half2>     mma_B;
@@ -120,12 +120,12 @@ static __global__ void flash_attn_ext_f16(
 //     }
 
     // Iterate over ne11 == previous tokens:
-    for (int k_VKQ_0 = ip*FATTN_KQ_STRIDE; k_VKQ_0 < ne11; k_VKQ_0 += parallel_blocks*FATTN_KQ_STRIDE) {
-        mma_C_KQ KQ_C[FATTN_KQ_STRIDE/mma_A::I];
+    for (int k_VKQ_0 = ip*KQ_stride; k_VKQ_0 < ne11; k_VKQ_0 += parallel_blocks*KQ_stride) {
+        mma_C_KQ KQ_C[KQ_stride/mma_A::I];
 
         // Calculate tile of KQ:
 #pragma unroll
-        for (int i_KQ_0 = 0; i_KQ_0 < FATTN_KQ_STRIDE; i_KQ_0 += mma_A::I) {
+        for (int i_KQ_0 = 0; i_KQ_0 < KQ_stride; i_KQ_0 += mma_A::I) {
 #pragma unroll
             for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += mma_A::K) {
                 mma_A K_A;
@@ -141,7 +141,7 @@ static __global__ void flash_attn_ext_f16(
         if constexpr (std::is_same<KQ_acc_t, float>::value) {
             float2 KQ_max_new = KQ_max_f;
 #pragma unroll
-            for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += mma_C_KQ::I) {
+            for (int k0 = 0; k0 < KQ_stride; k0 += mma_C_KQ::I) {
 #pragma unroll
                 for (int l = 0; l < mma_C_KQ::ne; ++l) {
                     const int k = k0 + mma_C_KQ::get_i(l);
@@ -175,7 +175,7 @@ static __global__ void flash_attn_ext_f16(
 
             float2 KQ_rowsum_add = make_float2(0.0f, 0.0f);
 #pragma unroll
-            for (int k0 = 0; k0 < FATTN_KQ_STRIDE; k0 += mma_C_KQ::I) {
+            for (int k0 = 0; k0 < KQ_stride; k0 += mma_C_KQ::I) {
 #pragma unroll
                 for (int l = 0; l < mma_C_KQ::ne; ++l) {
                     const float KQ_max_l = l % 2 == 0 ? KQ_max_f.x : KQ_max_f.y;
@@ -267,16 +267,16 @@ static __global__ void flash_attn_ext_f16(
             NO_DEVICE_CODE;
         }
 
-        mma_B B[FATTN_KQ_STRIDE/(2*mma_B::K)];
+        mma_B B[KQ_stride/(2*mma_B::K)];
 #pragma unroll
-        for (int k = 0; k < FATTN_KQ_STRIDE/(2*mma_B::K); ++k) {
+        for (int k = 0; k < KQ_stride/(2*mma_B::K); ++k) {
             B[k] = KQ_C[k].to_mma_B();
         }
 
 #pragma unroll
         for (int i_VKQ_0 = 0; i_VKQ_0 < D; i_VKQ_0 += mma_C_VKQ::I) {
 #pragma unroll
-            for (int k0 = 0; k0 < FATTN_KQ_STRIDE/2; k0 += mma_A::K) {
+            for (int k0 = 0; k0 < KQ_stride/2; k0 += mma_A::K) {
                 mma_A A;
                 // A.load_generic((const half2 *)(V_h + k_VKQ*stride_KV + i_VKQ), stride_KV/2);
                 // A.transpose();
@@ -347,30 +347,6 @@ static __global__ void flash_attn_ext_f16(
 #endif // FP16_MMA_AVAILABLE
 }
 
-constexpr int get_max_power_of_2(int x) {
-    return x % 2 == 0 ? 2*get_max_power_of_2(x/2) : 1;
-}
-
-static_assert(get_max_power_of_2(1) == 1, "Test failed.");
-static_assert(get_max_power_of_2(2) == 2, "Test failed.");
-static_assert(get_max_power_of_2(4) == 4, "Test failed.");
-static_assert(get_max_power_of_2(6) == 2, "Test failed.");
-
-// Number of VKQ rows calculated in parallel:
-constexpr int get_VKQ_stride(int D, int nwarps, int frag_m) {
-    return (get_max_power_of_2(D/frag_m) < nwarps ? get_max_power_of_2(D/frag_m) : nwarps)*frag_m;
-}
-
-static_assert(get_VKQ_stride(128, 1, 16) ==  16, "Test failed.");
-static_assert(get_VKQ_stride(128, 2, 16) ==  32, "Test failed.");
-static_assert(get_VKQ_stride(128, 4, 16) ==  64, "Test failed.");
-static_assert(get_VKQ_stride( 64, 1, 16) ==  16, "Test failed.");
-static_assert(get_VKQ_stride( 64, 2, 16) ==  32, "Test failed.");
-static_assert(get_VKQ_stride( 64, 4, 16) ==  64, "Test failed.");
-static_assert(get_VKQ_stride( 80, 1, 16) ==  16, "Test failed.");
-static_assert(get_VKQ_stride( 80, 2, 16) ==  16, "Test failed.");
-static_assert(get_VKQ_stride( 80, 4, 16) ==  16, "Test failed.");
-
 template <int D, int cols_per_block, typename KQ_acc_t>
 void ggml_cuda_flash_attn_ext_wmma_f16_case(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     typedef mma_A_I16K8<half2> mma_A;
@@ -379,7 +355,8 @@ void ggml_cuda_flash_attn_ext_wmma_f16_case(ggml_backend_cuda_context & ctx, ggm
     const ggml_tensor * KQV = dst;
     const ggml_tensor * Q   = dst->src[0];
 
-    constexpr int nwarps = cols_per_block / mma_B::J;
+    constexpr int nwarps    = cols_per_block / mma_B::J;
+    constexpr int KQ_stride = 32;
 
     const int blocks_num_pb1 = ((Q->ne[1] + cols_per_block - 1) / cols_per_block)*Q->ne[2]*Q->ne[3];
     const int nsm = ggml_cuda_info().devices[ggml_cuda_get_device()].nsm;
@@ -393,11 +370,11 @@ void ggml_cuda_flash_attn_ext_wmma_f16_case(ggml_backend_cuda_context & ctx, ggm
         if (logit_softcap == 0.0f) {
             constexpr bool use_logit_softcap = false;
             fattn_kernel = flash_attn_ext_f16<
-                D, cols_per_block, nwarps, get_VKQ_stride(D, nwarps, mma_A::I), parallel_blocks, KQ_acc_t, use_logit_softcap>;
+                D, cols_per_block, nwarps, KQ_stride, parallel_blocks, KQ_acc_t, use_logit_softcap>;
         } else {
             constexpr bool use_logit_softcap = true;
             fattn_kernel = flash_attn_ext_f16<
-                D, cols_per_block, nwarps, get_VKQ_stride(D, nwarps, mma_A::I), parallel_blocks, KQ_acc_t, use_logit_softcap>;
+                D, cols_per_block, nwarps, KQ_stride, parallel_blocks, KQ_acc_t, use_logit_softcap>;
         }
         launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block, true, true);
         return;
@@ -408,11 +385,11 @@ void ggml_cuda_flash_attn_ext_wmma_f16_case(ggml_backend_cuda_context & ctx, ggm
         if (logit_softcap == 0.0f) {
             constexpr bool use_logit_softcap = false;
             fattn_kernel = flash_attn_ext_f16<
-                D, cols_per_block, nwarps, get_VKQ_stride(D, nwarps, mma_A::I), parallel_blocks, KQ_acc_t, use_logit_softcap>;
+                D, cols_per_block, nwarps, KQ_stride, parallel_blocks, KQ_acc_t, use_logit_softcap>;
         } else {
             constexpr bool use_logit_softcap = true;
             fattn_kernel = flash_attn_ext_f16<
-                D, cols_per_block, nwarps, get_VKQ_stride(D, nwarps, mma_A::I), parallel_blocks, KQ_acc_t, use_logit_softcap>;
+                D, cols_per_block, nwarps, KQ_stride, parallel_blocks, KQ_acc_t, use_logit_softcap>;
         }
         launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block, true, true);
         return;
@@ -422,11 +399,11 @@ void ggml_cuda_flash_attn_ext_wmma_f16_case(ggml_backend_cuda_context & ctx, ggm
     if (logit_softcap == 0.0f) {
         constexpr bool use_logit_softcap = false;
         fattn_kernel = flash_attn_ext_f16<
-            D, cols_per_block, nwarps, get_VKQ_stride(D, nwarps, mma_A::I), parallel_blocks, KQ_acc_t, use_logit_softcap>;
+            D, cols_per_block, nwarps, KQ_stride, parallel_blocks, KQ_acc_t, use_logit_softcap>;
     } else {
         constexpr bool use_logit_softcap = true;
         fattn_kernel = flash_attn_ext_f16<
-            D, cols_per_block, nwarps, get_VKQ_stride(D, nwarps, mma_A::I), parallel_blocks, KQ_acc_t, use_logit_softcap>;
+            D, cols_per_block, nwarps, KQ_stride, parallel_blocks, KQ_acc_t, use_logit_softcap>;
     }
     launch_fattn<D, parallel_blocks>(ctx, dst, fattn_kernel, nwarps, cols_per_block, true, true);
 }
@@ -461,9 +438,9 @@ extern DECL_FATTN_WMMA_F16_CASE(128,  8, half2);
 extern DECL_FATTN_WMMA_F16_CASE(128, 16, half2);
 // extern DECL_FATTN_WMMA_F16_CASE(256, 16, half2);
 
-extern DECL_FATTN_WMMA_F16_CASE( 64, 32, half2);
-extern DECL_FATTN_WMMA_F16_CASE( 80, 32, half2);
-extern DECL_FATTN_WMMA_F16_CASE( 96, 32, half2);
-extern DECL_FATTN_WMMA_F16_CASE(112, 32, half2);
+// extern DECL_FATTN_WMMA_F16_CASE( 64, 32, half2);
+// extern DECL_FATTN_WMMA_F16_CASE( 80, 32, half2);
+// extern DECL_FATTN_WMMA_F16_CASE( 96, 32, half2);
+// extern DECL_FATTN_WMMA_F16_CASE(112, 32, half2);
 extern DECL_FATTN_WMMA_F16_CASE(128, 32, half2);
 // extern DECL_FATTN_WMMA_F16_CASE(256, 16, half2);

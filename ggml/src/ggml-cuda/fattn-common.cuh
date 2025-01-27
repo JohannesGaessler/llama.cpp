@@ -7,6 +7,7 @@
 #include <cstdint>
 
 #define FATTN_KQ_STRIDE       256
+#define FATTN_KQ_STRIDE2      64
 #define HALF_MAX_HALF         __float2half(65504.0f/2) // Use neg. of this instead of -INFINITY to initialize KQ max vals to avoid NaN upon subtraction.
 #define SOFTMAX_FTZ_THRESHOLD -20.0f                   // Softmax exp. of values smaller than this are flushed to zero to avoid NaNs.
 

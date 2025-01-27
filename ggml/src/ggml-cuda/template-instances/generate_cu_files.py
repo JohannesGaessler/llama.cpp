@@ -65,7 +65,8 @@ for kq_acc_t in ["half2", "float"]:
         with open(f"fattn-wmma-f16-instance-kq{kq_acc_t}-cpb{cols_per_block}.cu", "w") as f:
             f.write(SOURCE_FATTN_WMMA_START)
 
-            for head_size in [64, 80, 96, 112, 128, 256]:
+            # for head_size in [64, 80, 96, 112, 128, 256]:
+            for head_size in [128]:
                 if cols_per_block == 8 and head_size % 32 != 0: # wmma fragment is 8x32
                     continue
                 if kq_acc_t == "float" and cols_per_block == 32 and head_size == 256: # register spilling, bad performance
