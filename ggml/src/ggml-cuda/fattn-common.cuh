@@ -711,12 +711,12 @@ void launch_fattn(
     ggml_cuda_pool_alloc<float>  dst_tmp(pool);
     ggml_cuda_pool_alloc<float2> dst_tmp_meta(pool);
 
-    char * K_data = (char *) K->data;
+    const char * K_data = (const char *) K->data;
     size_t nb11 = K->nb[1];
     size_t nb12 = K->nb[2];
     size_t nb13 = K->nb[3];
 
-    char * V_data = (char *) V->data;
+    const char * V_data = (const char *) V->data;
     size_t nb21 = V->nb[1];
     size_t nb22 = V->nb[2];
     size_t nb23 = V->nb[3];
@@ -760,7 +760,14 @@ void launch_fattn(
         const bool tiles_inefficient = 3*nsm < 2*tiles_nwaves*ntiles_total;
         const bool short_context = K->ne[1] < 4096;
 
-        blocks_num.x = short_context && !tiles_inefficient ? ntiles_total : 2*nsm;
+        int nblocks_stream_k = 2*nsm;
+        if (cols_per_block <= 8) {
+            nblocks_stream_k *= 4;
+        } else if (cols_per_block <= 32) {
+            nblocks_stream_k *= 2;
+        }
+
+        blocks_num.x = short_context && !tiles_inefficient ? ntiles_total : nblocks_stream_k;
         blocks_num.y = 1;
         blocks_num.z = 1;
 
