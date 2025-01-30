@@ -760,12 +760,7 @@ void launch_fattn(
         const bool tiles_inefficient = 3*nsm < 2*tiles_nwaves*ntiles_total;
         const bool short_context = K->ne[1] < 4096;
 
-        int nblocks_stream_k = 2*nsm;
-        if (cols_per_block <= 8) {
-            nblocks_stream_k *= 4;
-        } else if (cols_per_block <= 32) {
-            nblocks_stream_k *= 2;
-        }
+        const int nblocks_stream_k = cols_per_block <= 32 ? 4*nsm : 2*nsm;
 
         blocks_num.x = short_context && !tiles_inefficient ? ntiles_total : nblocks_stream_k;
         blocks_num.y = 1;

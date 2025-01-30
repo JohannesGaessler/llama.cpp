@@ -492,7 +492,7 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     const ggml_tensor * KQV = dst;
 
     constexpr int    nwarps        = cols_per_block / mma_B::J;
-    constexpr int    KQ_stride     = D <= 128 ? 64 : 32;
+    constexpr int    KQ_stride     = (D <= 128 ? 64 : 32) * (cols_per_block <= 32 ? 2 : 1);
     constexpr size_t nbytes_shared = std::max(KQ_stride, cols_per_block) * (D + 8) * sizeof(half);
 
     float logit_softcap;
