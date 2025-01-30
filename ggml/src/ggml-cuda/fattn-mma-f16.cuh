@@ -365,7 +365,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
 template<int D, int ncols, int nwarps, int KQ_stride, bool use_logit_softcap>
 #if !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__))
-__launch_bounds__(nwarps*WARP_SIZE, 2)
+__launch_bounds__(nwarps*WARP_SIZE, ncols <= 32 ? 4 : 2)
 #endif // !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__))
 static __global__ void flash_attn_ext_f16(
         const char * __restrict__ Q,
@@ -492,7 +492,7 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     const ggml_tensor * KQV = dst;
 
     constexpr int    nwarps        = cols_per_block / mma_B::J;
-    constexpr int    KQ_stride     = (D <= 128 ? 64 : 32) * (cols_per_block <= 32 ? 2 : 1);
+    constexpr int    KQ_stride     = D <= 128 ? 64 : 32;
     constexpr size_t nbytes_shared = std::max(KQ_stride, cols_per_block) * (D + 8) * sizeof(half);
 
     float logit_softcap;
