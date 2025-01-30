@@ -732,11 +732,16 @@ void launch_fattn(
     }
 
     const int ntiles_x = ((Q->ne[1] + cols_per_block - 1) / cols_per_block);
+    const int ntiles_total = ntiles_x*Q->ne[2]*Q->ne[3];
 
     const dim3 block_dim(WARP_SIZE, nwarps, 1);
     dim3 blocks_num;
     if (parallel_blocks == 0) {
-        blocks_num.x = K->ne[1] < 8192 ? ntiles_x*Q->ne[2] : 2*nsm;
+        const int tiles_nwaves  = (ntiles_total - nsm - 1) / nsm;
+        const bool tiles_inefficient = 3*nsm < 2*tiles_nwaves*ntiles_total;
+        const bool short_context = K->ne[1] < 4096;
+
+        blocks_num.x = short_context && !tiles_inefficient ? ntiles_total : 2*nsm;
         blocks_num.y = 1;
         blocks_num.z = 1;
     } else {
@@ -790,7 +795,7 @@ void launch_fattn(
     CUDA_CHECK(cudaGetLastError());
 
     if constexpr (parallel_blocks == 0) {
-        if (blocks_num.x % (ntiles_x*Q->ne[2]) != 0) {
+        if (blocks_num.x % ntiles_total != 0) {
             const dim3 block_dim_combine(D, 1, 1);
             const dim3 blocks_num_combine = blocks_num;
             const int  shmem_combine = 0;
