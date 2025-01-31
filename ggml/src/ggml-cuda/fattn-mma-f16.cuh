@@ -305,12 +305,14 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         KQ_rowsum.y += __shfl_xor_sync(0xFFFFFFFF, KQ_rowsum.y, offset, WARP_SIZE);
     }
 
-    const int j_tmpf = threadIdx.y*mma_B::J + mma_B::get_j(-1);
 
-    if (threadIdx.x % (mma_B::K/2) == 0) {
-        ((float *) tile_KV)[j_tmpf*D2_padded + D/2] = ((const float *) &KQ_rowsum)[(threadIdx.x % mma_B::K) / (mma_B::K/2)];
+    if (threadIdx.x < 2*mma_C_VKQ::J) {
+        const int j_offset = (threadIdx.x % (2*mma_C_VKQ::J)) / mma_C_VKQ::J;
+        const int j = threadIdx.y*(2*mma_C_VKQ::J) + 2*mma_C_VKQ::get_j(-1) + j_offset;
+        ((float *) tile_KV)[j*D2_padded + D/2] = ((const float *) &KQ_rowsum)[j_offset];
     }
 
+    const int j_tmpf = threadIdx.y*mma_B::J + mma_B::get_j(-1);
 #pragma unroll
     for (int k0 = 0; k0 < D/2; k0 += mma_B::K) {
         const mma_B B = VKQ_C[k0/mma_B::K].to_mma_B();
