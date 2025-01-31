@@ -76,13 +76,16 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const int k0_stop  =                             D/2 - (D/2) % (1*stride_k);
         const int stride_j = WARP_SIZE / stride_k;
 
-        if (nwarps*mma_B::J/np > ncols && threadIdx.y*(mma_B::J/np) >= ncols) {
+        if ((nwarps/np)*mma_B::J > ncols && (threadIdx.y / np)*mma_B::J >= ncols) {
+            break;
+        }
+        if (np*stride_j > mma_B::J && (threadIdx.y % np)*stride_j >= mma_B::J) {
             break;
         }
 
 #pragma unroll
         for (int j0 = 0; j0 < mma_B::J; j0 += np*stride_j) {
-            const int j = j0 + threadIdx.y*(mma_B::J/np) + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
+            const int j = j0 + (threadIdx.y / np)*mma_B::J + (threadIdx.y % np)*stride_j + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
 
             if (jt*ncols + j < ne01) {
 #pragma unroll
@@ -121,7 +124,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     // Iterate over ne11 == previous tokens:
     for (int kb0 = kb0_start; kb0 < kb0_stop; ++kb0) {
         const int k_VKQ_0 = kb0*KQ_stride;
-        mma_C_KQ KQ_C[KQ_stride/mma_C_KQ::I];
+        mma_C_KQ KQ_C[KQ_stride/(np*mma_C_KQ::I)];
 
         // Load K data into tile with decreasing granularity for D for better memory bandwidth:
 #pragma unroll
@@ -157,7 +160,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
             for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += mma_A::K) {
                 mma_A K_A;
                 K_A.load_ldmatrix(tile_KV + i_KQ_0*D2_padded + k_KQ_0, D2_padded);
-                KQ_C[i_KQ_0/mma_A::I].mma(K_A, Q_B[k_KQ_0/mma_A::K]);
+                KQ_C[i_KQ_00/(np*mma_A::I)].mma(K_A, Q_B[k_KQ_0/mma_A::K]);
             }
         }
 
@@ -180,9 +183,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 #pragma unroll
                 for (int l = 0; l < mma_C_KQ::ne; ++l) {
                     const int i = i0 + mma_C_KQ::get_i(l);
-                    const int j = threadIdx.y*mma_C_KQ::J + mma_C_KQ::get_j(l);
+                    const int j = (threadIdx.y / np)*mma_C_KQ::J + mma_C_KQ::get_j(l);
 
-                    KQ_C[i0/mma_C_KQ::I].x[l] += slope*__half2float(maskh[j*stride_mask + k_VKQ_0 + i]);
+                    KQ_C[i00/mma_C_KQ::I].x[l] += slope*__half2float(maskh[j*stride_mask + k_VKQ_0 + i]);
                 }
             }
         }
@@ -252,9 +255,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         }
 
         // Convert KQ C tiles into B tiles for VKQ calculation:
-        mma_B B[KQ_stride/(2*mma_B::K)];
+        mma_B B[KQ_stride/(np*2*mma_B::K)];
 #pragma unroll
-        for (int k = 0; k < KQ_stride/(2*mma_B::K); ++k) {
+        for (int k = 0; k < KQ_stride/(np*2*mma_B::K); ++k) {
             B[k] = KQ_C[k].to_mma_B();
         }
 
@@ -288,10 +291,12 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 #pragma unroll
         for (int i_VKQ_0 = 0; i_VKQ_0 < D; i_VKQ_0 += mma_C_VKQ::I) {
 #pragma unroll
-            for (int k0 = 0; k0 < KQ_stride/2; k0 += mma_A::K) {
+            for (int k00 = 0; k00 < KQ_stride/2; k00 += np*mma_A::K) {
+                const int k0 = k00 + (threadIdx.y % np)*mma_A::K;
+
                 mma_A A;
                 A.load_ldmatrix_trans(tile_KV + 2*k0*D2_padded + i_VKQ_0/2, D2_padded);
-                VKQ_C[i_VKQ_0/mma_C_VKQ::I].mma(A, B[k0/mma_A::K]);
+                VKQ_C[i_VKQ_0/mma_C_VKQ::I].mma(A, B[k00/(np*mma_A::K)]);
             }
         }
 
@@ -300,30 +305,19 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
     // Finally, sum up partial KQ rowsums.
     // The partial sums are spread across 8 threads each, does not need full reduce.
+#pragma unroll
     for (int offset = 16; offset > 2; offset >>= 1) {
         KQ_rowsum.x += __shfl_xor_sync(0xFFFFFFFF, KQ_rowsum.x, offset, WARP_SIZE);
         KQ_rowsum.y += __shfl_xor_sync(0xFFFFFFFF, KQ_rowsum.y, offset, WARP_SIZE);
     }
 
-
-    const int j_offset = (threadIdx.x % (2*mma_C_VKQ::J)) / mma_C_VKQ::J;
-    const int j_fixup = threadIdx.y*(2*mma_C_VKQ::J) + 2*mma_C_VKQ::get_j(-1) + j_offset;
-    const float2 KQ_mrc = make_float2(((const float *) &KQ_max)[j_offset], ((const float *) &KQ_rowsum)[j_offset]);
-
-    if (!needs_fixup && !is_fixup && threadIdx.x < 2*mma_C_VKQ::J) {
-        ((float2 *) tile_KV)[j_fixup*(D2_padded/2) + D/4] = KQ_mrc;
-    }
-    if (needs_fixup && threadIdx.x < 2*mma_C_VKQ::J) {
-        dstk_fixup[             blockIdx.x *ncols + j_fixup] = KQ_mrc;
-    }
-    if (is_fixup && threadIdx.x < 2*mma_C_VKQ::J) {
-        dstk_fixup[(gridDim.x + blockIdx.x)*ncols + j_fixup] = KQ_mrc;
-    }
-
+    // Write VKQ accumulators to shared memory in column-major format.
+    // It's faster to do small writes to shared memory, then large write to VRAM than to do small writes to VRAM.
+    // Also for np > 1 the combination is done via these values in shared memory.
     const int j_tmpf = threadIdx.y*mma_B::J + mma_B::get_j(-1);
 #pragma unroll
     for (int k0 = 0; k0 < D/2; k0 += mma_B::K) {
-        const mma_B B = VKQ_C[k0/mma_B::K].to_mma_B();
+        const mma_B B = VKQ_C[k0/mma_B::K].to_mma_B(); // Conversion of C to B matrix puts it in column-major format.
 
 #pragma unroll
         for (int l = 0; l < mma_B::ne; ++l) {
@@ -333,8 +327,77 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         }
     }
 
+    const int j_offset = (threadIdx.x % (2*mma_C_VKQ::J)) / mma_C_VKQ::J;
+    const int j_fixup = threadIdx.y*(2*mma_C_VKQ::J) + 2*mma_C_VKQ::get_j(-1) + j_offset;
+    const float2 KQ_mrc = make_float2(((const float *) &KQ_max)[j_offset], ((const float *) &KQ_rowsum)[j_offset]);
+
+    if (((!needs_fixup && !is_fixup) || np > 1) && threadIdx.x < 2*mma_C_VKQ::J) {
+        // Use the 16 bytes of padding in each row to store the meta data: KQ max, KQ rowsum, KQ max scale.
+        ((float2 *) tile_KV)[j_fixup*(D2_padded/2) + D/4] = KQ_mrc;
+    }
+
+    // Ensure that all warps have written their partial results.
+    if (np > 1) {
+        if (threadIdx.y % np != 0) {
+            return;
+        }
+        __syncthreads();
+    }
+
+    static_assert(np == 1 || np == 2 || np == 4, "bad np");
+    if (np == 1) {
+        if (needs_fixup && threadIdx.x < mma_B::J) {
+            dstk_fixup[blockIdx.x*ncols + j_fixup] = KQ_mrc;
+        }
+        if (is_fixup && threadIdx.x < mma_B::J) {
+            dstk_fixup[(gridDim.x + blockIdx.x)*ncols + j_fixup] = KQ_mrc;
+        }
+    } else { // Combine the meta data for parallel warps.
+        float * meta_j = (float *) tile_KV + (threadIdx.y*mma_B::J + threadIdx.x)*D2_padded + D/2;
+
+        float KQ_mc = -FLT_MAX/2; // KQ max combine
+        if (np*mma_B::J == WARP_SIZE || threadIdx.x < np*mma_B::J) {
+            KQ_mc = meta_j[0];
+        }
+
+        float KQ_mnc = KQ_mc; // KQ max new combine
+#pragma unroll
+        for (int offset = np*mma_B::J/2; offset >= mma_B::J; offset >>= 1) {
+            KQ_mnc = fmaxf(KQ_mnc, __shfl_xor_sync(0xFFFFFFFF, KQ_mnc, offset, WARP_SIZE));
+        }
+
+        const float KQ_msc = expf(KQ_mc - KQ_mnc); // KQ max scale combine
+        float KQ_rsc = 0.0f; // KQ row sum combine
+        if (np*mma_B::J == WARP_SIZE || threadIdx.x < np*mma_B::J) {
+            KQ_rsc = KQ_msc*meta_j[1];
+        }
+#pragma unroll
+        for (int offset = np*mma_B::J/2; offset >= mma_B::J; offset >>= 1) {
+            KQ_rsc += __shfl_xor_sync(0xFFFFFFFF, KQ_rsc, offset, WARP_SIZE);
+        }
+
+        // Write back combined meta data:
+        if (np*mma_B::J == WARP_SIZE || threadIdx.x < np*mma_B::J) {
+            meta_j[0] = KQ_mnc;
+            meta_j[1] = KQ_rsc;
+            meta_j[2] = KQ_msc;
+        }
+        if (threadIdx.x < mma_B::J) {
+            if (needs_fixup) {
+                dstk_fixup[blockIdx.x*ncols + (threadIdx.y/np)*mma_B::J + threadIdx.x]
+                    = make_float2(KQ_mnc, KQ_rsc);
+            }
+            if (is_fixup) {
+                dstk_fixup[(gridDim.x + blockIdx.x)*ncols + (threadIdx.y/np)*mma_B::J + threadIdx.x]
+                    = make_float2(KQ_mnc, KQ_rsc);
+            }
+        }
+    }
+
+
     // The first 2*2*gridDim.x*ncols floats in dstk_fixup are for storing max. values and row sums.
     // The values after that are for the partial results of the individual blocks.
+    float2 * dstk_fixup_data = dstk_fixup + 2*gridDim.x*ncols + blockIdx.x*ncols*(D/2);
 
 #pragma unroll
     for (int stride_k : {WARP_SIZE, WARP_SIZE/2, WARP_SIZE/4}) {
@@ -342,32 +405,48 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const int k0_stop  =                             D/2 - (D/2) % (1*stride_k);
         const int stride_j = WARP_SIZE / stride_k;
 
-        if (nwarps*mma_B::J/np > ncols && threadIdx.y*(mma_B::J/np) >= ncols) {
+        if ((nwarps/np)*mma_B::J > ncols && (threadIdx.y/np)*mma_B::J >= ncols) {
             break;
         }
 
 #pragma unroll
-        for (int j0 = 0; j0 < mma_B::J; j0 += np*stride_j) {
-            const int j = j0 + threadIdx.y*(mma_B::J/np) + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
+        for (int j0 = 0; j0 < mma_B::J; j0 += stride_j) {
+            const int j_dst     = j0 + (threadIdx.y/np)*mma_B::J + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
+            const int j_tile_KV = j0 +  threadIdx.y    *mma_B::J + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
 
-            if (jt*ncols + j >= ne01) {
+            if (jt*ncols + j_dst >= ne01) {
                 continue;
             }
+            const float * meta_j = (const float *) tile_KV + j_tile_KV*D2_padded + D/2;
 #pragma unroll
             for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
                 const int k = k0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
 
+                float2 dstk_val = __half22float2(tile_KV[j_tile_KV*D2_padded + k]);
+
+                if (np > 1) {
+                    const float KQ_rsc = meta_j[2];
+                    dstk_val.x *= KQ_rsc;
+                    dstk_val.y *= KQ_rsc;
+                }
+#pragma unroll
+                for (int ip = 1; ip < np; ++ip) {
+                    const float KQ_rsc = meta_j[ip*mma_B::J*D2_padded + 2];
+                    const float2 dstk_val_add = __half22float2(tile_KV[(j_tile_KV + ip*mma_B::J)*D2_padded + k]);
+                    dstk_val.x += dstk_val_add.x*KQ_rsc;
+                    dstk_val.y += dstk_val_add.y*KQ_rsc;
+                }
+
+                if (!needs_fixup && !is_fixup) {
+                    const float KQ_rowsum_j = meta_j[1];
+                    dstk_val.x /= KQ_rowsum_j;
+                    dstk_val.y /= KQ_rowsum_j;
+                }
+
                 if (is_fixup) {
-                    float2 * dstk_fixup_data = dstk_fixup + 2*gridDim.x*ncols + blockIdx.x*ncols*(D/2);
-                    dstk_fixup_data[j*(D/2) + k] = __half22float2(tile_KV[j*D2_padded + k]);
+                    dstk_fixup_data[j_dst*(D/2) + k] = dstk_val;
                 } else {
-                    float2 dstk_val = __half22float2(tile_KV[j*D2_padded + k]);
-                    if (!needs_fixup) {
-                        const float KQ_rowsum_j = ((const float *) tile_KV)[j*D2_padded + D/2 + 1];
-                        dstk_val.x /= KQ_rowsum_j;
-                        dstk_val.y /= KQ_rowsum_j;
-                    }
-                    dstk[(jt*ncols + j)*ne02*(D/2) + k] = dstk_val;
+                    dstk[(jt*ncols + j_dst)*ne02*(D/2) + k] = dstk_val;
                 }
             }
         }
@@ -508,8 +587,9 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
 
     const ggml_tensor * KQV = dst;
 
-    constexpr int    nwarps        = cols_per_block <= 8 ? 4 : 8;
     constexpr int    KQ_stride     = D <= 128 ? 64 : 32;
+    constexpr int    nwarps        = (KQ_stride == 64 || cols_per_block >= 32) ? (cols_per_block <= 8 ? 4 : 8)
+                                     : cols_per_block/mma_B::J * KQ_stride/mma_A::I;
     constexpr size_t nbytes_shared = std::max(KQ_stride, nwarps*mma_B::J) * (D + 8) * sizeof(half);
 
     float logit_softcap;
