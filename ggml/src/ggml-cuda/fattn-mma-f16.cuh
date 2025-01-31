@@ -47,6 +47,12 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     typedef mma_C_I16J8<float> mma_C_KQ;
     typedef mma_C_I16J8<half2> mma_C_VKQ;
 
+    static_assert(nwarps*mma_B::J % ncols == 0, "bad nwarps");
+    constexpr int np = nwarps*mma_B::J / ncols; // Number of parallel CUDA warps per Q column.
+
+    static_assert(D         % nwarps == 0, "bad D");
+    static_assert(KQ_stride % nwarps == 0, "bad KQ_stride");
+
     const int D2_padded = D/2 + 4;     // Size of D in half2, padded to avoid shared memory bank conflicts.
     extern __shared__ half2 tile_KV[]; // Temporary shared buffer for loading K/V data with KQ_stride*D logical elements.
 
@@ -70,9 +76,13 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const int k0_stop  =                             D/2 - (D/2) % (1*stride_k);
         const int stride_j = WARP_SIZE / stride_k;
 
+        if (nwarps*mma_B::J/np > ncols && threadIdx.y*(mma_B::J/np) >= ncols) {
+            break;
+        }
+
 #pragma unroll
-        for (int j0 = 0; j0 < mma_B::J; j0 += stride_j) {
-            const int j = j0 + threadIdx.y*mma_B::J + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
+        for (int j0 = 0; j0 < mma_B::J; j0 += np*stride_j) {
+            const int j = j0 + threadIdx.y*(mma_B::J/np) + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
 
             if (jt*ncols + j < ne01) {
 #pragma unroll
@@ -91,6 +101,10 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
                 }
             }
         }
+    }
+
+    if (np > 1) {
+        __syncthreads(); // For np == 1 the data load pattern can avoid inter-warp dependencies.
     }
 
     {
@@ -114,7 +128,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         for (int stride_k : {WARP_SIZE, WARP_SIZE/2, WARP_SIZE/4}) {
             const int k0_start = stride_k == WARP_SIZE ? 0 : D/2 - (D/2) % (2*stride_k);
             const int k0_stop  =                             D/2 - (D/2) % (1*stride_k);
-            const int stride_i = WARP_SIZE/stride_k;
+            const int stride_i = WARP_SIZE / stride_k;
+
+            if (nwarps*stride_i > KQ_stride && threadIdx.y*stride_i >= KQ_stride) {
+                break;
+            }
 
 #pragma unroll
             for (int i_KQ_0 = 0; i_KQ_0 < KQ_stride; i_KQ_0 += nwarps*stride_i) {
@@ -133,7 +151,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
         // Calculate tile of KQ:
 #pragma unroll
-        for (int i_KQ_0 = 0; i_KQ_0 < KQ_stride; i_KQ_0 += mma_A::I) {
+        for (int i_KQ_00 = 0; i_KQ_00 < KQ_stride; i_KQ_00 += np*mma_A::I) {
+            const int i_KQ_0 = i_KQ_00 + (threadIdx.y % np)*mma_A::I;
 #pragma unroll
             for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += mma_A::K) {
                 mma_A K_A;
@@ -146,17 +165,18 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
         if (use_logit_softcap) {
 #pragma unroll
-            for (int i0 = 0; i0 < KQ_stride; i0 += mma_C_KQ::I) {
+            for (int i = 0; i < KQ_stride/(np*mma_C_KQ::I); ++i) {
 #pragma unroll
                 for (int l = 0; l < mma_C_KQ::ne; ++l) {
-                    KQ_C[i0/mma_C_KQ::I].x[l] = logit_softcap*tanhf(KQ_C[i0/mma_C_KQ::I].x[l]);
+                    KQ_C[i].x[l] = logit_softcap*tanhf(KQ_C[i].x[l]);
                 }
             }
         }
 
         if (maskh) {
 #pragma unroll
-            for (int i0 = 0; i0 < KQ_stride; i0 += mma_C_KQ::I) {
+            for (int i00 = 0; i00 < KQ_stride; i00 += np*mma_C_KQ::I) {
+                const int i0 = i00 + (threadIdx.y % np)*mma_C_KQ::I;
 #pragma unroll
                 for (int l = 0; l < mma_C_KQ::ne; ++l) {
                     const int i = i0 + mma_C_KQ::get_i(l);
@@ -171,13 +191,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         // The divisor is stored in KQ_rowsum and will be applied at the end.
         float2 KQ_max_new = KQ_max;
 #pragma unroll
-        for (int k0 = 0; k0 < KQ_stride; k0 += mma_C_KQ::I) {
+        for (int k = 0; k < KQ_stride/(np*mma_C_KQ::I); ++k) {
 #pragma unroll
             for (int l0 = 0; l0 < mma_C_KQ::ne; l0 += 2) {
-                const int k = k0 + mma_C_KQ::get_i(l0);
-
-                KQ_max_new.x = fmaxf(KQ_max_new.x, KQ_C[k0/mma_C_KQ::I].x[l0 + 0]);
-                KQ_max_new.y = fmaxf(KQ_max_new.y, KQ_C[k0/mma_C_KQ::I].x[l0 + 1]);
+                KQ_max_new.x = fmaxf(KQ_max_new.x, KQ_C[k].x[l0 + 0]);
+                KQ_max_new.y = fmaxf(KQ_max_new.y, KQ_C[k].x[l0 + 1]);
             }
         }
 
@@ -202,20 +220,20 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
         float2 KQ_rowsum_add = make_float2(0.0f, 0.0f);
 #pragma unroll
-        for (int k0 = 0; k0 < KQ_stride; k0 += mma_C_KQ::I) {
+        for (int k = 0; k < KQ_stride/(np*mma_C_KQ::I); ++k) {
 #pragma unroll
             for (int l = 0; l < mma_C_KQ::ne; ++l) {
                 const float KQ_max_l = l % 2 == 0 ? KQ_max.x : KQ_max.y;
-                const float diff = KQ_C[k0/mma_C_KQ::I].x[l] - KQ_max_l;
-                KQ_C[k0/mma_C_KQ::I].x[l] = expf(diff);
+                const float diff = KQ_C[k].x[l] - KQ_max_l;
+                KQ_C[k].x[l] = expf(diff);
                 if (diff <= SOFTMAX_FTZ_THRESHOLD) {
-                    KQ_C[k0/mma_C_KQ::I].x[l] = 0.0f;
+                    KQ_C[k].x[l] = 0.0f;
                 }
 
                 if (l % 2 == 0) {
-                    KQ_rowsum_add.x += KQ_C[k0/mma_C_KQ::I].x[l];
+                    KQ_rowsum_add.x += KQ_C[k].x[l];
                 } else {
-                    KQ_rowsum_add.y += KQ_C[k0/mma_C_KQ::I].x[l];
+                    KQ_rowsum_add.y += KQ_C[k].x[l];
                 }
             }
         }
@@ -245,7 +263,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         for (int stride_i : {WARP_SIZE, WARP_SIZE/2, WARP_SIZE/4}) {
             const int i0_start = stride_i == WARP_SIZE ? 0 : D/2 - (D/2) % (2*stride_i);
             const int i0_stop  =                             D/2 - (D/2) % (1*stride_i);
-            const int stride_k = WARP_SIZE/stride_i;
+            const int stride_k = WARP_SIZE / stride_i;
+
+            if (nwarps*stride_k > KQ_stride && threadIdx.y*stride_k >= KQ_stride) {
+                break;
+            }
 
 #pragma unroll
             for (int k_V_0 = 0; k_V_0 < KQ_stride; k_V_0 += nwarps*stride_k) {
@@ -489,9 +511,12 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     typedef mma_A_I16K8<half2> mma_A;
     typedef mma_B_J8K8<half2>  mma_B;
 
+    static_assert(D              % mma_B::K == 0, "bad D");
+    static_assert(cols_per_block % mma_B::J == 0, "bad cols_per_block");
+
     const ggml_tensor * KQV = dst;
 
-    constexpr int    nwarps        = cols_per_block / mma_B::J;
+    constexpr int    nwarps        = cols_per_block <= 8 ? 4 : 8;
     constexpr int    KQ_stride     = D <= 128 ? 64 : 32;
     constexpr size_t nbytes_shared = std::max(KQ_stride, cols_per_block) * (D + 8) * sizeof(half);
 
