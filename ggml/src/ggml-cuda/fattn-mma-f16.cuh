@@ -108,7 +108,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     }
 
     {
-        const int j0 = threadIdx.y*mma_B::J;
+        const int j0 = (threadIdx.y / np) * mma_B::J;
 
 #pragma unroll
         for (int k0 = 0; k0 < D/2; k0 += mma_B::K) {
@@ -309,7 +309,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     if (threadIdx.x < 2*mma_C_VKQ::J) {
         const int j_offset = (threadIdx.x % (2*mma_C_VKQ::J)) / mma_C_VKQ::J;
         const int j = threadIdx.y*(2*mma_C_VKQ::J) + 2*mma_C_VKQ::get_j(-1) + j_offset;
-        ((float *) tile_KV)[j*D2_padded + D/2] = ((const float *) &KQ_rowsum)[j_offset];
+        ((float *) tile_KV)[j*D2_padded + D/2 + 0] = ((const float *) &KQ_max)[j_offset];
+        ((float *) tile_KV)[j*D2_padded + D/2 + 1] = ((const float *) &KQ_rowsum)[j_offset];
     }
 
     const int j_tmpf = threadIdx.y*mma_B::J + mma_B::get_j(-1);
@@ -327,34 +328,6 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
     // The first 2*2*gridDim.x*ncols floats in dstk_fixup are for storing max. values and row sums.
     // The values after that are for the partial results of the individual blocks.
-
-    const int j_fixup = threadIdx.y*(2*mma_C_VKQ::J) + 2*mma_C_VKQ::get_j(-1);
-    const int j_VKQ_0 = jt*ncols + j_fixup;
-
-    if (j_VKQ_0 + 0 < ne01) {
-        if constexpr (is_fixup) {
-            static_assert(!needs_fixup, "needs_fixup and is_fixup are mutually exclusive");
-            if (threadIdx.x < mma_C_VKQ::J) {
-                dstk_fixup[(gridDim.x + blockIdx.x)*ncols + j_fixup + 0] = make_float2(KQ_max.x, KQ_rowsum.x);
-            }
-        } else if constexpr (needs_fixup) {
-            if (threadIdx.x < mma_C_VKQ::J) {
-                dstk_fixup[blockIdx.x*ncols + j_fixup + 0] = make_float2(KQ_max.x, KQ_rowsum.x);
-            }
-        }
-        if (j_VKQ_0 + 1 < ne01) {
-            if constexpr (is_fixup) {
-                static_assert(!needs_fixup, "needs_fixup and is_fixup are mutually exclusive");
-                if (threadIdx.x < mma_C_VKQ::J) {
-                    dstk_fixup[(gridDim.x + blockIdx.x)*ncols + j_fixup + 1] = make_float2(KQ_max.y, KQ_rowsum.y);
-                }
-            } else if constexpr (needs_fixup) {
-                if (threadIdx.x < mma_C_VKQ::J) {
-                    dstk_fixup[blockIdx.x*ncols + j_fixup + 1] = make_float2(KQ_max.y, KQ_rowsum.y);
-                }
-            }
-        }
-    }
 
 #pragma unroll
     for (int stride_k : {WARP_SIZE, WARP_SIZE/2, WARP_SIZE/4}) {
@@ -378,12 +351,16 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
                 const int k = k0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
 
                 if (is_fixup) {
+                    dstk_fixup[(gridDim.x + blockIdx.x)*ncols + j] = ((const float2 *) tile_KV)[j*(D2_padded/2) + D/4];
+
                     float2 * dstk_fixup_data = dstk_fixup + 2*gridDim.x*ncols + blockIdx.x*ncols*(D/2);
                     dstk_fixup_data[j*(D/2) + k] = __half22float2(tile_KV[j*D2_padded + k]);
                 } else {
                     float2 dstk_val = __half22float2(tile_KV[j*D2_padded + k]);
-                    if (!needs_fixup) {
-                        const float KQ_rowsum_j = ((const float *) tile_KV)[j*D2_padded + D/2];
+                    if (needs_fixup) {
+                        dstk_fixup[blockIdx.x*ncols + j] = ((const float2 *) tile_KV)[j*(D2_padded/2) + D/4];
+                    } else {
+                        const float KQ_rowsum_j = ((const float *) tile_KV)[j*D2_padded + D/2 + 1];
                         dstk_val.x /= KQ_rowsum_j;
                         dstk_val.y /= KQ_rowsum_j;
                     }
