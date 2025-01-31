@@ -306,11 +306,18 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     }
 
 
-    if (threadIdx.x < 2*mma_C_VKQ::J) {
-        const int j_offset = (threadIdx.x % (2*mma_C_VKQ::J)) / mma_C_VKQ::J;
-        const int j = threadIdx.y*(2*mma_C_VKQ::J) + 2*mma_C_VKQ::get_j(-1) + j_offset;
-        ((float *) tile_KV)[j*D2_padded + D/2 + 0] = ((const float *) &KQ_max)[j_offset];
-        ((float *) tile_KV)[j*D2_padded + D/2 + 1] = ((const float *) &KQ_rowsum)[j_offset];
+    const int j_offset = (threadIdx.x % (2*mma_C_VKQ::J)) / mma_C_VKQ::J;
+    const int j_fixup = threadIdx.y*(2*mma_C_VKQ::J) + 2*mma_C_VKQ::get_j(-1) + j_offset;
+    const float2 KQ_mrc = make_float2(((const float *) &KQ_max)[j_offset], ((const float *) &KQ_rowsum)[j_offset]);
+
+    if (!needs_fixup && !is_fixup && threadIdx.x < 2*mma_C_VKQ::J) {
+        ((float2 *) tile_KV)[j_fixup*(D2_padded/2) + D/4] = KQ_mrc;
+    }
+    if (needs_fixup && threadIdx.x < 2*mma_C_VKQ::J) {
+        dstk_fixup[             blockIdx.x *ncols + j_fixup] = KQ_mrc;
+    }
+    if (is_fixup && threadIdx.x < 2*mma_C_VKQ::J) {
+        dstk_fixup[(gridDim.x + blockIdx.x)*ncols + j_fixup] = KQ_mrc;
     }
 
     const int j_tmpf = threadIdx.y*mma_B::J + mma_B::get_j(-1);
@@ -351,15 +358,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
                 const int k = k0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
 
                 if (is_fixup) {
-                    dstk_fixup[(gridDim.x + blockIdx.x)*ncols + j] = ((const float2 *) tile_KV)[j*(D2_padded/2) + D/4];
-
                     float2 * dstk_fixup_data = dstk_fixup + 2*gridDim.x*ncols + blockIdx.x*ncols*(D/2);
                     dstk_fixup_data[j*(D/2) + k] = __half22float2(tile_KV[j*D2_padded + k]);
                 } else {
                     float2 dstk_val = __half22float2(tile_KV[j*D2_padded + k]);
-                    if (needs_fixup) {
-                        dstk_fixup[blockIdx.x*ncols + j] = ((const float2 *) tile_KV)[j*(D2_padded/2) + D/4];
-                    } else {
+                    if (!needs_fixup) {
                         const float KQ_rowsum_j = ((const float *) tile_KV)[j*D2_padded + D/2 + 1];
                         dstk_val.x /= KQ_rowsum_j;
                         dstk_val.y /= KQ_rowsum_j;
