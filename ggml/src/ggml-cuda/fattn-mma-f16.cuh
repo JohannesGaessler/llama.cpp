@@ -76,16 +76,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const int k0_stop  =                             D/2 - (D/2) % (1*stride_k);
         const int stride_j = WARP_SIZE / stride_k;
 
-        if ((nwarps/np)*mma_B::J > ncols && (threadIdx.y / np)*mma_B::J >= ncols) {
-            break;
-        }
-        if (np*stride_j > mma_B::J && (threadIdx.y % np)*stride_j >= mma_B::J) {
-            break;
-        }
-
 #pragma unroll
-        for (int j0 = 0; j0 < mma_B::J; j0 += np*stride_j) {
-            const int j = j0 + (threadIdx.y / np)*mma_B::J + (threadIdx.y % np)*stride_j + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
+        for (int j0 = 0; j0 < ncols; j0 += nwarps*stride_j) {
+            const int j = j0 + threadIdx.y*stride_j + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
 
             if (jt*ncols + j < ne01) {
 #pragma unroll
@@ -106,9 +99,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         }
     }
 
-    if (np > 1) {
-        __syncthreads(); // For np == 1 the data load pattern can avoid inter-warp dependencies.
-    }
+    __syncthreads();
 
     {
         const int j0 = (threadIdx.y / np) * mma_B::J;
@@ -336,13 +327,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         ((float2 *) tile_KV)[j_fixup*(D2_padded/2) + D/4] = KQ_mrc;
     }
 
-    // Ensure that all warps have written their partial results.
-    if (np > 1) {
-        if (threadIdx.y % np != 0) {
-            return;
-        }
-        __syncthreads();
+    if (threadIdx.y % np != 0) {
+        return;
     }
+
+    __syncthreads();
 
     static_assert(np == 1 || np == 2 || np == 4, "bad np");
     if (np == 1) {
@@ -392,6 +381,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
                     = make_float2(KQ_mnc, KQ_rsc);
             }
         }
+        __syncthreads();
     }
 
 
@@ -405,14 +395,10 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const int k0_stop  =                             D/2 - (D/2) % (1*stride_k);
         const int stride_j = WARP_SIZE / stride_k;
 
-        if ((nwarps/np)*mma_B::J > ncols && (threadIdx.y/np)*mma_B::J >= ncols) {
-            break;
-        }
-
 #pragma unroll
-        for (int j0 = 0; j0 < mma_B::J; j0 += stride_j) {
-            const int j_dst     = j0 + (threadIdx.y/np)*mma_B::J + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
-            const int j_tile_KV = j0 +  threadIdx.y    *mma_B::J + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
+        for (int j0 = 0; j0 < ncols; j0 += (nwarps/np)*stride_j) {
+            const int j_dst     = j0 + (threadIdx.y/np)*stride_j + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
+            const int j_tile_KV = j_dst + (j_dst/mma_B::J)*((np-1)*mma_B::J);
 
             if (jt*ncols + j_dst >= ne01) {
                 continue;
