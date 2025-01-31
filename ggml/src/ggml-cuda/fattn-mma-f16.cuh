@@ -8,7 +8,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const half2  * __restrict__ K_h2,
         const half2  * __restrict__ V_h2,
         const half   * __restrict__ maskh,
-        float        * __restrict__ dstk,
+        float2       * __restrict__ dstk,
         float2       * __restrict__ dstk_fixup,
         const float scale,
         const float slope,
@@ -53,7 +53,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     static_assert(D         % nwarps == 0, "bad D");
     static_assert(KQ_stride % nwarps == 0, "bad KQ_stride");
 
-    const int D2_padded = D/2 + 4;     // Size of D in half2, padded to avoid shared memory bank conflicts.
+    constexpr int D2_padded = D/2 + 4; // Size of D in half2, padded to avoid shared memory bank conflicts.
     extern __shared__ half2 tile_KV[]; // Temporary shared buffer for loading K/V data with KQ_stride*D logical elements.
 
     const int stride_Q    = nb01 / sizeof(float2);
@@ -305,78 +305,88 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         KQ_rowsum.y += __shfl_xor_sync(0xFFFFFFFF, KQ_rowsum.y, offset, WARP_SIZE);
     }
 
+    const int j_tmpf = threadIdx.y*mma_B::J + mma_B::get_j(-1);
+
+    if (threadIdx.x % (mma_B::K/2) == 0) {
+        ((float *) tile_KV)[j_tmpf*D2_padded + D/2] = ((const float *) &KQ_rowsum)[(threadIdx.x % mma_B::K) / (mma_B::K/2)];
+    }
+
+#pragma unroll
+    for (int k0 = 0; k0 < D/2; k0 += mma_B::K) {
+        const mma_B B = VKQ_C[k0/mma_B::K].to_mma_B();
+
+#pragma unroll
+        for (int l = 0; l < mma_B::ne; ++l) {
+            const int k = k0 + mma_B::get_k(l);
+
+            tile_KV[j_tmpf*D2_padded + k] = B.x[l];
+        }
+    }
+
     // The first 2*2*gridDim.x*ncols floats in dstk_fixup are for storing max. values and row sums.
     // The values after that are for the partial results of the individual blocks.
 
     const int j_fixup = threadIdx.y*(2*mma_C_VKQ::J) + 2*mma_C_VKQ::get_j(-1);
     const int j_VKQ_0 = jt*ncols + j_fixup;
 
-    if (j_VKQ_0 + 0 >= ne01) {
-        return;
-    }
-
-    if constexpr (is_fixup) {
-        static_assert(!needs_fixup, "needs_fixup and is_fixup are mutually exclusive");
-        if (threadIdx.x < mma_C_VKQ::J) {
-            dstk_fixup[(gridDim.x + blockIdx.x)*ncols + j_fixup + 0] = make_float2(KQ_max.x, KQ_rowsum.x);
+    if (j_VKQ_0 + 0 < ne01) {
+        if constexpr (is_fixup) {
+            static_assert(!needs_fixup, "needs_fixup and is_fixup are mutually exclusive");
+            if (threadIdx.x < mma_C_VKQ::J) {
+                dstk_fixup[(gridDim.x + blockIdx.x)*ncols + j_fixup + 0] = make_float2(KQ_max.x, KQ_rowsum.x);
+            }
+        } else if constexpr (needs_fixup) {
+            if (threadIdx.x < mma_C_VKQ::J) {
+                dstk_fixup[blockIdx.x*ncols + j_fixup + 0] = make_float2(KQ_max.x, KQ_rowsum.x);
+            }
         }
-    } else if constexpr (needs_fixup) {
-        if (threadIdx.x < mma_C_VKQ::J) {
-            dstk_fixup[blockIdx.x*ncols + j_fixup + 0] = make_float2(KQ_max.x, KQ_rowsum.x);
-        }
-    }
-
-#pragma unroll
-    for (int i0 = 0; i0 < D; i0 += mma_C_VKQ::I) {
-#pragma unroll
-        for (int l = 0; l < mma_C_VKQ::ne; ++l) {
-            const int i = i0 + mma_C_VKQ::get_i(l);
-
-            float dst_val = __low2float(VKQ_C[i0/mma_C_VKQ::I].x[l]);
+        if (j_VKQ_0 + 1 < ne01) {
             if constexpr (is_fixup) {
                 static_assert(!needs_fixup, "needs_fixup and is_fixup are mutually exclusive");
-                float * dstk_fixup_data = ((float *) dstk_fixup) + 2*2*gridDim.x*ncols + blockIdx.x*ncols*D;
-                dstk_fixup_data[(j_fixup + 0)*D + i] = dst_val;
-            } else {
-                if constexpr (!needs_fixup) {
-                    dst_val /= KQ_rowsum.x;
+                if (threadIdx.x < mma_C_VKQ::J) {
+                    dstk_fixup[(gridDim.x + blockIdx.x)*ncols + j_fixup + 1] = make_float2(KQ_max.y, KQ_rowsum.y);
                 }
-                dstk[(j_VKQ_0 + 0)*ne02*D + i] = dst_val;
+            } else if constexpr (needs_fixup) {
+                if (threadIdx.x < mma_C_VKQ::J) {
+                    dstk_fixup[blockIdx.x*ncols + j_fixup + 1] = make_float2(KQ_max.y, KQ_rowsum.y);
+                }
             }
         }
     }
 
-    if (j_VKQ_0 + 1 >= ne01) {
-        return;
-    }
+#pragma unroll
+    for (int stride_k : {WARP_SIZE, WARP_SIZE/2, WARP_SIZE/4}) {
+        const int k0_start = stride_k == WARP_SIZE ? 0 : D/2 - (D/2) % (2*stride_k);
+        const int k0_stop  =                             D/2 - (D/2) % (1*stride_k);
+        const int stride_j = WARP_SIZE / stride_k;
 
-    if constexpr (is_fixup) {
-        static_assert(!needs_fixup, "needs_fixup and is_fixup are mutually exclusive");
-        if (threadIdx.x < mma_C_VKQ::J) {
-            dstk_fixup[(gridDim.x + blockIdx.x)*ncols + j_fixup + 1] = make_float2(KQ_max.y, KQ_rowsum.y);
+        if (nwarps*mma_B::J/np > ncols && threadIdx.y*(mma_B::J/np) >= ncols) {
+            break;
         }
-    } else if constexpr (needs_fixup) {
-        if (threadIdx.x < mma_C_VKQ::J) {
-            dstk_fixup[blockIdx.x*ncols + j_fixup + 1] = make_float2(KQ_max.y, KQ_rowsum.y);
-        }
-    }
 
 #pragma unroll
-    for (int i0 = 0; i0 < D; i0 += mma_C_VKQ::I) {
-#pragma unroll
-        for (int l = 0; l < mma_C_VKQ::ne; ++l) {
-            const int i = i0 + mma_C_VKQ::get_i(l);
+        for (int j0 = 0; j0 < mma_B::J; j0 += np*stride_j) {
+            const int j = j0 + threadIdx.y*(mma_B::J/np) + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
 
-            float dst_val = __high2float(VKQ_C[i0/mma_C_VKQ::I].x[l]);
-            if constexpr (is_fixup) {
-                static_assert(!needs_fixup, "needs_fixup and is_fixup are mutually exclusive");
-                float * dstk_fixup_data = ((float *) dstk_fixup) + 2*2*gridDim.x*ncols + blockIdx.x*ncols*D;
-                dstk_fixup_data[(j_fixup + 1)*D + i] = dst_val;
-            } else {
-                if constexpr (!needs_fixup) {
-                    dst_val /= KQ_rowsum.y;
+            if (jt*ncols + j >= ne01) {
+                continue;
+            }
+#pragma unroll
+            for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
+                const int k = k0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
+
+                if (is_fixup) {
+                    float2 * dstk_fixup_data = dstk_fixup + 2*gridDim.x*ncols + blockIdx.x*ncols*(D/2);
+                    dstk_fixup_data[j*(D/2) + k] = __half22float2(tile_KV[j*D2_padded + k]);
+                } else {
+                    float2 dstk_val = __half22float2(tile_KV[j*D2_padded + k]);
+                    if (!needs_fixup) {
+                        const float KQ_rowsum_j = ((const float *) tile_KV)[j*D2_padded + D/2];
+                        dstk_val.x /= KQ_rowsum_j;
+                        dstk_val.y /= KQ_rowsum_j;
+                    }
+                    dstk[(jt*ncols + j)*ne02*(D/2) + k] = dstk_val;
                 }
-                dstk[(j_VKQ_0 + 1)*ne02*D + i] = dst_val;
             }
         }
     }
@@ -387,7 +397,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
 template<int D, int ncols, int nwarps, int KQ_stride, bool use_logit_softcap>
 #if !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__))
-__launch_bounds__(nwarps*WARP_SIZE, ncols <= 32 ? 4 : 2)
+__launch_bounds__(nwarps*WARP_SIZE, 2)
 #endif // !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__))
 static __global__ void flash_attn_ext_f16(
         const char * __restrict__ Q,
@@ -457,7 +467,7 @@ static __global__ void flash_attn_ext_f16(
         const half2  * K_h2  = (const half2  *) (K + nb12*(channel / gqa_ratio));
         const half2  * V_h2  = (const half2  *) (V + nb12*(channel / gqa_ratio)); // K and V have same shape
         const half   * maskh = mask ? (const half  *) mask + (nb31/sizeof(half))*jt*ncols : nullptr;
-        float        * dstk  = dst + channel*D;
+        float2       * dstk  = ((float2 *) dst) + channel*(D/2);
 
         const float slope = get_alibi_slope(max_bias, channel, n_head_log2, m0, m1);
 
@@ -494,7 +504,7 @@ static __global__ void flash_attn_ext_f16(
     const half2  * K_h2  = (const half2  *) (K + nb12*(channel / gqa_ratio));
     const half2  * V_h2  = (const half2  *) (V + nb12*(channel / gqa_ratio)); // K and V have same shape
     const half   * maskh = mask ? (const half  *) mask + (nb31/sizeof(half))*jt*ncols : nullptr;
-    float        * dstk  = dst + channel*D;
+    float2       * dstk  = ((float2 *) dst) + channel*(D/2);
 
     const float slope = get_alibi_slope(max_bias, channel, n_head_log2, m0, m1);
 
@@ -518,7 +528,7 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
 
     constexpr int    nwarps        = cols_per_block <= 8 ? 4 : 8;
     constexpr int    KQ_stride     = D <= 128 ? 64 : 32;
-    constexpr size_t nbytes_shared = std::max(KQ_stride, cols_per_block) * (D + 8) * sizeof(half);
+    constexpr size_t nbytes_shared = std::max(KQ_stride, nwarps*mma_B::J) * (D + 8) * sizeof(half);
 
     float logit_softcap;
     memcpy(&logit_softcap, (const float *) KQV->op_params + 2, sizeof(float));
