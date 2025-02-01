@@ -125,7 +125,7 @@ struct mma_A_I16K8 {
             : "+r"(xi[0]) : "r"(xi[0]));
         int tmp = 0;
         asm("movmatrix.sync.aligned.m8n8.trans.b16 %0, %1;"
-            : "+r"(tmp) : "r"(xi[1]));
+            : "+r"(tmp)   : "r"(xi[1]));
         asm("movmatrix.sync.aligned.m8n8.trans.b16 %0, %1;"
             : "+r"(xi[1]) : "r"(xi[2]));
         xi[2] = tmp;
@@ -173,8 +173,7 @@ struct mma_B_J8K4 {
         int * xi = (int *) x;
         const int * xs = (const int *) xs0 + (threadIdx.x%J)*stride;
         asm("ldmatrix.sync.aligned.m8n8.x1.b16 {%0}, [%1];"
-            : "+r"(xi[0])
-            : "l"(xs));
+            : "+r"(xi[0]) : "l"(xs));
 #else
         load_generic(xs0, stride);
 #endif // NEW_MMA_AVAILABLE
@@ -350,15 +349,14 @@ struct mma_C_I16J8<half2> {
 
     __device__ __forceinline__ mma_B_J8K8<half2> to_mma_B() {
         mma_B_J8K8<half2> mma_B;
-        mma_B.x[0] = x[0];
-        mma_B.x[1] = x[1];
 
 #ifdef NEW_MMA_AVAILABLE
+        int * xi   = (int *) x;
         int * Bxi  = (int *) mma_B.x;
-        asm("movmatrix.sync.aligned.m8n8.trans.b16 %0, %0;"
-            : "+r"(Bxi[0]) : );
-        asm("movmatrix.sync.aligned.m8n8.trans.b16 %0, %0;"
-            : "+r"(Bxi[1]) : );
+        asm("movmatrix.sync.aligned.m8n8.trans.b16 %0, %1;"
+            : "+r"(Bxi[0]) : "r"(xi[0]));
+        asm("movmatrix.sync.aligned.m8n8.trans.b16 %0, %1;"
+            : "+r"(Bxi[1]) : "r"(xi[1]));
 #else
         NO_DEVICE_CODE;
 #endif // NEW_MMA_AVAILABLE

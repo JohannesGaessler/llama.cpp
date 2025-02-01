@@ -438,10 +438,6 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
                 }
             }
         }
-
-        if ((D/2) % stride_k == 0) {
-            break;
-        }
     }
 #else
    NO_DEVICE_CODE;

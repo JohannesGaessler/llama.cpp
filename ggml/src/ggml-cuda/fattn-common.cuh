@@ -702,6 +702,8 @@ void launch_fattn(
 
     GGML_ASSERT(K->ne[1] % FATTN_KQ_STRIDE == 0 && "Incorrect KV cache padding.");
 
+    GGML_ASSERT(Q->ne[3] == 1);
+
     ggml_cuda_pool & pool = ctx.pool();
     cudaStream_t main_stream = ctx.stream();
     const int nsm = ggml_cuda_info().devices[ggml_cuda_get_device()].nsm;
@@ -768,7 +770,7 @@ void launch_fattn(
         blocks_num.z = 1;
 
         dst_tmp_meta.alloc(blocks_num.x*cols_per_block * (2*2 + D) * sizeof(float));
-        CUDA_CHECK(cudaMemsetAsync(dst_tmp_meta.get(), 0, nsm*cols_per_block * (2*2 + D) * sizeof(float), main_stream)); // FIXME
+        CUDA_CHECK(cudaMemsetAsync(dst_tmp_meta.get(), 0, blocks_num.x*cols_per_block * (2*2 + D) * sizeof(float), main_stream)); // FIXME
     } else {
         blocks_num.x = parallel_blocks*ntiles_x;
         blocks_num.y = Q->ne[2];
