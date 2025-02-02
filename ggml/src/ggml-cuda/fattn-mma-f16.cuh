@@ -456,7 +456,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
 template<int D, int ncols, int nwarps, int KQ_stride, bool use_logit_softcap>
 #if !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__))
-__launch_bounds__(nwarps*WARP_SIZE, 2)
+__launch_bounds__(nwarps*WARP_SIZE, ncols <= 8 ? 4 : 2)
 #endif // !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__))
 static __global__ void flash_attn_ext_f16(
         const char * __restrict__ Q,
