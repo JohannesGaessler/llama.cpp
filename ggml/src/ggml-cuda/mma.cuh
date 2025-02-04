@@ -142,6 +142,17 @@ struct mma_A_I16K8 {
 #endif // NEW_MMA_AVAILABLE
     }
 
+    __device__ __forceinline__ void load_generic_trans(const T * __restrict__ xs0, const int & stride) {
+        int * xi = (int *) x;
+        const int * xs0i = (const int *) xs0;
+
+        static_assert(ne == 4, "bad ne");
+        xi[0] = ggml_cuda_movmatrix(xs0i[get_i(0)*stride + get_k(0)]);
+        xi[1] = ggml_cuda_movmatrix(xs0i[get_i(2)*stride + get_k(2)]);
+        xi[2] = ggml_cuda_movmatrix(xs0i[get_i(1)*stride + get_k(1)]);
+        xi[3] = ggml_cuda_movmatrix(xs0i[get_i(3)*stride + get_k(3)]);
+    }
+
     __device__ __forceinline__ void load_ldmatrix_trans(const T * __restrict__ xs0, const int & stride) {
 #ifdef NEW_MMA_AVAILABLE
         int * xi = (int * ) x;
