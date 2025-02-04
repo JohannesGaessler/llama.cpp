@@ -287,8 +287,7 @@ struct mma_B_J8K8 {
 };
 
 template <typename T>
-struct mma_B_J8K16 {
-}
+struct mma_B_J8K16 {};
 
 template <>
 struct mma_B_J8K16<float> {
