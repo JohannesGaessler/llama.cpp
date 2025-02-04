@@ -225,13 +225,13 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         for (int k = 0; k < KQ_stride/(np*mma_B_f::K); ++k) {
 #pragma unroll
             for (int l = 0; l < mma_B_f::ne; ++l) {
-                const float diff = KQ_C[k].x[l] - KQ_max;
-                KQ_C[k].x[l] = expf(diff);
+                const float diff = VKQ_B_f[k].x[l] - KQ_max;
+                VKQ_B_f[k].x[l] = expf(diff);
                 if (diff <= SOFTMAX_FTZ_THRESHOLD) {
-                    KQ_C[k].x[l] = 0.0f;
+                    VKQ_B_f[k].x[l] = 0.0f;
                 }
 
-                KQ_rowsum_add += KQ_C[k].x[l];
+                KQ_rowsum_add += VKQ_B_f[k].x[l];
             }
         }
 

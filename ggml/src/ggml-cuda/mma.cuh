@@ -61,9 +61,6 @@ static __device__ __forceinline__ int2 ggml_cuda_movmatrix(const int2 x) {
     const int src_laneid_low  = src_i_low  * 4 + src_j / 2;
     const int src_laneid_high = src_i_high * 4 + src_j / 2;
 
-    const int mask_offset_low  = src_j + 0;
-    const int mask_offset_high = src_j + 1;
-
     int2 ret;
     ret.x  = __shfl_sync(0xFFFFFFFF, x.x, src_laneid_low,   WARP_SIZE) * ((src_j + 0) % 2);
     ret.x |= __shfl_sync(0xFFFFFFFF, x.y, src_laneid_low,   WARP_SIZE) * ((src_j + 1) % 2);
