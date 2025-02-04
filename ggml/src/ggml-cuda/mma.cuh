@@ -295,7 +295,7 @@ struct mma_B_J8K16<float> {
     static constexpr int K  = 16;
     static constexpr int ne = 4;
 
-    T x[ne];
+    float x[ne];
 
     static __device__ __forceinline__ int get_j(const int /* l */) {
         const int ret = threadIdx.x / (K/4);
