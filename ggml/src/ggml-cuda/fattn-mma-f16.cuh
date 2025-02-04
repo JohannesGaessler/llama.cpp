@@ -151,7 +151,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         for (int i_KQ_00 = 0; i_KQ_00 < KQ_stride; i_KQ_00 += np*mma_A::I) {
             const int i_KQ_0 = i_KQ_00 + (threadIdx.y % np)*mma_A::I;
 
-            mma_C KQ_C;
+            mma_C_KQ KQ_C;
 #pragma unroll
             for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += mma_A::K) {
                 mma_A K_A;
@@ -283,7 +283,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         for (int i_VKQ_0 = 0; i_VKQ_0 < D; i_VKQ_0 += mma_C_VKQ::I) {
             static_assert((KQ_stride/2) % (np*mma_A::K) == 0, "bad loop size");
 
-            mma_C VKQ_C;
+            mma_C_VKQ VKQ_C;
 #pragma unroll
             for (int k00 = 0; k00 < KQ_stride/2; k00 += np*mma_A::K) {
                 const int k0 = k00 + (threadIdx.y % np)*mma_A::K;
@@ -295,7 +295,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
             const mma_B tmp = VKQ_C.to_mma_B();
 #pragma unroll
             for (int l = 0; l < mma_B::ne; ++l) {
-                VKQ_acc[i_VKQ_0/mma_C_VKQ::I].x[l] += tmp[l];
+                VKQ_acc[i_VKQ_0/mma_C_VKQ::I].x[l] += tmp.x[l];
             }
         }
 
@@ -325,7 +325,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
     if (((!needs_fixup && !is_fixup) || np > 1) && threadIdx.x < mma_B::J) {
         // Use the 16 bytes of padding in each row to store the meta data: KQ max, KQ rowsum, KQ max scale.
-        ((float2 *) tile_KV)[j_cwm*(D2_padded/2) + D/4] = make_float2(KQ_max, KQ_rowsum);
+        ((float2 *) tile_KV)[j_cwd*(D2_padded/2) + D/4] = make_float2(KQ_max, KQ_rowsum);
     }
 
     __syncthreads();
@@ -335,11 +335,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         // No combination is needed, the meta data can be directly written from registers to VRAM.
         if (needs_fixup && threadIdx.x < mma_B::J) {
             float2 * dstk_fixup_meta = dstk_fixup + blockIdx.x*ncols;
-            dstk_fixup_meta[j_cwm] = make_float2(KQ_max, KQ_rowsum);
+            dstk_fixup_meta[j_cwd] = make_float2(KQ_max, KQ_rowsum);
         }
         if (is_fixup && threadIdx.x < mma_B::J) {
             float2 * dstk_fixup_meta = dstk_fixup + (gridDim.x + blockIdx.x)*ncols;
-            dstk_fixup_meta[j_cwm] = make_float2(KQ_max, KQ_rowsum);
+            dstk_fixup_meta[j_cwd] = make_float2(KQ_max, KQ_rowsum);
         }
     } else if (threadIdx.y % np == 0) {
         // Combine the meta data for parallel warps via shared memory.
