@@ -252,7 +252,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         static_assert(KQ_stride % (np*2*mma_B::K) == 0, "bad loop size");
 #pragma unroll
         for (int k = 0; k < KQ_stride/(np*2*mma_B::K); ++k) {
-            B[k] = KQ_C[k].to_h2();
+            B[k] = VKQ_B_f[k].to_h2();
         }
 
         // Load V data into tile with decreasing granularity for D for better memory bandwidth:
