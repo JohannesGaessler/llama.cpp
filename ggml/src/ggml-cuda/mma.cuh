@@ -52,6 +52,26 @@ static __device__ __forceinline__ int ggml_cuda_movmatrix(const int x) {
 
 #endif // CUDART_VERSION >= 11800
 
+static __device__ __forceinline__ int2 ggml_cuda_movmatrix(const int2 x) {
+    // Imagine transposing row-major matrix to column-major matrix.
+    const int src_i_low  = 2 * (threadIdx.x % 4);
+    const int src_i_high = src_i_low + 1;
+    const int src_j      = threadIdx.x / 4;
+
+    const int src_laneid_low  = src_i_low  * 4 + src_j / 2;
+    const int src_laneid_high = src_i_high * 4 + src_j / 2;
+
+    const int mask_offset_low  = src_j + 0;
+    const int mask_offset_high = src_j + 1;
+
+    int2 ret;
+    ret.x  = __shfl_sync(0xFFFFFFFF, x.x, src_laneid_low,   WARP_SIZE) * ((src_j + 0) % 2);
+    ret.x |= __shfl_sync(0xFFFFFFFF, x.y, src_laneid_low,   WARP_SIZE) * ((src_j + 1) % 2);
+    ret.y  = __shfl_sync(0xFFFFFFFF, x.x, src_laneid_high,  WARP_SIZE) * ((src_j + 1) % 2);
+    ret.y |= __shfl_sync(0xFFFFFFFF, x.y, src_laneid_high,  WARP_SIZE) * ((src_j + 0) % 2);
+
+    return ret;
+}
 
 template <typename T>
 struct mma_A_I16K4 {
@@ -267,6 +287,40 @@ struct mma_B_J8K8 {
 };
 
 template <typename T>
+struct mma_B_J8K16 {
+}
+
+template <>
+struct mma_B_J8K16<float> {
+    static constexpr int J  = 8;
+    static constexpr int K  = 16;
+    static constexpr int ne = 4;
+
+    T x[ne];
+
+    static __device__ __forceinline__ int get_j(const int /* l */) {
+        const int ret = threadIdx.x / (K/4);
+        GGML_CUDA_ASSUME(ret >= 0);
+        GGML_CUDA_ASSUME(ret <  J);
+        return ret;
+    }
+
+    static __device__ __forceinline__ int get_k(const int l) {
+        const int ret = l * (K/2) + threadIdx.x % (K/4) + l % 2;
+        GGML_CUDA_ASSUME(ret >= 0);
+        GGML_CUDA_ASSUME(ret <  K);
+        return ret;
+    }
+
+    __device__ __forceinline__ mma_B_J8K8<half2> to_h2() {
+        mma_B_J8K8<half2> mma_B;
+        mma_B.x[0] = make_half2(x[0], x[1]);
+        mma_B.x[1] = make_half2(x[2], x[3]);
+        return mma_B;
+    }
+};
+
+template <typename T>
 struct mma_C_I16J8 {};
 
 template <>
@@ -448,7 +502,7 @@ struct mma_C_I16J8<float> {
 #endif // NEW_MMA_AVAILABLE
     }
 
-    __device__ __forceinline__ mma_B_J8K8<half2> to_mma_B() {
+    __device__ __forceinline__ mma_B_J8K8<half2> to_mma_B_h2() {
         mma_B_J8K8<half2> mma_B;
         mma_B.x[0] = make_half2(x[0], x[1]);
         mma_B.x[1] = make_half2(x[2], x[3]);
@@ -456,6 +510,18 @@ struct mma_C_I16J8<float> {
         int * Bxi  = (int *) mma_B.x;
         Bxi[0] = ggml_cuda_movmatrix(Bxi[0]);
         Bxi[1] = ggml_cuda_movmatrix(Bxi[1]);
+
+        return mma_B;
+    }
+
+    __device__ __forceinline__ mma_B_J8K16<float> to_mma_B_f() {
+        mma_B_J8K16<float> mma_B;
+
+        const int2 * xi2  = (const int2 *) x;
+        int2       * Bxi2 = (int2       *) mma_B.x;
+
+        Bxi2[0] = ggml_cuda_movmatrix(xi2[0]);
+        Bxi2[1] = ggml_cuda_movmatrix(xi2[1]);
 
         return mma_B;
     }
