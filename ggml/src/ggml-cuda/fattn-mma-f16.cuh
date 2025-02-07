@@ -15,14 +15,14 @@ static __device__ __forceinline__ void load_tile_KV(const half2 * __restrict__ K
         const int stride_i = WARP_SIZE / stride_k;
 
 #pragma unroll
-        for (int i_KQ_0 = 0; i_KQ_0 < KQ_stride; i_KQ_0 += nwarps*stride_i) {
-            const int i_KQ = i_KQ_0 + threadIdx.y*stride_i + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
+        for (int i0 = 0; i0 < KQ_stride; i0 += nwarps*stride_i) {
+            const int i = i0 + threadIdx.y*stride_i + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
 
 #pragma unroll
-            for (int k_KQ_0 = k0_start; k_KQ_0 < k0_stop; k_KQ_0 += stride_k) {
-                const int k_KQ = k_KQ_0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
+            for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
+                const int k = k0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
 
-                tile_KV[i_KQ*D2_padded + k_KQ] = KV[i_KQ*stride_KV + k_KQ];
+                tile_KV[i*D2_padded + k] = KV[i*stride_KV + k];
             }
         }
     }
