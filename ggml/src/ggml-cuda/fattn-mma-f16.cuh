@@ -2,8 +2,49 @@
 #include "mma.cuh"
 #include "fattn-common.cuh"
 
+#if __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
+#define MEMCPY_ASYNC_AVAILABLE
+#endif // __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
+
+#include <cuda/barrier>
+
+#ifdef MEMCPY_ASYNC_AVAILABLE
+typedef cuda::barrier<cuda::thread_scope::thread_scope_block> cuda_barrier;
+#else
+typedef int64_t cuda_barrier;
+#endif // MEMCPY_ASYNC_AVAILABLE
+
+static_assert(sizeof(cuda_barrier) == 8, "bad cuda_barrier size");
+
 template <int D, int nwarps, int KQ_stride>
-static __device__ __forceinline__ void load_tile_KV(const half2 * __restrict__ KV, half2 * __restrict__ tile_KV, const int stride_KV) {
+static __device__ __forceinline__ void preload_tile_KV(
+        const half2 * __restrict__ KV, half2 * __restrict__ tile_KV, const int stride_KV, cuda_barrier & barrier) {
+#ifdef MEMCPY_ASYNC_AVAILABLE
+    if constexpr (D == 128) {
+        constexpr int D2_padded = D/2 + 4;
+
+        constexpr int rows_per_warp = KQ_stride / nwarps;
+        constexpr int threads_per_row = WARP_SIZE / rows_per_warp;
+        constexpr int h2_per_thread = (D/2) / threads_per_row;
+        constexpr int nbytes_per_thread = h2_per_thread * sizeof(half2);
+        static_assert(nbytes_per_thread % 16 == 0, "bad nbytes");
+
+        const int i = threadIdx.y*rows_per_warp + threadIdx.x / threads_per_row;
+        const int k = (threadIdx.x % threads_per_row) * h2_per_thread;
+
+        memcpy_async((int *) (tile_KV + i*D2_padded + k), (const int *) (KV + i*stride_KV + k), nbytes_per_thread, barrier);
+    } else {
+        NO_DEVICE_CODE;
+    }
+#endif // MEMCPY_ASYNC_AVAILABLE
+}
+
+template <int D, int nwarps, int KQ_stride>
+static __device__ __forceinline__ void load_tile_KV(
+        const half2 * __restrict__ KV, half2 * __restrict__ tile_KV, const int stride_KV, cuda_barrier & barrier) {
+#ifdef MEMCPY_ASYNC_AVAILABLE
+    barrier.arrive_and_wait();
+#else
     constexpr int D2_padded = D/2 + 4;
 
     static_assert(KQ_stride % (4*nwarps) == 0, "out of bounds");
@@ -28,6 +69,7 @@ static __device__ __forceinline__ void load_tile_KV(const half2 * __restrict__ K
     }
 
     __syncthreads();
+#endif // MEMCPY_ASYNC_AVAILABLE
 }
 
 template<int D, int ncols, int nwarps, int KQ_stride, bool use_logit_softcap, bool needs_fixup, bool is_fixup>
@@ -82,7 +124,17 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     static_assert(KQ_stride % nwarps == 0, "bad KQ_stride");
 
     constexpr int D2_padded = D/2 + 4; // Size of D in half2, padded to avoid shared memory bank conflicts.
-    extern __shared__ half2 tile_KV[]; // Temporary shared buffer for loading K/V data with KQ_stride*D logical elements.
+
+#ifdef MEMCPY_ASYNC_AVAILABLE
+    constexpr int nbarriers = 2;
+#else
+    constexpr int nbarriers = 0;
+#endif // MEMCPY_ASYNC_AVAILABLE
+    extern __shared__ cuda_barrier barriers[];
+    half2 * tile_KV = (half2 *) (barriers + nbarriers); // Temporary shared buffer for loading K/V data with KQ_stride*D logical elements.
+    if (nbarriers > 0 && threadIdx.y == 0 && threadIdx.x < nbarriers) {
+        init(barriers + threadIdx.x, nwarps*WARP_SIZE);
+    }
 
     const int stride_Q    = nb01 / sizeof(float2);
     const int stride_KV   = nb11 / sizeof(half2);
@@ -149,7 +201,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const int k_VKQ_0 = kb0*KQ_stride;
         mma_C_KQ KQ_C[KQ_stride/(np*mma_C_KQ::I)];
 
-        load_tile_KV<D, nwarps, KQ_stride>(K_h2 + k_VKQ_0*stride_KV, tile_KV, stride_KV);
+        preload_tile_KV<D, nwarps, KQ_stride>(K_h2 + k_VKQ_0*stride_KV, tile_KV, stride_KV, barriers[0]);
+        load_tile_KV<D, nwarps, KQ_stride>(K_h2 + k_VKQ_0*stride_KV, tile_KV, stride_KV, barriers[0]);
 
         // Calculate tile of KQ:
 #pragma unroll
@@ -266,7 +319,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
             B[k] = KQ_C[k].to_mma_B();
         }
 
-        load_tile_KV<D, nwarps, KQ_stride>(V_h2 + k_VKQ_0*stride_KV, tile_KV, stride_KV);
+        preload_tile_KV<D, nwarps, KQ_stride>(V_h2 + k_VKQ_0*stride_KV, tile_KV, stride_KV, barriers[1]);
+        load_tile_KV<D, nwarps, KQ_stride>(V_h2 + k_VKQ_0*stride_KV, tile_KV, stride_KV, barriers[1]);
 
         // Calculate VKQ tile:
 #pragma unroll
@@ -574,7 +628,7 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     constexpr int    KQ_stride     = D <= 128 ? 64 : 32;
     constexpr int    nwarps        = (KQ_stride == 32 && cols_per_block <= 16) ?
                                      cols_per_block/mma_B::J * KQ_stride/mma_A::I : (cols_per_block <= 8 ? 4 : 8);
-    constexpr size_t nbytes_shared = std::max(KQ_stride, nwarps*mma_B::J) * (D + 8) * sizeof(half);
+    constexpr size_t nbytes_shared = std::max(KQ_stride, nwarps*mma_B::J) * (D + 8) * sizeof(half) + 16;
 
     float logit_softcap;
     memcpy(&logit_softcap, (const float *) KQV->op_params + 2, sizeof(float));
