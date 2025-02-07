@@ -2,6 +2,34 @@
 #include "mma.cuh"
 #include "fattn-common.cuh"
 
+template <int D, int nwarps, int KQ_stride>
+static __device__ __forceinline__ void load_tile_KV(const half2 * __restrict__ KV, half2 * __restrict__ tile_KV, const int stride_KV) {
+    constexpr int D2_padded = D/2 + 4;
+
+    static_assert(KQ_stride % (4*nwarps) == 0, "out of bounds");
+    // Load KV data into tile with decreasing granularity for D for better memory bandwidth:
+#pragma unroll
+    for (int stride_k : {WARP_SIZE, WARP_SIZE/2, WARP_SIZE/4}) {
+        const int k0_start = stride_k == WARP_SIZE ? 0 : D/2 - (D/2) % (2*stride_k);
+        const int k0_stop  =                             D/2 - (D/2) % (1*stride_k);
+        const int stride_i = WARP_SIZE / stride_k;
+
+#pragma unroll
+        for (int i_KQ_0 = 0; i_KQ_0 < KQ_stride; i_KQ_0 += nwarps*stride_i) {
+            const int i_KQ = i_KQ_0 + threadIdx.y*stride_i + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
+
+#pragma unroll
+            for (int k_KQ_0 = k0_start; k_KQ_0 < k0_stop; k_KQ_0 += stride_k) {
+                const int k_KQ = k_KQ_0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
+
+                tile_KV[i_KQ*D2_padded + k_KQ] = KV[i_KQ*stride_KV + k_KQ];
+            }
+        }
+    }
+
+    __syncthreads();
+}
+
 template<int D, int ncols, int nwarps, int KQ_stride, bool use_logit_softcap, bool needs_fixup, bool is_fixup>
 static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const float2 * const __restrict__ Q_f2,
@@ -121,28 +149,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const int k_VKQ_0 = kb0*KQ_stride;
         mma_C_KQ KQ_C[KQ_stride/(np*mma_C_KQ::I)];
 
-        // Load K data into tile with decreasing granularity for D for better memory bandwidth:
-        static_assert(KQ_stride % (4*nwarps) == 0, "out of bounds");
-#pragma unroll
-        for (int stride_k : {WARP_SIZE, WARP_SIZE/2, WARP_SIZE/4}) {
-            const int k0_start = stride_k == WARP_SIZE ? 0 : D/2 - (D/2) % (2*stride_k);
-            const int k0_stop  =                             D/2 - (D/2) % (1*stride_k);
-            const int stride_i = WARP_SIZE / stride_k;
-
-#pragma unroll
-            for (int i_KQ_0 = 0; i_KQ_0 < KQ_stride; i_KQ_0 += nwarps*stride_i) {
-                const int i_KQ = i_KQ_0 + threadIdx.y*stride_i + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
-
-#pragma unroll
-                for (int k_KQ_0 = k0_start; k_KQ_0 < k0_stop; k_KQ_0 += stride_k) {
-                    const int k_KQ = k_KQ_0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
-
-                    tile_KV[i_KQ*D2_padded + k_KQ] = K_h2[(k_VKQ_0 + i_KQ)*stride_KV + k_KQ];
-                }
-            }
-        }
-
-        __syncthreads();
+        load_tile_KV<D, nwarps, KQ_stride>(K_h2 + k_VKQ_0*stride_KV, tile_KV, stride_KV);
 
         // Calculate tile of KQ:
 #pragma unroll
@@ -259,28 +266,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
             B[k] = KQ_C[k].to_mma_B();
         }
 
-        // Load V data into tile with decreasing granularity for D for better memory bandwidth:
-        static_assert(KQ_stride % (4*nwarps) == 0, "out of bounds");
-#pragma unroll
-        for (int stride_i : {WARP_SIZE, WARP_SIZE/2, WARP_SIZE/4}) {
-            const int i0_start = stride_i == WARP_SIZE ? 0 : D/2 - (D/2) % (2*stride_i);
-            const int i0_stop  =                             D/2 - (D/2) % (1*stride_i);
-            const int stride_k = WARP_SIZE / stride_i;
-
-#pragma unroll
-            for (int k_V_0 = 0; k_V_0 < KQ_stride; k_V_0 += nwarps*stride_k) {
-                const int k_V = k_V_0 + threadIdx.y*stride_k + (stride_i == WARP_SIZE ? 0 : threadIdx.x / stride_i);
-
-#pragma unroll
-                for (int i_V_0 = i0_start; i_V_0 < i0_stop; i_V_0 += stride_i) {
-                    const int i_V = i_V_0 + (stride_i == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_i);
-
-                    tile_KV[k_V*D2_padded + i_V] = V_h2[(k_VKQ_0 + k_V)*stride_KV + i_V];
-                }
-            }
-        }
-
-        __syncthreads();
+        load_tile_KV<D, nwarps, KQ_stride>(V_h2 + k_VKQ_0*stride_KV, tile_KV, stride_KV);
 
         // Calculate VKQ tile:
 #pragma unroll
