@@ -241,6 +241,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             VKQ_C[i_VKQ_0/mma_C_VKQ::I].mma(A, B[k00/(np*mma_A::K)]);
         }
     }
+
+    __syncthreads();
 }
 
 template<int D, int ncols, int nwarps, int KQ_stride, bool use_logit_softcap, bool needs_fixup, bool is_fixup>
@@ -353,8 +355,6 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         flash_attn_ext_f16_iter<D, ncols, nwarps, KQ_stride, use_logit_softcap, needs_fixup, is_fixup>
             (Q_f2, K_h2, V_h2, maskh, dstk, dstk_fixup, scale, slope, logit_softcap, ne01, ne02, stride_Q, stride_KV, stride_mask,
             jt, Q_B, VKQ_C, barriers, tile_KV, KQ_max, KQ_rowsum, KQ_max_scale, k_VKQ_0, B);
-
-        __syncthreads();
     }
 
     // Finally, sum up partial KQ rowsums.
