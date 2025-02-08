@@ -18,6 +18,11 @@ typedef int64_t cuda_barrier;
 
 static_assert(sizeof(cuda_barrier) == 8, "bad cuda_barrier size");
 
+typedef mma_A_I16K8<half2> mma_A;
+typedef mma_B_J8K8<half2>  mma_B;
+typedef mma_C_I16J8<float> mma_C_KQ;
+typedef mma_C_I16J8<half2> mma_C_VKQ;
+
 template <int D, int nwarps, int KQ_stride>
 static __device__ __forceinline__ void preload_tile_KV(
         const half2 * __restrict__ KV, half2 * __restrict__ tile_KV, const int stride_KV, cuda_barrier & barrier) {
@@ -75,6 +80,174 @@ static __device__ __forceinline__ void load_tile_KV(
 }
 
 template<int D, int ncols, int nwarps, int KQ_stride, bool use_logit_softcap, bool needs_fixup, bool is_fixup>
+static __device__ __forceinline__ void flash_attn_ext_f16_iter(
+        const float2 * const __restrict__ Q_f2,
+        const half2  * const __restrict__ K_h2,
+        const half2  * const __restrict__ V_h2,
+        const half   * const __restrict__ maskh,
+        float2       * const __restrict__ dstk,
+        float2       * const __restrict__ dstk_fixup,
+        const float scale,
+        const float slope,
+        const float logit_softcap,
+        const int ne01,
+        const int ne02,
+        const int stride_Q,
+        const int stride_KV,
+        const int stride_mask,
+        const int jt,
+        const mma_B  * const Q_B,
+        mma_C_VKQ    * const VKQ_C,
+        cuda_barrier * const barriers,
+        half2        * const tile_KV,
+        float2 & KQ_max,
+        float2 & KQ_rowsum,
+        float2 & KQ_max_scale,
+        const int k_VKQ_0) {
+    constexpr int np = nwarps*mma_B::J / ncols; // Number of parallel CUDA warps per Q column.
+    constexpr int D2_padded = D/2 + 4; // Size of D in half2, padded to avoid shared memory bank conflicts.
+
+    mma_C_KQ KQ_C[KQ_stride/(np*mma_C_KQ::I)];
+
+    preload_tile_KV<D, nwarps, KQ_stride>(K_h2 + k_VKQ_0*stride_KV, tile_KV, stride_KV, barriers[0]);
+    load_tile_KV<D, nwarps, KQ_stride>(K_h2 + k_VKQ_0*stride_KV, tile_KV, stride_KV, barriers[0]);
+
+    // Calculate tile of KQ:
+#pragma unroll
+    for (int i_KQ_00 = 0; i_KQ_00 < KQ_stride; i_KQ_00 += np*mma_A::I) {
+        const int i_KQ_0 = i_KQ_00 + (threadIdx.y % np)*mma_A::I;
+#pragma unroll
+        for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += mma_A::K) {
+            mma_A K_A;
+            K_A.load_ldmatrix(tile_KV + i_KQ_0*D2_padded + k_KQ_0, D2_padded);
+            KQ_C[i_KQ_00/(np*mma_A::I)].mma(K_A, Q_B[k_KQ_0/mma_A::K]);
+        }
+    }
+
+    __syncthreads();
+
+    if (use_logit_softcap) {
+        static_assert(KQ_stride % (np*mma_C_KQ::I) == 0, "bad loop size");
+#pragma unroll
+        for (int i = 0; i < KQ_stride/(np*mma_C_KQ::I); ++i) {
+#pragma unroll
+            for (int l = 0; l < mma_C_KQ::ne; ++l) {
+                KQ_C[i].x[l] = logit_softcap*tanhf(KQ_C[i].x[l]);
+            }
+        }
+    }
+
+    if (maskh) {
+        static_assert(KQ_stride % (np       *mma_C_KQ::I) == 0, "bad loop size");
+        static_assert(ncols     % (nwarps/np*mma_C_KQ::J) == 0, "bad loop size");
+#pragma unroll
+        for (int i00 = 0; i00 < KQ_stride; i00 += np*mma_C_KQ::I) {
+            const int i0 = i00 + (threadIdx.y % np)*mma_C_KQ::I;
+#pragma unroll
+            for (int l = 0; l < mma_C_KQ::ne; ++l) {
+                const int i = i0 + mma_C_KQ::get_i(l);
+                const int j = (threadIdx.y / np)*mma_C_KQ::J + mma_C_KQ::get_j(l);
+
+                KQ_C[i00/(np*mma_C_KQ::I)].x[l] += slope*__half2float(maskh[j*stride_mask + k_VKQ_0 + i]);
+            }
+        }
+    }
+
+    // Calculate softmax for each KQ column using the current max. value.
+    // The divisor is stored in KQ_rowsum and will be applied at the end.
+    float2 KQ_max_new = KQ_max;
+    static_assert(KQ_stride % (np*mma_C_KQ::I) == 0, "bad loop size");
+#pragma unroll
+    for (int k = 0; k < KQ_stride/(np*mma_C_KQ::I); ++k) {
+#pragma unroll
+        for (int l0 = 0; l0 < mma_C_KQ::ne; l0 += 2) {
+            KQ_max_new.x = fmaxf(KQ_max_new.x, KQ_C[k].x[l0 + 0]);
+            KQ_max_new.y = fmaxf(KQ_max_new.y, KQ_C[k].x[l0 + 1]);
+        }
+    }
+
+    // Values per KQ column are spread across 8 threads, does not need full warp reduce:
+#pragma unroll
+    for (int offset = 16; offset > 2; offset >>= 1) {
+        KQ_max_new.x = fmaxf(KQ_max_new.x, __shfl_xor_sync(0xFFFFFFFF, KQ_max_new.x, offset, WARP_SIZE));
+        KQ_max_new.y = fmaxf(KQ_max_new.y, __shfl_xor_sync(0xFFFFFFFF, KQ_max_new.y, offset, WARP_SIZE));
+    }
+
+    {
+        const float2 diff = make_float2(KQ_max.x - KQ_max_new.x, KQ_max.y - KQ_max_new.y);
+        KQ_max_scale = make_float2(expf(diff.x), expf(diff.y));
+        if (diff.x <= SOFTMAX_FTZ_THRESHOLD) {
+            KQ_max_scale.x = 0.0f;
+        }
+        if (diff.y <= SOFTMAX_FTZ_THRESHOLD) {
+            KQ_max_scale.y = 0.0f;
+        }
+        KQ_max = KQ_max_new;
+    }
+
+    float2 KQ_rowsum_add = make_float2(0.0f, 0.0f);
+    static_assert(KQ_stride % (np*mma_C_KQ::I) == 0, "bad loop size");
+#pragma unroll
+    for (int k = 0; k < KQ_stride/(np*mma_C_KQ::I); ++k) {
+#pragma unroll
+        for (int l = 0; l < mma_C_KQ::ne; ++l) {
+            const float KQ_max_l = l % 2 == 0 ? KQ_max.x : KQ_max.y;
+            const float diff = KQ_C[k].x[l] - KQ_max_l;
+            KQ_C[k].x[l] = expf(diff);
+            if (diff <= SOFTMAX_FTZ_THRESHOLD) {
+                KQ_C[k].x[l] = 0.0f;
+            }
+
+            if (l % 2 == 0) {
+                KQ_rowsum_add.x += KQ_C[k].x[l];
+            } else {
+                KQ_rowsum_add.y += KQ_C[k].x[l];
+            }
+        }
+    }
+
+    // Scale previous KQ_rowsum to account for a potential increase in KQ_max:
+    KQ_rowsum.x = KQ_max_scale.x*KQ_rowsum.x + KQ_rowsum_add.x;
+    KQ_rowsum.y = KQ_max_scale.y*KQ_rowsum.y + KQ_rowsum_add.y;
+
+    const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale.x, KQ_max_scale.y);
+#pragma unroll
+    for (int i = 0; i < D/mma_C_VKQ::I; ++i) {
+#pragma unroll
+        for (int l = 0; l < mma_C_VKQ::ne; ++l) {
+            VKQ_C[i].x[l] *= KQ_max_scale_h2;
+        }
+    }
+
+    // Convert KQ C tiles into B tiles for VKQ calculation:
+    mma_B B[KQ_stride/(np*2*mma_B::K)];
+    static_assert(KQ_stride % (np*2*mma_B::K) == 0, "bad loop size");
+#pragma unroll
+    for (int k = 0; k < KQ_stride/(np*2*mma_B::K); ++k) {
+        B[k] = KQ_C[k].to_mma_B();
+    }
+
+    preload_tile_KV<D, nwarps, KQ_stride>(V_h2 + k_VKQ_0*stride_KV, tile_KV, stride_KV, barriers[1]);
+    load_tile_KV<D, nwarps, KQ_stride>(V_h2 + k_VKQ_0*stride_KV, tile_KV, stride_KV, barriers[1]);
+
+    // Calculate VKQ tile:
+#pragma unroll
+    for (int i_VKQ_0 = 0; i_VKQ_0 < D; i_VKQ_0 += mma_C_VKQ::I) {
+        static_assert((KQ_stride/2) % (np*mma_A::K) == 0, "bad loop size");
+#pragma unroll
+        for (int k00 = 0; k00 < KQ_stride/2; k00 += np*mma_A::K) {
+            const int k0 = k00 + (threadIdx.y % np)*mma_A::K;
+
+            mma_A A;
+            A.load_ldmatrix_trans(tile_KV + 2*k0*D2_padded + i_VKQ_0/2, D2_padded);
+            VKQ_C[i_VKQ_0/mma_C_VKQ::I].mma(A, B[k00/(np*mma_A::K)]);
+        }
+    }
+
+    __syncthreads();
+}
+
+template<int D, int ncols, int nwarps, int KQ_stride, bool use_logit_softcap, bool needs_fixup, bool is_fixup>
 static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const float2 * const __restrict__ Q_f2,
         const half2  * const __restrict__ K_h2,
@@ -95,11 +268,6 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const int kb0_stop) {
 #ifdef NEW_MMA_AVAILABLE
     //In this kernel Q, K, V are matrices while i, j, k are matrix indices.
-
-    typedef mma_A_I16K8<half2> mma_A;
-    typedef mma_B_J8K8<half2>  mma_B;
-    typedef mma_C_I16J8<float> mma_C_KQ;
-    typedef mma_C_I16J8<half2> mma_C_VKQ;
 
     static_assert(nwarps*mma_B::J % ncols == 0, "bad nwarps");
     constexpr int np = nwarps*mma_B::J / ncols; // Number of parallel CUDA warps per Q column.
@@ -182,6 +350,12 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     // Iterate over ne11 == previous tokens:
     for (int kb0 = kb0_start; kb0 < kb0_stop; ++kb0) {
         const int k_VKQ_0 = kb0*KQ_stride;
+
+        // flash_attn_ext_f16_iter<D, ncols, nwarps, KQ_stride, use_logit_softcap, needs_fixup, is_fixup>(
+        //     Q_f2, K_h2, V_h2, maskh, dstk, dstk_fixup, scale, slope, logit_softcap,
+        //     ne01, ne02, stride_Q, stride_KV, stride_mask, jt,
+        //     Q_B, VKQ_C, barriers, tile_KV, KQ_max, KQ_rowsum, KQ_max_scale, k_VKQ_0);
+
         mma_C_KQ KQ_C[KQ_stride/(np*mma_C_KQ::I)];
 
         preload_tile_KV<D, nwarps, KQ_stride>(K_h2 + k_VKQ_0*stride_KV, tile_KV, stride_KV, barriers[0]);
