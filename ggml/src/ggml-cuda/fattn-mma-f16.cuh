@@ -104,10 +104,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         float2 & KQ_rowsum,
         float2 & KQ_max_scale,
         const int k_VKQ_0,
-        mma_C_KQ * KQ_C,
         mma_B * B) {
     constexpr int np = nwarps*mma_B::J / ncols; // Number of parallel CUDA warps per Q column.
     constexpr int D2_padded = D/2 + 4; // Size of D in half2, padded to avoid shared memory bank conflicts.
+
+    mma_C_KQ KQ_C[KQ_stride/(np*mma_C_KQ::I)];
 
     preload_tile_KV<D, nwarps, KQ_stride>(K_h2 + k_VKQ_0*stride_KV, tile_KV, stride_KV, barriers[0]);
     load_tile_KV<D, nwarps, KQ_stride>(K_h2 + k_VKQ_0*stride_KV, tile_KV, stride_KV, barriers[0]);
@@ -329,13 +330,12 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     for (int kb0 = kb0_start; kb0 < kb0_stop; ++kb0) {
         const int k_VKQ_0 = kb0*KQ_stride;
 
-        mma_C_KQ KQ_C[KQ_stride/(np*mma_C_KQ::I)];
         mma_B B[KQ_stride/(np*2*mma_B::K)];
         static_assert(KQ_stride % (np*2*mma_B::K) == 0, "bad loop size");
 
         flash_attn_ext_f16_iter<D, ncols, nwarps, KQ_stride, use_logit_softcap, needs_fixup, is_fixup>
             (Q_f2, K_h2, V_h2, maskh, dstk, dstk_fixup, scale, slope, logit_softcap, ne01, ne02, stride_Q, stride_KV, stride_mask,
-            jt, Q_B, VKQ_C, barriers, tile_KV, KQ_max, KQ_rowsum, KQ_max_scale, k_VKQ_0, KQ_C, B);
+            jt, Q_B, VKQ_C, barriers, tile_KV, KQ_max, KQ_rowsum, KQ_max_scale, k_VKQ_0, B);
 
         preload_tile_KV<D, nwarps, KQ_stride>(V_h2 + k_VKQ_0*stride_KV, tile_KV, stride_KV, barriers[1]);
         load_tile_KV<D, nwarps, KQ_stride>(V_h2 + k_VKQ_0*stride_KV, tile_KV, stride_KV, barriers[1]);
