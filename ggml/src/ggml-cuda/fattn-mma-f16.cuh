@@ -224,6 +224,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     for (int k = 0; k < KQ_stride/(np*2*mma_B::K); ++k) {
         B[k] = KQ_C[k].to_mma_B();
     }
+
+    preload_tile_KV<D, nwarps, KQ_stride>(V_h2 + k_VKQ_0*stride_KV, tile_KV, stride_KV, barriers[1]);
+    load_tile_KV<D, nwarps, KQ_stride>(V_h2 + k_VKQ_0*stride_KV, tile_KV, stride_KV, barriers[1]);
 }
 
 template<int D, int ncols, int nwarps, int KQ_stride, bool use_logit_softcap, bool needs_fixup, bool is_fixup>
@@ -336,9 +339,6 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         flash_attn_ext_f16_iter<D, ncols, nwarps, KQ_stride, use_logit_softcap, needs_fixup, is_fixup>
             (Q_f2, K_h2, V_h2, maskh, dstk, dstk_fixup, scale, slope, logit_softcap, ne01, ne02, stride_Q, stride_KV, stride_mask,
             jt, Q_B, VKQ_C, barriers, tile_KV, KQ_max, KQ_rowsum, KQ_max_scale, k_VKQ_0, B);
-
-        preload_tile_KV<D, nwarps, KQ_stride>(V_h2 + k_VKQ_0*stride_KV, tile_KV, stride_KV, barriers[1]);
-        load_tile_KV<D, nwarps, KQ_stride>(V_h2 + k_VKQ_0*stride_KV, tile_KV, stride_KV, barriers[1]);
 
         // Calculate VKQ tile:
 #pragma unroll
