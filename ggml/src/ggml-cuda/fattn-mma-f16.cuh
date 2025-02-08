@@ -124,6 +124,33 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     }
 
     __syncthreads();
+
+    if (use_logit_softcap) {
+        static_assert(KQ_stride % (np*mma_C_KQ::I) == 0, "bad loop size");
+#pragma unroll
+        for (int i = 0; i < KQ_stride/(np*mma_C_KQ::I); ++i) {
+#pragma unroll
+            for (int l = 0; l < mma_C_KQ::ne; ++l) {
+                KQ_C[i].x[l] = logit_softcap*tanhf(KQ_C[i].x[l]);
+            }
+        }
+    }
+
+    if (maskh) {
+        static_assert(KQ_stride % (np       *mma_C_KQ::I) == 0, "bad loop size");
+        static_assert(ncols     % (nwarps/np*mma_C_KQ::J) == 0, "bad loop size");
+#pragma unroll
+        for (int i00 = 0; i00 < KQ_stride; i00 += np*mma_C_KQ::I) {
+            const int i0 = i00 + (threadIdx.y % np)*mma_C_KQ::I;
+#pragma unroll
+            for (int l = 0; l < mma_C_KQ::ne; ++l) {
+                const int i = i0 + mma_C_KQ::get_i(l);
+                const int j = (threadIdx.y / np)*mma_C_KQ::J + mma_C_KQ::get_j(l);
+
+                KQ_C[i00/(np*mma_C_KQ::I)].x[l] += slope*__half2float(maskh[j*stride_mask + k_VKQ_0 + i]);
+            }
+        }
+    }
 }
 
 template<int D, int ncols, int nwarps, int KQ_stride, bool use_logit_softcap, bool needs_fixup, bool is_fixup>
@@ -235,33 +262,6 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         flash_attn_ext_f16_iter<D, ncols, nwarps, KQ_stride, use_logit_softcap, needs_fixup, is_fixup>
             (Q_f2, K_h2, V_h2, maskh, dstk, dstk_fixup, scale, slope, logit_softcap, ne01, ne02, stride_Q, stride_KV, stride_mask,
             jt, Q_B, VKQ_C, barriers, tile_KV, KQ_max, KQ_rowsum, KQ_max_scale, k_VKQ_0, KQ_C);
-
-        if (use_logit_softcap) {
-            static_assert(KQ_stride % (np*mma_C_KQ::I) == 0, "bad loop size");
-#pragma unroll
-            for (int i = 0; i < KQ_stride/(np*mma_C_KQ::I); ++i) {
-#pragma unroll
-                for (int l = 0; l < mma_C_KQ::ne; ++l) {
-                    KQ_C[i].x[l] = logit_softcap*tanhf(KQ_C[i].x[l]);
-                }
-            }
-        }
-
-        if (maskh) {
-            static_assert(KQ_stride % (np       *mma_C_KQ::I) == 0, "bad loop size");
-            static_assert(ncols     % (nwarps/np*mma_C_KQ::J) == 0, "bad loop size");
-#pragma unroll
-            for (int i00 = 0; i00 < KQ_stride; i00 += np*mma_C_KQ::I) {
-                const int i0 = i00 + (threadIdx.y % np)*mma_C_KQ::I;
-#pragma unroll
-                for (int l = 0; l < mma_C_KQ::ne; ++l) {
-                    const int i = i0 + mma_C_KQ::get_i(l);
-                    const int j = (threadIdx.y / np)*mma_C_KQ::J + mma_C_KQ::get_j(l);
-
-                    KQ_C[i00/(np*mma_C_KQ::I)].x[l] += slope*__half2float(maskh[j*stride_mask + k_VKQ_0 + i]);
-                }
-            }
-        }
 
         // Calculate softmax for each KQ column using the current max. value.
         // The divisor is stored in KQ_rowsum and will be applied at the end.
