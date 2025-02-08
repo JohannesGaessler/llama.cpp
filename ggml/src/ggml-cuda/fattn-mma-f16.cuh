@@ -227,6 +227,20 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 
     preload_tile_KV<D, nwarps, KQ_stride>(V_h2 + k_VKQ_0*stride_KV, tile_KV, stride_KV, barriers[1]);
     load_tile_KV<D, nwarps, KQ_stride>(V_h2 + k_VKQ_0*stride_KV, tile_KV, stride_KV, barriers[1]);
+
+    // Calculate VKQ tile:
+#pragma unroll
+    for (int i_VKQ_0 = 0; i_VKQ_0 < D; i_VKQ_0 += mma_C_VKQ::I) {
+        static_assert((KQ_stride/2) % (np*mma_A::K) == 0, "bad loop size");
+#pragma unroll
+        for (int k00 = 0; k00 < KQ_stride/2; k00 += np*mma_A::K) {
+            const int k0 = k00 + (threadIdx.y % np)*mma_A::K;
+
+            mma_A A;
+            A.load_ldmatrix_trans(tile_KV + 2*k0*D2_padded + i_VKQ_0/2, D2_padded);
+            VKQ_C[i_VKQ_0/mma_C_VKQ::I].mma(A, B[k00/(np*mma_A::K)]);
+        }
+    }
 }
 
 template<int D, int ncols, int nwarps, int KQ_stride, bool use_logit_softcap, bool needs_fixup, bool is_fixup>
@@ -339,20 +353,6 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         flash_attn_ext_f16_iter<D, ncols, nwarps, KQ_stride, use_logit_softcap, needs_fixup, is_fixup>
             (Q_f2, K_h2, V_h2, maskh, dstk, dstk_fixup, scale, slope, logit_softcap, ne01, ne02, stride_Q, stride_KV, stride_mask,
             jt, Q_B, VKQ_C, barriers, tile_KV, KQ_max, KQ_rowsum, KQ_max_scale, k_VKQ_0, B);
-
-        // Calculate VKQ tile:
-#pragma unroll
-        for (int i_VKQ_0 = 0; i_VKQ_0 < D; i_VKQ_0 += mma_C_VKQ::I) {
-            static_assert((KQ_stride/2) % (np*mma_A::K) == 0, "bad loop size");
-#pragma unroll
-            for (int k00 = 0; k00 < KQ_stride/2; k00 += np*mma_A::K) {
-                const int k0 = k00 + (threadIdx.y % np)*mma_A::K;
-
-                mma_A A;
-                A.load_ldmatrix_trans(tile_KV + 2*k0*D2_padded + i_VKQ_0/2, D2_padded);
-                VKQ_C[i_VKQ_0/mma_C_VKQ::I].mma(A, B[k00/(np*mma_A::K)]);
-            }
-        }
 
         __syncthreads();
     }

@@ -146,7 +146,7 @@ struct mma_A_I16K8 {
 #ifdef NEW_MMA_AVAILABLE
         int * xi = (int * ) x;
         const int * xs = (const int *) xs0 + (threadIdx.x%I)*stride + (threadIdx.x/I)*(K/2);
-        asm("ldmatrix.sync.aligned.m8n8.x4.trans.b16 {%0, %1, %2, %3}, [%4];"
+        asm volatile("ldmatrix.sync.aligned.m8n8.x4.trans.b16 {%0, %1, %2, %3}, [%4];" // FIXME
             : "+r"(xi[0]), "+r"(xi[2]), "+r"(xi[1]), "+r"(xi[3])
             : "l"(xs));
 #else
