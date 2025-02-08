@@ -6,7 +6,9 @@
 #define MEMCPY_ASYNC_AVAILABLE
 #endif // __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
 
+#if defined(GEMCPY_ASYNC_AVAILABLE) || !defined(__CUDA_ARCH__)
 #include <cuda/barrier>
+#endif // defined(GEMCPY_ASYNC_AVAILABLE) || !defined(__CUDA_ARCH__)
 
 #ifdef MEMCPY_ASYNC_AVAILABLE
 typedef cuda::barrier<cuda::thread_scope::thread_scope_block> cuda_barrier;
