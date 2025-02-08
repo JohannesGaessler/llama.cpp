@@ -2,13 +2,13 @@
 #include "mma.cuh"
 #include "fattn-common.cuh"
 
-#if __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
+#if !defined(__CUDA_ARCH__) || __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
 #define MEMCPY_ASYNC_AVAILABLE
-#endif // __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
+#endif // !defined(__CUDA_ARCH__) || __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
 
-#if defined(GEMCPY_ASYNC_AVAILABLE) || !defined(__CUDA_ARCH__)
+#ifdef MEMCPY_ASYNC_AVAILABLE
 #include <cuda/barrier>
-#endif // defined(GEMCPY_ASYNC_AVAILABLE) || !defined(__CUDA_ARCH__)
+#endif // MEMCPY_ASYNC_AVAILABLE
 
 #ifdef MEMCPY_ASYNC_AVAILABLE
 typedef cuda::barrier<cuda::thread_scope::thread_scope_block> cuda_barrier;
@@ -85,29 +85,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const float scale,
         const float slope,
         const float logit_softcap,
-        const int ne00,
         const int ne01,
         const int ne02,
-        const int ne03,
-        const int ne10,
-        const int ne11,
-        const int ne12,
-        const int ne13,
-        const int ne31,
-        const int nb31,
-        const int nb01,
-        const int nb02,
-        const int nb03,
-        const int nb11,
-        const int nb12,
-        const int nb13,
-        const int nb21,
-        const int nb22,
-        const int nb23,
-        const int ne0,
-        const int ne1,
-        const int ne2,
-        const int ne3,
+        const int stride_Q,
+        const int stride_KV,
+        const int stride_mask,
         const int jt,
         const int kb0_start,
         const int kb0_stop) {
@@ -134,13 +116,12 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 #endif // MEMCPY_ASYNC_AVAILABLE
     extern __shared__ cuda_barrier barriers[];
     half2 * tile_KV = (half2 *) (barriers + nbarriers); // Temporary shared buffer for loading K/V data with KQ_stride*D logical elements.
+
+#ifdef MEMCPY_ASYNC_AVAILABLE
     if (nbarriers > 0 && threadIdx.y == 0 && threadIdx.x < nbarriers) {
         init(barriers + threadIdx.x, nwarps*WARP_SIZE);
     }
-
-    const int stride_Q    = nb01 / sizeof(float2);
-    const int stride_KV   = nb11 / sizeof(half2);
-    const int stride_mask = nb31 / sizeof(half);
+#endif // MEMCPY_ASYNC_AVAILABLE
 
     mma_B Q_B[D/(2*mma_B::K)];
     mma_C_VKQ VKQ_C[D/mma_C_VKQ::I];
@@ -546,6 +527,10 @@ static __global__ void flash_attn_ext_f16(
 
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
 
+    const int stride_Q    = nb01 / sizeof(float2);
+    const int stride_KV   = nb11 / sizeof(half2);
+    const int stride_mask = nb31 / sizeof(half);
+
     const int iter_k = ne11 / KQ_stride;
     const int iter_j = (ne01 + (ncols - 1)) / ncols;
 
@@ -577,14 +562,12 @@ static __global__ void flash_attn_ext_f16(
             constexpr bool needs_fixup = false; // CUDA block is working on an entire tile.
             flash_attn_ext_f16_process_tile<D, ncols, nwarps, KQ_stride, use_logit_softcap, needs_fixup, is_fixup>
                 (Q_f2, K_h2, V_h2, maskh, dstk, dst_meta, scale, slope, logit_softcap,
-                ne00, ne01, ne02, ne03, ne10, ne11, ne12, ne13, ne31, nb31, nb01, nb02, nb03, nb11, nb12, nb13, nb21, nb22, nb23, ne0, ne1, ne2, ne3,
-                jt, kb0_start, kb0_stop);
+                 ne01, ne02, stride_Q, stride_KV, stride_mask, jt, kb0_start, kb0_stop);
         } else {
             constexpr bool needs_fixup = true; // CUDA block is working on the beginning of a tile.
             flash_attn_ext_f16_process_tile<D, ncols, nwarps, KQ_stride, use_logit_softcap, needs_fixup, is_fixup>
                 (Q_f2, K_h2, V_h2, maskh, dstk, dst_meta, scale, slope, logit_softcap,
-                ne00, ne01, ne02, ne03, ne10, ne11, ne12, ne13, ne31, nb31, nb01, nb02, nb03, nb11, nb12, nb13, nb21, nb22, nb23, ne0, ne1, ne2, ne3,
-                jt, kb0_start, kb0_stop);
+                 ne01, ne02, stride_Q, stride_KV, stride_mask, jt, kb0_start, kb0_stop);
         }
 
         kbc += iter_k;
@@ -613,8 +596,7 @@ static __global__ void flash_attn_ext_f16(
     constexpr bool needs_fixup = false;
     flash_attn_ext_f16_process_tile<D, ncols, nwarps, KQ_stride, use_logit_softcap, needs_fixup, is_fixup>
         (Q_f2, K_h2, V_h2, maskh, dstk, dst_meta, scale, slope, logit_softcap,
-        ne00, ne01, ne02, ne03, ne10, ne11, ne12, ne13, ne31, nb31, nb01, nb02, nb03, nb11, nb12, nb13, nb21, nb22, nb23, ne0, ne1, ne2, ne3,
-        jt, kb0_start, kb0_stop);
+         ne01, ne02, stride_Q, stride_KV, stride_mask, jt, kb0_start, kb0_stop);
 }
 
 template <int D, int cols_per_block>
