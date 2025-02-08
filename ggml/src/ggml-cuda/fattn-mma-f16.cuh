@@ -151,6 +151,38 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             }
         }
     }
+
+    // Calculate softmax for each KQ column using the current max. value.
+    // The divisor is stored in KQ_rowsum and will be applied at the end.
+    float2 KQ_max_new = KQ_max;
+    static_assert(KQ_stride % (np*mma_C_KQ::I) == 0, "bad loop size");
+#pragma unroll
+    for (int k = 0; k < KQ_stride/(np*mma_C_KQ::I); ++k) {
+#pragma unroll
+        for (int l0 = 0; l0 < mma_C_KQ::ne; l0 += 2) {
+            KQ_max_new.x = fmaxf(KQ_max_new.x, KQ_C[k].x[l0 + 0]);
+            KQ_max_new.y = fmaxf(KQ_max_new.y, KQ_C[k].x[l0 + 1]);
+        }
+    }
+
+    // Values per KQ column are spread across 8 threads, does not need full warp reduce:
+#pragma unroll
+    for (int offset = 16; offset > 2; offset >>= 1) {
+        KQ_max_new.x = fmaxf(KQ_max_new.x, __shfl_xor_sync(0xFFFFFFFF, KQ_max_new.x, offset, WARP_SIZE));
+        KQ_max_new.y = fmaxf(KQ_max_new.y, __shfl_xor_sync(0xFFFFFFFF, KQ_max_new.y, offset, WARP_SIZE));
+    }
+
+    {
+        const float2 diff = make_float2(KQ_max.x - KQ_max_new.x, KQ_max.y - KQ_max_new.y);
+        KQ_max_scale = make_float2(expf(diff.x), expf(diff.y));
+        if (diff.x <= SOFTMAX_FTZ_THRESHOLD) {
+            KQ_max_scale.x = 0.0f;
+        }
+        if (diff.y <= SOFTMAX_FTZ_THRESHOLD) {
+            KQ_max_scale.y = 0.0f;
+        }
+        KQ_max = KQ_max_new;
+    }
 }
 
 template<int D, int ncols, int nwarps, int KQ_stride, bool use_logit_softcap, bool needs_fixup, bool is_fixup>
@@ -262,38 +294,6 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         flash_attn_ext_f16_iter<D, ncols, nwarps, KQ_stride, use_logit_softcap, needs_fixup, is_fixup>
             (Q_f2, K_h2, V_h2, maskh, dstk, dstk_fixup, scale, slope, logit_softcap, ne01, ne02, stride_Q, stride_KV, stride_mask,
             jt, Q_B, VKQ_C, barriers, tile_KV, KQ_max, KQ_rowsum, KQ_max_scale, k_VKQ_0, KQ_C);
-
-        // Calculate softmax for each KQ column using the current max. value.
-        // The divisor is stored in KQ_rowsum and will be applied at the end.
-        float2 KQ_max_new = KQ_max;
-        static_assert(KQ_stride % (np*mma_C_KQ::I) == 0, "bad loop size");
-#pragma unroll
-        for (int k = 0; k < KQ_stride/(np*mma_C_KQ::I); ++k) {
-#pragma unroll
-            for (int l0 = 0; l0 < mma_C_KQ::ne; l0 += 2) {
-                KQ_max_new.x = fmaxf(KQ_max_new.x, KQ_C[k].x[l0 + 0]);
-                KQ_max_new.y = fmaxf(KQ_max_new.y, KQ_C[k].x[l0 + 1]);
-            }
-        }
-
-        // Values per KQ column are spread across 8 threads, does not need full warp reduce:
-#pragma unroll
-        for (int offset = 16; offset > 2; offset >>= 1) {
-            KQ_max_new.x = fmaxf(KQ_max_new.x, __shfl_xor_sync(0xFFFFFFFF, KQ_max_new.x, offset, WARP_SIZE));
-            KQ_max_new.y = fmaxf(KQ_max_new.y, __shfl_xor_sync(0xFFFFFFFF, KQ_max_new.y, offset, WARP_SIZE));
-        }
-
-        {
-            const float2 diff = make_float2(KQ_max.x - KQ_max_new.x, KQ_max.y - KQ_max_new.y);
-            KQ_max_scale = make_float2(expf(diff.x), expf(diff.y));
-            if (diff.x <= SOFTMAX_FTZ_THRESHOLD) {
-                KQ_max_scale.x = 0.0f;
-            }
-            if (diff.y <= SOFTMAX_FTZ_THRESHOLD) {
-                KQ_max_scale.y = 0.0f;
-            }
-            KQ_max = KQ_max_new;
-        }
 
         float2 KQ_rowsum_add = make_float2(0.0f, 0.0f);
         static_assert(KQ_stride % (np*mma_C_KQ::I) == 0, "bad loop size");
