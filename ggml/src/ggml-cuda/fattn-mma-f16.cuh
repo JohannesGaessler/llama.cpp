@@ -36,8 +36,6 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
             }
         }
     }
-    asm("cp.async.commit_group;");
-    asm("cp.async.wait_all;");
 }
 
 template<int D, int ncols, int nwarps, int KQ_stride, bool use_logit_softcap, bool needs_fixup, bool is_fixup, bool last_iter>
@@ -72,7 +70,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         mma_C_KQ KQ_C[KQ_stride/(np*mma_C_KQ::I)];
 
         flash_attn_ext_f16_load_tile<D, nwarps, KQ_stride>(K_h2 + k_VKQ_0*stride_KV, tile_K, stride_KV);
-
+        asm("cp.async.wait_all;");
         __syncthreads();
 
         // Calculate tile of KQ:
@@ -191,7 +189,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         }
 
         flash_attn_ext_f16_load_tile<D, nwarps, KQ_stride>(V_h2 + k_VKQ_0*stride_KV, tile_V, stride_KV);
-
+        asm("cp.async.wait_all;");
         __syncthreads();
 
         // Calculate VKQ tile:
