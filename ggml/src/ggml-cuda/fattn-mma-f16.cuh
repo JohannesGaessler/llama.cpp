@@ -2,8 +2,13 @@
 #include "mma.cuh"
 #include "fattn-common.cuh"
 
+typedef mma_A_I16K8<half2> mma_A;
+typedef mma_B_J8K8<half2>  mma_B;
+typedef mma_C_I16J8<float> mma_C_KQ;
+typedef mma_C_I16J8<half2> mma_C_VKQ;
+
 template<int D, int ncols, int nwarps, int KQ_stride, bool use_logit_softcap, bool needs_fixup, bool is_fixup>
-static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
+static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         const float2 * const __restrict__ Q_f2,
         const half2  * const __restrict__ K_h2,
         const half2  * const __restrict__ V_h2,
@@ -19,82 +24,17 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const int stride_KV,
         const int stride_mask,
         const int jt,
-        const int kb0_start,
-        const int kb0_stop) {
-    //In this kernel Q, K, V are matrices while i, j, k are matrix indices.
+        half2       * const __restrict__ tile_KV,
+        const mma_B * const __restrict__ Q_B,
+        mma_C_VKQ   * const __restrict__ VKQ_C,
+        float2 & KQ_max,
+        float2 & KQ_rowsum,
+        float2 & KQ_max_scale,
+        const int kb0) {
 
-    typedef mma_A_I16K8<half2> mma_A;
-    typedef mma_B_J8K8<half2>  mma_B;
-    typedef mma_C_I16J8<float> mma_C_KQ;
-    typedef mma_C_I16J8<half2> mma_C_VKQ;
-
-    static_assert(nwarps*mma_B::J % ncols == 0, "bad nwarps");
     constexpr int np = nwarps*mma_B::J / ncols; // Number of parallel CUDA warps per Q column.
-
-    static_assert(D         % nwarps == 0, "bad D");
-    static_assert(KQ_stride % nwarps == 0, "bad KQ_stride");
-
     constexpr int D2_padded = D/2 + 4; // Size of D in half2, padded to avoid shared memory bank conflicts.
-    extern __shared__ half2 tile_KV[]; // Temporary shared buffer for loading K/V data with KQ_stride*D logical elements.
 
-    mma_B Q_B[D/(2*mma_B::K)];
-    mma_C_VKQ VKQ_C[D/mma_C_VKQ::I];
-
-    float2    KQ_rowsum = {0.0f, 0.0f};
-    float2       KQ_max = {-FLT_MAX/2.0f, -FLT_MAX/2.0f};
-    float2 KQ_max_scale = {0.0f, 0.0f};
-
-    // Temporarily load Q data into tile_KV, will be loaded into registers afterwards.
-    // The loading is done with decreasing granularity for D for better memory bandwidth.
-    const half2 scale_h2 = make_half2(scale, scale);
-#pragma unroll
-    for (int stride_k : {WARP_SIZE, WARP_SIZE/2, WARP_SIZE/4}) {
-        const int k0_start = stride_k == WARP_SIZE ? 0 : D/2 - (D/2) % (2*stride_k);
-        const int k0_stop  =                             D/2 - (D/2) % (1*stride_k);
-        const int stride_j = WARP_SIZE / stride_k;
-
-        if (nwarps*stride_j > ncols && threadIdx.y*stride_j >= ncols) {
-            break;
-        }
-
-#pragma unroll
-        for (int j0 = 0; j0 < ncols; j0 += nwarps*stride_j) {
-            const int j = j0 + threadIdx.y*stride_j + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
-
-            if (jt*ncols + j < ne01) {
-#pragma unroll
-                for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
-                    const int k = k0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
-
-                    const float2 tmp = Q_f2[(jt*ncols + j)*stride_Q + k];
-                    tile_KV[j*D2_padded + k] = scale_h2 * make_half2(tmp.x, tmp.y);
-                }
-            } else {
-#pragma unroll
-                for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
-                    const int k = k0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
-
-                    tile_KV[j*D2_padded + k] = make_half2(0.0f, 0.0f);
-                }
-            }
-        }
-    }
-
-    __syncthreads();
-
-    {
-        const int j0 = (threadIdx.y / np) * mma_B::J;
-
-#pragma unroll
-        for (int k0 = 0; k0 < D/2; k0 += mma_B::K) {
-            Q_B[k0/mma_B::K].load_ldmatrix(tile_KV + j0*D2_padded + k0, D2_padded);
-        }
-    }
-
-    __syncthreads();
-
-    // Iterate over ne11 == previous tokens:
-    for (int kb0 = kb0_start; kb0 < kb0_stop; ++kb0) {
         const int k_VKQ_0 = kb0*KQ_stride;
         mma_C_KQ KQ_C[KQ_stride/(np*mma_C_KQ::I)];
 
@@ -274,6 +214,99 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         }
 
         __syncthreads();
+}
+
+template<int D, int ncols, int nwarps, int KQ_stride, bool use_logit_softcap, bool needs_fixup, bool is_fixup>
+static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
+        const float2 * const __restrict__ Q_f2,
+        const half2  * const __restrict__ K_h2,
+        const half2  * const __restrict__ V_h2,
+        const half   * const __restrict__ maskh,
+        float2       * const __restrict__ dstk,
+        float2       * const __restrict__ dstk_fixup,
+        const float scale,
+        const float slope,
+        const float logit_softcap,
+        const int ne01,
+        const int ne02,
+        const int stride_Q,
+        const int stride_KV,
+        const int stride_mask,
+        const int jt,
+        const int kb0_start,
+        const int kb0_stop) {
+    //In this kernel Q, K, V are matrices while i, j, k are matrix indices.
+
+    static_assert(nwarps*mma_B::J % ncols == 0, "bad nwarps");
+    constexpr int np = nwarps*mma_B::J / ncols; // Number of parallel CUDA warps per Q column.
+
+    static_assert(D         % nwarps == 0, "bad D");
+    static_assert(KQ_stride % nwarps == 0, "bad KQ_stride");
+
+    constexpr int D2_padded = D/2 + 4; // Size of D in half2, padded to avoid shared memory bank conflicts.
+    extern __shared__ half2 tile_KV[]; // Temporary shared buffer for loading K/V data with KQ_stride*D logical elements.
+
+    mma_B Q_B[D/(2*mma_B::K)];
+    mma_C_VKQ VKQ_C[D/mma_C_VKQ::I];
+
+    float2    KQ_rowsum = {0.0f, 0.0f};
+    float2       KQ_max = {-FLT_MAX/2.0f, -FLT_MAX/2.0f};
+    float2 KQ_max_scale = {0.0f, 0.0f};
+
+    // Temporarily load Q data into tile_KV, will be loaded into registers afterwards.
+    // The loading is done with decreasing granularity for D for better memory bandwidth.
+    const half2 scale_h2 = make_half2(scale, scale);
+#pragma unroll
+    for (int stride_k : {WARP_SIZE, WARP_SIZE/2, WARP_SIZE/4}) {
+        const int k0_start = stride_k == WARP_SIZE ? 0 : D/2 - (D/2) % (2*stride_k);
+        const int k0_stop  =                             D/2 - (D/2) % (1*stride_k);
+        const int stride_j = WARP_SIZE / stride_k;
+
+        if (nwarps*stride_j > ncols && threadIdx.y*stride_j >= ncols) {
+            break;
+        }
+
+#pragma unroll
+        for (int j0 = 0; j0 < ncols; j0 += nwarps*stride_j) {
+            const int j = j0 + threadIdx.y*stride_j + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
+
+            if (jt*ncols + j < ne01) {
+#pragma unroll
+                for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
+                    const int k = k0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
+
+                    const float2 tmp = Q_f2[(jt*ncols + j)*stride_Q + k];
+                    tile_KV[j*D2_padded + k] = scale_h2 * make_half2(tmp.x, tmp.y);
+                }
+            } else {
+#pragma unroll
+                for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
+                    const int k = k0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
+
+                    tile_KV[j*D2_padded + k] = make_half2(0.0f, 0.0f);
+                }
+            }
+        }
+    }
+
+    __syncthreads();
+
+    {
+        const int j0 = (threadIdx.y / np) * mma_B::J;
+
+#pragma unroll
+        for (int k0 = 0; k0 < D/2; k0 += mma_B::K) {
+            Q_B[k0/mma_B::K].load_ldmatrix(tile_KV + j0*D2_padded + k0, D2_padded);
+        }
+    }
+
+    __syncthreads();
+
+    // Iterate over ne11 == previous tokens:
+    for (int kb0 = kb0_start; kb0 < kb0_stop; ++kb0) {
+        flash_attn_ext_f16_iter<D, ncols, nwarps, KQ_stride, use_logit_softcap, needs_fixup, is_fixup>
+            (Q_f2, K_h2, V_h2, maskh, dstk, dstk_fixup, scale, slope, logit_softcap,
+             ne01, ne02, stride_Q, stride_KV, stride_mask, jt, tile_KV, Q_B, VKQ_C, KQ_max, KQ_rowsum, KQ_max_scale, kb0);
     }
 
     // Finally, sum up partial KQ rowsums.
