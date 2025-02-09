@@ -12,6 +12,19 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
         const half2 * const __restrict__ KV, half2 * const __restrict__ tile_KV, const int stride_KV) {
     constexpr int D2_padded = D/2 + 4; // Size of D in half2, padded to avoid shared memory bank conflicts.
 
+    if (D == 128) {
+#pragma unroll
+        for (int i0 = 0; i0 < KQ_stride; i0 += nwarps*2) {
+            const int i = i0 + threadIdx.y*2 + threadIdx.x/16;
+            const int k = (threadIdx.x % 16)*4;
+
+            const unsigned int dst = __cvta_generic_to_shared(tile_KV + i*D2_padded + k);
+            const void * src = KV + i*stride_KV + k;
+            asm("cp.async.ca.shared.global [%0], [%1], 16;"
+                : : "r"(dst), "l"(src));
+        }
+    } else {
+
     // Load K/V data into tile with decreasing granularity for D for better memory bandwidth:
     static_assert(KQ_stride % (4*nwarps) == 0, "out of bounds");
 #pragma unroll
@@ -35,6 +48,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
                 // tile_KV[i*D2_padded + k] = KV[i*stride_KV + k];
             }
         }
+    }
     }
 }
 
