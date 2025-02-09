@@ -34,7 +34,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
     }
 }
 
-template<int D, int ncols, int nwarps, int KQ_stride, bool use_logit_softcap, bool needs_fixup, bool is_fixup>
+template<int D, int ncols, int nwarps, int KQ_stride, bool use_logit_softcap, bool needs_fixup, bool is_fixup, bool last_iter>
 static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         const float2 * const __restrict__ Q_f2,
         const half2  * const __restrict__ K_h2,
@@ -290,10 +290,17 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     __syncthreads();
 
     // Iterate over ne11 == previous tokens:
-    for (int kb0 = kb0_start; kb0 < kb0_stop; ++kb0) {
-        flash_attn_ext_f16_iter<D, ncols, nwarps, KQ_stride, use_logit_softcap, needs_fixup, is_fixup>
+    for (int kb0 = kb0_start; kb0 < kb0_stop-1; ++kb0) {
+        constexpr bool last_iter = false;
+        flash_attn_ext_f16_iter<D, ncols, nwarps, KQ_stride, use_logit_softcap, needs_fixup, is_fixup, last_iter>
             (Q_f2, K_h2, V_h2, maskh, dstk, dstk_fixup, scale, slope, logit_softcap,
              ne01, ne02, stride_Q, stride_KV, stride_mask, jt, tile_KV, Q_B, VKQ_C, KQ_max, KQ_rowsum, kb0);
+    }
+    {
+        constexpr bool last_iter = true;
+        flash_attn_ext_f16_iter<D, ncols, nwarps, KQ_stride, use_logit_softcap, needs_fixup, is_fixup, last_iter>
+            (Q_f2, K_h2, V_h2, maskh, dstk, dstk_fixup, scale, slope, logit_softcap,
+             ne01, ne02, stride_Q, stride_KV, stride_mask, jt, tile_KV, Q_B, VKQ_C, KQ_max, KQ_rowsum, kb0_stop-1);
     }
 
     // Finally, sum up partial KQ rowsums.
