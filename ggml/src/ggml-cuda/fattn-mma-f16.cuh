@@ -69,9 +69,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         const int k_VKQ_0 = kb0*KQ_stride;
         mma_C_KQ KQ_C[KQ_stride/(np*mma_C_KQ::I)];
 
-        flash_attn_ext_f16_load_tile<D, nwarps, KQ_stride>(K_h2 + k_VKQ_0*stride_KV, tile_K, stride_KV);
         asm("cp.async.wait_all;");
         __syncthreads();
+        flash_attn_ext_f16_load_tile<D, nwarps, KQ_stride>(V_h2 + k_VKQ_0*stride_KV, tile_V, stride_KV);
 
         // Calculate tile of KQ:
 #pragma unroll
@@ -188,9 +188,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             B[k] = KQ_C[k].to_mma_B();
         }
 
-        flash_attn_ext_f16_load_tile<D, nwarps, KQ_stride>(V_h2 + k_VKQ_0*stride_KV, tile_V, stride_KV);
         asm("cp.async.wait_all;");
         __syncthreads();
+        if (!last_iter) {
+            flash_attn_ext_f16_load_tile<D, nwarps, KQ_stride>(K_h2 + (k_VKQ_0 + KQ_stride)*stride_KV, tile_K, stride_KV);
+        }
 
         // Calculate VKQ tile:
 #pragma unroll
@@ -297,6 +299,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
     __syncthreads();
 
+    flash_attn_ext_f16_load_tile<D, nwarps, KQ_stride>(K_h2 + kb0_start*KQ_stride*stride_KV, tile_K, stride_KV);
     // Iterate over ne11 == previous tokens:
     for (int kb0 = kb0_start; kb0 < kb0_stop-1; ++kb0) {
         constexpr bool last_iter = false;
