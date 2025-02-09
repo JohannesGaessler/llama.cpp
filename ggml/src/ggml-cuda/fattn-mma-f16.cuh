@@ -29,7 +29,6 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         mma_C_VKQ   * const __restrict__ VKQ_C,
         float2 & KQ_max,
         float2 & KQ_rowsum,
-        float2 & KQ_max_scale,
         const int kb0) {
 
     constexpr int np = nwarps*mma_B::J / ncols; // Number of parallel CUDA warps per Q column.
@@ -122,25 +121,13 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             KQ_max_new.y = fmaxf(KQ_max_new.y, __shfl_xor_sync(0xFFFFFFFF, KQ_max_new.y, offset, WARP_SIZE));
         }
 
-        {
-            const float2 diff = make_float2(KQ_max.x - KQ_max_new.x, KQ_max.y - KQ_max_new.y);
-            KQ_max_scale = make_float2(expf(diff.x), expf(diff.y));
-            if (diff.x <= SOFTMAX_FTZ_THRESHOLD) {
-                KQ_max_scale.x = 0.0f;
-            }
-            if (diff.y <= SOFTMAX_FTZ_THRESHOLD) {
-                KQ_max_scale.y = 0.0f;
-            }
-            KQ_max = KQ_max_new;
-        }
-
         float2 KQ_rowsum_add = make_float2(0.0f, 0.0f);
         static_assert(KQ_stride % (np*mma_C_KQ::I) == 0, "bad loop size");
 #pragma unroll
         for (int k = 0; k < KQ_stride/(np*mma_C_KQ::I); ++k) {
 #pragma unroll
             for (int l = 0; l < mma_C_KQ::ne; ++l) {
-                const float KQ_max_l = l % 2 == 0 ? KQ_max.x : KQ_max.y;
+                const float KQ_max_l = l % 2 == 0 ? KQ_max_new.x : KQ_max_new.y;
                 const float diff = KQ_C[k].x[l] - KQ_max_l;
                 KQ_C[k].x[l] = expf(diff);
                 if (diff <= SOFTMAX_FTZ_THRESHOLD) {
@@ -155,16 +142,28 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             }
         }
 
-        // Scale previous KQ_rowsum to account for a potential increase in KQ_max:
-        KQ_rowsum.x = KQ_max_scale.x*KQ_rowsum.x + KQ_rowsum_add.x;
-        KQ_rowsum.y = KQ_max_scale.y*KQ_rowsum.y + KQ_rowsum_add.y;
+        {
+            const float2 diff = make_float2(KQ_max.x - KQ_max_new.x, KQ_max.y - KQ_max_new.y);
+            float2 KQ_max_scale = make_float2(expf(diff.x), expf(diff.y));
+            if (diff.x <= SOFTMAX_FTZ_THRESHOLD) {
+                KQ_max_scale.x = 0.0f;
+            }
+            if (diff.y <= SOFTMAX_FTZ_THRESHOLD) {
+                KQ_max_scale.y = 0.0f;
+            }
+            KQ_max = KQ_max_new;
 
-        const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale.x, KQ_max_scale.y);
+            // Scale previous KQ_rowsum to account for a potential increase in KQ_max:
+            KQ_rowsum.x = KQ_max_scale.x*KQ_rowsum.x + KQ_rowsum_add.x;
+            KQ_rowsum.y = KQ_max_scale.y*KQ_rowsum.y + KQ_rowsum_add.y;
+
+            const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale.x, KQ_max_scale.y);
 #pragma unroll
-        for (int i = 0; i < D/mma_C_VKQ::I; ++i) {
+            for (int i = 0; i < D/mma_C_VKQ::I; ++i) {
 #pragma unroll
-            for (int l = 0; l < mma_C_VKQ::ne; ++l) {
-                VKQ_C[i].x[l] *= KQ_max_scale_h2;
+                for (int l = 0; l < mma_C_VKQ::ne; ++l) {
+                    VKQ_C[i].x[l] *= KQ_max_scale_h2;
+                }
             }
         }
 
@@ -249,9 +248,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     mma_B Q_B[D/(2*mma_B::K)];
     mma_C_VKQ VKQ_C[D/mma_C_VKQ::I];
 
-    float2    KQ_rowsum = {0.0f, 0.0f};
-    float2       KQ_max = {-FLT_MAX/2.0f, -FLT_MAX/2.0f};
-    float2 KQ_max_scale = {0.0f, 0.0f};
+    float2 KQ_rowsum = {0.0f, 0.0f};
+    float2    KQ_max = {-FLT_MAX/2.0f, -FLT_MAX/2.0f};
 
     // Temporarily load Q data into tile_KV, will be loaded into registers afterwards.
     // The loading is done with decreasing granularity for D for better memory bandwidth.
@@ -306,7 +304,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     for (int kb0 = kb0_start; kb0 < kb0_stop; ++kb0) {
         flash_attn_ext_f16_iter<D, ncols, nwarps, KQ_stride, use_logit_softcap, needs_fixup, is_fixup>
             (Q_f2, K_h2, V_h2, maskh, dstk, dstk_fixup, scale, slope, logit_softcap,
-             ne01, ne02, stride_Q, stride_KV, stride_mask, jt, tile_KV, Q_B, VKQ_C, KQ_max, KQ_rowsum, KQ_max_scale, kb0);
+             ne01, ne02, stride_Q, stride_KV, stride_mask, jt, tile_KV, Q_B, VKQ_C, KQ_max, KQ_rowsum, kb0);
     }
 
     // Finally, sum up partial KQ rowsums.
