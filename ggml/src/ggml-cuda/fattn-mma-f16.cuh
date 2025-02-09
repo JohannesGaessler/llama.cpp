@@ -28,10 +28,16 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
             for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
                 const int k = k0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
 
-                tile_KV[i*D2_padded + k] = KV[i*stride_KV + k];
+                const unsigned int dst = __cvta_generic_to_shared(tile_KV + i*D2_padded + k);
+                const void * src = KV + i*stride_KV + k;
+                asm("cp.async.ca.shared.global [%0], [%1], 4;"
+                    : : "r"(dst), "l"(src));
+                // tile_KV[i*D2_padded + k] = KV[i*stride_KV + k];
             }
         }
     }
+    asm("cp.async.commit_group;");
+    asm("cp.async.wait_all;");
 }
 
 template<int D, int ncols, int nwarps, int KQ_stride, bool use_logit_softcap, bool needs_fixup, bool is_fixup, bool last_iter>
