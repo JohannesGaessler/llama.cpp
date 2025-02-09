@@ -20,7 +20,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
 
             const unsigned int dst = __cvta_generic_to_shared(tile_KV + i*D2_padded + k);
             const void * src = KV + i*stride_KV + k;
-            asm("cp.async.ca.shared.global [%0], [%1], 16;"
+            asm("cp.async.cg.shared.global [%0], [%1], 16;"
                 : : "r"(dst), "l"(src));
         }
     } else {
