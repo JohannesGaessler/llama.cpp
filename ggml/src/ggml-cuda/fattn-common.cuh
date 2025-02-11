@@ -716,7 +716,7 @@ void launch_fattn(
 
     ggml_cuda_pool & pool = ctx.pool();
     cudaStream_t main_stream = ctx.stream();
-    const int nsm = 128;
+    const int nsm = ggml_cuda_info().devices[ggml_cuda_get_device()].nsm;
 
     ggml_cuda_pool_alloc<half>   K_f16(pool);
     ggml_cuda_pool_alloc<half>   V_f16(pool);
