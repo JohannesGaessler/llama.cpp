@@ -45,8 +45,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
         const int k0_stop  =                                         D/2 - (D/2) % (1*stride_k);
         const int stride_i = WARP_SIZE / stride_k;
 
-        if (k0_start == k0_stop) {
-            return;
+        if (k0_start >= k0_stop) {
+            continue;
         }
 
 #pragma unroll
@@ -57,11 +57,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
             for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
                 const int k = k0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
 
-                const unsigned int dst = __cvta_generic_to_shared(tile_KV + i*D2_padded + k);
-                const void * src = KV + i*stride_KV + k;
-                asm("cp.async.ca.shared.global [%0], [%1], 4;"
-                    : : "r"(dst), "l"(src));
-                // tile_KV[i*D2_padded + k] = KV[i*stride_KV + k];
+                tile_KV[i*D2_padded + k] = KV[i*stride_KV + k];
             }
         }
     }
@@ -311,8 +307,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const int k0_stop  =                             D/2 - (D/2) % (1*stride_k);
         const int stride_j = WARP_SIZE / stride_k;
 
-        if (k0_start == k0_stop) {
-            break;
+        if (k0_start >= k0_stop) {
+            continue;
         }
 
         if (nwarps*stride_j > ncols && threadIdx.y*stride_j >= ncols) {
@@ -472,7 +468,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
             const int k0_stop  =                             D/2 - (D/2) % (1*stride_k);
             const int stride_j = WARP_SIZE / stride_k;
 
-            if (k0_start == k0_stop) {
+            if (k0_start >= k0_stop) {
                 break;
             }
 
