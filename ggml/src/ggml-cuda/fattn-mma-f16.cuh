@@ -45,7 +45,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
         const int k0_stop  =                                         D/2 - (D/2) % (1*stride_k);
         const int stride_i = WARP_SIZE / stride_k;
 
-        if (k0_start >= k0_stop) {
+        if (k0_start >= k0_stop || k0_stop <= k0_sync_start) {
             continue;
         }
 
