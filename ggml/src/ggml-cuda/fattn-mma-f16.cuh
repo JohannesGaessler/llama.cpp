@@ -1,4 +1,5 @@
 #include "common.cuh"
+#include "cp-async.cuh"
 #include "mma.cuh"
 #include "fattn-common.cuh"
 
@@ -83,7 +84,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         const int k_VKQ_0 = kb0*KQ_stride;
         mma_C_KQ KQ_C[KQ_stride/(np*mma_C_KQ::I)];
 
-        asm("cp.async.wait_all;");
+        cp_async_wait_all();
         __syncthreads();
         flash_attn_ext_f16_load_tile<D, nwarps, KQ_stride>(V_h2 + k_VKQ_0*stride_KV, tile_V, stride_KV);
 
@@ -99,7 +100,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             }
         }
 
-        // __syncthreads(); // FIXME
+#ifndef CP_ASYNC_AVAILABLE
+        __syncthreads(); // Only needed if tile_K == tile_V.
+#endif // CP_ASYNC_AVAILABLE
 
         if (use_logit_softcap) {
             static_assert(KQ_stride % (np*mma_C_KQ::I) == 0, "bad loop size");
@@ -202,7 +205,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             B[k] = KQ_C[k].to_mma_B();
         }
 
-        asm("cp.async.wait_all;");
+        cp_async_wait_all();
         __syncthreads();
         if (!last_iter) {
             flash_attn_ext_f16_load_tile<D, nwarps, KQ_stride>(K_h2 + (k_VKQ_0 + KQ_stride)*stride_KV, tile_K, stride_KV);
@@ -222,7 +225,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             }
         }
 
-        // __syncthreads(); // FIXME
+#ifndef CP_ASYNC_AVAILABLE
+        __syncthreads(); // Only needed if tile_K == tile_V.
+#endif // CP_ASYNC_AVAILABLE
 }
 
 template<int D, int ncols, int nwarps, int KQ_stride, bool use_logit_softcap, bool needs_fixup, bool is_fixup>
@@ -256,7 +261,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
     // Temporary shared buffer for loading K/V data with KQ_stride*D logical elements:
     extern __shared__ half2 tile_K[];
+#ifdef CP_ASYNC_AVAILABLE
     half2 * tile_V = tile_K + KQ_stride*D2_padded;
+#else
+    half2 * tile_V = tile_K;
+#endif // CP_ASYNC_AVAILABLE
 
     mma_B Q_B[D/(2*mma_B::K)];
     mma_C_VKQ VKQ_C[D/mma_C_VKQ::I];
@@ -616,11 +625,15 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     static_assert(cols_per_block % mma_B::J == 0, "bad cols_per_block");
 
     const ggml_tensor * KQV = dst;
+    const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
 
-    constexpr int    KQ_stride     = D <= 128 ? 64 : 32;
-    constexpr int    nwarps        = (KQ_stride == 32 && cols_per_block <= 16) ?
-                                     cols_per_block/mma_B::J * KQ_stride/mma_A::I : (cols_per_block <= 8 ? 4 : 8);
-    constexpr size_t nbytes_shared = std::max(2*KQ_stride, nwarps*mma_B::J) * (D + 8) * sizeof(half);
+    constexpr int KQ_stride = D <= 128 ? 64 : 32;
+    constexpr int nwarps    = (KQ_stride == 32 && cols_per_block <= 16) ?
+                              cols_per_block/mma_B::J * KQ_stride/mma_A::I : (cols_per_block <= 8 ? 4 : 8);
+
+    const int    nrows_KQ      = cp_async_available(cc) ? 2*KQ_stride : KQ_stride;
+    const int    nrows_combine = nwarps*mma_B::J;
+    const size_t nbytes_shared = std::max(nrows_KQ, nrows_combine) * (D + 8) * sizeof(half);
 
     float logit_softcap;
     memcpy(&logit_softcap, (const float *) KQV->op_params + 2, sizeof(float));
