@@ -13,25 +13,37 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
         const half2 * const __restrict__ KV, half2 * const __restrict__ tile_KV, const int stride_KV) {
     constexpr int D2_padded = D/2 + 4; // Size of D in half2, padded to avoid shared memory bank conflicts.
 
-    if (D == 128) {
+    // If cp.async is available, load up to the highest power of 2 in D asynchronously:
+#ifdef CP_ASYNC_AVAILABLE
+    static_assert(D >= 64 && D < 512, "bad D");
+    constexpr int k0_sync_start = D/2 < 64 ? 32 : (D/2 < 128 ? 64 : 128);
+
+    // const unsigned int tile_KV_32 = __cvta_generic_to_shared(tile_KV);
+
+    constexpr int preload = 64;
+    constexpr int h2_per_chunk = 16/sizeof(half2);
+    constexpr int chunks_per_row = k0_sync_start / h2_per_chunk;
+    constexpr int stride_i = WARP_SIZE / chunks_per_row;
 #pragma unroll
-        for (int i0 = 0; i0 < KQ_stride; i0 += nwarps*2) {
-            const int i = i0 + threadIdx.y*2 + threadIdx.x/16;
-            const int k = (threadIdx.x % 16)*4;
+    for (int i0 = 0; i0 < KQ_stride; i0 += nwarps*stride_i) {
+        const int i = i0 + threadIdx.y*stride_i + threadIdx.x / chunks_per_row;
+        const int k = (threadIdx.x % chunks_per_row)*h2_per_chunk;
 
-            const unsigned int dst = __cvta_generic_to_shared(tile_KV + i*D2_padded + k);
-            const void * src = KV + i*stride_KV + k;
-            asm("cp.async.cg.shared.global.L2::64B [%0], [%1], 16;"
-                : : "r"(dst), "l"(src));
-        }
-    } else {
+        // cp_async_cg_16<preload>(tile_KV_32 + (i*D2_padded + k)*sizeof(half2), KV + i*stride_KV + k);
+        cp_async_cg_16<preload>(__cvta_generic_to_shared(tile_KV + i*D2_padded + k), KV + i*stride_KV + k);
+    }
+#else
+    constexpr int k0_sync_start = 0;
+#endif // CP_ASYNC_AVAILABLE
+    static_assert(k0_sync_start % WARP_SIZE == 0, "bad k0_sync_start");
 
-    // Load K/V data into tile with decreasing granularity for D for better memory bandwidth:
+    // If D is not a power of 2, the rest is loaded synchronously.
+    // K/V data is loaded with decreasing granularity for D for better memory bandwidth.
     static_assert(KQ_stride % (4*nwarps) == 0, "out of bounds");
 #pragma unroll
     for (int stride_k : {WARP_SIZE, WARP_SIZE/2, WARP_SIZE/4}) {
-        const int k0_start = stride_k == WARP_SIZE ? 0 : D/2 - (D/2) % (2*stride_k);
-        const int k0_stop  =                             D/2 - (D/2) % (1*stride_k);
+        const int k0_start = stride_k == WARP_SIZE ? k0_sync_start : D/2 - (D/2) % (2*stride_k);
+        const int k0_stop  =                                         D/2 - (D/2) % (1*stride_k);
         const int stride_i = WARP_SIZE / stride_k;
 
 #pragma unroll
@@ -49,7 +61,6 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
                 // tile_KV[i*D2_padded + k] = KV[i*stride_KV + k];
             }
         }
-    }
     }
 }
 
