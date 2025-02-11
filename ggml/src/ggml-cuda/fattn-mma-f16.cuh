@@ -283,18 +283,13 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     half2 * tile_V = tile_K;
 #endif // CP_ASYNC_AVAILABLE
 
-    // Preload K data for first iteration when using cp_async:
-#ifdef CP_ASYNC_AVAILABLE
-    flash_attn_ext_f16_load_tile<D, nwarps, KQ_stride>(K_h2 + kb0_start*KQ_stride*stride_KV, tile_K, stride_KV);
-#endif // CP_ASYNC_AVAILABLE
-
     mma_B Q_B[D/(2*mma_B::K)];
     mma_C_VKQ VKQ_C[D/mma_C_VKQ::I];
 
     float2 KQ_rowsum = {0.0f, 0.0f};
     float2    KQ_max = {-FLT_MAX/2.0f, -FLT_MAX/2.0f};
 
-    // Temporarily load Q data into tile_V, will be loaded into registers afterwards.
+    // Temporarily load Q data into tile_K, will be loaded into registers afterwards.
     // The loading is done with decreasing granularity for D for better memory bandwidth.
     const half2 scale_h2 = make_half2(scale, scale);
 #pragma unroll
@@ -317,14 +312,14 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
                     const int k = k0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
 
                     const float2 tmp = Q_f2[(jt*ncols + j)*stride_Q + k];
-                    tile_V[j*D2_padded + k] = scale_h2 * make_half2(tmp.x, tmp.y);
+                    tile_K[j*D2_padded + k] = scale_h2 * make_half2(tmp.x, tmp.y);
                 }
             } else {
 #pragma unroll
                 for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
                     const int k = k0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
 
-                    tile_V[j*D2_padded + k] = make_half2(0.0f, 0.0f);
+                    tile_K[j*D2_padded + k] = make_half2(0.0f, 0.0f);
                 }
             }
         }
@@ -337,11 +332,16 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
 #pragma unroll
         for (int k0 = 0; k0 < D/2; k0 += mma_B::K) {
-            Q_B[k0/mma_B::K].load_ldmatrix(tile_V + j0*D2_padded + k0, D2_padded);
+            Q_B[k0/mma_B::K].load_ldmatrix(tile_K + j0*D2_padded + k0, D2_padded);
         }
     }
 
     __syncthreads();
+
+    // Preload K data for first iteration when using cp_async:
+#ifdef CP_ASYNC_AVAILABLE
+    flash_attn_ext_f16_load_tile<D, nwarps, KQ_stride>(K_h2 + kb0_start*KQ_stride*stride_KV, tile_K, stride_KV);
+#endif // CP_ASYNC_AVAILABLE
 
     // Iterate over ne11 == previous tokens:
     for (int kb0 = kb0_start; kb0 < kb0_stop-1; ++kb0) {
