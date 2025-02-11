@@ -46,7 +46,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
         const int stride_i = WARP_SIZE / stride_k;
 
         if (k0_start == k0_stop) {
-            return; // All further iterations would have lower granularity.
+            return;
         }
 
 #pragma unroll
@@ -311,6 +311,10 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const int k0_stop  =                             D/2 - (D/2) % (1*stride_k);
         const int stride_j = WARP_SIZE / stride_k;
 
+        if (k0_start == k0_stop) {
+            break;
+        }
+
         if (nwarps*stride_j > ncols && threadIdx.y*stride_j >= ncols) {
             break;
         }
@@ -358,7 +362,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
             (Q_f2, K_h2, V_h2, maskh, dstk, dstk_fixup, scale, slope, logit_softcap,
              ne01, ne02, stride_Q, stride_KV, stride_mask, jt, tile_K, tile_V, Q_B, VKQ_C, KQ_max, KQ_rowsum, kb0);
     }
-    {
+    { // kb0_start is always < kb0_stop so the last iter can be executed unconditionally.
         constexpr bool last_iter = true;
         flash_attn_ext_f16_iter<D, ncols, nwarps, KQ_stride, use_logit_softcap, needs_fixup, is_fixup, last_iter>
             (Q_f2, K_h2, V_h2, maskh, dstk, dstk_fixup, scale, slope, logit_softcap,
@@ -441,9 +445,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
         // Write back combined meta data:
         if (np*mma_B::J == WARP_SIZE || threadIdx.x < np*mma_B::J) {
-            meta_j[0] = KQ_cmn; // Combined max. KQ values.
-            meta_j[1] = KQ_crs; // Combined KQ rowsums.
-            meta_j[2] = KQ_cms; // KQ max scales per parallel warp.
+            *((float2 *) meta_j) = make_float2(KQ_cms, KQ_crs); // Combined KQ max scale + rowsum.
         }
         if (needs_fixup && threadIdx.x < mma_B::J) {
             float2 * dstk_fixup_meta = dstk_fixup + blockIdx.x*ncols;
@@ -470,6 +472,10 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
             const int k0_stop  =                             D/2 - (D/2) % (1*stride_k);
             const int stride_j = WARP_SIZE / stride_k;
 
+            if (k0_start == k0_stop) {
+                break;
+            }
+
             if (nwarps*stride_j > ncols && threadIdx.y*stride_j >= ncols) {
                 break;
             }
@@ -490,7 +496,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
                     float2 dstk_val = make_float2(0.0f, 0.0f);
 #pragma unroll
                     for (int ip = 0; ip < np; ++ip) {
-                        const float KQ_crs = np == 1 ? 1.0f : meta_j[ip*mma_B::J*D2_padded + 2];
+                        const float KQ_crs = np == 1 ? 1.0f : meta_j[ip*mma_B::J*D2_padded + 0];
                         const float2 dstk_val_add = __half22float2(tile_K[(j_tile_K + ip*mma_B::J)*D2_padded + k]);
                         dstk_val.x += dstk_val_add.x*KQ_crs;
                         dstk_val.y += dstk_val_add.y*KQ_crs;
