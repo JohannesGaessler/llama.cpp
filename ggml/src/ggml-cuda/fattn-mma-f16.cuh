@@ -18,7 +18,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
     static_assert(D >= 64 && D < 512, "bad D");
     constexpr int k0_sync_start = D/2 < 64 ? 32 : (D/2 < 128 ? 64 : 128);
 
-    // const unsigned int tile_KV_32 = __cvta_generic_to_shared(tile_KV);
+    const unsigned int tile_KV_32 = __cvta_generic_to_shared(tile_KV);
 
     constexpr int preload = 64;
     constexpr int h2_per_chunk = 16/sizeof(half2);
@@ -29,8 +29,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
         const int i = i0 + threadIdx.y*stride_i + threadIdx.x / chunks_per_row;
         const int k = (threadIdx.x % chunks_per_row)*h2_per_chunk;
 
-        // cp_async_cg_16<preload>(tile_KV_32 + (i*D2_padded + k)*sizeof(half2), KV + i*stride_KV + k);
-        cp_async_cg_16<preload>(__cvta_generic_to_shared(tile_KV + i*D2_padded + k), KV + i*stride_KV + k);
+        cp_async_cg_16<preload>(tile_KV_32 + (i*D2_padded + k)*sizeof(half2), KV + i*stride_KV + k);
     }
 #else
     constexpr int k0_sync_start = 0;
