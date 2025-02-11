@@ -288,6 +288,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     half2 * tile_V = tile_K;
 #endif // CP_ASYNC_AVAILABLE
 
+    // Preload K data for first iteration when using cp_async:
+#ifdef CP_ASYNC_AVAILABLE
+    flash_attn_ext_f16_load_tile<D, nwarps, KQ_stride>(K_h2 + kb0_start*KQ_stride*stride_KV, tile_K, stride_KV);
+#endif // CP_ASYNC_AVAILABLE
+
     mma_B Q_B[D/(2*mma_B::K)];
     mma_C_VKQ VKQ_C[D/mma_C_VKQ::I];
 
@@ -342,11 +347,6 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     }
 
     __syncthreads();
-
-    // Preload K data for first iteration when using cp_async:
-#ifdef CP_ASYNC_AVAILABLE
-    flash_attn_ext_f16_load_tile<D, nwarps, KQ_stride>(K_h2 + kb0_start*KQ_stride*stride_KV, tile_K, stride_KV);
-#endif // CP_ASYNC_AVAILABLE
 
     // Iterate over ne11 == previous tokens:
     for (int kb0 = kb0_start; kb0 < kb0_stop-1; ++kb0) {
