@@ -175,9 +175,6 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             const float KQ_max_l = l % 2 == 0 ? KQ_max_new.x : KQ_max_new.y;
             const float diff = KQ_C[k].x[l] - KQ_max_l;
             KQ_C[k].x[l] = expf(diff);
-            if (diff <= SOFTMAX_FTZ_THRESHOLD) {
-                KQ_C[k].x[l] = 0.0f;
-            }
 
             if (l % 2 == 0) {
                 KQ_rowsum_add.x += KQ_C[k].x[l];
@@ -189,13 +186,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 
     {
         const float2 diff = make_float2(KQ_max.x - KQ_max_new.x, KQ_max.y - KQ_max_new.y);
-        float2 KQ_max_scale = make_float2(expf(diff.x), expf(diff.y));
-        if (diff.x <= SOFTMAX_FTZ_THRESHOLD) {
-            KQ_max_scale.x = 0.0f;
-        }
-        if (diff.y <= SOFTMAX_FTZ_THRESHOLD) {
-            KQ_max_scale.y = 0.0f;
-        }
+        const float2 KQ_max_scale = make_float2(expf(diff.x), expf(diff.y));
         KQ_max = KQ_max_new;
 
         // Scale previous KQ_rowsum to account for a potential increase in KQ_max:
