@@ -45,6 +45,10 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
         const int k0_stop  =                                         D/2 - (D/2) % (1*stride_k);
         const int stride_i = WARP_SIZE / stride_k;
 
+        if (k0_start == k0_stop || k0_stop <= k0_sync_start) {
+            continue;
+        }
+
 #pragma unroll
         for (int i0 = 0; i0 < KQ_stride; i0 += nwarps*stride_i) {
             const int i = i0 + threadIdx.y*stride_i + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
@@ -298,6 +302,10 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const int k0_stop  =                             D/2 - (D/2) % (1*stride_k);
         const int stride_j = WARP_SIZE / stride_k;
 
+        if (k0_start == k0_stop) {
+            continue;
+        }
+
         if (nwarps*stride_j > ncols && threadIdx.y*stride_j >= ncols) {
             break;
         }
@@ -467,6 +475,10 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
             const int k0_start = stride_k == WARP_SIZE ? 0 : D/2 - (D/2) % (2*stride_k);
             const int k0_stop  =                             D/2 - (D/2) % (1*stride_k);
             const int stride_j = WARP_SIZE / stride_k;
+
+            if (k0_start == k0_stop) {
+                continue;
+            }
 
             if (nwarps*stride_j > ncols && threadIdx.y*stride_j >= ncols) {
                 break;
