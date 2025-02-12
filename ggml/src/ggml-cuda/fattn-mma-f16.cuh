@@ -26,8 +26,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
     constexpr int stride_i = WARP_SIZE / chunks_per_row;
 #pragma unroll
     for (int i0 = 0; i0 < KQ_stride; i0 += nwarps*stride_i) {
-        const int i = i0 + threadIdx.y*stride_i + threadIdx.x / chunks_per_row;
-        const int k = (threadIdx.x % chunks_per_row)*h2_per_chunk;
+        const int i = i0 + threadIdx.y*stride_i + (chunks_per_row == WARP_SIZE ? 0 : threadIdx.x / chunks_per_row);
+        const int k = (chunks_per_row == WARP_SIZE ? threadIdx.x : threadIdx.x % chunks_per_row)*h2_per_chunk;
 
         cp_async_cg_16<preload>(tile_KV_32 + (i*D2_padded + k)*sizeof(half2), KV + i*stride_KV + k);
     }
@@ -364,6 +364,14 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
             (Q_f2, K_h2, V_h2, maskh, dstk, dstk_fixup, scale, slope, logit_softcap,
              ne01, ne02, stride_Q, stride_KV, stride_mask, jt, tile_K, tile_V, Q_B, VKQ_C, KQ_max, KQ_rowsum, kb0_stop-1);
     }
+
+    // With cp_async there is no __syncthreads at the end of the iter,
+    //     there can be a race condition on shared memory access for combining/writing back results.
+#ifdef CP_ASYNC_AVAILABLE
+    if (nwarps*mma_B::J > KQ_stride) {
+        __syncthreads();
+    }
+#endif // CP_ASYNC_AVAILABLE
 
     // Finally, sum up partial KQ rowsums.
     // The partial sums are spread across 8 threads each, does not need full reduce.
