@@ -459,8 +459,21 @@ struct mma_C_I16J8<float> {
 
 template <int I, int J, typename T>
 struct mma_tile {
-    static __device__ __forceinline__ int get_i(int l);
-    static __device__ __forceinline__ int get_j(int l);
+    static __device__ __forceinline__ int get_i(const int l) {
+        if constexpr (I == 16 && J == 8) {
+            return ((l / 2) % 2) * 8 + threadIdx.x / 4;
+        } else {
+            static_assert(I == -1 && J == -1, "template specialization not implemented");
+        }
+    }
+
+    static __device__ __forceinline__ int get_j(const int l) {
+        if constexpr (I == 16 && J == 8) {
+            return (l / 4) * 4 + threadIdx.x % 4;
+        } else {
+            static_assert(I == -1 && J == -1, "template specialization not implemented");
+        }
+    }
 };
 
 template <int I_, int J_>
@@ -470,39 +483,27 @@ struct mma_tile<I_, J_, half2> {
     static constexpr int ne = I * J / WARP_SIZE;
     half2 x[ne] = {{0.0f, 0.0f}};
 
-    static __device__ __forceinline__ int get_i(int l);
-    static __device__ __forceinline__ int get_j(int l);
+    static __device__ __forceinline__ int get_i(const int l) {
+        if constexpr (I == 8 && J == 8) {
+            return threadIdx.x / 4;
+        } else if constexpr (I == 16 && J == 8) {
+            return (l % 2) * 8 + threadIdx.x / 4;
+        } else {
+            static_assert(I == -1 && J == -1, "template specialization not implemented");
+        }
+    }
+
+    static __device__ __forceinline__ int get_j(const int l) {
+        if constexpr (I == 8 && J == 8) {
+            return l * 4 + threadIdx.x % 4;
+        } else if constexpr (I == 16 && J == 8) {
+            return (l / 2) * 4 + threadIdx.x % 4;
+        } else {
+            static_assert(I == -1 && J == -1, "template specialization not implemented");
+        }
+    }
 
     __device__ __forceinline__ void load_ldmatrix_trans(const half2 * __restrict__ xs0, int stride);
-};
-
-template <int I, int J, typename T>
-__device__ __forceinline__ int mma_tile<I, J, T>::get_i(const int l) {
-    if constexpr (I == 8 && J == 8) {
-        return threadIdx.x / 4;
-    } else if constexpr (I == 16 && J == 8) {
-        if (std::is_same<T, half2>::value) {
-            return (l % 2) * 8 + threadIdx.x / 4;
-        }
-        return ((l / 2) % 2) * 8 + threadIdx.x / 4;
-    } else {
-        static_assert(I == -1 && J == -1, "template specialization not implemented");
-    }
-};
-
-template <int I, int J, typename T>
-__device__ __forceinline__ int mma_tile<I, J, T>::get_j(const int l) {
-    if constexpr (I == 8 && J == 8) {
-        static_assert(std::is_same<T, half2>::value, "only half2 implemented");
-        return l * 4 + threadIdx.x % 4;
-    } else if constexpr (I == 16 && J == 8) {
-        if (std::is_same<T, half2>::value) {
-            return (l / 2) * 4 + threadIdx.x % 4;
-        }
-        return (l / 4) * 4 + threadIdx.x % 4;
-    } else {
-        static_assert(I == -1 && J == -1, "template specialization not implemented");
-    }
 };
 
 template<>
