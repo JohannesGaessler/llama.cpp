@@ -498,6 +498,8 @@ namespace ggml_cuda_mma {
         static __device__ __forceinline__ int get_i(const int l) {
             if constexpr (I == 8 && J == 8) {
                 return threadIdx.x / 4;
+            } else if constexpr (I == 16 && J == 4) {
+                return l * 8 + threadIdx.x / 4;
             } else if constexpr (I == 16 && J == 8) {
                 return (l % 2) * 8 + threadIdx.x / 4;
             } else {
@@ -508,6 +510,8 @@ namespace ggml_cuda_mma {
         static __device__ __forceinline__ int get_j(const int l) {
             if constexpr (I == 8 && J == 8) {
                 return l * 4 + threadIdx.x % 4;
+            } else if constexpr (I == 16 && J == 4) {
+                return threadIdx.x % 4;
             } else if constexpr (I == 16 && J == 8) {
                 return (l / 2) * 4 + threadIdx.x % 4;
             } else {

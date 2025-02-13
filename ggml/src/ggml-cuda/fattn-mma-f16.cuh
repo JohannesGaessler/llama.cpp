@@ -97,7 +97,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     constexpr int D2_padded = D/2 + 4; // Size of D in half2, padded to avoid shared memory bank conflicts.
 
     const int k_VKQ_0 = kb0*KQ_stride;
-    tile_C_KQ KQ_C[KQ_stride/(np*mma_C_KQ::I)];
+    tile_C_KQ KQ_C[KQ_stride/(np*tile_C_KQ::I)];
 
 #ifdef CP_ASYNC_AVAILABLE
     cp_async_wait_all();
@@ -154,11 +154,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     // Calculate softmax for each KQ column using the current max. value.
     // The divisor is stored in KQ_rowsum and will be applied at the end.
     float2 KQ_max_new = KQ_max;
-    static_assert(KQ_stride % (np*mma_C_KQ::I) == 0, "bad loop size");
+    static_assert(KQ_stride % (np*tile_C_KQ::I) == 0, "bad loop size");
 #pragma unroll
-    for (int k = 0; k < KQ_stride/(np*mma_C_KQ::I); ++k) {
+    for (int k = 0; k < KQ_stride/(np*tile_C_KQ::I); ++k) {
 #pragma unroll
-        for (int l0 = 0; l0 < mma_C_KQ::ne; l0 += 2) {
+        for (int l0 = 0; l0 < tile_C_KQ::ne; l0 += 2) {
             KQ_max_new.x = fmaxf(KQ_max_new.x, KQ_C[k].x[l0 + 0]);
             KQ_max_new.y = fmaxf(KQ_max_new.y, KQ_C[k].x[l0 + 1]);
         }
@@ -172,11 +172,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     }
 
     float2 KQ_rowsum_add = make_float2(0.0f, 0.0f);
-    static_assert(KQ_stride % (np*mma_C_KQ::I) == 0, "bad loop size");
+    static_assert(KQ_stride % (np*tile_C_KQ::I) == 0, "bad loop size");
 #pragma unroll
-    for (int k = 0; k < KQ_stride/(np*mma_C_KQ::I); ++k) {
+    for (int k = 0; k < KQ_stride/(np*tile_C_KQ::I); ++k) {
 #pragma unroll
-        for (int l = 0; l < mma_C_KQ::ne; ++l) {
+        for (int l = 0; l < tile_C_KQ::ne; ++l) {
             const float KQ_max_l = l % 2 == 0 ? KQ_max_new.x : KQ_max_new.y;
             const float diff = KQ_C[k].x[l] - KQ_max_l;
             KQ_C[k].x[l] = expf(diff);
