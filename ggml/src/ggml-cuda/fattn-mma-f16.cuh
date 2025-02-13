@@ -125,28 +125,28 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 #endif // CP_ASYNC_AVAILABLE
 
     if (use_logit_softcap) {
-        static_assert(KQ_stride % (np*mma_C_KQ::I) == 0, "bad loop size");
+        static_assert(KQ_stride % (np*tile_C_KQ::I) == 0, "bad loop size");
 #pragma unroll
-        for (int i = 0; i < KQ_stride/(np*mma_C_KQ::I); ++i) {
+        for (int i = 0; i < KQ_stride/(np*tile_C_KQ::I); ++i) {
 #pragma unroll
-            for (int l = 0; l < mma_C_KQ::ne; ++l) {
+            for (int l = 0; l < tile_C_KQ::ne; ++l) {
                 KQ_C[i].x[l] = logit_softcap*tanhf(KQ_C[i].x[l]);
             }
         }
     }
 
     if (maskh) {
-        static_assert(KQ_stride % (np       *mma_C_KQ::I) == 0, "bad loop size");
-        static_assert(ncols     % (nwarps/np*mma_C_KQ::J) == 0, "bad loop size");
+        static_assert(KQ_stride % (np       *tile_C_KQ::I) == 0, "bad loop size");
+        static_assert(ncols     % (nwarps/np*tile_C_KQ::J) == 0, "bad loop size");
 #pragma unroll
-        for (int i00 = 0; i00 < KQ_stride; i00 += np*mma_C_KQ::I) {
-            const int i0 = i00 + (threadIdx.y % np)*mma_C_KQ::I;
+        for (int i00 = 0; i00 < KQ_stride; i00 += np*tile_C_KQ::I) {
+            const int i0 = i00 + (threadIdx.y % np)*tile_C_KQ::I;
 #pragma unroll
-            for (int l = 0; l < mma_C_KQ::ne; ++l) {
+            for (int l = 0; l < tile_C_KQ::ne; ++l) {
                 const int i = i0 + mma_C_KQ::get_i(l);
-                const int j = (threadIdx.y / np)*mma_C_KQ::J + mma_C_KQ::get_j(l);
+                const int j = (threadIdx.y / np)*tile_C_KQ::J + mma_C_KQ::get_j(l);
 
-                KQ_C[i00/(np*mma_C_KQ::I)].x[l] += slope*__half2float(maskh[j*stride_mask + k_VKQ_0 + i]);
+                KQ_C[i00/(np*tile_C_KQ::I)].x[l] += slope*__half2float(maskh[j*stride_mask + k_VKQ_0 + i]);
             }
         }
     }
