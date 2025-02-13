@@ -87,9 +87,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         const int stride_KV,
         const int stride_mask,
         const int jt,
-        half2       * const __restrict__ tile_K,
-        half2       * const __restrict__ tile_V,
-        const mma_B * const __restrict__ Q_B,
+        half2        * const __restrict__ tile_K,
+        half2        * const __restrict__ tile_V,
+        const tile_B * const __restrict__ Q_B,
         tile_C_VKQ   * const __restrict__ VKQ_C,
         float2 & KQ_max,
         float2 & KQ_rowsum,
@@ -285,7 +285,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     half2 * tile_V = tile_K;
 #endif // CP_ASYNC_AVAILABLE
 
-    mma_B Q_B[D/(2*mma_B::K)];
+    tile_B Q_B[D/(2*mma_B::K)];
     tile_C_VKQ VKQ_C[D/mma_C_VKQ::I];
 
     float2 KQ_rowsum = {0.0f, 0.0f};
@@ -338,7 +338,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
 #pragma unroll
         for (int k0 = 0; k0 < D/2; k0 += mma_B::K) {
-            Q_B[k0/mma_B::K].load_ldmatrix(tile_K + j0*D2_padded + k0, D2_padded);
+            ((mma_B *) Q_B)[k0/mma_B::K].load_ldmatrix(tile_K + j0*D2_padded + k0, D2_padded);
+            // load_ldmatrix(Q_B[k0/mma_B::K], tile_K + j0*D2_padded + k0, D2_padded);
         }
     }
 
