@@ -8,9 +8,11 @@ typedef mma_B_J8K8<half2>  mma_B;
 typedef mma_C_I16J8<float> mma_C_KQ;
 typedef mma_C_I16J8<half2> mma_C_VKQ;
 
-typedef mma_tile<16, 8, half2> mma_tile_A;
-typedef mma_tile< 8, 8, half2> mma_tile_B;
-typedef mma_tile<16, 4, half2> mma_tile_C_VKQ;
+using namespace ggml_cuda_mma;
+
+typedef tile<16, 8, half2> tile_A;
+typedef tile< 8, 8, half2> tile_B;
+typedef tile<16, 4, half2> tile_C_VKQ;
 
 template<int D, int nwarps, int KQ_stride>
 static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
@@ -87,7 +89,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         half2       * const __restrict__ tile_K,
         half2       * const __restrict__ tile_V,
         const mma_B * const __restrict__ Q_B,
-        mma_tile_C_VKQ   * const __restrict__ VKQ_C,
+        tile_C_VKQ   * const __restrict__ VKQ_C,
         float2 & KQ_max,
         float2 & KQ_rowsum,
         const int kb0) {
@@ -199,9 +201,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 
         const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale.x, KQ_max_scale.y);
 #pragma unroll
-        for (int i = 0; i < D/mma_tile_C_VKQ::I; ++i) {
+        for (int i = 0; i < D/tile_C_VKQ::I; ++i) {
 #pragma unroll
-            for (int l = 0; l < mma_tile_C_VKQ::ne; ++l) {
+            for (int l = 0; l < tile_C_VKQ::ne; ++l) {
                 VKQ_C[i].x[l] *= KQ_max_scale_h2;
             }
         }
@@ -228,15 +230,15 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 
     // Calculate VKQ tile:
 #pragma unroll
-    for (int i_VKQ_0 = 0; i_VKQ_0 < D; i_VKQ_0 += mma_tile_C_VKQ::I) {
-        static_assert((KQ_stride/2) % (np*mma_tile_A::J) == 0, "bad loop size");
+    for (int i_VKQ_0 = 0; i_VKQ_0 < D; i_VKQ_0 += tile_C_VKQ::I) {
+        static_assert((KQ_stride/2) % (np*tile_A::J) == 0, "bad loop size");
 #pragma unroll
-        for (int k00 = 0; k00 < KQ_stride/2; k00 += np*mma_tile_A::J) {
-            const int k0 = k00 + (threadIdx.y % np)*mma_tile_A::J;
+        for (int k00 = 0; k00 < KQ_stride/2; k00 += np*tile_A::J) {
+            const int k0 = k00 + (threadIdx.y % np)*tile_A::J;
 
-            mma_tile_A A;
-            ggml_cuda_mma_load_ldmatrix_trans(A, tile_V + 2*k0*D2_padded + i_VKQ_0/2, D2_padded);
-            ggml_cuda_mma_mma(VKQ_C[i_VKQ_0/mma_tile_C_VKQ::I], A, ((mma_tile_B *)B)[k00/(np*mma_A::K)]);
+            tile_A A;
+            ggml_cuda_mma::load_ldmatrix_trans(A, tile_V + 2*k0*D2_padded + i_VKQ_0/2, D2_padded);
+            ggml_cuda_mma::mma(VKQ_C[i_VKQ_0/tile_C_VKQ::I], A, ((tile_B *)B)[k00/(np*mma_A::K)]);
         }
     }
 
@@ -283,7 +285,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 #endif // CP_ASYNC_AVAILABLE
 
     mma_B Q_B[D/(2*mma_B::K)];
-    mma_tile_C_VKQ VKQ_C[D/mma_C_VKQ::I];
+    tile_C_VKQ VKQ_C[D/mma_C_VKQ::I];
 
     float2 KQ_rowsum = {0.0f, 0.0f};
     float2    KQ_max = {-FLT_MAX/2.0f, -FLT_MAX/2.0f};
