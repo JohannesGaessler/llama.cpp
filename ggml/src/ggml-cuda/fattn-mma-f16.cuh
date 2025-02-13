@@ -3,7 +3,6 @@
 #include "mma.cuh"
 #include "fattn-common.cuh"
 
-typedef mma_B_J8K8<half2>  mma_B;
 typedef mma_C_I16J8<float> mma_C_KQ;
 typedef mma_C_I16J8<half2> mma_C_VKQ;
 
@@ -94,7 +93,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         float2 & KQ_rowsum,
         const int kb0) {
 
-    constexpr int np = nwarps*mma_B::J / ncols; // Number of parallel CUDA warps per Q column.
+    constexpr int np = nwarps*tile_B::I / ncols; // Number of parallel CUDA warps per Q column.
     constexpr int D2_padded = D/2 + 4; // Size of D in half2, padded to avoid shared memory bank conflicts.
 
     const int k_VKQ_0 = kb0*KQ_stride;
@@ -210,10 +209,10 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     }
 
     // Convert KQ C tiles into B tiles for VKQ calculation:
-    tile_B B[KQ_stride/(np*2*mma_B::K)];
-    static_assert(KQ_stride % (np*2*mma_B::K) == 0, "bad loop size");
+    tile_B B[KQ_stride/(np*2*tile_B::J)];
+    static_assert(KQ_stride % (np*2*tile_B::J) == 0, "bad loop size");
 #pragma unroll
-    for (int k = 0; k < KQ_stride/(np*2*mma_B::K); ++k) {
+    for (int k = 0; k < KQ_stride/(np*2*tile_B::J); ++k) {
         B[k] = get_transposed(get_half2(KQ_C[k]));
     }
 
@@ -268,8 +267,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const int kb0_stop) {
     //In this kernel Q, K, V are matrices while i, j, k are matrix indices.
 
-    static_assert(nwarps*mma_B::J % ncols == 0, "bad nwarps");
-    constexpr int np = nwarps*mma_B::J / ncols; // Number of parallel CUDA warps per Q column.
+    static_assert(nwarps*tile_B::I % ncols == 0, "bad nwarps");
+    constexpr int np = nwarps*tile_B::I / ncols; // Number of parallel CUDA warps per Q column.
 
     static_assert(D         % nwarps == 0, "bad D");
     static_assert(KQ_stride % nwarps == 0, "bad KQ_stride");
@@ -284,7 +283,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     half2 * tile_V = tile_K;
 #endif // CP_ASYNC_AVAILABLE
 
-    tile_B Q_B[D/(2*mma_B::K)];
+    tile_B Q_B[D/(2*tile_B::J)];
     tile_C_VKQ VKQ_C[D/mma_C_VKQ::I];
 
     float2 KQ_rowsum = {0.0f, 0.0f};
@@ -333,11 +332,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     __syncthreads();
 
     {
-        const int j0 = (threadIdx.y / np) * mma_B::J;
+        const int j0 = (threadIdx.y / np) * tile_B::I;
 
 #pragma unroll
-        for (int k0 = 0; k0 < D/2; k0 += mma_B::K) {
-            load_ldmatrix(Q_B[k0/mma_B::K], tile_K + j0*D2_padded + k0, D2_padded);
+        for (int k0 = 0; k0 < D/2; k0 += tile_B::J) {
+            load_ldmatrix(Q_B[k0/tile_B::J], tile_K + j0*D2_padded + k0, D2_padded);
         }
     }
 
@@ -365,7 +364,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     // With cp_async there is no __syncthreads at the end of the iter,
     //     there can be a race condition on shared memory access for combining/writing back results.
 #ifdef CP_ASYNC_AVAILABLE
-    if (nwarps*mma_B::J > KQ_stride) {
+    if (nwarps*tile_B::I > KQ_stride) {
         __syncthreads();
     }
 #endif // CP_ASYNC_AVAILABLE
@@ -381,14 +380,14 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     // Write VKQ accumulators to shared memory in column-major format.
     // It's faster to do small writes to shared memory, then large write to VRAM than to do small writes to VRAM.
     // Also for np > 1 the combination is done via these values in shared memory.
-    const int j_cwd = threadIdx.y*mma_B::J + mma_B::get_j(-1); // j combine write data
+    const int j_cwd = threadIdx.y*tile_B::I + tile_B::get_i(-1); // j combine write data
 #pragma unroll
-    for (int k0 = 0; k0 < D/2; k0 += mma_B::K) {
-        const mma_B B = ((mma_C_VKQ *) VKQ_C)[k0/mma_B::K].to_mma_B(); // Conversion of C to B matrix puts it in column-major format.
+    for (int k0 = 0; k0 < D/2; k0 += tile_B::J) {
+        const tile_B B = get_transposed(VKQ_C[k0/tile_B::J]); // Conversion of C to B matrix puts it in column-major format.
 
 #pragma unroll
-        for (int l = 0; l < mma_B::ne; ++l) {
-            const int k = k0 + mma_B::get_k(l);
+        for (int l = 0; l < tile_B::ne; ++l) {
+            const int k = k0 + tile_B::get_j(l);
 
             tile_K[j_cwd*D2_padded + k] = B.x[l];
         }
@@ -408,11 +407,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     static_assert(np == 1 || np == 2 || np == 4, "bad np");
     if (np == 1) {
         // No combination is needed, the meta data can be directly written from registers to VRAM.
-        if (needs_fixup && threadIdx.x < mma_B::J) {
+        if (needs_fixup && threadIdx.x < tile_B::I) {
             float2 * dstk_fixup_meta = dstk_fixup + blockIdx.x*ncols;
             dstk_fixup_meta[j_cwm] = KQ_cmr;
         }
-        if (is_fixup && threadIdx.x < mma_B::J) {
+        if (is_fixup && threadIdx.x < tile_B::I) {
             float2 * dstk_fixup_meta = dstk_fixup + (gridDim.x + blockIdx.x)*ncols;
             dstk_fixup_meta[j_cwm] = KQ_cmr;
         }
@@ -421,40 +420,40 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         // Warps with threadIdx.y % np != 0 must NOT return early.
         // All threads must return simultaneously to avoid race conditions with work on the next tile.
 
-        float * meta_j = (float *) tile_K + (threadIdx.y*mma_B::J + threadIdx.x)*D2_padded + D/2;
+        float * meta_j = (float *) tile_K + (threadIdx.y*tile_B::I + threadIdx.x)*D2_padded + D/2;
 
         float KQ_cm = -FLT_MAX/2; // KQ combine max per parallel warp.
-        if (np*mma_B::J == WARP_SIZE || threadIdx.x < np*mma_B::J) {
+        if (np*tile_B::I == WARP_SIZE || threadIdx.x < np*tile_B::I) {
             KQ_cm = meta_j[0];
         }
 
         float KQ_cmn = KQ_cm; // KQ combine max new, max between all parallel warps.
 #pragma unroll
-        for (int offset = np*mma_B::J/2; offset >= mma_B::J; offset >>= 1) {
+        for (int offset = np*tile_B::I/2; offset >= tile_B::I; offset >>= 1) {
             KQ_cmn = fmaxf(KQ_cmn, __shfl_xor_sync(0xFFFFFFFF, KQ_cmn, offset, WARP_SIZE));
         }
 
         const float KQ_cms = expf(KQ_cm - KQ_cmn); // KQ combine max scale per warp.
         float KQ_crs = 0.0f; // KQ combine rowsum, scaled sum of all parallel warps.
-        if (np*mma_B::J == WARP_SIZE || threadIdx.x < np*mma_B::J) {
+        if (np*tile_B::I == WARP_SIZE || threadIdx.x < np*tile_B::I) {
             KQ_crs = KQ_cms*meta_j[1];
         }
 #pragma unroll
-        for (int offset = np*mma_B::J/2; offset >= mma_B::J; offset >>= 1) {
+        for (int offset = np*tile_B::I/2; offset >= tile_B::I; offset >>= 1) {
             KQ_crs += __shfl_xor_sync(0xFFFFFFFF, KQ_crs, offset, WARP_SIZE);
         }
 
         // Write back combined meta data:
-        if (np*mma_B::J == WARP_SIZE || threadIdx.x < np*mma_B::J) {
+        if (np*tile_B::I == WARP_SIZE || threadIdx.x < np*tile_B::I) {
             *((float2 *) meta_j) = make_float2(KQ_cms, KQ_crs); // Combined KQ max scale + rowsum.
         }
-        if (needs_fixup && threadIdx.x < mma_B::J) {
+        if (needs_fixup && threadIdx.x < tile_B::I) {
             float2 * dstk_fixup_meta = dstk_fixup + blockIdx.x*ncols;
-            dstk_fixup_meta[(threadIdx.y/np)*mma_B::J + threadIdx.x] = make_float2(KQ_cmn, KQ_crs);
+            dstk_fixup_meta[(threadIdx.y/np)*tile_B::I + threadIdx.x] = make_float2(KQ_cmn, KQ_crs);
         }
-        if (is_fixup && threadIdx.x < mma_B::J) {
+        if (is_fixup && threadIdx.x < tile_B::I) {
             float2 * dstk_fixup_meta = dstk_fixup + (gridDim.x + blockIdx.x)*ncols;
-            dstk_fixup_meta[(threadIdx.y/np)*mma_B::J + threadIdx.x] = make_float2(KQ_cmn, KQ_crs);
+            dstk_fixup_meta[(threadIdx.y/np)*tile_B::I + threadIdx.x] = make_float2(KQ_cmn, KQ_crs);
         }
     }
 
@@ -484,7 +483,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 #pragma unroll
             for (int j0_dst = 0; j0_dst < ncols; j0_dst += (nwarps/np)*stride_j) {
                 const int j_dst = j0_dst + (threadIdx.y/np)*stride_j + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
-                const int j_tile_K = (j_dst/mma_B::J)*(np*mma_B::J) + j_dst % mma_B::J;
+                const int j_tile_K = (j_dst/tile_B::I)*(np*tile_B::I) + j_dst % tile_B::I;
 
                 if (!is_fixup && jt*ncols + j_dst >= ne01) {
                     continue;
@@ -497,8 +496,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
                     float2 dstk_val = make_float2(0.0f, 0.0f);
 #pragma unroll
                     for (int ip = 0; ip < np; ++ip) {
-                        const float KQ_crs = np == 1 ? 1.0f : meta_j[ip*mma_B::J*D2_padded + 0];
-                        const float2 dstk_val_add = __half22float2(tile_K[(j_tile_K + ip*mma_B::J)*D2_padded + k]);
+                        const float KQ_crs = np == 1 ? 1.0f : meta_j[ip*tile_B::I*D2_padded + 0];
+                        const float2 dstk_val_add = __half22float2(tile_K[(j_tile_K + ip*tile_B::I)*D2_padded + k]);
                         dstk_val.x += dstk_val_add.x*KQ_crs;
                         dstk_val.y += dstk_val_add.y*KQ_crs;
                     }
