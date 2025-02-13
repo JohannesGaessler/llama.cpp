@@ -3,9 +3,6 @@
 #include "mma.cuh"
 #include "fattn-common.cuh"
 
-typedef mma_C_I16J8<float> mma_C_KQ;
-typedef mma_C_I16J8<half2> mma_C_VKQ;
-
 using namespace ggml_cuda_mma;
 
 typedef tile<16, 8, half2> tile_A;
@@ -284,7 +281,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 #endif // CP_ASYNC_AVAILABLE
 
     tile_B Q_B[D/(2*tile_B::J)];
-    tile_C_VKQ VKQ_C[D/mma_C_VKQ::I];
+    tile_C_VKQ VKQ_C[D/tile_C_VKQ::I];
 
     float2 KQ_rowsum = {0.0f, 0.0f};
     float2    KQ_max = {-FLT_MAX/2.0f, -FLT_MAX/2.0f};
@@ -393,11 +390,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         }
     }
 
-    const int j_cwmo = (threadIdx.x % (2*mma_C_VKQ::J)) / mma_C_VKQ::J; // j combine write meta offset
-    const int j_cwm = threadIdx.y*(2*mma_C_VKQ::J) + 2*mma_C_VKQ::get_j(-1) + j_cwmo; // j combine write meta
+    const int j_cwmo = (threadIdx.x % (2*tile_C_VKQ::J)) / tile_C_VKQ::J; // j combine write meta offset
+    const int j_cwm = threadIdx.y*(2*tile_C_VKQ::J) + 2*tile_C_VKQ::get_j(-1) + j_cwmo; // j combine write meta
     const float2 KQ_cmr = make_float2(((const float *) &KQ_max)[j_cwmo], ((const float *) &KQ_rowsum)[j_cwmo]); // KQ combine max rowsum
 
-    if (((!needs_fixup && !is_fixup) || np > 1) && threadIdx.x < 2*mma_C_VKQ::J) {
+    if (((!needs_fixup && !is_fixup) || np > 1) && threadIdx.x < 2*tile_C_VKQ::J) {
         // Use the 16 bytes of padding in each row to store the meta data: KQ max, KQ rowsum, KQ max scale.
         ((float2 *) tile_K)[j_cwm*(D2_padded/2) + D/4] = KQ_cmr;
     }
