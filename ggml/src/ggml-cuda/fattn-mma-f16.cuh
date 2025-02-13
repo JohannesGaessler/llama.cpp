@@ -99,7 +99,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     constexpr int D2_padded = D/2 + 4; // Size of D in half2, padded to avoid shared memory bank conflicts.
 
     const int k_VKQ_0 = kb0*KQ_stride;
-    mma_C_KQ KQ_C[KQ_stride/(np*mma_C_KQ::I)];
+    tile_C_KQ KQ_C[KQ_stride/(np*mma_C_KQ::I)];
 
 #ifdef CP_ASYNC_AVAILABLE
     cp_async_wait_all();
@@ -118,7 +118,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += mma_A::K) {
             mma_A K_A;
             K_A.load_ldmatrix(tile_K + i_KQ_0*D2_padded + k_KQ_0, D2_padded);
-            KQ_C[i_KQ_00/(np*mma_A::I)].mma(K_A, Q_B[k_KQ_0/mma_A::K]);
+            mma(KQ_C[i_KQ_00/(np*mma_A::I)], *((tile_A *) &K_A), ((tile_B *) Q_B)[k_KQ_0/mma_A::K]);
         }
     }
 
@@ -215,7 +215,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     static_assert(KQ_stride % (np*2*mma_B::K) == 0, "bad loop size");
 #pragma unroll
     for (int k = 0; k < KQ_stride/(np*2*mma_B::K); ++k) {
-        B[k] = get_transposed(get_half2(((tile_C_KQ *)KQ_C)[k]));
+        B[k] = get_transposed(get_half2(KQ_C[k]));
     }
 
 #ifdef CP_ASYNC_AVAILABLE
