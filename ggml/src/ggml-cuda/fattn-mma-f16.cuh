@@ -338,8 +338,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
 #pragma unroll
         for (int k0 = 0; k0 < D/2; k0 += mma_B::K) {
-            ((mma_B *) Q_B)[k0/mma_B::K].load_ldmatrix(tile_K + j0*D2_padded + k0, D2_padded);
-            // load_ldmatrix(Q_B[k0/mma_B::K], tile_K + j0*D2_padded + k0, D2_padded);
+            load_ldmatrix(Q_B[k0/mma_B::K], tile_K + j0*D2_padded + k0, D2_padded);
         }
     }
 
