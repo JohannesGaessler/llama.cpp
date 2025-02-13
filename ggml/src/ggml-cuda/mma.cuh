@@ -456,3 +456,79 @@ struct mma_C_I16J8<float> {
         }
     }
 };
+
+template <int I, int J, typename T>
+struct mma_tile {
+    static __device__ __forceinline__ int get_i(int l);
+    static __device__ __forceinline__ int get_j(int l);
+};
+
+template <int I_, int J_>
+struct mma_tile<I_, J_, half2> {
+    static constexpr int I  = I_;
+    static constexpr int J  = J_;
+    static constexpr int ne = I * J / WARP_SIZE;
+    half2 x[ne] = {{0.0f, 0.0f}};
+
+    static __device__ __forceinline__ int get_i(int l);
+    static __device__ __forceinline__ int get_j(int l);
+
+    template<int K>
+    __device__ __forceinline__ void mma(const mma_tile<I, K, half2> & A, const mma_tile<2*J, K, half2> & B);
+};
+
+template <int I, int J, typename T>
+__device__ __forceinline__ int mma_tile<I, J, T>::get_i(const int l) {
+    if constexpr (I == 8 && J == 8) {
+        return threadIdx.x / 4;
+    } else if constexpr (I == 16 && J == 8) {
+        if (std::is_same<T, half2>::value) {
+            return (l % 2) * 8 + threadIdx.x / 4;
+        }
+        return ((l / 2) % 2) * 8 + threadIdx.x / 4;
+    } else {
+        static_assert(I == -1 && J == -1, "template specialization not implemented");
+    }
+};
+
+template <int I, int J, typename T>
+__device__ __forceinline__ int mma_tile<I, J, T>::get_j(const int l) {
+    if constexpr (I == 8 && J == 8) {
+        static_assert(std::is_same<T, half2>::value, "only half2 implemented");
+        return l * 4 + threadIdx.x % 4;
+    } else if constexpr (I == 16 && J == 8) {
+        if (std::is_same<T, half2>::value) {
+            return (l / 2) * 4 + threadIdx.x % 4;
+        }
+        return (l / 4) * 4 + threadIdx.x % 4;
+    } else {
+        static_assert(I == -1 && J == -1, "template specialization not implemented");
+    }
+};
+
+template <>
+template <>
+__device__ __forceinline__ void mma_tile<16, 4, half2>::mma<8>(const mma_tile<16, 8, half2> & A, const mma_tile<8, 8, half2> & B) {
+#ifdef NEW_MMA_AVAILABLE
+    const int * Axi = (const int *) A.x;
+    const int * Bxi = (const int *) B.x;
+    int       * xi  = (int       *) x;
+#if __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
+    asm("mma.sync.aligned.m16n8k16.row.col.f16.f16.f16.f16 {%0, %1}, {%2, %3, %4, %5}, {%6, %7}, {%0, %1};"
+        : "+r"(xi[0]), "+r"(xi[1])
+        : "r"(Axi[0]), "r"(Axi[1]), "r"(Axi[2]), "r"(Axi[3]), "r"(Bxi[0]), "r"(Bxi[1]));
+#else
+    // On Turing m16n8k16 mma is not available, use 2x m8n8k8 mma instead:
+    asm("mma.sync.aligned.m16n8k8.row.col.f16.f16.f16.f16 {%0, %1}, {%2, %3}, {%4}, {%0, %1};"
+        : "+r"(xi[0]), "+r"(xi[1])
+        : "r"(Axi[0]), "r"(Axi[1]), "r"(Bxi[0]));
+    asm("mma.sync.aligned.m16n8k8.row.col.f16.f16.f16.f16 {%0, %1}, {%2, %3}, {%4}, {%0, %1};"
+        : "+r"(xi[0]), "+r"(xi[1])
+        : "r"(Axi[2]), "r"(Axi[3]), "r"(Bxi[1]));
+#endif // __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
+#else
+    GGML_UNUSED(A);
+    GGML_UNUSED(B);
+    NO_DEVICE_CODE;
+#endif // NEW_MMA_AVAILABLE
+}
