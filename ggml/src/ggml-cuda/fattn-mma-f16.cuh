@@ -3,7 +3,6 @@
 #include "mma.cuh"
 #include "fattn-common.cuh"
 
-typedef mma_A_I16K8<half2> mma_A;
 typedef mma_B_J8K8<half2>  mma_B;
 typedef mma_C_I16J8<float> mma_C_KQ;
 typedef mma_C_I16J8<half2> mma_C_VKQ;
@@ -112,13 +111,13 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 
     // Calculate tile of KQ:
 #pragma unroll
-    for (int i_KQ_00 = 0; i_KQ_00 < KQ_stride; i_KQ_00 += np*mma_A::I) {
-        const int i_KQ_0 = i_KQ_00 + (threadIdx.y % np)*mma_A::I;
+    for (int i_KQ_00 = 0; i_KQ_00 < KQ_stride; i_KQ_00 += np*tile_A::I) {
+        const int i_KQ_0 = i_KQ_00 + (threadIdx.y % np)*tile_A::I;
 #pragma unroll
-        for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += mma_A::K) {
+        for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += tile_A::J) {
             tile_A K_A;
             load_ldmatrix(K_A, tile_K + i_KQ_0*D2_padded + k_KQ_0, D2_padded);
-            mma(KQ_C[i_KQ_00/(np*mma_A::I)], K_A, ((tile_B *) Q_B)[k_KQ_0/mma_A::K]);
+            mma(KQ_C[i_KQ_00/(np*tile_A::I)], K_A, ((tile_B *) Q_B)[k_KQ_0/tile_A::J]);
         }
     }
 
