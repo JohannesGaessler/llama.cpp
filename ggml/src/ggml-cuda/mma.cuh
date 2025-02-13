@@ -52,6 +52,11 @@ static __device__ __forceinline__ int ggml_cuda_movmatrix(const int x) {
 
 #endif // CUDART_VERSION >= 11080
 
+static __device__ __forceinline__ half2 ggml_cuda_movmatrix(const half2 x) {
+    half2 ret;
+    *((int *) &ret) = ggml_cuda_movmatrix(*((const int *) &x));
+    return ret;
+}
 
 template <typename T>
 struct mma_A_I16K4 {
@@ -459,8 +464,13 @@ struct mma_C_I16J8<float> {
 
 namespace ggml_cuda_mma {
 
-    template <int I, int J, typename T>
+    template <int I_, int J_, typename T>
     struct tile {
+        static constexpr int I  = I_;
+        static constexpr int J  = J_;
+        static constexpr int ne = I * J / WARP_SIZE;
+        T x[ne] = {0};
+
         static __device__ __forceinline__ int get_i(const int l) {
             if constexpr (I == 16 && J == 8) {
                 return ((l / 2) % 2) * 8 + threadIdx.x / 4;
@@ -505,6 +515,24 @@ namespace ggml_cuda_mma {
             }
         }
     };
+
+    template <int I, int J>
+    static __device__ __forceinline__ tile<I, J/2, half2> get_half2(const tile<I, J, float> & tile_float) {
+        tile<I, J/2, half2> ret;
+#pragma unroll
+        for (int l0 = 0; l0 < tile_float.ne; l0 += 2) {
+            ret.x[l0/2] = make_half2(tile_float.x[l0 + 0], tile_float.x[l0 + 1]);
+        }
+        return ret;
+    }
+
+    static __device__ __forceinline__ tile<8, 8, half2> get_transposed(const tile<16, 4, half2> & t) {
+        tile<8, 8, half2> ret;
+        ret.x[0] = ggml_cuda_movmatrix(t.x[0]);
+        ret.x[1] = ggml_cuda_movmatrix(t.x[1]);
+
+        return ret;
+    }
 
     template <typename T>
     static __device__ __forceinline__ void load_ldmatrix_trans(

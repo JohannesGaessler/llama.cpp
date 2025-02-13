@@ -12,6 +12,7 @@ using namespace ggml_cuda_mma;
 
 typedef tile<16, 8, half2> tile_A;
 typedef tile< 8, 8, half2> tile_B;
+typedef tile<16, 8, float> tile_C_KQ;
 typedef tile<16, 4, half2> tile_C_VKQ;
 
 template<int D, int nwarps, int KQ_stride>
@@ -210,11 +211,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     }
 
     // Convert KQ C tiles into B tiles for VKQ calculation:
-    mma_B B[KQ_stride/(np*2*mma_B::K)];
+    tile_B B[KQ_stride/(np*2*mma_B::K)];
     static_assert(KQ_stride % (np*2*mma_B::K) == 0, "bad loop size");
 #pragma unroll
     for (int k = 0; k < KQ_stride/(np*2*mma_B::K); ++k) {
-        B[k] = KQ_C[k].to_mma_B();
+        B[k] = get_transposed(get_half2(((tile_C_KQ *)KQ_C)[k]));
     }
 
 #ifdef CP_ASYNC_AVAILABLE
@@ -237,8 +238,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             const int k0 = k00 + (threadIdx.y % np)*tile_A::J;
 
             tile_A A;
-            ggml_cuda_mma::load_ldmatrix_trans(A, tile_V + 2*k0*D2_padded + i_VKQ_0/2, D2_padded);
-            ggml_cuda_mma::mma(VKQ_C[i_VKQ_0/tile_C_VKQ::I], A, ((tile_B *)B)[k00/(np*mma_A::K)]);
+            load_ldmatrix_trans(A, tile_V + 2*k0*D2_padded + i_VKQ_0/2, D2_padded);
+            mma(VKQ_C[i_VKQ_0/tile_C_VKQ::I], A, B[k00/(np*tile_A::J)]);
         }
     }
 
