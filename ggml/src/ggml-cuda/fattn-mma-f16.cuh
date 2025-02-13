@@ -144,7 +144,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 #pragma unroll
             for (int l = 0; l < tile_C_KQ::ne; ++l) {
                 const int i = i0 + tile_C_KQ::get_i(l);
-                const int j = (threadIdx.y / np)*tile_C_KQ::J + mma_C_KQ::get_j(l);
+                const int j = (threadIdx.y / np)*tile_C_KQ::J + tile_C_KQ::get_j(l);
 
                 KQ_C[i00/(np*tile_C_KQ::I)].x[l] += slope*__half2float(maskh[j*stride_mask + k_VKQ_0 + i]);
             }
