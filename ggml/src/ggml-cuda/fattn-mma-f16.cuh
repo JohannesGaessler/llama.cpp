@@ -235,7 +235,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             const int k0 = k00 + (threadIdx.y % np)*mma_tile_A::J;
 
             mma_tile_A A;
-            A.load_ldmatrix_trans(tile_V + 2*k0*D2_padded + i_VKQ_0/2, D2_padded);
+            ggml_cuda_mma_load_ldmatrix_trans(A, tile_V + 2*k0*D2_padded + i_VKQ_0/2, D2_padded);
             ggml_cuda_mma_mma(VKQ_C[i_VKQ_0/mma_tile_C_VKQ::I], A, ((mma_tile_B *)B)[k00/(np*mma_A::K)]);
         }
     }

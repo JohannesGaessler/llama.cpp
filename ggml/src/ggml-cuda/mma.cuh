@@ -502,25 +502,24 @@ struct mma_tile<I_, J_, half2> {
             static_assert(I == -1 && J == -1, "template specialization not implemented");
         }
     }
-
-    __device__ __forceinline__ void load_ldmatrix_trans(const half2 * __restrict__ xs0, int stride);
 };
 
-template<>
-__device__ __forceinline__ void mma_tile<16, 8, half2>::load_ldmatrix_trans(const half2 * __restrict__ xs0, int stride) {
+template <typename T>
+static __device__ __forceinline__ void ggml_cuda_mma_load_ldmatrix_trans(
+        mma_tile<16, 8, T> & tile, const T * __restrict__ xs0, const int stride) {
 #ifdef NEW_MMA_AVAILABLE
-    int * xi = (int * ) x;
-    const int * xs = (const int *) xs0 + (threadIdx.x%I)*stride + (threadIdx.x/I)*(J/2);
+    int * xi = (int * ) tile.x;
+    const int * xs = (const int *) xs0 + (threadIdx.x % tile.I) * stride + (threadIdx.x / tile.I) * (tile.J / 2);
     asm volatile("ldmatrix.sync.aligned.m8n8.x4.trans.b16 {%0, %1, %2, %3}, [%4];"
         : "=r"(xi[0]), "=r"(xi[2]), "=r"(xi[1]), "=r"(xi[3])
         : "l"(xs));
 #else
+    GGML_UNUSED(tile);
     GGML_UNUSED(xs0);
     GGML_UNUSED(stride);
     NO_DEVICE_CODE;
 #endif // NEW_MMA_AVAILABLE
 }
-
 
 static __device__ __forceinline__ void ggml_cuda_mma_mma(
         mma_tile<16, 4, half2> & D, const mma_tile<16, 8, half2> & A, const mma_tile<8, 8, half2> & B) {
