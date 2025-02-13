@@ -474,9 +474,6 @@ struct mma_tile<I_, J_, half2> {
     static __device__ __forceinline__ int get_j(int l);
 
     __device__ __forceinline__ void load_ldmatrix_trans(const half2 * __restrict__ xs0, int stride);
-
-    template<int K>
-    __device__ __forceinline__ void mma(const mma_tile<I, K, half2> & A, const mma_tile<2*J, K, half2> & B);
 };
 
 template <int I, int J, typename T>
@@ -524,27 +521,27 @@ __device__ __forceinline__ void mma_tile<16, 8, half2>::load_ldmatrix_trans(cons
 }
 
 
-template <>
-template <>
-__device__ __forceinline__ void mma_tile<16, 4, half2>::mma<8>(const mma_tile<16, 8, half2> & A, const mma_tile<8, 8, half2> & B) {
+static __device__ __forceinline__ void ggml_cuda_mma_mma(
+        mma_tile<16, 4, half2> & D, const mma_tile<16, 8, half2> & A, const mma_tile<8, 8, half2> & B) {
 #ifdef NEW_MMA_AVAILABLE
     const int * Axi = (const int *) A.x;
     const int * Bxi = (const int *) B.x;
-    int       * xi  = (int       *) x;
+    int       * Dxi = (int       *) D.x;
 #if __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
     asm("mma.sync.aligned.m16n8k16.row.col.f16.f16.f16.f16 {%0, %1}, {%2, %3, %4, %5}, {%6, %7}, {%0, %1};"
-        : "+r"(xi[0]), "+r"(xi[1])
+        : "+r"(Dxi[0]), "+r"(Dxi[1])
         : "r"(Axi[0]), "r"(Axi[1]), "r"(Axi[2]), "r"(Axi[3]), "r"(Bxi[0]), "r"(Bxi[1]));
 #else
     // On Turing m16n8k16 mma is not available, use 2x m8n8k8 mma instead:
     asm("mma.sync.aligned.m16n8k8.row.col.f16.f16.f16.f16 {%0, %1}, {%2, %3}, {%4}, {%0, %1};"
-        : "+r"(xi[0]), "+r"(xi[1])
+        : "+r"(Dxi[0]), "+r"(Dxi[1])
         : "r"(Axi[0]), "r"(Axi[1]), "r"(Bxi[0]));
     asm("mma.sync.aligned.m16n8k8.row.col.f16.f16.f16.f16 {%0, %1}, {%2, %3}, {%4}, {%0, %1};"
-        : "+r"(xi[0]), "+r"(xi[1])
+        : "+r"(Dxi[0]), "+r"(Dxi[1])
         : "r"(Axi[2]), "r"(Axi[3]), "r"(Bxi[1]));
 #endif // __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
 #else
+    GGML_UNUSED(D);
     GGML_UNUSED(A);
     GGML_UNUSED(B);
     NO_DEVICE_CODE;

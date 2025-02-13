@@ -229,14 +229,14 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     // Calculate VKQ tile:
 #pragma unroll
     for (int i_VKQ_0 = 0; i_VKQ_0 < D; i_VKQ_0 += mma_tile_C_VKQ::I) {
-        static_assert((KQ_stride/2) % (np*mma_A::K) == 0, "bad loop size");
+        static_assert((KQ_stride/2) % (np*mma_tile_A::J) == 0, "bad loop size");
 #pragma unroll
-        for (int k00 = 0; k00 < KQ_stride/2; k00 += np*mma_A::K) {
-            const int k0 = k00 + (threadIdx.y % np)*mma_A::K;
+        for (int k00 = 0; k00 < KQ_stride/2; k00 += np*mma_tile_A::J) {
+            const int k0 = k00 + (threadIdx.y % np)*mma_tile_A::J;
 
             mma_tile_A A;
             A.load_ldmatrix_trans(tile_V + 2*k0*D2_padded + i_VKQ_0/2, D2_padded);
-            VKQ_C[i_VKQ_0/mma_tile_C_VKQ::I].mma<8>(A, ((mma_tile_B *)B)[k00/(np*mma_A::K)]);
+            ggml_cuda_mma_mma(VKQ_C[i_VKQ_0/mma_tile_C_VKQ::I], A, ((mma_tile_B *)B)[k00/(np*mma_A::K)]);
         }
     }
 
