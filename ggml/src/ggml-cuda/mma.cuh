@@ -473,7 +473,7 @@ namespace ggml_cuda_mma {
 
         static __device__ __forceinline__ int get_i(const int l) {
             if constexpr (I == 16 && J == 8) {
-                return ((l / 2) % 2) * 8 + threadIdx.x / 4;
+                return (l / 2) * 8 + threadIdx.x / 4;
             } else {
                 static_assert(I == -1 && J == -1, "template specialization not implemented");
             }
@@ -481,7 +481,7 @@ namespace ggml_cuda_mma {
 
         static __device__ __forceinline__ int get_j(const int l) {
             if constexpr (I == 16 && J == 8) {
-                return (l / 4) * 4 + threadIdx.x % 4;
+                return 2 * (threadIdx.x % 4) + l % 2;
             } else {
                 static_assert(I == -1 && J == -1, "template specialization not implemented");
             }
