@@ -534,6 +534,28 @@ namespace ggml_cuda_mma {
         return ret;
     }
 
+    template <int I, int J, typename T>
+    static __device__ __forceinline__ void load_generic(tile<I, J, T> & t, const T * __restrict__ xs0, const int & stride) {
+#pragma unroll
+        for (int l = 0; l < t.ne; ++l) {
+            t.x[l] = xs0[t.get_i(l)*stride + t.get_k(l)];
+        }
+    }
+
+    template <typename T>
+    static __device__ __forceinline__ void load_ldmatrix(
+            tile<16, 8, T> & t, const T * __restrict__ xs0, const int stride) {
+#ifdef NEW_MMA_AVAILABLE
+        int * xi = (int * ) t.x;
+        const int * xs = (const int *) xs0 + (threadIdx.x % t.I) * stride + (threadIdx.x / t.I) * (t.J / 2);
+        asm volatile("ldmatrix.sync.aligned.m8n8.x4.b16 {%0, %1, %2, %3}, [%4];"
+            : "=r"(xi[0]), "=r"(xi[1]), "=r"(xi[2]), "=r"(xi[3])
+            : "l"(xs));
+#else
+        load_generic(t, xs0, stride);
+#endif // NEW_MMA_AVAILABLE
+    }
+
     template <typename T>
     static __device__ __forceinline__ void load_ldmatrix_trans(
             tile<16, 8, T> & t, const T * __restrict__ xs0, const int stride) {

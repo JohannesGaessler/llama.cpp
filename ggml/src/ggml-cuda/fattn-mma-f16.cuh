@@ -116,9 +116,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         const int i_KQ_0 = i_KQ_00 + (threadIdx.y % np)*mma_A::I;
 #pragma unroll
         for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += mma_A::K) {
-            mma_A K_A;
-            K_A.load_ldmatrix(tile_K + i_KQ_0*D2_padded + k_KQ_0, D2_padded);
-            mma(KQ_C[i_KQ_00/(np*mma_A::I)], *((tile_A *) &K_A), ((tile_B *) Q_B)[k_KQ_0/mma_A::K]);
+            tile_A K_A;
+            load_ldmatrix(K_A, tile_K + i_KQ_0*D2_padded + k_KQ_0, D2_padded);
+            mma(KQ_C[i_KQ_00/(np*mma_A::I)], K_A, ((tile_B *) Q_B)[k_KQ_0/mma_A::K]);
         }
     }
 
