@@ -649,21 +649,21 @@ static __global__ void flash_attn_ext_f16(
 
 template <int D, int cols_per_block>
 void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-    typedef mma_A_I16K8<half2> mma_A;
-    typedef mma_B_J8K8<half2>  mma_B;
+    typedef tile<16, 8, half2> tile_A;
+    typedef tile< 8, 8, half2> tile_B;
 
-    static_assert(D              % mma_B::K == 0, "bad D");
-    static_assert(cols_per_block % mma_B::J == 0, "bad cols_per_block");
+    static_assert(D              % tile_B::J == 0, "bad D");
+    static_assert(cols_per_block % tile_B::I == 0, "bad cols_per_block");
 
     const ggml_tensor * KQV = dst;
     const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
 
     constexpr int KQ_stride = D <= 128 ? 64 : 32;
     constexpr int nwarps    = (KQ_stride == 32 && cols_per_block <= 16) ?
-                              cols_per_block/mma_B::J * KQ_stride/mma_A::I : (cols_per_block <= 8 ? 4 : 8);
+                              cols_per_block/tile_B::J * KQ_stride/tile_A::I : (cols_per_block <= 8 ? 4 : 8);
 
     const int    nrows_KQ      = cp_async_available(cc) ? 2*KQ_stride : KQ_stride;
-    const int    nrows_combine = nwarps*mma_B::J;
+    const int    nrows_combine = nwarps*tile_B::J;
     const size_t nbytes_shared = std::max(nrows_KQ, nrows_combine) * (D + 8) * sizeof(half);
 
     float logit_softcap;
