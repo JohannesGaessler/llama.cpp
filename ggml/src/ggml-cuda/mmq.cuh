@@ -4,6 +4,8 @@
 #include "vecdotq.cuh"
 #include "mma.cuh"
 
+#include "ggml-threading.h"
+
 #include <climits>
 #include <cstdint>
 
@@ -2771,11 +2773,15 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     const int shmem = mmq_get_shmem<type>(mmq_x, mmq_y, cc);
 
 #if !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__))
-    static bool shmem_limit_raised[GGML_CUDA_MAX_DEVICES] = {false};
-    if (!shmem_limit_raised[id]) {
-        CUDA_CHECK(cudaFuncSetAttribute(mul_mat_q<type, mmq_x, MMQ_NWARPS, false>, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem));
-        CUDA_CHECK(cudaFuncSetAttribute(mul_mat_q<type, mmq_x, MMQ_NWARPS, true>,  cudaFuncAttributeMaxDynamicSharedMemorySize, shmem));
-        shmem_limit_raised[id] = true;
+    static bool shared_memory_limit_raised[GGML_CUDA_MAX_DEVICES] = {false};
+    if (!shared_memory_limit_raised[id]) {
+        ggml_critical_section_start();
+        if (!shared_memory_limit_raised[id]) {
+            CUDA_CHECK(cudaFuncSetAttribute(mul_mat_q<type, mmq_x, MMQ_NWARPS, false>, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem));
+            CUDA_CHECK(cudaFuncSetAttribute(mul_mat_q<type, mmq_x, MMQ_NWARPS, true>,  cudaFuncAttributeMaxDynamicSharedMemorySize, shmem));
+            shared_memory_limit_raised[id] = true;
+        }
+        ggml_critical_section_end();
     }
 #endif // !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__))
 

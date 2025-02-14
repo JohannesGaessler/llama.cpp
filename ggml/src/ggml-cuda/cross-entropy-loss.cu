@@ -2,6 +2,8 @@
 #include "cross-entropy-loss.cuh"
 #include "sum.cuh"
 
+#include "ggml-threading.h"
+
 #include <cmath>
 #include <cstdint>
 
@@ -178,8 +180,12 @@ void ggml_cuda_cross_entropy_loss_back(ggml_backend_cuda_context & ctx, ggml_ten
 #if !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__))
         static bool shared_memory_limit_raised[GGML_CUDA_MAX_DEVICES] = {false};
         if (!shared_memory_limit_raised[id]) {
-            CUDA_CHECK(cudaFuncSetAttribute(cross_entropy_loss_back_f32<true>, cudaFuncAttributeMaxDynamicSharedMemorySize, smpbo));
-            shared_memory_limit_raised[id] = true;
+            ggml_critical_section_start();
+            if (!shared_memory_limit_raised[id]) {
+                CUDA_CHECK(cudaFuncSetAttribute(cross_entropy_loss_back_f32<true>, cudaFuncAttributeMaxDynamicSharedMemorySize, smpbo));
+                shared_memory_limit_raised[id] = true;
+            }
+            ggml_critical_section_end();
         }
 #endif // !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__))
         cross_entropy_loss_back_f32<true><<<blocks_num, blocks_dim, nbytes_shared, stream>>>(grad_d, src0f_d, src1f_d, dst_d, ne00);
