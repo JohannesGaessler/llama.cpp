@@ -7,6 +7,8 @@
 #include <climits>
 #include <cstdint>
 
+using namespace ggml_cuda_mma;
+
 #define MMQ_DP4A_MAX_BATCH_SIZE 64 // Max. batch size to use for dp4a MMQ kernels when FP16 tensor cores are available.
 #define MMQ_ITER_K 256
 #define MMQ_NWARPS 8
@@ -647,6 +649,9 @@ template <int mmq_x, int mmq_y, int nwarps, mmq_q8_1_ds_layout ds_layout>
 static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
     const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00) {
 
+    typedef tile<16, 8, int> tile_A;
+    typedef tile< 8, 8, int> tile_B;
+    typedef tile<16, 8, int> tile_C;
     typedef mma_A_I16K8<int> mma_A;
     typedef mma_B_J8K8<int>  mma_B;
     typedef mma_C_I16J8<int> mma_C;
@@ -712,12 +717,12 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
 
 #pragma unroll
             for (int n = 0; n < ntx; ++n) {
-                mma_C C;
-                C.mma(A[n][k01/QI8_0], B);
+                tile_C C;
+                mma(C, ((tile_A *) A[n])[k01/QI8_0], *((tile_B *) &B));
 
 #pragma unroll
-                for (int l = 0; l < mma_C::ne; ++l) {
-                    sum[(j0/mma_C::J + n)*mma_C::ne + l] += C.x[l]*dA[n][l/2][k01/QI8_0]*dB[l%2];
+                for (int l = 0; l < tile_C::ne; ++l) {
+                    sum[(j0/tile_C::J + n)*tile_C::ne + l] += C.x[l]*dA[n][l/2][k01/QI8_0]*dB[l%2];
                 }
             }
         }
