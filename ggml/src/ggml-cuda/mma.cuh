@@ -472,7 +472,7 @@ namespace ggml_cuda_mma {
         T x[ne] = {0};
 
         static __device__ __forceinline__ int get_i(const int l) {
-            if constexpr (I == 8 && J == 8) {
+            if constexpr (I == 8 && (J == 4 || J == 8)) {
                 return threadIdx.x / 4;
             } else if constexpr (I == 16 && J == 8) {
                 return (l / 2) * 8 + threadIdx.x / 4;
@@ -482,7 +482,9 @@ namespace ggml_cuda_mma {
         }
 
         static __device__ __forceinline__ int get_j(const int l) {
-            if constexpr (I == 8 && J == 8) {
+            if constexpr (I == 8 && J == 4) {
+                return threadIdx.x % 4;
+            } else if constexpr (I == 8 && J == 8) {
                 return 4 * l + threadIdx.x % 4;
             } else if constexpr (I == 16 && J == 8) {
                 return 2 * (threadIdx.x % 4) + l % 2;
@@ -591,6 +593,30 @@ namespace ggml_cuda_mma {
         GGML_UNUSED(t);
         GGML_UNUSED(xs0);
         GGML_UNUSED(stride);
+        NO_DEVICE_CODE;
+#endif // NEW_MMA_AVAILABLE
+    }
+
+    static __device__ __forceinline__ void mma(
+            tile<16, 8, int> & D, const tile<16, 4, int> & A, const tile<8, 4, int> & B) {
+#ifdef NEW_MMA_AVAILABLE
+#if __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
+        asm("mma.sync.aligned.m16n8k16.row.col.s32.s8.s8.s32 {%0, %1, %2, %3}, {%4, %5}, {%6}, {%0, %1, %2, %3};"
+            : "+r"(D.x[0]), "+r"(D.x[1]), "+r"(D.x[2]), "+r"(D.x[3])
+            : "r"(A.x[0]), "r"(A.x[1]), "r"(B.x[0]));
+#else
+        // On Turing m16n8k16 mma is not available, use 2x m8n8k16 mma instead:
+        asm("mma.sync.aligned.m8n8k16.row.col.s32.s8.s8.s32 {%0, %1}, {%2}, {%3}, {%0, %1};"
+            : "+r"(D.x[0]), "+r"(D.x[1])
+            : "r"(A.x[0]), "r"(B.x[0]));
+        asm("mma.sync.aligned.m8n8k16.row.col.s32.s8.s8.s32 {%0, %1}, {%2}, {%3}, {%0, %1};"
+            : "+r"(D.x[2]), "+r"(D.x[3])
+            : "r"(A.x[1]), "r"(B.x[0]));
+#endif // __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
+#else
+        GGML_UNUSED(D);
+        GGML_UNUSED(A);
+        GGML_UNUSED(B);
         NO_DEVICE_CODE;
 #endif // NEW_MMA_AVAILABLE
     }
