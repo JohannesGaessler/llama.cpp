@@ -699,10 +699,10 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
     for (int j0 = 0; j0 < mmq_x; j0 += ntx*mma_C::J) {
 #pragma unroll
         for (int k01 = 0; k01 < WARP_SIZE; k01 += QI8_0) {
-            mma_B  B;
+            tile_B B;
             float dB[mma_C::ne/2];
 
-            B.load_generic(y_qs + j0*MMQ_TILE_Y_K + k01, MMQ_TILE_Y_K); // faster than load_ldmatrix
+            load_generic(B, y_qs + j0*MMQ_TILE_Y_K + k01, MMQ_TILE_Y_K); // faster than load_ldmatrix
 
 #pragma unroll
             for (int l = 0; l < mma_C::ne/2; ++l) {
@@ -718,7 +718,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
 #pragma unroll
             for (int n = 0; n < ntx; ++n) {
                 tile_C C;
-                mma(C, ((tile_A *) A[n])[k01/QI8_0], *((tile_B *) &B));
+                mma(C, ((tile_A *) A[n])[k01/QI8_0], B);
 
 #pragma unroll
                 for (int l = 0; l < tile_C::ne; ++l) {
