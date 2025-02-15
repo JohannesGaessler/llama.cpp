@@ -769,12 +769,11 @@ void launch_fattn(
     if (parallel_blocks == 0) {
         // For short contexts it can be faster to have the SMs work on whole tiles because this lets us skip the fixup.
         const int tiles_nwaves  = (ntiles_total + 2*nsm - 1) / (2*nsm);
-        const int tiles_inefficient = 100 * ntiles_total / (2*nsm*tiles_nwaves) < 75;
-        const bool short_context = K->ne[1] < 4096;
+        const int tiles_efficiency_percent = 100 * ntiles_total / (2*nsm*tiles_nwaves);
 
         const int nblocks_stream_k = 2*nsm;
 
-        blocks_num.x = short_context && !tiles_inefficient ? ntiles_total : nblocks_stream_k;
+        blocks_num.x = tiles_efficiency_percent >= 75 ? ntiles_total : nblocks_stream_k;
         blocks_num.y = 1;
         blocks_num.z = 1;
 
