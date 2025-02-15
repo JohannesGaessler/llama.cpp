@@ -773,7 +773,7 @@ void launch_fattn(
 
         const int nblocks_stream_k = 2*nsm;
 
-        blocks_num.x = tiles_efficiency_percent >= 999 ? ntiles_total : nblocks_stream_k;
+        blocks_num.x = tiles_efficiency_percent >= 0 ? ntiles_total : nblocks_stream_k;
         blocks_num.y = 1;
         blocks_num.z = 1;
 
