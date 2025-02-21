@@ -289,7 +289,7 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
     }
 
     const int gqa_ratio = Q->ne[2] / K->ne[2];
-    const bool mma_fast_for_bs1 = fp16_mma_available(cc) && gqa_ratio % 8 == 0 &&
+    const bool mma_fast_for_bs1 = fp16_mma_available(cc) && (gqa_ratio == 4 || gqa_ratio % 8 == 0) &&
         K->type == GGML_TYPE_F16 && V->type == GGML_TYPE_F16 && mask;
     if (Q->ne[1] == 1 && Q->ne[0] % (2*WARP_SIZE) == 0 && !mma_fast_for_bs1) {
         if (prec == GGML_PREC_DEFAULT) {
