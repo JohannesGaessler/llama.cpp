@@ -778,9 +778,10 @@ void launch_fattn(
 
         dst_tmp_meta.alloc(blocks_num.x*ncols * (2*2 + D) * sizeof(float));
     } else {
-        blocks_num.x = parallel_blocks*ntiles_x;
-        blocks_num.y = Q->ne[2];
-        blocks_num.z = Q->ne[3];
+        GGML_ASSERT(Q->ne[3] == 1);
+        blocks_num.x = ntiles_x;
+        blocks_num.y = parallel_blocks;
+        blocks_num.z = Q->ne[2]*Q->ne[3];
 
         if (parallel_blocks > 1) {
             dst_tmp.alloc(parallel_blocks*ggml_nelements(KQV));

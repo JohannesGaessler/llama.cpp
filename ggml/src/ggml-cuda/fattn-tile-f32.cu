@@ -59,18 +59,17 @@ static __global__ void flash_attn_tile_ext_f32(
 
     // In this kernel Q, K, V are matrices while i, j, k are matrix indices.
 
-    const int ic0 = (blockIdx.x / parallel_blocks) * ncols; // Index of the Q/QKV column to work on.
-    const int ip  =  blockIdx.x % parallel_blocks; // Index in group of blocks running for the same column in parallel.
+    const int ic0 = blockIdx.x * ncols; // Index of the Q/QKV column to work on.
 
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
-    const float2 * Q_f2  = (const float2 *) (Q    + nb02* blockIdx.y              + nb01*ic0);
-    const half2  * K_h2  = (const half2  *) (K    + nb12*(blockIdx.y / gqa_ratio));
-    const half2  * V_h2  = (const half2  *) (V    + nb12*(blockIdx.y / gqa_ratio)); // K and V have same shape
+    const float2 * Q_f2  = (const float2 *) (Q    + nb02* blockIdx.z              + nb01*ic0);
+    const half2  * K_h2  = (const half2  *) (K    + nb12*(blockIdx.z / gqa_ratio));
+    const half2  * V_h2  = (const half2  *) (V    + nb12*(blockIdx.z / gqa_ratio)); // K and V have same shape
     const half   * maskh = (const half   *)  mask + ne11*ic0;
 
     const int stride_KV2 = nb11 / sizeof(half2);
 
-    const float slope = get_alibi_slope(max_bias, blockIdx.y, n_head_log2, m0, m1);
+    const float slope = get_alibi_slope(max_bias, blockIdx.z, n_head_log2, m0, m1);
 
     static_assert(D % (2*WARP_SIZE) == 0, "D not divisible by 2*WARP_SIZE == 64.");
 
@@ -104,7 +103,7 @@ static __global__ void flash_attn_tile_ext_f32(
 
     __syncthreads();
 
-    for (int k_VKQ_0 = ip*FATTN_KQ_STRIDE_TILE_F32; k_VKQ_0 < ne11; k_VKQ_0 += parallel_blocks*FATTN_KQ_STRIDE_TILE_F32) {
+    for (int k_VKQ_0 = blockIdx.y*FATTN_KQ_STRIDE_TILE_F32; k_VKQ_0 < ne11; k_VKQ_0 += parallel_blocks*FATTN_KQ_STRIDE_TILE_F32) {
         // Calculate KQ tile and keep track of new maximum KQ values:
 
         float kqmax_new[ncols/nwarps];
@@ -273,13 +272,14 @@ static __global__ void flash_attn_tile_ext_f32(
                 dst_val.x /= kqsum_j;
                 dst_val.y /= kqsum_j;
             }
-            const int j_dst = (ic0 + j_VKQ)*parallel_blocks + ip;
-            dst[j_dst*D*gridDim.y + D*blockIdx.y + i0 + 0] = dst_val.x;
-            dst[j_dst*D*gridDim.y + D*blockIdx.y + i0 + 1] = dst_val.y;
+            const int j_dst = (ic0 + j_VKQ)*parallel_blocks + blockIdx.y;
+            dst[j_dst*D*gridDim.z + D*blockIdx.z + i0 + 0] = dst_val.x;
+            dst[j_dst*D*gridDim.z + D*blockIdx.z + i0 + 1] = dst_val.y;
         }
 
         if (parallel_blocks != 1 && threadIdx.x == 0) {
-            dst_meta[(ic0 + j_VKQ)*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = make_float2(kqmax[j_VKQ_0/nwarps], kqsum_j);
+            dst_meta[(ic0 + j_VKQ)*gridDim.z*parallel_blocks + blockIdx.z*parallel_blocks + blockIdx.y]
+                = make_float2(kqmax[j_VKQ_0/nwarps], kqsum_j);
         }
     }
 #else
