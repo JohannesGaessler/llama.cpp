@@ -103,7 +103,7 @@ static __global__ void flash_attn_tile_ext_f32(
 
     __syncthreads();
 
-    for (int k_VKQ_0 = blockIdx.y*FATTN_KQ_STRIDE_TILE_F32; k_VKQ_0 < ne11; k_VKQ_0 += parallel_blocks*FATTN_KQ_STRIDE_TILE_F32) {
+    for (int k_VKQ_0 = blockIdx.y*FATTN_KQ_STRIDE_TILE_F32; k_VKQ_0 < ne11; k_VKQ_0 += gridDim.y*FATTN_KQ_STRIDE_TILE_F32) {
         // Calculate KQ tile and keep track of new maximum KQ values:
 
         float kqmax_new[ncols/nwarps];
@@ -268,17 +268,17 @@ static __global__ void flash_attn_tile_ext_f32(
             const int i0 = i00 + 2*threadIdx.x;
 
             float2 dst_val = VKQ[j_VKQ_0/nwarps][i0/(2*WARP_SIZE)];
-            if (parallel_blocks == 1) {
+            if (gridDim.y == 1) {
                 dst_val.x /= kqsum_j;
                 dst_val.y /= kqsum_j;
             }
-            const int j_dst = (ic0 + j_VKQ)*parallel_blocks + blockIdx.y;
+            const int j_dst = (ic0 + j_VKQ)*gridDim.y + blockIdx.y;
             dst[j_dst*D*gridDim.z + D*blockIdx.z + i0 + 0] = dst_val.x;
             dst[j_dst*D*gridDim.z + D*blockIdx.z + i0 + 1] = dst_val.y;
         }
 
-        if (parallel_blocks != 1 && threadIdx.x == 0) {
-            dst_meta[(ic0 + j_VKQ)*gridDim.z*parallel_blocks + blockIdx.z*parallel_blocks + blockIdx.y]
+        if (gridDim.y != 1 && threadIdx.x == 0) {
+            dst_meta[((ic0 + j_VKQ)*gridDim.z + blockIdx.z) * gridDim.y + blockIdx.y]
                 = make_float2(kqmax[j_VKQ_0/nwarps], kqsum_j);
         }
     }
