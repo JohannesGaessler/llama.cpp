@@ -40,8 +40,7 @@ static __global__ void flash_attn_vec_ext_f16(
         const int ne0,
         const int ne1,
         const int ne2,
-        const int ne3,
-        const int parallel_blocks) {
+        const int ne3) {
 #if defined(FLASH_ATTN_AVAILABLE) && defined(FP16_AVAILABLE)
 
     // Skip unused kernel variants for faster compilation:
@@ -56,17 +55,16 @@ static __global__ void flash_attn_vec_ext_f16(
     constexpr bool Q_q8_1 = type_K != GGML_TYPE_F16;
     constexpr dequantize_1_f16_t dequantize_1_v = get_dequantize_1_f16(type_V);
 
-    const int ic0 = (blockIdx.x / parallel_blocks) * ncols; // Index of the Q/QKV column to work on.
-    const int ip  =  blockIdx.x % parallel_blocks; // Index in group of blocks running for the same column in parallel.
+    const int ic0 = blockIdx.x * ncols; // Index of the Q/QKV column to work on.
 
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
-    Q += nb02* blockIdx.y              + nb01*ic0;
-    K += nb12*(blockIdx.y / gqa_ratio);
-    V += nb22*(blockIdx.y / gqa_ratio);
+    Q += nb02* blockIdx.z              + nb01*ic0;
+    K += nb12*(blockIdx.z / gqa_ratio);
+    V += nb22*(blockIdx.z / gqa_ratio);
 
     const half * maskh = (const half   *)  mask + ne11*ic0;
 
-    const float slopef = get_alibi_slope(max_bias, blockIdx.y, n_head_log2, m0, m1);
+    const float slopef = get_alibi_slope(max_bias, blockIdx.z, n_head_log2, m0, m1);
     const half  slopeh = __float2half(slopef);
 
     static_assert(D % (2*WARP_SIZE) == 0, "D not divisible by 2*WARP_SIZE == 64.");
@@ -173,7 +171,7 @@ static __global__ void flash_attn_vec_ext_f16(
 
     half2 VKQ[ncols] = {{0.0f, 0.0f}};
 
-    for (int k_VKQ_0 = ip*D; k_VKQ_0 < ne11; k_VKQ_0 += parallel_blocks*D) {
+    for (int k_VKQ_0 = blockIdx.y*D; k_VKQ_0 < ne11; k_VKQ_0 += gridDim.y*D) {
         // Calculate KQ tile and keep track of new maximum KQ values:
 
         // For unknown reasons using a half array of size 1 for kqmax_new causes a performance regression,
@@ -283,15 +281,15 @@ static __global__ void flash_attn_vec_ext_f16(
         kqsum[j_VKQ] = warp_reduce_sum((float)kqsum[j_VKQ]);
 
         half dst_val = (__low2half(VKQ[j_VKQ]) + __high2half(VKQ[j_VKQ]));
-        if (parallel_blocks == 1) {
+        if (gridDim.y == 1) {
             dst_val /= kqsum[j_VKQ];
         }
-        const int j_dst = (ic0 + j_VKQ)*parallel_blocks + ip;
-        dst[j_dst*D*gridDim.y + D*blockIdx.y + tid] = dst_val;
+        const int j_dst = (ic0 + j_VKQ)*gridDim.y + blockIdx.y;
+        dst[j_dst*D*gridDim.z + D*blockIdx.z + tid] = dst_val;
     }
 
-    if (parallel_blocks != 1 && tid < ncols && (ncols <= 2 || ic0 + tid < ne01)) {
-        dst_meta[(ic0 + tid)*gridDim.y*parallel_blocks + blockIdx.y*parallel_blocks + ip] = make_float2(kqmax[tid], kqsum[tid]);
+    if (gridDim.y != 1 && tid < ncols && (ncols <= 2 || ic0 + tid < ne01)) {
+        dst_meta[((ic0 + tid)*gridDim.z + blockIdx.z) * gridDim.y + blockIdx.y] = make_float2(kqmax[tid], kqsum[tid]);
     }
 #else
    NO_DEVICE_CODE;

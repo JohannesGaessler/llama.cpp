@@ -45,8 +45,7 @@ typedef void (* fattn_kernel_t)(
         const int ne0,
         const int ne1,
         const int ne2,
-        const int ne3,
-        const int parallel_blocks);
+        const int ne3);
 
 typedef half (*vec_dot_KQ_f16_t)(
     const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8 , const void * __restrict__ Q_ds);
@@ -822,8 +821,7 @@ void launch_fattn(
         Q->nb[1], Q->nb[2], Q->nb[3],
         nb11, nb12, nb13,
         nb21, nb22, nb23,
-        KQV->ne[0], KQV->ne[1], KQV->ne[2], KQV->ne[3],
-        parallel_blocks
+        KQV->ne[0], KQV->ne[1], KQV->ne[2], KQV->ne[3]
     );
     CUDA_CHECK(cudaGetLastError());
 

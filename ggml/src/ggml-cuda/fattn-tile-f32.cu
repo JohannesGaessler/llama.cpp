@@ -43,8 +43,7 @@ static __global__ void flash_attn_tile_ext_f32(
         const int ne0,
         const int ne1,
         const int ne2,
-        const int ne3,
-        const int parallel_blocks) {
+        const int ne3) {
 #ifdef FLASH_ATTN_AVAILABLE
 
     // Skip unused kernel variants for faster compilation:
@@ -278,8 +277,7 @@ static __global__ void flash_attn_tile_ext_f32(
         }
 
         if (gridDim.y != 1 && threadIdx.x == 0) {
-            dst_meta[((ic0 + j_VKQ)*gridDim.z + blockIdx.z) * gridDim.y + blockIdx.y]
-                = make_float2(kqmax[j_VKQ_0/nwarps], kqsum_j);
+            dst_meta[((ic0 + j_VKQ)*gridDim.z + blockIdx.z) * gridDim.y + blockIdx.y] = make_float2(kqmax[j_VKQ_0/nwarps], kqsum_j);
         }
     }
 #else

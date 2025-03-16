@@ -838,8 +838,7 @@ static __global__ void flash_attn_ext_f16(
         const int ne0,
         const int ne1,
         const int ne2,
-        const int ne3,
-        const int parallel_blocks) {
+        const int ne3) {
 #if defined(FLASH_ATTN_AVAILABLE) && defined(NEW_MMA_AVAILABLE)
 
     // Skip unused kernel variants for faster compilation:
