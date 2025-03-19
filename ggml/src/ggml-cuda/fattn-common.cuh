@@ -793,8 +793,9 @@ void launch_fattn(
         const int blocks_per_wave = nsm * max_blocks_per_sm;
         int efficiency_percent_best = 0;
         for (int parallel_blocks_test = parallel_blocks; parallel_blocks_test <= ntiles_KQ; ++parallel_blocks_test) {
-            const int nwaves = (ntiles_total + blocks_per_wave - 1) / blocks_per_wave;
-            const int efficiency_percent = 100 * ntiles_total / (nwaves*blocks_per_wave);
+            const int nblocks_total = ntiles_total * parallel_blocks_test;
+            const int nwaves = (nblocks_total + blocks_per_wave - 1) / blocks_per_wave;
+            const int efficiency_percent = 100 * nblocks_total / (nwaves*blocks_per_wave);
 
             if (efficiency_percent > efficiency_percent_best) {
                 efficiency_percent_best = efficiency_percent;
