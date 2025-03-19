@@ -777,18 +777,22 @@ void launch_fattn(
         dst_tmp_meta.alloc(blocks_num.x*ncols * (2*2 + D) * sizeof(float));
     } else {
         GGML_ASSERT(K->ne[1] % KQ_row_granularity == 0);
-        const int ntiles_KQ = K->ne[1] / KQ_row_granularity; // Max. number of blocks limited by tensor size.
+        const int ntiles_KQ = K->ne[1] / KQ_row_granularity; // Max. number of parallel blocks limited by tensor size.
 
-        int max_blocks_per_sm = 1; // Max. number of parallel blocks limited by occupancy.
+        int max_blocks_per_sm = 1; // Max. number of active blocks limited by occupancy.
         CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max_blocks_per_sm, fattn_kernel, block_dim.x * block_dim.y * block_dim.z, nbytes_shared));
 
-        parallel_blocks = std::min(max_blocks_per_sm, ntiles_KQ);
+        // parallel_blocks should be at least large enough to achieve max. occupancy for a single wave:
+        parallel_blocks = std::max((nsm * max_blocks_per_sm) / ntiles_total, 1);
 
-        // If ntiles_total % blocks_per_wave != 0 then some efficiency is lost to tail effects.
-        // Scale up the number of blocks until good efficiency is achieved.
+        // parallel_blocks must not be larger than what the tensor size allows:
+        parallel_blocks = std::min(parallel_blocks, ntiles_KQ);
+
+        // If ntiles_total % blocks_per_wave != 0 then some efficiency is lost due to tail effects.
+        // Test whether parallel_blocks can be set to a higher value for better efficiency.
         const int blocks_per_wave = nsm * max_blocks_per_sm;
         int efficiency_percent_best = 0;
-        for (int parallel_blocks_test = parallel_blocks; parallel_blocks_test < ntiles_KQ; ++parallel_blocks_test) {
+        for (int parallel_blocks_test = parallel_blocks; parallel_blocks_test <= ntiles_KQ; ++parallel_blocks_test) {
             const int nwaves = (ntiles_total + blocks_per_wave - 1) / blocks_per_wave;
             const int efficiency_percent = 100 * ntiles_total / (nwaves*blocks_per_wave);
 
