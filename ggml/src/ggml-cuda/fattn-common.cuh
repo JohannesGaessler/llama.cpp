@@ -678,8 +678,8 @@ static void on_no_fattn_vec_case(const int D) {
 
 template <int D, int ncols1, int ncols2, int KQ_stride>
 void launch_fattn(
-    ggml_backend_cuda_context & ctx, ggml_tensor * dst, fattn_kernel_t fattn_kernel,
-    const int nwarps, const size_t nbytes_shared, const bool need_f16_K, const bool need_f16_V, const bool stream_k
+    ggml_backend_cuda_context & ctx, ggml_tensor * dst, fattn_kernel_t fattn_kernel, const int nwarps, const size_t nbytes_shared,
+    const int KQ_row_granularity, const bool need_f16_K, const bool need_f16_V, const bool stream_k
 ) {
     constexpr int ncols = ncols1 * ncols2;
 
@@ -701,9 +701,6 @@ void launch_fattn(
     GGML_ASSERT(K->ne[1] % FATTN_KQ_STRIDE == 0 && "Incorrect KV cache padding.");
 
     GGML_ASSERT(Q->ne[3] == 1);
-
-    GGML_ASSERT(stream_k || ncols2 == 1);
-    const bool use_parallel_blocks = !stream_k && (Q->ne[1] <= ncols1) ? true : false;
 
     const int warp_size = ggml_cuda_info().devices[ctx.device].warp_size;
 
@@ -779,19 +776,29 @@ void launch_fattn(
 
         dst_tmp_meta.alloc(blocks_num.x*ncols * (2*2 + D) * sizeof(float));
     } else {
-        if (use_parallel_blocks) {
-            const int num_blocks_base = ntiles_x*Q->ne[2]*Q->ne[3];
-            const int nsm = ggml_cuda_info().devices[ggml_cuda_get_device()].nsm;
-            const int seqlen_tiles = (K->ne[1] + D - 1) / D;
+        GGML_ASSERT(K->ne[1] % KQ_row_granularity == 0);
+        const int ntiles_KQ = K->ne[1] / KQ_row_granularity; // Max. number of blocks limited by tensor size.
 
-            // Determine the number of active blocks per SM
-            int numActiveBlocks = 1;
-            CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numActiveBlocks, fattn_kernel, block_dim.x * block_dim.y * block_dim.z, nbytes_shared));
+        int max_blocks_per_sm = 1; // Max. number of parallel blocks limited by occupancy.
+        CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max_blocks_per_sm, fattn_kernel, block_dim.x * block_dim.y * block_dim.z, nbytes_shared));
 
-            // we want to keep at least `numActiveBlocks` blocks per SM to improve occupancy.
-            // this kernel operates on `D` tile of seq length. We need to consider how many `D` tiles can be processed in parallel.
-            // If there are not enough tiles to process, we can reduce the number of blocks
-            parallel_blocks = std::max(std::min((nsm * numActiveBlocks) / num_blocks_base, seqlen_tiles), 1);
+        parallel_blocks = std::min(max_blocks_per_sm, ntiles_KQ);
+
+        // If ntiles_total % blocks_per_wave != 0 then some efficiency is lost to tail effects.
+        // Scale up the number of blocks until good efficiency is achieved.
+        const int blocks_per_wave = nsm * max_blocks_per_sm;
+        int efficiency_percent_best = 0;
+        for (int parallel_blocks_test = parallel_blocks; parallel_blocks_test < ntiles_KQ; ++parallel_blocks_test) {
+            const int nwaves = (ntiles_total + blocks_per_wave - 1) / blocks_per_wave;
+            const int efficiency_percent = 100 * ntiles_total / (nwaves*blocks_per_wave);
+
+            if (efficiency_percent > efficiency_percent_best) {
+                efficiency_percent_best = efficiency_percent;
+                parallel_blocks = parallel_blocks_test;
+                if (efficiency_percent_best >= 90) {
+                    break;
+                }
+            }
         }
 
         blocks_num.x = ntiles_x;
