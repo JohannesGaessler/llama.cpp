@@ -249,7 +249,8 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
     const ggml_tensor * mask = dst->src[3];
 
     ggml_cuda_set_device(ctx.device);
-    const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
+    const int cc        = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
+    const int nsm       = ggml_cuda_info().devices[ggml_cuda_get_device()].nsm;
     const int warp_size = ggml_cuda_info().devices[ggml_cuda_get_device()].warp_size;
     const enum ggml_prec prec = ggml_flash_attn_ext_get_prec(KQV);
 
@@ -296,17 +297,18 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
         return;
     }
 
-    const int gqa_ratio = Q->ne[2] / K->ne[2];
-    const bool mma_fast_for_bs1 = fp16_mma_available(cc) && gqa_ratio % 2 == 0 &&
-        K->type == GGML_TYPE_F16 && V->type == GGML_TYPE_F16 && mask;
-    if (Q->ne[1] == 1 && Q->ne[0] % (2*warp_size) == 0 && !mma_fast_for_bs1) {
+    const bool gqa_opt_applies = ((Q->ne[2] / K->ne[2]) % 2 == 0) && mask; // The mma-based kernels have GQA-specific optimizations
+    const bool nsm_is_power_of_2 = (nsm & (nsm - 1)) == 0; // For GPUs where the SM count is a power of 2 the vector kernels are faster.
+    const bool mma_needs_data_conversion = K->type != GGML_TYPE_F16 || V->type != GGML_TYPE_F16;
+    const bool mma_faster_for_bs1 = new_mma_available(cc) && gqa_opt_applies && !nsm_is_power_of_2 && !mma_needs_data_conversion;
+    const bool can_use_vector_kernel = (Q->ne[0] % (2*warp_size) == 0) && (prec == GGML_PREC_DEFAULT || Q->ne[0] <= 128);
+    if (Q->ne[1] == 1 && can_use_vector_kernel && !mma_faster_for_bs1) {
         if (prec == GGML_PREC_DEFAULT) {
             ggml_cuda_flash_attn_ext_vec_f16(ctx, dst);
-            return;
-        } else if(Q->ne[0] <= 128) {
+        } else {
             ggml_cuda_flash_attn_ext_vec_f32(ctx, dst);
-            return;
         }
+        return;
     }
 
     // The MMA implementation needs Turing or newer, use the old WMMA code for Volta:
