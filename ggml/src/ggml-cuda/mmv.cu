@@ -90,13 +90,6 @@ static __global__ void mul_mat_vec(
     dst[row] = sumf;
 }
 
-#define MMV_SWITCH_CASE(block_size)                                                                             \
-case (block_size): {                                                                                            \
-    mul_mat_vec<T, type_acc, (block_size)><<<block_nums, block_dims, smem, stream>>>                            \
-        (x, y, dst, ncols/2, stride_row, channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst, \
-            sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);                                 \
-} break;                                                                                                        \
-
 template <typename T, typename type_acc>
 static void launch_mul_mat_vec_cuda(
         const T * x, const float * y, float * dst,
@@ -118,7 +111,7 @@ static void launch_mul_mat_vec_cuda(
 
     int64_t block_size_best = warp_size;
     int64_t niter_best      = (ncols + 2*warp_size - 1) / (2*warp_size);
-    int64_t max_block_size  = 286;
+    int64_t max_block_size  = 256;
     if(ggml_cuda_info().devices[device].cc > GGML_CUDA_CC_OFFSET_AMD && ggml_cuda_info().devices[device].cc < GGML_CUDA_CC_RDNA1) {
         max_block_size = 128;
     }
@@ -134,22 +127,46 @@ static void launch_mul_mat_vec_cuda(
     const dim3 block_nums(nrows, nchannels_y, nsamples_y);
     const dim3 block_dims(block_size_best, 1, 1);
     switch (block_size_best) {
-        MMV_SWITCH_CASE(  32)
-        MMV_SWITCH_CASE(  64)
-        MMV_SWITCH_CASE(  96)
-        MMV_SWITCH_CASE( 128)
-        MMV_SWITCH_CASE( 160)
-        MMV_SWITCH_CASE( 192)
-        MMV_SWITCH_CASE( 224)
-        MMV_SWITCH_CASE( 256)
-        MMV_SWITCH_CASE( 288)
-        MMV_SWITCH_CASE( 320)
-        MMV_SWITCH_CASE( 352)
-        MMV_SWITCH_CASE( 384)
-        MMV_SWITCH_CASE( 416)
-        MMV_SWITCH_CASE( 448)
-        MMV_SWITCH_CASE( 480)
-        MMV_SWITCH_CASE( 512)
+        case   32: {
+            mul_mat_vec<T, type_acc,  32><<<block_nums, block_dims, smem, stream>>>
+                (x, y, dst, ncols/2, stride_row, channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
+                 sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
+        } break;
+        case   64: {
+            mul_mat_vec<T, type_acc,  64><<<block_nums, block_dims, smem, stream>>>
+                (x, y, dst, ncols/2, stride_row, channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
+                 sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
+        } break;
+        case   96: {
+            mul_mat_vec<T, type_acc,  96><<<block_nums, block_dims, smem, stream>>>
+                (x, y, dst, ncols/2, stride_row, channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
+                 sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
+        } break;
+        case  128: {
+            mul_mat_vec<T, type_acc, 128><<<block_nums, block_dims, smem, stream>>>
+                (x, y, dst, ncols/2, stride_row, channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
+                 sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
+        } break;
+        case  160: {
+            mul_mat_vec<T, type_acc, 160><<<block_nums, block_dims, smem, stream>>>
+                (x, y, dst, ncols/2, stride_row, channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
+                 sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
+        } break;
+        case  192: {
+            mul_mat_vec<T, type_acc, 192><<<block_nums, block_dims, smem, stream>>>
+                (x, y, dst, ncols/2, stride_row, channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
+                 sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
+        } break;
+        case  224: {
+            mul_mat_vec<T, type_acc, 224><<<block_nums, block_dims, smem, stream>>>
+                (x, y, dst, ncols/2, stride_row, channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
+                 sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
+        } break;
+        case  256: {
+            mul_mat_vec<T, type_acc, 256><<<block_nums, block_dims, smem, stream>>>
+                (x, y, dst, ncols/2, stride_row, channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
+                 sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
+        } break;
         default: {
             GGML_ABORT("fatal error");
         } break;
