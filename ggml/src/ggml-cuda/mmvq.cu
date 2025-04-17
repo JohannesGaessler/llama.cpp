@@ -208,11 +208,7 @@ static __global__ void mul_mat_vec_q(
         }
 
         if (threadIdx.x < rows_per_cuda_block && (rows_per_cuda_block == 1 || row0 + int(threadIdx.x) < stride_col_dst)) {
-            if (ids) {
-                dst[sample_y*stride_sample_dst + channel_y*stride_col_dst + row0 + threadIdx.x] = tmp[j][threadIdx.x];
-            } else {
-                dst[sample_y*stride_sample_dst + channel_y*stride_channel_dst + j*stride_col_dst + row0 + threadIdx.x] = tmp[j][threadIdx.x];
-            }
+            dst[sample_y*stride_sample_dst + channel_y*stride_channel_dst + j*stride_col_dst + row0 + threadIdx.x] = tmp[j][threadIdx.x];
         }
     }
 }
@@ -521,13 +517,15 @@ void ggml_cuda_mul_mat_vec_q(
     const int64_t s12 = ne11*s11;
     const int64_t s13 = ne12*s12;
 
-    const int64_t nchannels_y = ids_d ? ids->ne[0] : ne12;
+    const int64_t nchannels_y        = ids ? ids->ne[0] : ne12;
+    const int64_t stride_col_dst     = ids ? s2         : s1;
+    const int64_t stride_channel_dst = ids ? s1         : s2;
 
     mul_mat_vec_q_switch_type(
         src0->data, src0->type, src1_q8_1.get(), ids_d, dst_d, ne00,
-        ne01, ne11,        s01, s11, s1,
-        ne02, nchannels_y, s02, s12, s2,
-        ne03, ne13,        s03, s13, s3, stream);
+        ne01, ne11,        s01, s11, stride_col_dst,
+        ne02, nchannels_y, s02, s12, stride_channel_dst,
+        ne03, ne13,        s03, s13, s3,                 stream);
 }
 
 void ggml_cuda_op_mul_mat_vec_q(
