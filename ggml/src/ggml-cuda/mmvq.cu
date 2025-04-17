@@ -496,7 +496,7 @@ void ggml_cuda_mul_mat_vec_q(ggml_backend_cuda_context & ctx, const ggml_tensor 
     GGML_ASSERT(ggml_is_contiguous(src1));
     const int64_t ne10_padded = GGML_PAD(ne10, MATRIX_ROW_PADDING);
     ggml_cuda_pool_alloc<char> src1_q8_1(ctx.pool(), ne13*ne12 * ne11*ne10_padded * sizeof(block_q8_1)/QK8_1);
-    quantize_row_q8_1_cuda(src1_d, ne10, ne11, ne12*ne13, ne10_padded, src0->type, stream);
+    quantize_row_q8_1_cuda(src1_d, src1_q8_1.get(), ne10, ne11, ne12*ne13, ne10_padded, src0->type, stream);
 
     const int64_t s01 = src0->nb[1] / ts_src0;
     const int64_t s11 = ne10_padded / QK8_1;
