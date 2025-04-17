@@ -1648,8 +1648,9 @@ static void ggml_cuda_op_mul_mat(
                 }
 
                 if (quantize_src1 && !src1_is_contiguous) {
-                    quantize_src1(dev[id].src1_ddf, dev[id].src1_ddq, src0->type, ne10, ne10, 0, 0,
-                                  src1_padded_col_size, 1, 1, 1, stream);
+                    quantize_src1(
+                        dev[id].src1_ddf, dev[id].src1_ddq, src0->type, ne10, ne10, ne11*ne10, ne12*ne11*ne10,
+                        src1_padded_col_size, src1_ncols, 1, 1, stream);
                     CUDA_CHECK(cudaGetLastError());
                 }
 
