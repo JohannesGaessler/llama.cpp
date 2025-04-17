@@ -510,7 +510,7 @@ void ggml_cuda_mul_mat_vec_q(ggml_backend_cuda_context & ctx, const ggml_tensor 
     const int64_t s13 = ne12*s12;
 
     mul_mat_vec_q_switch_type(
-        src0->data, src0->type, src1_q8_1.get(), dst_d, ne00, ne10, ne11, s01, s11, s1,
+        src0->data, src0->type, src1_q8_1.get(), dst_d, ne00, ne01, ne11, s01, s11, s1,
         ne02, ne12, s02, s12, s2, ne03, ne13, s03, s13, s3, stream);
 }
 
