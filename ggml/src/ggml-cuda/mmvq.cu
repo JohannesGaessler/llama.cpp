@@ -154,15 +154,18 @@ static __global__ void mul_mat_vec_q(
     const     int blocks_per_row_x = ncols_x / qk;
     constexpr int blocks_per_iter = vdr * nwarps*warp_size / qi;
 
-    const int channel_y = ids ? blockIdx.y % ncols_y : blockIdx.y;
-    const int channel_x = ids ? ids[blockIdx.y]      : channel_y / channel_ratio;
-    const int sample_y  = blockIdx.z;
-    const int sample_x  = sample_y / sample_ratio;
+    const int channel_dst = blockIdx.y;
+    const int channel_y   = ids ? channel_dst % ncols_y : channel_dst;
+    const int channel_x   = ids ? ids[blockIdx.y]       : channel_dst / channel_ratio;
+    const int sample_dst  = blockIdx.z;
+    const int sample_y    = sample_dst;
+    const int sample_x    = sample_dst / sample_ratio;
 
     // partial sum for each thread
     float tmp[ncols_y][rows_per_cuda_block] = {{0.0f}};
 
     const block_q8_1 * y = ((const block_q8_1 *) vy) + sample_y*stride_sample_y + channel_y*stride_channel_y;
+    const int kbx_offset = sample_x*stride_sample_x + channel_x*stride_channel_x + row0*stride_row_x;
 
     for (int kbx = tid / (qi/vdr); kbx < blocks_per_row_x; kbx += blocks_per_iter) {
         const int kby = kbx * (qk/QK8_1); // y block index that aligns with kbx
@@ -175,7 +178,7 @@ static __global__ void mul_mat_vec_q(
 #pragma unroll
             for (int i = 0; i < rows_per_cuda_block; ++i) {
                 tmp[j][i] += vec_dot_q_cuda(
-                    vx, &y[j*stride_col_y + kby], sample_x*stride_sample_x + channel_x*stride_channel_x + (row0 + i)*stride_row_x + kbx, kqs);
+                    vx, &y[j*stride_col_y + kby], kbx_offset + i*stride_row_x + kbx, kqs);
             }
         }
     }
@@ -195,6 +198,8 @@ static __global__ void mul_mat_vec_q(
         return;
     }
 
+    dst += sample_dst*stride_sample_dst + channel_dst*stride_channel_dst + row0;
+
     // sum up partial sums and write back result
 #pragma unroll
     for (int j = 0; j < ncols_y; ++j) {
@@ -208,7 +213,7 @@ static __global__ void mul_mat_vec_q(
         }
 
         if (threadIdx.x < rows_per_cuda_block && (rows_per_cuda_block == 1 || row0 + int(threadIdx.x) < stride_col_dst)) {
-            dst[sample_y*stride_sample_dst + blockIdx.y*stride_channel_dst + j*stride_col_dst + row0 + threadIdx.x] = tmp[j][threadIdx.x];
+            dst[j*stride_col_dst + threadIdx.x] = tmp[j][threadIdx.x];
         }
     }
 }
