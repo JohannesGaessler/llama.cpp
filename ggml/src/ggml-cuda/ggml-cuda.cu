@@ -1940,7 +1940,7 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
         ggml_cuda_mul_mat_vec(ctx, src0, src1, dst);
     } else if (!split && use_mul_mat_vec_q) {
         // fprintf(stderr, "15\n");
-        ggml_cuda_mul_mat_vec_q(ctx, dst);
+        ggml_cuda_mul_mat_vec_q(ctx, src0, src1, nullptr, dst);
     } else if (!split && src0->type == GGML_TYPE_F16 && (src1->type == GGML_TYPE_F16 || !any_gpus_with_slow_fp16)
                && !ggml_is_transposed(src0) && !ggml_is_transposed(src1) && src1->ne[2]*src1->ne[3] > 1) {
         // general KQ + KQV multi-batch without FlashAttention
@@ -2023,7 +2023,7 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
     GGML_TENSOR_BINARY_OP_LOCALS
 
     if (ggml_is_quantized(src0->type) && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32 && ne11 == 1 && ne12 == 1) {
-        ggml_cuda_mul_mat_vec_q(ctx, dst);
+        ggml_cuda_mul_mat_vec_q(ctx, src0, src1, ids, dst);
     }
 
     GGML_ASSERT(!ggml_backend_buft_is_cuda_split(src0->buffer->buft) && "mul_mat_id does not support split buffers");

@@ -476,14 +476,11 @@ static void mul_mat_vec_q_switch_type(
     }
 }
 
-void ggml_cuda_mul_mat_vec_q(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-    const ggml_tensor * src0 = dst->src[0];
-    const ggml_tensor * src1 = dst->src[1];
-    const ggml_tensor * ids  = dst->src[2]; // Optional, used for GGML_MUL_MAT_ID
-
+void ggml_cuda_mul_mat_vec_q(
+        ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * ids, ggml_tensor * dst) {
     GGML_ASSERT(        src1->type == GGML_TYPE_F32);
     GGML_ASSERT(        dst->type  == GGML_TYPE_F32);
-    GGML_ASSERT(!ids || ids->type  == GGML_TYPE_I32);
+    GGML_ASSERT(!ids || ids->type  == GGML_TYPE_I32); // Optional, used for in-place GGML_MUL_MAT_ID.
 
     GGML_TENSOR_BINARY_OP_LOCALS;
 
@@ -492,9 +489,6 @@ void ggml_cuda_mul_mat_vec_q(ggml_backend_cuda_context & ctx, ggml_tensor * dst)
     const size_t ts_src0 = ggml_type_size(src0->type);
     const size_t ts_src1 = ggml_type_size(src1->type);
     const size_t ts_dst  = ggml_type_size(dst->type);
-
-    GGML_ASSERT(ne12 == ne2);
-    GGML_ASSERT(ne13 == ne3);
 
     GGML_ASSERT(nb00 == ts_src0);
     GGML_ASSERT(nb0  == ts_dst);
