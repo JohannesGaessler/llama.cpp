@@ -2026,6 +2026,7 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
         // fprintf(stderr, "\nsrc0={%ld, %ld, %ld, %ld} src1={%ld, %ld, %ld, %ld} ids={%ld, %ld, %ld, %ld} dst={%ld, %ld, %ld, %ld}\n",
         //         ne00, ne01, ne02, ne03, ne10, ne11, ne12, ne13, ids->ne[0], ids->ne[1], ids->ne[2], ids->ne[3], ne0, ne1, ne2, ne3);
         ggml_cuda_mul_mat_vec_q(ctx, src0, src1, ids, dst);
+        return;
     }
 
     GGML_ASSERT(!ggml_backend_buft_is_cuda_split(src0->buffer->buft) && "mul_mat_id does not support split buffers");

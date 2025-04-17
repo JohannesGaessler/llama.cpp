@@ -154,8 +154,8 @@ static __global__ void mul_mat_vec_q(
     const     int blocks_per_row_x = ncols_x / qk;
     constexpr int blocks_per_iter = vdr * nwarps*warp_size / qi;
 
-    const int channel_y = blockIdx.y;
-    const int channel_x = ids ? ids[blockIdx.y] : channel_y / channel_ratio;
+    const int channel_y = ids ? blockIdx.y % ncols_y : blockIdx.y;
+    const int channel_x = ids ? ids[blockIdx.y]      : channel_y / channel_ratio;
     const int sample_y  = blockIdx.z;
     const int sample_x  = sample_y / sample_ratio;
 
@@ -208,7 +208,7 @@ static __global__ void mul_mat_vec_q(
         }
 
         if (threadIdx.x < rows_per_cuda_block && (rows_per_cuda_block == 1 || row0 + int(threadIdx.x) < stride_col_dst)) {
-            dst[sample_y*stride_sample_dst + channel_y*stride_channel_dst + j*stride_col_dst + row0 + threadIdx.x] = tmp[j][threadIdx.x];
+            dst[sample_y*stride_sample_dst + blockIdx.y*stride_channel_dst + j*stride_col_dst + row0 + threadIdx.x] = tmp[j][threadIdx.x];
         }
     }
 }
@@ -490,8 +490,10 @@ void ggml_cuda_mul_mat_vec_q(
     const size_t ts_src1 = ggml_type_size(src1->type);
     const size_t ts_dst  = ggml_type_size(dst->type);
 
-    GGML_ASSERT(nb00 == ts_src0);
-    GGML_ASSERT(nb0  == ts_dst);
+    GGML_ASSERT(        nb00       == ts_src0);
+    GGML_ASSERT(        nb10       == ts_src1);
+    GGML_ASSERT(        nb0        == ts_dst);
+    GGML_ASSERT(!ids || ids->nb[0] == ggml_type_size(ids->type));
 
     const float   * src1_d =       (const float   *) src1->data;
     const int32_t *  ids_d = ids ? (const int32_t *)  ids->data : nullptr;
