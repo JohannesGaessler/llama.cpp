@@ -2022,7 +2022,7 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
 
     GGML_TENSOR_BINARY_OP_LOCALS
 
-    if (ggml_is_quantized(src0->type) && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32 && ne11 == 1) {
+    if (ggml_is_quantized(src0->type) && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32 && ne11 == 1 && ne12 == 1) {
         ggml_cuda_mul_mat_vec_q(ctx, dst);
     }
 
