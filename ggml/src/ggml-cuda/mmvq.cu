@@ -154,8 +154,8 @@ static __global__ void mul_mat_vec_q(
     const     int blocks_per_row_x = ncols_x / qk;
     constexpr int blocks_per_iter = vdr * nwarps*warp_size / qi;
 
-    const int channel_y = ids ? ids[blockIdx.y] : blockIdx.y;
-    const int channel_x = channel_y / channel_ratio;
+    const int channel_y = blockIdx.y;
+    const int channel_x = ids ? ids[blockIdx.y] : channel_y / channel_ratio;
     const int sample_y  = blockIdx.z;
     const int sample_x  = sample_y / sample_ratio;
 
@@ -208,7 +208,11 @@ static __global__ void mul_mat_vec_q(
         }
 
         if (threadIdx.x < rows_per_cuda_block && (rows_per_cuda_block == 1 || row0 + int(threadIdx.x) < stride_col_dst)) {
-            dst[sample_y*stride_sample_dst + channel_y*stride_channel_dst + j*stride_col_dst + row0 + threadIdx.x] = tmp[j][threadIdx.x];
+            if (ids) {
+                dst[sample_y*stride_sample_dst + channel_y*stride_col_dst + row0 + threadIdx.x] = tmp[j][threadIdx.x];
+            } else {
+                dst[sample_y*stride_sample_dst + channel_y*stride_channel_dst + j*stride_col_dst + row0 + threadIdx.x] = tmp[j][threadIdx.x];
+            }
         }
     }
 }
@@ -517,11 +521,13 @@ void ggml_cuda_mul_mat_vec_q(
     const int64_t s12 = ne11*s11;
     const int64_t s13 = ne12*s12;
 
+    const int64_t nchannels_y = ids_d ? ids->ne[0] : ne12;
+
     mul_mat_vec_q_switch_type(
         src0->data, src0->type, src1_q8_1.get(), ids_d, dst_d, ne00,
-        ne01, ne11, s01, s11, s1,
-        ne02, ne12, s02, s12, s2,
-        ne03, ne13, s03, s13, s3, stream);
+        ne01, ne11,        s01, s11, s1,
+        ne02, nchannels_y, s02, s12, s2,
+        ne03, ne13,        s03, s13, s3, stream);
 }
 
 void ggml_cuda_op_mul_mat_vec_q(
