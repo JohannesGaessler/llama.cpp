@@ -1410,7 +1410,7 @@ static void ggml_cuda_op_mul_mat(
     const int64_t ne0 = dst->ne[0];
     const int64_t ne1 = dst->ne[1];
 
-    const int64_t nb10 = src1->nb[0];
+    // const int64_t nb10 = src1->nb[0];
     const int64_t nb11 = src1->nb[1];
     const int64_t nb12 = src1->nb[2];
     const int64_t nb13 = src1->nb[3];
@@ -1937,7 +1937,7 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
         // but this is only faster for GPUs without tensor cores or with a thin src0 matrix (particularly KQV in attention)
         // fprintf(stderr, "10\n");
         ggml_cuda_mul_mat_vec(ctx, src0, src1, dst);
-    } else if (!split && use_mul_mat_vec_q && ggml_is_contiguous(src1)) {
+    } else if (!split && use_mul_mat_vec_q) {
         // fprintf(stderr, "15\n");
         ggml_cuda_mul_mat_vec_q(ctx, src0, src1, dst);
     } else if (!split && src0->type == GGML_TYPE_F16 && (src1->type == GGML_TYPE_F16 || !any_gpus_with_slow_fp16)
