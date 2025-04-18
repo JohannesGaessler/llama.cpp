@@ -1937,7 +1937,7 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
         // the custom F16 vector kernel can be used over batched cuBLAS GEMM
         // but this is only faster for GPUs without tensor cores or with a thin src0 matrix (particularly KQV in attention)
         // fprintf(stderr, "10\n");
-        ggml_cuda_mul_mat_vec(ctx, src0, src1, dst);
+        ggml_cuda_mul_mat_vec(ctx, src0, src1, nullptr, dst);
     } else if (!split && use_mul_mat_vec_q) {
         // fprintf(stderr, "15\n");
         ggml_cuda_mul_mat_vec_q(ctx, src0, src1, nullptr, dst);
@@ -2022,10 +2022,14 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
 
     GGML_TENSOR_BINARY_OP_LOCALS
 
-    if (ggml_is_quantized(src0->type) && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32 && ne2 == 1) {
+    if (src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32 && ne2 == 1) {
         // fprintf(stderr, "\nsrc0={%ld, %ld, %ld, %ld} src1={%ld, %ld, %ld, %ld} ids={%ld, %ld, %ld, %ld} dst={%ld, %ld, %ld, %ld}\n",
         //         ne00, ne01, ne02, ne03, ne10, ne11, ne12, ne13, ids->ne[0], ids->ne[1], ids->ne[2], ids->ne[3], ne0, ne1, ne2, ne3);
-        ggml_cuda_mul_mat_vec_q(ctx, src0, src1, ids, dst);
+        if (ggml_is_quantized(src0->type)) {
+            ggml_cuda_mul_mat_vec_q(ctx, src0, src1, ids, dst);
+        } else {
+            ggml_cuda_mul_mat_vec(ctx, src0, src1, ids, dst);
+        }
         return;
     }
 
