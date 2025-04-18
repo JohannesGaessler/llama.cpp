@@ -31,12 +31,19 @@ static __global__ void mul_mat_vec(
 
     float sumf = 0.0f;
 
-    if constexpr (std::is_same<T, half>::value) {
+    if constexpr (std::is_same<T, float>::value) {
+        const float2 * x2 = (const float2 *) x;
+
+        for (int64_t col2 = tid; col2 < ncols2; col2 += block_size) {
+            const float2 tmpx = x2[col2];
+            const float2 tmpy = y2[col2];
+            sumf += tmpx.x*tmpy.x;
+            sumf += tmpx.y*tmpy.y;
+        }
+    } else if constexpr (std::is_same<T, half>::value) {
         const half2 * x2 = (const half2 *) x;
 
         if (std::is_same<type_acc, float>::value) {
-            sumf = 0.0f;
-
             for (int64_t col2 = tid; col2 < ncols2; col2 += block_size) {
                 const float2 tmpx = __half22float2(x2[col2]);
                 const float2 tmpy = y2[col2];
@@ -59,8 +66,6 @@ static __global__ void mul_mat_vec(
         }
     } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
         const int * x2 = (const int *) x;
-        sumf = 0.0f;
-
         for (int64_t col2 = tid; col2 < ncols2; col2 += block_size) {
             const int    tmpx = x2[col2];
             const float2 tmpy = y2[col2];
@@ -180,18 +185,17 @@ static void mul_mat_vec_cuda(
         const int64_t stride_channel_x, const int64_t stride_channel_y, const int64_t stride_channel_dst, const int64_t nsamples_x,
         const int64_t nsamples_y, const int64_t stride_sample_x, const int64_t stride_sample_y, const int64_t stride_sample_dst,
         enum ggml_prec prec, cudaStream_t stream) {
-    switch (prec) {
-        case GGML_PREC_DEFAULT: {
+    if constexpr(std::is_same<T, half>::value) {
+        if (prec == GGML_PREC_DEFAULT) {
             launch_mul_mat_vec_cuda<T, half>
                 (x, y, dst, ncols, nrows, stride_row, nchannels_x, nchannels_y, stride_channel_x, stride_channel_y, stride_channel_dst,
                  nsamples_x, nsamples_y, stride_sample_x, stride_sample_y, stride_sample_dst, stream);
-        } break;
-        case GGML_PREC_F32: {
-            launch_mul_mat_vec_cuda<T, float>
-                (x, y, dst, ncols, nrows, stride_row, nchannels_x, nchannels_y, stride_channel_x, stride_channel_y, stride_channel_dst,
-                 nsamples_x, nsamples_y, stride_sample_x, stride_sample_y, stride_sample_dst, stream);
-        } break;
+            return;
+        }
     }
+    launch_mul_mat_vec_cuda<T, float>
+        (x, y, dst, ncols, nrows, stride_row, nchannels_x, nchannels_y, stride_channel_x, stride_channel_y, stride_channel_dst,
+         nsamples_x, nsamples_y, stride_sample_x, stride_sample_y, stride_sample_dst, stream);
 }
 
 void ggml_cuda_mul_mat_vec(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
@@ -227,6 +231,10 @@ void ggml_cuda_mul_mat_vec(ggml_backend_cuda_context & ctx, const ggml_tensor * 
     const int64_t s3  =  dst->nb[3] / ts_dst;
 
     switch (src0->type) {
+        case GGML_TYPE_F32: {
+            const float * src0_d = (const float *) src0->data;
+            mul_mat_vec_cuda(src0_d, src1_d, dst_d, ne00, ne01, s01, ne02, ne12, s02, s12, s2, ne03, ne13, s03, s13, s3, prec, ctx.stream());
+        } break;
         case GGML_TYPE_F16: {
             const half * src0_d = (const half *) src0->data;
             mul_mat_vec_cuda(src0_d, src1_d, dst_d, ne00, ne01, s01, ne02, ne12, s02, s12, s2, ne03, ne13, s03, s13, s3, prec, ctx.stream());
@@ -272,6 +280,12 @@ void ggml_cuda_op_mul_mat_vec(
     const int64_t stride_sample_dst  = 0;
 
     switch (src0->type) {
+        case GGML_TYPE_F32: {
+            const float * src0_d = (const float *) src0_dd_i;
+            mul_mat_vec_cuda(src0_d, src1_ddf_i, dst_dd_i, ne00, row_diff, stride_row,
+                nchannels_x, nchannels_y, stride_channel_x, stride_channel_y, stride_channel_dst,
+                nsamples_x, nsamples_y, stride_sample_x, stride_sample_y, stride_sample_dst, prec, stream);
+        } break;
         case GGML_TYPE_F16: {
             const half * src0_d = (const half *) src0_dd_i;
             mul_mat_vec_cuda(src0_d, src1_ddf_i, dst_dd_i, ne00, row_diff, stride_row,

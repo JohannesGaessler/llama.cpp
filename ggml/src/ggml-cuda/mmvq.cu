@@ -154,6 +154,7 @@ static __global__ void mul_mat_vec_q(
     const     int blocks_per_row_x = ncols_x / qk;
     constexpr int blocks_per_iter = vdr * nwarps*warp_size / qi;
 
+    // The following logic for ids != nullptr is only correct if ncols_dst == 1.
     const int channel_dst = blockIdx.y;
     const int channel_y   = ids ? channel_dst % nchannels_y : channel_dst;
     const int channel_x   = ids ? ids[blockIdx.y]           : channel_dst / channel_ratio;
