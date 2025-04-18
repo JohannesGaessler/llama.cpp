@@ -156,11 +156,11 @@ static __global__ void mul_mat_vec_q(
 
     // The following logic for ids != nullptr is only correct if ncols_dst == 1.
     const int channel_dst = blockIdx.y;
+    const int channel_x   = ids ? ids[channel_dst]          : channel_dst / channel_ratio;
     const int channel_y   = ids ? channel_dst % nchannels_y : channel_dst;
-    const int channel_x   = ids ? ids[blockIdx.y]           : channel_dst / channel_ratio;
     const int sample_dst  = blockIdx.z;
-    const int sample_y    = sample_dst;
     const int sample_x    = sample_dst / sample_ratio;
+    const int sample_y    = sample_dst;
 
     // partial sum for each thread
     float tmp[ncols_dst][rows_per_cuda_block] = {{0.0f}};
