@@ -7,15 +7,19 @@ static __global__ void mul_mat_vec(
         const T * __restrict__ x, const float * __restrict__ y, float * __restrict__ dst, const int64_t ncols2, const int64_t stride_row,
         const int64_t channel_ratio, const int64_t stride_channel_x, const int64_t stride_channel_y, const int64_t stride_channel_dst,
         const int64_t sample_ratio, const int64_t stride_sample_x, const int64_t stride_sample_y, const int64_t stride_sample_dst) {
-    const int64_t row       = blockIdx.x;
-    const int64_t channel   = blockIdx.y;
-    const int64_t sample    = blockIdx.z;
-    const int     tid       = threadIdx.x;
-    constexpr int warp_size = ggml_cuda_get_physical_warp_size();
+    const int64_t row         = blockIdx.x;
+    const int64_t channel_dst = blockIdx.y;
+    const int64_t channel_x   = channel_dst / channel_ratio;
+    const int64_t channel_y   = channel_dst;
+    const int64_t sample_dst  = blockIdx.z;
+    const int64_t sample_x    = sample_dst / sample_ratio;
+    const int64_t sample_y    = sample_dst;
+    const int     tid         = threadIdx.x;
+    constexpr int warp_size   = ggml_cuda_get_physical_warp_size();
 
-    x   +=  (sample/sample_ratio)*stride_sample_x   + (channel/channel_ratio)*stride_channel_x + row*stride_row;
-    y   +=   sample              *stride_sample_y   +  channel               *stride_channel_y;
-    dst +=   sample              *stride_sample_dst +  channel               *stride_channel_dst;
+    x   += sample_x  *stride_sample_x   + channel_x  *stride_channel_x   + row*stride_row;
+    y   += sample_y  *stride_sample_y   + channel_y  *stride_channel_y;
+    dst += sample_dst*stride_sample_dst + channel_dst*stride_channel_dst;
 
     const float2 * y2 = (const float2 *) y;
 
@@ -98,16 +102,16 @@ static __global__ void mul_mat_vec(
 template <typename T, typename type_acc>
 static void launch_mul_mat_vec_cuda(
         const T * x, const float * y, float * dst,
-        const int64_t ncols, const int64_t nrows, const int64_t stride_row, const int64_t nchannels_x, const int64_t nchannels_y,
+        const int64_t ncols, const int64_t nrows, const int64_t stride_row, const int64_t nchannels_x, const int64_t nchannels_dst,
         const int64_t stride_channel_x, const int64_t stride_channel_y, const int64_t stride_channel_dst, const int64_t nsamples_x,
-        const int64_t nsamples_y, const int64_t stride_sample_x, const int64_t stride_sample_y, const int64_t stride_sample_dst,
+        const int64_t nsamples_dst, const int64_t stride_sample_x, const int64_t stride_sample_y, const int64_t stride_sample_dst,
         cudaStream_t stream) {
     GGML_ASSERT(ncols      % 2 == 0);
     GGML_ASSERT(stride_row % 2 == 0);
-    GGML_ASSERT(nchannels_y % nchannels_x == 0);
-    GGML_ASSERT(nsamples_y  % nsamples_x  == 0);
-    const int64_t channel_ratio = nchannels_y / nchannels_x;
-    const int64_t sample_ratio  = nsamples_y  / nsamples_x;
+    GGML_ASSERT(nchannels_dst % nchannels_x == 0);
+    GGML_ASSERT(nsamples_dst  % nsamples_x  == 0);
+    const int64_t channel_ratio = nchannels_dst / nchannels_x;
+    const int64_t sample_ratio  = nsamples_dst  / nsamples_x;
     int device;
     int warp_size;
 
@@ -129,7 +133,7 @@ static void launch_mul_mat_vec_cuda(
     }
 
     const int smem = warp_size*sizeof(float);
-    const dim3 block_nums(nrows, nchannels_y, nsamples_y);
+    const dim3 block_nums(nrows, nchannels_dst, nsamples_dst);
     const dim3 block_dims(block_size_best, 1, 1);
     switch (block_size_best) {
         case   32: {
@@ -181,21 +185,21 @@ static void launch_mul_mat_vec_cuda(
 template<typename T>
 static void mul_mat_vec_cuda(
         const T * x, const float * y, float * dst,
-        const int64_t ncols, const int64_t nrows, const int64_t stride_row, const int64_t nchannels_x, const int64_t nchannels_y,
+        const int64_t ncols, const int64_t nrows, const int64_t stride_row, const int64_t nchannels_x, const int64_t nchannels_dst,
         const int64_t stride_channel_x, const int64_t stride_channel_y, const int64_t stride_channel_dst, const int64_t nsamples_x,
-        const int64_t nsamples_y, const int64_t stride_sample_x, const int64_t stride_sample_y, const int64_t stride_sample_dst,
+        const int64_t nsamples_dst, const int64_t stride_sample_x, const int64_t stride_sample_y, const int64_t stride_sample_dst,
         enum ggml_prec prec, cudaStream_t stream) {
     if constexpr(std::is_same<T, half>::value) {
         if (prec == GGML_PREC_DEFAULT) {
             launch_mul_mat_vec_cuda<T, half>
-                (x, y, dst, ncols, nrows, stride_row, nchannels_x, nchannels_y, stride_channel_x, stride_channel_y, stride_channel_dst,
-                 nsamples_x, nsamples_y, stride_sample_x, stride_sample_y, stride_sample_dst, stream);
+                (x, y, dst, ncols, nrows, stride_row, nchannels_x, nchannels_dst, stride_channel_x, stride_channel_y, stride_channel_dst,
+                 nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, stream);
             return;
         }
     }
     launch_mul_mat_vec_cuda<T, float>
-        (x, y, dst, ncols, nrows, stride_row, nchannels_x, nchannels_y, stride_channel_x, stride_channel_y, stride_channel_dst,
-         nsamples_x, nsamples_y, stride_sample_x, stride_sample_y, stride_sample_dst, stream);
+        (x, y, dst, ncols, nrows, stride_row, nchannels_x, nchannels_dst, stride_channel_x, stride_channel_y, stride_channel_dst,
+         nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, stream);
 }
 
 void ggml_cuda_mul_mat_vec(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
@@ -269,12 +273,12 @@ void ggml_cuda_op_mul_mat_vec(
     // ggml_cuda_op provides single, contiguous matrices
     const int64_t stride_row         = ne00;
     const int64_t nchannels_x        = 1;
-    const int64_t nchannels_y        = 1;
+    const int64_t nchannels_dst      = 1;
     const int64_t stride_channel_x   = 0;
     const int64_t stride_channel_y   = 0;
     const int64_t stride_channel_dst = 0;
     const int64_t nsamples_x         = 1;
-    const int64_t nsamples_y         = 1;
+    const int64_t nsamples_dst       = 1;
     const int64_t stride_sample_x    = 0;
     const int64_t stride_sample_y    = 0;
     const int64_t stride_sample_dst  = 0;
@@ -283,20 +287,20 @@ void ggml_cuda_op_mul_mat_vec(
         case GGML_TYPE_F32: {
             const float * src0_d = (const float *) src0_dd_i;
             mul_mat_vec_cuda(src0_d, src1_ddf_i, dst_dd_i, ne00, row_diff, stride_row,
-                nchannels_x, nchannels_y, stride_channel_x, stride_channel_y, stride_channel_dst,
-                nsamples_x, nsamples_y, stride_sample_x, stride_sample_y, stride_sample_dst, prec, stream);
+                nchannels_x, nchannels_dst, stride_channel_x, stride_channel_y, stride_channel_dst,
+                nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, prec, stream);
         } break;
         case GGML_TYPE_F16: {
             const half * src0_d = (const half *) src0_dd_i;
             mul_mat_vec_cuda(src0_d, src1_ddf_i, dst_dd_i, ne00, row_diff, stride_row,
-                nchannels_x, nchannels_y, stride_channel_x, stride_channel_y, stride_channel_dst,
-                nsamples_x, nsamples_y, stride_sample_x, stride_sample_y, stride_sample_dst, prec, stream);
+                nchannels_x, nchannels_dst, stride_channel_x, stride_channel_y, stride_channel_dst,
+                nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, prec, stream);
         } break;
         case GGML_TYPE_BF16: {
             const nv_bfloat16 * src0_d = (const nv_bfloat16 *) src0_dd_i;
             mul_mat_vec_cuda(src0_d, src1_ddf_i, dst_dd_i, ne00, row_diff, stride_row,
-                nchannels_x, nchannels_y, stride_channel_x, stride_channel_y, stride_channel_dst,
-                nsamples_x, nsamples_y, stride_sample_x, stride_sample_y, stride_sample_dst, prec, stream);
+                nchannels_x, nchannels_dst, stride_channel_x, stride_channel_y, stride_channel_dst,
+                nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, prec, stream);
         } break;
         default:
             GGML_ABORT("unsupported type: %s", ggml_type_name(src0->type));
