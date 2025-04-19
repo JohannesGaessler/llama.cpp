@@ -13,9 +13,9 @@ using namespace ggml_cuda_mma;
 #define MMQ_ITER_K 256
 #define MMQ_NWARPS 8
 
-typedef void (*load_tiles_mmq_t)(const char * __restrict__ x, int * x_tile, const int & kbx0, const int & i_max, const int & stride);
-typedef void (*vec_dot_mmq_t)(const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00);
-typedef void (*mmq_write_back_t)(const float * __restrict__ sum, float * __restrict__ dst, const int & stride, const int & i_max, const int & j_max);
+typedef void (*load_tiles_mmq_t)(const char * __restrict__ x, int * x_tile, const int kbx0, const int i_max, const int stride);
+typedef void (*vec_dot_mmq_t)(const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00);
+typedef void (*mmq_write_back_t)(const float * __restrict__ sum, float * __restrict__ dst, const int stride, const int i_max, const int j_max);
 
 enum mmq_q8_1_ds_layout {
     MMQ_Q8_1_DS_LAYOUT_D4,
@@ -229,7 +229,7 @@ static constexpr __device__ int mmq_get_granularity_device(const int /* mmq_x */
 // ------------------------------------------------------------
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q4_0(
-    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
 
 #ifdef NEW_MMA_AVAILABLE
     int   * x_qs = (int   *)  x_tile;
@@ -285,7 +285,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q4_0_q8_1_dp4a(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
 
     constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q4_0, mmq_y);
     const int   * x_qs = (const int   *) x;
@@ -324,7 +324,7 @@ static __device__ __forceinline__ void vec_dot_q4_0_q8_1_dp4a(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q4_1(
-    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
 
 #ifdef NEW_MMA_AVAILABLE
     int   * x_qs = (int   *)  x_tile;
@@ -380,7 +380,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q4_1_q8_1_dp4a(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
 
     constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q4_1, mmq_y);
     const int   * x_qs = (const int   *) x;
@@ -419,7 +419,7 @@ static __device__ __forceinline__ void vec_dot_q4_1_q8_1_dp4a(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q5_0(
-    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
 
 #ifdef NEW_MMA_AVAILABLE
     int   * x_qs = (int   *)  x_tile;
@@ -491,7 +491,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q5_1(
-    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
 
 #ifdef NEW_MMA_AVAILABLE
     int   * x_qs = (int   *)  x_tile;
@@ -561,7 +561,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q8_0(
-    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
 
 #ifdef NEW_MMA_AVAILABLE
     int   * x_qs = (int   *)  x_tile;
@@ -617,7 +617,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q8_0_q8_1_dp4a(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
 
     constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q8_0, mmq_y);
     const int   * x_qs = (const int   *) x;
@@ -647,7 +647,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_dp4a(
 
 template <int mmq_x, int mmq_y, int nwarps, mmq_q8_1_ds_layout ds_layout>
 static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
 
     typedef tile<16, 8, int> tile_A;
     typedef tile< 8, 8, int> tile_B;
@@ -728,7 +728,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q8_1_q8_1_dp4a(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
 
     constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q5_1, mmq_y);
     const int   * x_qs = (const int   *) x;
@@ -758,7 +758,7 @@ static __device__ __forceinline__ void vec_dot_q8_1_q8_1_dp4a(
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q8_1_q8_1_mma(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
 
     typedef tile<16, 8, int> tile_A;
     typedef tile< 8, 8, int> tile_B;
@@ -835,7 +835,7 @@ static __device__ __forceinline__ void vec_dot_q8_1_q8_1_mma(
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q8_0_16_q8_1_dp4a(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
 
     constexpr tile_x_sizes txs = MMQ_DP4A_TXS_Q8_0_16;
     const int   * x_qs = (const int   *) x;
@@ -867,7 +867,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_16_q8_1_dp4a(
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q8_0_16_q8_1_mma(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
 #ifdef NEW_MMA_AVAILABLE
 
     typedef tile<16, 4, int> tile_A;
@@ -951,7 +951,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_16_q8_1_mma(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q2_K(
-    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
 
 #ifdef NEW_MMA_AVAILABLE
     int   * x_qs = (int   *)  x_tile;
@@ -1007,7 +1007,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q2_K_q8_1_dp4a(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
 
     constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q2_K, mmq_y);
     const int   * x_qs = (const int   *) x;
@@ -1070,7 +1070,7 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_dp4a(
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
 #ifdef NEW_MMA_AVAILABLE
 
     typedef tile<16, 4, int> tile_A;
@@ -1197,7 +1197,7 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q3_K(
-    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
 
 #ifdef NEW_MMA_AVAILABLE
     int   * x_qs = (int   *)  x_tile;
@@ -1294,7 +1294,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q3_K_q8_1_dp4a(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
 
     constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q3_K, mmq_y);
     const int   * x_qs = (const int   *) x;
@@ -1336,7 +1336,7 @@ static __device__ __forceinline__ int unpack_scales_q45_K(const int * scales, co
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q4_K(
-    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
 
 #ifdef NEW_MMA_AVAILABLE
     int   * x_qs = (int   *)  x_tile;
@@ -1433,7 +1433,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q4_K_q8_1_dp4a(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
 
     constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q4_K, mmq_y);
     const int   * x_qs = (const int   *) x;
@@ -1465,7 +1465,7 @@ static __device__ __forceinline__ void vec_dot_q4_K_q8_1_dp4a(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q5_K(
-    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
 
 #ifdef NEW_MMA_AVAILABLE
     int   * x_qs = (int   *)  x_tile;
@@ -1574,7 +1574,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q5_K_q8_1_dp4a(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
 
     constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q5_K, mmq_y);
     const int   * x_qs = (const int   *) x;
@@ -1606,7 +1606,7 @@ static __device__ __forceinline__ void vec_dot_q5_K_q8_1_dp4a(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_q6_K(
-    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
 
 #ifdef NEW_MMA_AVAILABLE
     int   * x_qs = (int   *)  x_tile;
@@ -1689,7 +1689,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q6_K_q8_1_dp4a(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
 
     constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q6_K, mmq_y);
     const int   * x_qs = (const int   *) x;
@@ -1722,7 +1722,7 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_dp4a(
 
 template <int mmq_x, int mmq_y, int nwarps>
 static __device__ __forceinline__ void vec_dot_q6_K_q8_1_mma(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int & k00) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
 #ifdef NEW_MMA_AVAILABLE
 
     typedef tile<16, 4, int> tile_A;
@@ -1831,7 +1831,7 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_mma(
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_iq4_nl(
-    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
 
 #ifdef NEW_MMA_AVAILABLE
     int   * x_qs = (int   *)  x_tile;
@@ -1889,7 +1889,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_iq2_xxs(
-    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
 
 #ifdef NEW_MMA_AVAILABLE
     int   * x_qs = (int   *)  x_tile;
@@ -1947,7 +1947,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_iq2_xs(
-    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
 
 #ifdef NEW_MMA_AVAILABLE
     int   * x_qs = (int   *)  x_tile;
@@ -2003,7 +2003,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_iq2_s(
-    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
 
 #ifdef NEW_MMA_AVAILABLE
     int   * x_qs = (int   *)  x_tile;
@@ -2066,7 +2066,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_iq3_xxs(
-    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
 
 #ifdef NEW_MMA_AVAILABLE
     int   * x_qs = (int   *)  x_tile;
@@ -2122,7 +2122,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_iq3_s(
-    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
 
 #ifdef NEW_MMA_AVAILABLE
     int   * x_qs = (int   *)  x_tile;
@@ -2185,7 +2185,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_iq1_s(
-    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
 
 #ifdef NEW_MMA_AVAILABLE
     int   * x_qs = (int   *)  x_tile;
@@ -2241,7 +2241,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 }
 
 template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinline__ void load_tiles_iq4_xs(
-    const char * __restrict__ x, int * __restrict__ x_tile, const int & kbx0, const int & i_max, const int & stride) {
+    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
 
 #ifdef NEW_MMA_AVAILABLE
     int   * x_qs = (int   *)  x_tile;
@@ -2302,7 +2302,7 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template<int mmq_x, int mmq_y, int nwarps, bool need_check>
 static __device__ __forceinline__ void mmq_write_back_dp4a(
-    const float * __restrict__ sum, float * __restrict__ dst, const int & stride, const int & i_max, const int & j_max) {
+    const float * __restrict__ sum, float * __restrict__ dst, const int stride, const int i_max, const int j_max) {
 
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
@@ -2327,7 +2327,7 @@ static __device__ __forceinline__ void mmq_write_back_dp4a(
 
 template<int mmq_x, int mmq_y, int nwarps, bool need_check>
 static __device__ __forceinline__ void mmq_write_back_mma(
-    const float * __restrict__ sum, float * __restrict__ dst, const int & stride, const int & i_max, const int & j_max) {
+    const float * __restrict__ sum, float * __restrict__ dst, const int stride, const int i_max, const int j_max) {
 
     typedef tile<16, 8, int> tile_C;
 
@@ -2514,10 +2514,10 @@ struct mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, GGML_TYPE_IQ4_XS> {
 };
 
 template <ggml_type type, int mmq_x, int nwarps, bool need_check, bool fixup>
-static __device__ void mul_mat_q_process_tile(
+static __device__ __forceinline__ void mul_mat_q_process_tile(
     const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst, float * __restrict__ tmp_fixup,
-    const int & nrows_x, const int & stride_row_x, const int & ncols_y, const int & stride_col_y, const int & nrows_dst,
-    const int & it, const int & jt, const int & kb0_start, const int & kb0_stop) {
+    const int nrows_x, const int stride_row_x, const int ncols_y, const int stride_col_y, const int nrows_dst,
+    const int it, const int jt, const int kb0_start, const int kb0_stop) {
 
     constexpr int              qk         = ggml_cuda_type_traits<type>::qk;
     constexpr int              mmq_y      = get_mmq_y_device();
