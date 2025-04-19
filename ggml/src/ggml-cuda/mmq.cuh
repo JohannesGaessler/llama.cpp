@@ -2516,7 +2516,7 @@ struct mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, GGML_TYPE_IQ4_XS> {
 template <ggml_type type, int mmq_x, int nwarps, bool need_check, bool fixup>
 static __device__ void mul_mat_q_process_tile(
     const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst, float * __restrict__ tmp_fixup,
-    const int & ne00, const int & ne01, const int & stride01, const int & ne10, const int & ne11, const int & stride11, const int & ne0,
+    const int & nrows_x, const int & stride_row_x, const int & ncols_y, const int & stride_col_y, const int & nrows_dst,
     const int & it, const int & jt, const int & kb0_start, const int & kb0_stop) {
 
     constexpr int              qk         = ggml_cuda_type_traits<type>::qk;
@@ -2539,16 +2539,16 @@ static __device__ void mul_mat_q_process_tile(
 
     float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
 
-    const int tile_x_max_i = ne01 - it*mmq_y - 1;
-    const int tile_y_max_j = ne11 - jt*mmq_x - 1;
+    const int tile_x_max_i = nrows_x - it*mmq_y - 1;
+    const int tile_y_max_j = ncols_y - jt*mmq_x - 1;
 
     const int * y = (const int *) yc + jt*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
 
     for (int kb0 = kb0_start; kb0 < kb0_stop; kb0 += blocks_per_iter) {
-        load_tiles(x, tile_x, stride01*it*mmq_y + kb0, tile_x_max_i, stride01);
+        load_tiles(x, tile_x, stride_row_x*it*mmq_y + kb0, tile_x_max_i, stride_row_x);
 
         {
-            const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + 0*sizeof(block_q8_1_mmq)/sizeof(int));
+            const int * by0 = y + stride_col_y*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + 0*sizeof(block_q8_1_mmq)/sizeof(int));
 #pragma unroll
             for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += nwarps*WARP_SIZE) {
                 int l = l0 + threadIdx.y*WARP_SIZE + threadIdx.x;
@@ -2564,7 +2564,7 @@ static __device__ void mul_mat_q_process_tile(
         __syncthreads();
 
         {
-            const int * by0 = y + stride11*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + 1*sizeof(block_q8_1_mmq)/sizeof(int));
+            const int * by0 = y + stride_col_y*(kb0*(qk*sizeof(block_q8_1_mmq) / (4*QK8_1*sizeof(int))) + 1*sizeof(block_q8_1_mmq)/sizeof(int));
 #pragma unroll
             for (int l0 = 0; l0 < mmq_x*MMQ_TILE_Y_K; l0 += nwarps*WARP_SIZE) {
                 int l = l0 + threadIdx.y*WARP_SIZE + threadIdx.x;
@@ -2583,10 +2583,8 @@ static __device__ void mul_mat_q_process_tile(
     if (fixup) {
         write_back(sum, tmp_fixup + blockIdx.x*(mmq_x*mmq_y), mmq_y, mmq_y, mmq_x);
     } else {
-        write_back(sum, dst + jt*mmq_x*ne0 + it*mmq_y, ne0, tile_x_max_i, tile_y_max_j);
+        write_back(sum, dst + jt*mmq_x*nrows_dst + it*mmq_y, nrows_dst, tile_x_max_i, tile_y_max_j);
     }
-
-    GGML_UNUSED(ne00); GGML_UNUSED(ne10);
 }
 
 
@@ -2606,7 +2604,7 @@ template <ggml_type type, int mmq_x, int nwarps, bool need_check>
 #endif // defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__)
 static __global__ void mul_mat_q(
     const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst, float * __restrict__ tmp_fixup,
-    const int ne00, const int ne01, const int stride01, const int ne10, const int ne11, const int stride11, const int ne0) {
+    const int ncols_x, const int nrows_x, const int stride_row_x, const int ncols_y, const int stride_col_y, const int nrows_dst) {
 
     // Skip unused template specializations for faster compilation:
     if (mmq_x > get_mmq_x_max_device() || mmq_x % mmq_get_granularity_device(mmq_x) != 0) {
@@ -2622,17 +2620,17 @@ static __global__ void mul_mat_q(
     {
         constexpr bool fixup = false;
         mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
-            (x, yc, dst, tmp_fixup, ne00, ne01, stride01, ne10, ne11, stride11, ne0,
-                blockIdx.x, blockIdx.y, 0, ne00/qk);
+            (x, yc, dst, tmp_fixup, nrows_x, stride_row_x, ncols_y, stride_col_y, nrows_dst,
+                blockIdx.x, blockIdx.y, 0, ncols_x/qk);
         return;
     }
 #endif // (defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__)) || __CUDA_ARCH__ < GGML_CUDA_CC_VOLTA
 
-    const     int64_t blocks_per_ne00 = ne00 / qk;
+    const     int64_t blocks_per_ne00 = ncols_x / qk;
     constexpr int     blocks_per_iter = MMQ_ITER_K / qk;
 
-    const int ntx = (ne11 + mmq_x - 1) / mmq_x; // Number of tiles x
-    const int nty = (ne01 + mmq_y - 1) / mmq_y; // Number of tiles y
+    const int ntx = (ncols_y + mmq_x - 1) / mmq_x; // Number of tiles x
+    const int nty = (nrows_x + mmq_y - 1) / mmq_y; // Number of tiles y
 
     // kbc == k block continuous, current index in continuous ijk space.
     int64_t kbc      = (int64_t) blockIdx.x     *blocks_per_ne00*ntx*nty / gridDim.x;
@@ -2650,7 +2648,7 @@ static __global__ void mul_mat_q(
 
         constexpr bool fixup = false; // All but (potentially) the last iterations write their data to dst rather than the fixup buffer.
         mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
-            (x, yc, dst, tmp_fixup, ne00, ne01, stride01, ne10, ne11, stride11, ne0,
+            (x, yc, dst, tmp_fixup, nrows_x, stride_row_x, ncols_y, stride_col_y, nrows_dst,
              it, jt, kb0_start, kb0_stop);
 
         kbc += blocks_per_ne00;
@@ -2669,7 +2667,7 @@ static __global__ void mul_mat_q(
 
     constexpr bool fixup = true; // Last index writes its data to fixup buffer to avoid data races with other blocks.
     mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
-        (x, yc, dst, tmp_fixup, ne00, ne01, stride01, ne10, ne11, stride11, ne0,
+        (x, yc, dst, tmp_fixup, nrows_x, stride_row_x, ncols_y, stride_col_y, nrows_dst,
             it, jt, kb0_start, kb0_stop);
 }
 
@@ -2763,9 +2761,9 @@ static __global__ void mul_mat_q_stream_k_fixup(
 
 struct mmq_args {
     const char * x; const char * y; float * dst;
-    int64_t ne00; int64_t ne01; int64_t stride01;
-    int64_t ne10; int64_t ne11; int64_t stride11;
-    int64_t ne0;
+    int64_t ncols_x; int64_t nrows_x; int64_t stride_row_x;
+    int64_t nrows_y; int64_t ncols_y; int64_t stride_col_y;
+    int64_t nrows_dst;
     bool use_stream_k;
 };
 
@@ -2798,19 +2796,19 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     }
 #endif // !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__)) && !defined(GGML_USE_MUSA)
 
-    const int nty = (args.ne01 + mmq_y - 1) / mmq_y;
-    const int ntx = (args.ne11 + mmq_x - 1) / mmq_x;
+    const int nty = (args.nrows_x + mmq_y - 1) / mmq_y;
+    const int ntx = (args.ncols_y + mmq_x - 1) / mmq_x;
     const dim3 block_nums_xy_tiling(nty, ntx, 1);
 
     if (!args.use_stream_k) {
-        if (args.ne01 % mmq_y == 0) {
+        if (args.nrows_x % mmq_y == 0) {
             constexpr bool need_check = false;
             mul_mat_q<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_xy_tiling, block_dims, shmem, stream>>>
-                (args.x, args.y, args.dst, nullptr, args.ne00, args.ne01, args.stride01, args.ne10, args.ne11, args.stride11, args.ne0);
+                (args.x, args.y, args.dst, nullptr, args.ncols_x, args.nrows_x, args.stride_row_x, args.ncols_y, args.stride_col_y, args.nrows_dst);
         } else {
             constexpr bool need_check = true;
             mul_mat_q<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_xy_tiling, block_dims, shmem, stream>>>
-                (args.x, args.y, args.dst, nullptr, args.ne00, args.ne01, args.stride01, args.ne10, args.ne11, args.stride11, args.ne0);
+                (args.x, args.y, args.dst, nullptr, args.ncols_x, args.nrows_x, args.stride_row_x, args.ncols_y, args.stride_col_y, args.nrows_dst);
         }
         return;
     }
@@ -2820,22 +2818,22 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     ggml_cuda_pool & pool = ctx.pool(id);
     ggml_cuda_pool_alloc<float> tmp_fixup(pool, block_nums_mmq.x * mmq_x*mmq_y);
 
-    if (args.ne01 % mmq_y == 0) {
+    if (args.nrows_x % mmq_y == 0) {
         constexpr bool need_check = false;
 
         mul_mat_q<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_mmq, block_dims, shmem, stream>>>
-            (args.x, args.y, args.dst, tmp_fixup.ptr, args.ne00, args.ne01, args.stride01, args.ne10, args.ne11, args.stride11, args.ne0);
+            (args.x, args.y, args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.stride_row_x, args.ncols_y, args.stride_col_y, args.nrows_dst);
 
         mul_mat_q_stream_k_fixup<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_xy_tiling, block_dims, 0, stream>>>
-            (args.dst, tmp_fixup.ptr, args.ne00, args.ne01, args.ne11, args.ne0, block_nums_mmq.x);
+            (args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.ncols_y, args.nrows_dst, block_nums_mmq.x);
     } else {
         constexpr bool need_check = true;
 
         mul_mat_q<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_mmq, block_dims, shmem, stream>>>
-            (args.x, args.y, args.dst, tmp_fixup.ptr, args.ne00, args.ne01, args.stride01, args.ne10, args.ne11, args.stride11, args.ne0);
+            (args.x, args.y, args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.stride_row_x, args.ncols_y, args.stride_col_y, args.nrows_dst);
 
         mul_mat_q_stream_k_fixup<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_xy_tiling, block_dims, 0, stream>>>
-            (args.dst, tmp_fixup.ptr, args.ne00, args.ne01, args.ne11, args.ne0, block_nums_mmq.x);
+            (args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.ncols_y, args.nrows_dst, block_nums_mmq.x);
     }
 }
 
@@ -2847,7 +2845,7 @@ void mul_mat_q_case(ggml_backend_cuda_context & ctx, const mmq_args & args, cuda
 
     const int mmq_x_max = get_mmq_x_max_host(cc);
     const int mmq_y = get_mmq_y_host(cc);
-    const int block_num_y = (args.ne01 + mmq_y - 1) / mmq_y;
+    const int block_num_y = (args.nrows_x + mmq_y - 1) / mmq_y;
     const bool use_stream_k = GGML_CUDA_CC_IS_NVIDIA(cc) && ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_VOLTA;
 
     int mmq_x_best  = 0;
@@ -2860,7 +2858,7 @@ void mul_mat_q_case(ggml_backend_cuda_context & ctx, const mmq_args & args, cuda
             continue;
         }
 
-        const int ntiles_x = (args.ne11 + mmq_x - 1) / mmq_x;
+        const int ntiles_x = (args.ncols_y + mmq_x - 1) / mmq_x;
         const int nwaves_xy_tiling = ntiles_x*block_num_y;
         const int nparts = use_stream_k ? ntiles_x : nwaves_xy_tiling;
 
