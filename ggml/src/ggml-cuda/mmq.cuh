@@ -2604,7 +2604,9 @@ template <ggml_type type, int mmq_x, int nwarps, bool need_check>
 #endif // defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__)
 static __global__ void mul_mat_q(
     const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst, float * __restrict__ tmp_fixup,
-    const int ncols_x, const int nrows_x, const int stride_row_x, const int ncols_y, const int stride_col_y, const int nrows_dst) {
+    const int ncols_x, const int nrows_x, const int stride_row_x, const int ncols_y, const int stride_col_y, const int nrows_dst,
+    const int channel_ratio, const int nchannels_y, const int stride_channel_x, const int stride_channel_y, const int stride_channel_dst,
+    const int sample_ratio, const int nsamples_y, const int stride_sample_x, const int stride_sample_y, const int stride_sample_dst) {
 
     // Skip unused template specializations for faster compilation:
     if (mmq_x > get_mmq_x_max_device() || mmq_x % mmq_get_granularity_device(mmq_x) != 0) {
@@ -2618,10 +2620,17 @@ static __global__ void mul_mat_q(
     // On AMD or old CUDA the performance with stream-k was worse, use conventional tiling instead:
 #if (defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__)) || __CUDA_ARCH__ < GGML_CUDA_CC_VOLTA
     {
+        const int wt = blockIdx.z / nchannels_y;
+        const int zt = blockIdx.z - wt*nchannels_y;
+
+        const char  * xcur   = x   + (wt/sample_ratio)*stride_sample_x   + (zt/channel_ratio)*stride_channel_x;
+        const char  * ycur   = yc  +  wt              *stride_sample_y   +  zt               *stride_channel_y;
+        float       * dstcur = dst +  wt              *stride_sample_dst +  zt               *stride_channel_dst;
+
         constexpr bool fixup = false;
         mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
-            (x, yc, dst, tmp_fixup, nrows_x, stride_row_x, ncols_y, stride_col_y, nrows_dst,
-                blockIdx.x, blockIdx.y, 0, ncols_x/qk);
+            (xcur, ycur, dstcur, tmp_fixup, nrows_x, stride_row_x, ncols_y, stride_col_y, nrows_dst,
+             blockIdx.x, blockIdx.y, 0, ncols_x/qk);
         return;
     }
 #endif // (defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__)) || __CUDA_ARCH__ < GGML_CUDA_CC_VOLTA
@@ -2633,8 +2642,8 @@ static __global__ void mul_mat_q(
     const int nty = (nrows_x + mmq_y - 1) / mmq_y; // Number of tiles y
 
     // kbc == k block continuous, current index in continuous ijk space.
-    int64_t kbc      = (int64_t) blockIdx.x     *blocks_per_ne00*ntx*nty / gridDim.x;
-    int64_t kbc_stop = (int64_t)(blockIdx.x + 1)*blocks_per_ne00*ntx*nty / gridDim.x;
+    int64_t kbc      = (int64_t) blockIdx.x     *nsamples_y*nchannels_y*nty*ntx*blocks_per_ne00 / gridDim.x;
+    int64_t kbc_stop = (int64_t)(blockIdx.x + 1)*nsamples_y*nchannels_y*nty*ntx*blocks_per_ne00 / gridDim.x;
 
     kbc      -= (kbc      % blocks_per_ne00) % blocks_per_iter;
     kbc_stop -= (kbc_stop % blocks_per_ne00) % blocks_per_iter;
@@ -2643,12 +2652,22 @@ static __global__ void mul_mat_q(
     int kb0_start = kbc % blocks_per_ne00;
     int kb0_stop  = min(blocks_per_ne00, kb0_start + kbc_stop - kbc);
     while (kbc < kbc_stop && kb0_stop == blocks_per_ne00) {
-        const int jt =  kbc /    (blocks_per_ne00*nty);                    // j index of current tile.
-        const int it = (kbc - jt*(blocks_per_ne00*nty)) / blocks_per_ne00; // i index of current tile.
+        int tmp = kbc;
+        const int wt = tmp / (nchannels_y*ntx*nty*blocks_per_ne00);
+        tmp -= wt * (nchannels_y*ntx*nty*blocks_per_ne00);
+        const int zt = tmp / (ntx*nty*blocks_per_ne00);
+        tmp -= zt * (ntx*nty*blocks_per_ne00);
+        const int jt = tmp / (nty*blocks_per_ne00);
+        tmp -= jt * (nty*blocks_per_ne00);
+        const int it = tmp / blocks_per_ne00;
+
+        const char  * xcur   = x   + (wt/sample_ratio)*stride_sample_x   + (zt/channel_ratio)*stride_channel_x;
+        const char  * ycur   = yc  +  wt              *stride_sample_y   +  zt               *stride_channel_y;
+        float       * dstcur = dst +  wt              *stride_sample_dst +  zt               *stride_channel_dst;
 
         constexpr bool fixup = false; // All but (potentially) the last iterations write their data to dst rather than the fixup buffer.
         mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
-            (x, yc, dst, tmp_fixup, nrows_x, stride_row_x, ncols_y, stride_col_y, nrows_dst,
+            (xcur, ycur, dstcur, tmp_fixup, nrows_x, stride_row_x, ncols_y, stride_col_y, nrows_dst,
              it, jt, kb0_start, kb0_stop);
 
         kbc += blocks_per_ne00;
@@ -2662,13 +2681,23 @@ static __global__ void mul_mat_q(
         return;
     }
 
-    const int jt =  kbc /    (blocks_per_ne00*nty);
-    const int it = (kbc - jt*(blocks_per_ne00*nty)) / blocks_per_ne00;
+    int tmp = kbc;
+    const int wt = tmp / (nchannels_y*ntx*nty*blocks_per_ne00);
+    tmp -= wt * (nchannels_y*ntx*nty*blocks_per_ne00);
+    const int zt = tmp / (ntx*nty*blocks_per_ne00);
+    tmp -= zt * (ntx*nty*blocks_per_ne00);
+    const int jt = tmp / (nty*blocks_per_ne00);
+    tmp -= jt * (nty*blocks_per_ne00);
+    const int it = tmp / blocks_per_ne00;
+
+    const char  * xcur   = x   + (wt/sample_ratio)*stride_sample_x   + (zt/channel_ratio)*stride_channel_x;
+    const char  * ycur   = yc  +  wt              *stride_sample_y   +  zt               *stride_channel_y;
+    float       * dstcur = dst +  wt              *stride_sample_dst +  zt               *stride_channel_dst;
 
     constexpr bool fixup = true; // Last index writes its data to fixup buffer to avoid data races with other blocks.
     mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
-        (x, yc, dst, tmp_fixup, nrows_x, stride_row_x, ncols_y, stride_col_y, nrows_dst,
-            it, jt, kb0_start, kb0_stop);
+        (xcur, ycur, dstcur, tmp_fixup, nrows_x, stride_row_x, ncols_y, stride_col_y, nrows_dst,
+         it, jt, kb0_start, kb0_stop);
 }
 
 
@@ -2796,19 +2825,29 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     }
 #endif // !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__)) && !defined(GGML_USE_MUSA)
 
-    const int nty = (args.nrows_x + mmq_y - 1) / mmq_y;
-    const int ntx = (args.ncols_y + mmq_x - 1) / mmq_x;
-    const dim3 block_nums_xy_tiling(nty, ntx, 1);
+    const int nty  = (args.nrows_x + mmq_y - 1) / mmq_y;
+    const int ntx  = (args.ncols_y + mmq_x - 1) / mmq_x;
+    const int ntzw = args.nchannels_y * args.nsamples_y;
+    const dim3 block_nums_xy_tiling(nty, ntx, ntzw);
+
+    GGML_ASSERT(args.nchannels_y % args.nchannels_x == 0);
+    GGML_ASSERT(args.nsamples_y  % args.nsamples_x  == 0);
+    const int channel_ratio = args.nchannels_y / args.nchannels_x;
+    const int sample_ratio  = args.nsamples_y  / args.nsamples_x;
 
     if (!args.use_stream_k) {
         if (args.nrows_x % mmq_y == 0) {
             constexpr bool need_check = false;
             mul_mat_q<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_xy_tiling, block_dims, shmem, stream>>>
-                (args.x, args.y, args.dst, nullptr, args.ncols_x, args.nrows_x, args.stride_row_x, args.ncols_y, args.stride_col_y, args.nrows_dst);
+                (args.x, args.y, args.dst, nullptr, args.ncols_x, args.nrows_x, args.stride_row_x, args.ncols_y, args.stride_col_y, args.nrows_dst,
+                 channel_ratio, args.nchannels_y, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
+                 sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst);
         } else {
             constexpr bool need_check = true;
             mul_mat_q<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_xy_tiling, block_dims, shmem, stream>>>
-                (args.x, args.y, args.dst, nullptr, args.ncols_x, args.nrows_x, args.stride_row_x, args.ncols_y, args.stride_col_y, args.nrows_dst);
+                (args.x, args.y, args.dst, nullptr, args.ncols_x, args.nrows_x, args.stride_row_x, args.ncols_y, args.stride_col_y, args.nrows_dst,
+                 channel_ratio, args.nchannels_y, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
+                 sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst);
         }
         return;
     }
@@ -2822,7 +2861,9 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
         constexpr bool need_check = false;
 
         mul_mat_q<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_mmq, block_dims, shmem, stream>>>
-            (args.x, args.y, args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.stride_row_x, args.ncols_y, args.stride_col_y, args.nrows_dst);
+            (args.x, args.y, args.dst, nullptr, args.ncols_x, args.nrows_x, args.stride_row_x, args.ncols_y, args.stride_col_y, args.nrows_dst,
+             channel_ratio, args.nchannels_y, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
+             sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst);
 
         mul_mat_q_stream_k_fixup<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_xy_tiling, block_dims, 0, stream>>>
             (args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.ncols_y, args.nrows_dst, block_nums_mmq.x);
@@ -2830,7 +2871,9 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
         constexpr bool need_check = true;
 
         mul_mat_q<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_mmq, block_dims, shmem, stream>>>
-            (args.x, args.y, args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.stride_row_x, args.ncols_y, args.stride_col_y, args.nrows_dst);
+            (args.x, args.y, args.dst, nullptr, args.ncols_x, args.nrows_x, args.stride_row_x, args.ncols_y, args.stride_col_y, args.nrows_dst,
+             channel_ratio, args.nchannels_y, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
+             sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst);
 
         mul_mat_q_stream_k_fixup<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_xy_tiling, block_dims, 0, stream>>>
             (args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.ncols_y, args.nrows_dst, block_nums_mmq.x);
@@ -2845,7 +2888,7 @@ void mul_mat_q_case(ggml_backend_cuda_context & ctx, const mmq_args & args, cuda
 
     const int mmq_x_max = get_mmq_x_max_host(cc);
     const int mmq_y = get_mmq_y_host(cc);
-    const int block_num_y = (args.nrows_x + mmq_y - 1) / mmq_y;
+    const int block_num_yzw = ((args.nrows_x + mmq_y - 1) / mmq_y) * args.nchannels_y * args.nsamples_y;
     const bool use_stream_k = GGML_CUDA_CC_IS_NVIDIA(cc) && ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_VOLTA;
 
     int mmq_x_best  = 0;
@@ -2859,8 +2902,8 @@ void mul_mat_q_case(ggml_backend_cuda_context & ctx, const mmq_args & args, cuda
         }
 
         const int ntiles_x = (args.ncols_y + mmq_x - 1) / mmq_x;
-        const int nwaves_xy_tiling = ntiles_x*block_num_y;
-        const int nparts = use_stream_k ? ntiles_x : nwaves_xy_tiling;
+        const int nwaves_tiling = ntiles_x*block_num_yzw;
+        const int nparts = use_stream_k ? ntiles_x : nwaves_tiling;
 
         if (nparts < nparts_best) {
             mmq_x_best  = mmq_x;
