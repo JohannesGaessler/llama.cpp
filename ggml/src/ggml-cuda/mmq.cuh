@@ -2761,9 +2761,8 @@ static __global__ void mul_mat_q_stream_k_fixup(
 
 struct mmq_args {
     const char * x; ggml_type type_x; const char * y; float * dst;
-    int64_t ncols_x; int64_t nrows_x; int64_t stride_row_x;
-    int64_t nrows_y; int64_t ncols_y; int64_t stride_col_y;
-    int64_t nrows_dst;
+    int64_t ncols_x; int64_t nrows_x; int64_t ncols_y;
+    int64_t stride_row_x; int64_t stride_col_y; int64_t nrows_dst;
     bool use_stream_k;
 };
 

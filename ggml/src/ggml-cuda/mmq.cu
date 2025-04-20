@@ -91,13 +91,14 @@ void ggml_cuda_op_mul_mat_q(
     // There are multiple parallel CUDA streams for src1_ncols != ne11 which would introduce a race condition for this buffer.
     const bool use_stream_k = GGML_CUDA_CC_IS_NVIDIA(cc) &&
         ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_VOLTA && src1_ncols == ne11;
-    const mmq_args args = {src0_dd_i, src0->type, src1_ddq_i, dst_dd_i, ne00, row_diff, stride00, src1_padded_row_size, src1_ncols, ne11, nrows_dst, use_stream_k};
+    const mmq_args args = {src0_dd_i, src0->type, src1_ddq_i, dst_dd_i, ne00, row_diff, src1_ncols, stride00, ne11, nrows_dst, use_stream_k};
 
     ggml_cuda_mul_mat_q_switch_type(ctx, args, stream);
 
     GGML_UNUSED(src1);
     GGML_UNUSED(dst);
     GGML_UNUSED(src1_ddf_i);
+    GGML_UNUSED(src1_padded_row_size);
 }
 
 bool ggml_cuda_should_use_mmq(enum ggml_type type, int cc, int64_t ne11) {
