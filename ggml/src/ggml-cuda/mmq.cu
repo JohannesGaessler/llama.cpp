@@ -93,7 +93,7 @@ void ggml_cuda_op_mul_mat_q(
         ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_VOLTA && src1_ncols == ne11;
     const mmq_args args = {
         src0_dd_i, src0->type, src1_ddq_i, dst_dd_i,
-        ne00, row_diff, src1_ncols, stride00, ne11, nrows_dst,
+        ne00, row_diff, src1_ncols, stride00, nrows_dst,
         1, 1, 0, 0, 0,
         1, 1, 0, 0, 0,
         use_stream_k};
