@@ -2515,7 +2515,7 @@ struct mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, GGML_TYPE_IQ4_XS> {
 
 template <ggml_type type, int mmq_x, int nwarps, bool need_check, bool fixup>
 static __device__ __forceinline__ void mul_mat_q_process_tile(
-    const char * __restrict__ x, const int offset_x, const char * __restrict__ yc, float * __restrict__ dst, float * __restrict__ tmp_fixup,
+    const char * __restrict__ x, const int offset_x, const int * __restrict__ y, float * __restrict__ dst, float * __restrict__ tmp_fixup,
     const int nrows_x, const int stride_row_x, const int ncols_y, const int stride_col_y, const int nrows_dst,
     const int tile_x_max_i, const int tile_y_max_j, const int kb0_start, const int kb0_stop) {
 
@@ -2538,8 +2538,6 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
     constexpr int blocks_per_iter = MMQ_ITER_K / qk;
 
     float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
-
-    const int * y = (const int *) yc;
 
     for (int kb0 = kb0_start; kb0 < kb0_stop; kb0 += blocks_per_iter) {
         load_tiles(x, tile_x, offset_x + kb0, tile_x_max_i, stride_row_x);
@@ -2600,10 +2598,11 @@ template <ggml_type type, int mmq_x, int nwarps, bool need_check>
 #endif // __CUDA_ARCH__ >= GGML_CUDA_CC_VOLTA
 #endif // defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__)
 static __global__ void mul_mat_q(
-    const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst, float * __restrict__ tmp_fixup,
-    const int ncols_x, const int nrows_x, const int stride_row_x, const int ncols_y, const int stride_col_y, const int nrows_dst,
-    const int channel_ratio, const int nchannels_y, const int stride_channel_x, const int stride_channel_y, const int stride_channel_dst,
-    const int sample_ratio, const int nsamples_y, const int stride_sample_x, const int stride_sample_y, const int stride_sample_dst) {
+        const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst, float * __restrict__ tmp_fixup,
+        const int ncols_x, const int nrows_x, const int stride_row_x, const int ncols_y, const int stride_col_y, const int nrows_dst,
+        const int channel_ratio, const int nchannels_y, const int stride_channel_x, const int stride_channel_y, const int stride_channel_dst,
+        const int sample_ratio, const int nsamples_y, const int stride_sample_x, const int stride_sample_y, const int stride_sample_dst) {
+    const int * y = (const int *) yc;
 
     // Skip unused template specializations for faster compilation:
     if (mmq_x > get_mmq_x_max_device() || mmq_x % mmq_get_granularity_device(mmq_x) != 0) {
@@ -2622,9 +2621,9 @@ static __global__ void mul_mat_q(
         const int jt = blockIdx.y;
         const int it = blockIdx.x;
 
-        const int offset_x =         (wt/sample_ratio)*stride_sample_x   + (zt/channel_ratio)*stride_channel_x   +                                     it*mmq_y*stride_row_x;
-        const char  * ycur   = yc  +  wt              *stride_sample_y   +  zt               *stride_channel_y   + jt*(mmq_x*sizeof(block_q8_1_mmq));
-        float       * dstcur = dst +  wt              *stride_sample_dst +  zt               *stride_channel_dst + jt*mmq_x*nrows_dst                + it*mmq_y;
+        const int offset_x =         (wt/sample_ratio)*stride_sample_x   + (zt/channel_ratio)*stride_channel_x   + it*mmq_y*stride_row_x;
+        const int   * ycur   = y   +  wt              *stride_sample_y   +  zt               *stride_channel_y   + jt*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
+        float       * dstcur = dst +  wt              *stride_sample_dst +  zt               *stride_channel_dst + jt*mmq_x*nrows_dst + it*mmq_y;
 
         const int tile_x_max_i = nrows_x - it*mmq_y - 1;
         const int tile_y_max_j = ncols_y - jt*mmq_x - 1;
@@ -2663,9 +2662,9 @@ static __global__ void mul_mat_q(
         tmp -= jt * (nty*blocks_per_ne00);
         const int it = tmp / blocks_per_ne00;
 
-        const int offset_x =         (wt/sample_ratio)*stride_sample_x   + (zt/channel_ratio)*stride_channel_x   +                                     it*mmq_y*stride_row_x;
-        const char  * ycur   = yc  +  wt              *stride_sample_y   +  zt               *stride_channel_y   + jt*(mmq_x*sizeof(block_q8_1_mmq));
-        float       * dstcur = dst +  wt              *stride_sample_dst +  zt               *stride_channel_dst + jt*mmq_x*nrows_dst                + it*mmq_y;
+        const int offset_x =         (wt/sample_ratio)*stride_sample_x   + (zt/channel_ratio)*stride_channel_x   + it*mmq_y*stride_row_x;
+        const int   * ycur   = y   +  wt              *stride_sample_y   +  zt               *stride_channel_y   + jt*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
+        float       * dstcur = dst +  wt              *stride_sample_dst +  zt               *stride_channel_dst + jt*mmq_x*nrows_dst + it*mmq_y;
 
         const int tile_x_max_i = nrows_x - it*mmq_y - 1;
         const int tile_y_max_j = ncols_y - jt*mmq_x - 1;
@@ -2695,9 +2694,9 @@ static __global__ void mul_mat_q(
     tmp -= jt * (nty*blocks_per_ne00);
     const int it = tmp / blocks_per_ne00;
 
-    const int offset_x =         (wt/sample_ratio)*stride_sample_x   + (zt/channel_ratio)*stride_channel_x   +                                     it*mmq_y*stride_row_x;
-    const char  * ycur   = yc  +  wt              *stride_sample_y   +  zt               *stride_channel_y   + jt*(mmq_x*sizeof(block_q8_1_mmq));
-    float       * dstcur = dst +  wt              *stride_sample_dst +  zt               *stride_channel_dst + jt*mmq_x*nrows_dst                + it*mmq_y;
+    const int offset_x =         (wt/sample_ratio)*stride_sample_x   + (zt/channel_ratio)*stride_channel_x   + it*mmq_y*stride_row_x;
+    const int   * ycur   = y   +  wt              *stride_sample_y   +  zt               *stride_channel_y   + jt*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
+    float       * dstcur = dst +  wt              *stride_sample_dst +  zt               *stride_channel_dst + jt*mmq_x*nrows_dst + it*mmq_y;
 
     const int tile_x_max_i = nrows_x - it*mmq_y - 1;
     const int tile_y_max_j = ncols_y - jt*mmq_x - 1;
