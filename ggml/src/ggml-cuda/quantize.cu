@@ -49,7 +49,7 @@ static __global__ void quantize_q8_1(
 
 template <mmq_q8_1_ds_layout ds_layout>
 static __global__ void quantize_mmq_q8_1(
-    const float * __restrict__ x, void * __restrict__ vy, const int64_t kx0, const int64_t kx1, const int64_t kx0_padded) {
+    const float * __restrict__ x, void * __restrict__ vy, const int64_t kx0, const int64_t kx0_padded, const int64_t kx1) {
 
     constexpr int vals_per_scale = ds_layout == MMQ_Q8_1_DS_LAYOUT_D2S6 ? 64 : 32;
     constexpr int vals_per_sum   = ds_layout == MMQ_Q8_1_DS_LAYOUT_D2S6 ? 16 : 32;
@@ -161,15 +161,15 @@ void quantize_mmq_q8_1_cuda(
     switch (mmq_get_q8_1_ds_layout(type_src0)) {
         case MMQ_Q8_1_DS_LAYOUT_D4:
             quantize_mmq_q8_1<MMQ_Q8_1_DS_LAYOUT_D4>
-                <<<num_blocks, block_size, 0, stream>>>(x, vy, ne00, ne1, ne0);
+                <<<num_blocks, block_size, 0, stream>>>(x, vy, ne00, ne0, ne1);
             break;
         case MMQ_Q8_1_DS_LAYOUT_DS4:
             quantize_mmq_q8_1<MMQ_Q8_1_DS_LAYOUT_DS4>
-                <<<num_blocks, block_size, 0, stream>>>(x, vy, ne00, ne1, ne0);
+                <<<num_blocks, block_size, 0, stream>>>(x, vy, ne00, ne0, ne1);
             break;
         case MMQ_Q8_1_DS_LAYOUT_D2S6:
             quantize_mmq_q8_1<MMQ_Q8_1_DS_LAYOUT_D2S6>
-                <<<num_blocks, block_size, 0, stream>>>(x, vy, ne00, ne1, ne0);
+                <<<num_blocks, block_size, 0, stream>>>(x, vy, ne00, ne0, ne1);
             break;
         default:
             GGML_ABORT("fatal error");
