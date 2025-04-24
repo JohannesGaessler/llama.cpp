@@ -49,29 +49,29 @@ static __global__ void quantize_q8_1(
 
 template <mmq_q8_1_ds_layout ds_layout>
 static __global__ void quantize_mmq_q8_1(
-    const float * __restrict__ x, void * __restrict__ vy, const int64_t kx0, const int64_t kx0_padded, const int64_t kx1) {
+    const float * __restrict__ x, void * __restrict__ vy, const int64_t ne00, const int64_t ne0, const int64_t ne1) {
 
     constexpr int vals_per_scale = ds_layout == MMQ_Q8_1_DS_LAYOUT_D2S6 ? 64 : 32;
     constexpr int vals_per_sum   = ds_layout == MMQ_Q8_1_DS_LAYOUT_D2S6 ? 16 : 32;
 
-    const int64_t ix0 = ((int64_t)blockDim.x*blockIdx.x + threadIdx.x)*4;
+    const int64_t i0 = ((int64_t)blockDim.x*blockIdx.x + threadIdx.x)*4;
 
-    if (ix0 >= kx0_padded) {
+    if (i0 >= ne0) {
         return;
     }
 
     const float4 * x4 = (const float4 *) x;
 
-    const int64_t ix1 = kx1*blockIdx.z + blockIdx.y;
+    const int64_t ix1 = ne1*blockIdx.z + blockIdx.y;
 
     block_q8_1_mmq * y = (block_q8_1_mmq *) vy;
 
     const int64_t ib0 = blockIdx.z*((int64_t)gridDim.y*gridDim.x*blockDim.x/QK8_1); // first block of channel
-    const int64_t ib  = ib0 + (ix0 / (4*QK8_1))*kx1 + blockIdx.y;                   // block index in channel
-    const int64_t iqs = ix0 % (4*QK8_1);                                            // quant index in block
+    const int64_t ib  = ib0 + (i0 / (4*QK8_1))*ne1 + blockIdx.y;                    // block index in channel
+    const int64_t iqs = i0 % (4*QK8_1);                                             // quant index in block
 
     // Load 4 floats per thread and calculate max. abs. value between them:
-    const float4 xi = ix0 < kx0 ? x4[(ix1*kx0 + ix0)/4] : make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+    const float4 xi = i0 < ne00 ? x4[(ix1*ne00 + i0)/4] : make_float4(0.0f, 0.0f, 0.0f, 0.0f);
     float amax = fabsf(xi.x);
     amax = fmaxf(amax, fabsf(xi.y));
     amax = fmaxf(amax, fabsf(xi.z));
