@@ -2516,7 +2516,7 @@ struct mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, GGML_TYPE_IQ4_XS> {
 template <ggml_type type, int mmq_x, int nwarps, bool need_check, bool fixup>
 static __device__ __forceinline__ void mul_mat_q_process_tile(
     const char * __restrict__ x, const int offset_x, const int * __restrict__ y, float * __restrict__ dst, float * __restrict__ tmp_fixup,
-    const int nrows_x, const int stride_row_x, const int ncols_y, const int nrows_dst,
+    const int nrows_x, const int ncols_y, const int stride_row_x, const int stride_col_dst,
     const int tile_x_max_i, const int tile_y_max_j, const int kb0_start, const int kb0_stop) {
 
     constexpr int              qk         = ggml_cuda_type_traits<type>::qk;
@@ -2578,7 +2578,7 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
     if (fixup) {
         write_back(sum, tmp_fixup + blockIdx.x*(mmq_x*mmq_y), mmq_y, mmq_y, mmq_x);
     } else {
-        write_back(sum, dst, nrows_dst, tile_x_max_i, tile_y_max_j);
+        write_back(sum, dst, stride_col_dst, tile_x_max_i, tile_y_max_j);
     }
 }
 
@@ -2599,7 +2599,7 @@ template <ggml_type type, int mmq_x, int nwarps, bool need_check>
 #endif // defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__)
 static __global__ void mul_mat_q(
         const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst, float * __restrict__ tmp_fixup,
-        const int ncols_x, const int nrows_x, const int stride_row_x, const int ncols_y, const int nrows_dst,
+        const int ncols_x, const int nrows_x, const int ncols_y, const int stride_row_x, const int stride_col_dst,
         const int channel_ratio, const int nchannels_y, const int scx, const int scdst,
         const int sample_ratio, const int nsamples_y, const int ssx, const int ssdst) {
     const int * y = (const int *) yc;
@@ -2624,8 +2624,8 @@ static __global__ void mul_mat_q(
         const int jt = blockIdx.y;
         const int it = blockIdx.x;
 
-        const int offset_x   = (wt/sample_ratio)*ssx   + (zt/channel_ratio)*scx   + it*mmq_y*stride_row_x;
-        const int offset_dst =  wt              *ssdst +  zt               *scdst + jt*mmq_x*nrows_dst + it*mmq_y;
+        const int offset_x   = (wt/sample_ratio)*ssx   + (zt/channel_ratio)*scx                             + it*mmq_y*stride_row_x;
+        const int offset_dst =  wt              *ssdst +  zt               *scdst + jt*mmq_x*stride_col_dst + it*mmq_y;
 
         const int offset_y = ((wt*nchannels_y + zt) * ntx + jt) * (mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
 
@@ -2634,7 +2634,7 @@ static __global__ void mul_mat_q(
 
         constexpr bool fixup = false;
         mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
-            (x, offset_x, y + offset_y, dst + offset_dst, tmp_fixup, nrows_x, stride_row_x, ncols_y, nrows_dst,
+            (x, offset_x, y + offset_y, dst + offset_dst, tmp_fixup, nrows_x, ncols_y, stride_row_x, stride_col_dst,
              tile_x_max_i, tile_y_max_j, 0, ncols_x/qk);
         return;
     }
@@ -2663,8 +2663,8 @@ static __global__ void mul_mat_q(
         tmp -= jt * (nty*blocks_per_ne00);
         const int it = tmp / blocks_per_ne00;
 
-        const int offset_x   = (wt/sample_ratio)*ssx   + (zt/channel_ratio)*scx   + it*mmq_y*stride_row_x;
-        const int offset_dst =  wt              *ssdst +  zt               *scdst + jt*mmq_x*nrows_dst + it*mmq_y;
+        const int offset_x   = (wt/sample_ratio)*ssx   + (zt/channel_ratio)*scx                             + it*mmq_y*stride_row_x;
+        const int offset_dst =  wt              *ssdst +  zt               *scdst + jt*mmq_x*stride_col_dst + it*mmq_y;
 
         const int offset_y = ((wt*nchannels_y + zt) * ntx + jt) * (mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
 
@@ -2673,7 +2673,7 @@ static __global__ void mul_mat_q(
 
         constexpr bool fixup = false; // All but (potentially) the last iterations write their data to dst rather than the fixup buffer.
         mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
-            (x, offset_x, y + offset_y, dst + offset_dst, tmp_fixup, nrows_x, stride_row_x, ncols_y, nrows_dst,
+            (x, offset_x, y + offset_y, dst + offset_dst, tmp_fixup, nrows_x, ncols_y, stride_row_x, stride_col_dst,
              tile_x_max_i, tile_y_max_j, kb0_start, kb0_stop);
 
         kbc += blocks_per_ne00;
@@ -2696,8 +2696,8 @@ static __global__ void mul_mat_q(
     tmp -= jt * (nty*blocks_per_ne00);
     const int it = tmp / blocks_per_ne00;
 
-    const int offset_x   = (wt/sample_ratio)*ssx   + (zt/channel_ratio)*scx   + it*mmq_y*stride_row_x;
-    const int offset_dst =  wt              *ssdst +  zt               *scdst + jt*mmq_x*nrows_dst + it*mmq_y;
+    const int offset_x   = (wt/sample_ratio)*ssx   + (zt/channel_ratio)*scx                             + it*mmq_y*stride_row_x;
+    const int offset_dst =  wt              *ssdst +  zt               *scdst + jt*mmq_x*stride_col_dst + it*mmq_y;
 
     const int offset_y = ((wt*nchannels_y + zt) * ntx + jt) * (mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
 
@@ -2706,7 +2706,7 @@ static __global__ void mul_mat_q(
 
     constexpr bool fixup = true; // Last index writes its data to fixup buffer to avoid data races with other blocks.
     mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
-        (x, offset_x, y + offset_y, dst + offset_dst, tmp_fixup, nrows_x, stride_row_x, ncols_y, nrows_dst,
+        (x, offset_x, y + offset_y, dst + offset_dst, tmp_fixup, nrows_x, ncols_y, stride_row_x, stride_col_dst,
          tile_x_max_i, tile_y_max_j, kb0_start, kb0_stop);
 }
 
@@ -2849,13 +2849,13 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
         if (args.nrows_x % mmq_y == 0) {
             constexpr bool need_check = false;
             mul_mat_q<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_xy_tiling, block_dims, shmem, stream>>>
-                (args.x, args.y, args.dst, nullptr, args.ncols_x, args.nrows_x, args.stride_row_x, args.ncols_y, args.nrows_dst,
+                (args.x, args.y, args.dst, nullptr, args.ncols_x, args.nrows_x, args.ncols_y, args.stride_row_x, args.nrows_dst,
                  channel_ratio, args.nchannels_y, args.stride_channel_x, args.stride_channel_dst,
                  sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_dst);
         } else {
             constexpr bool need_check = true;
             mul_mat_q<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_xy_tiling, block_dims, shmem, stream>>>
-                (args.x, args.y, args.dst, nullptr, args.ncols_x, args.nrows_x, args.stride_row_x, args.ncols_y, args.nrows_dst,
+                (args.x, args.y, args.dst, nullptr, args.ncols_x, args.nrows_x, args.ncols_y, args.stride_row_x, args.nrows_dst,
                  channel_ratio, args.nchannels_y, args.stride_channel_x, args.stride_channel_dst,
                  sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_dst);
         }
@@ -2871,7 +2871,7 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
         constexpr bool need_check = false;
 
         mul_mat_q<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_mmq, block_dims, shmem, stream>>>
-            (args.x, args.y, args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.stride_row_x, args.ncols_y, args.nrows_dst,
+            (args.x, args.y, args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.ncols_y, args.stride_row_x, args.nrows_dst,
              channel_ratio, args.nchannels_y, args.stride_channel_x, args.stride_channel_dst,
              sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_dst);
 
@@ -2881,7 +2881,7 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
         constexpr bool need_check = true;
 
         mul_mat_q<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_mmq, block_dims, shmem, stream>>>
-            (args.x, args.y, args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.stride_row_x, args.ncols_y, args.nrows_dst,
+            (args.x, args.y, args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.ncols_y, args.stride_row_x, args.nrows_dst,
              channel_ratio, args.nchannels_y, args.stride_channel_x, args.stride_channel_dst,
              sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_dst);
 
