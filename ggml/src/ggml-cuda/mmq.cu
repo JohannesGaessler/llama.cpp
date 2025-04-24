@@ -94,8 +94,8 @@ void ggml_cuda_op_mul_mat_q(
     const mmq_args args = {
         src0_dd_i, src0->type, src1_ddq_i, dst_dd_i,
         ne00, row_diff, src1_ncols, stride00, nrows_dst,
-        1, 1, 0, 0, 0,
-        1, 1, 0, 0, 0,
+        1, 1, 0, 0,
+        1, 1, 0, 0,
         use_stream_k};
 
     ggml_cuda_mul_mat_q_switch_type(ctx, args, stream);
