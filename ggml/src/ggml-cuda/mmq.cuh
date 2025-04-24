@@ -2600,8 +2600,8 @@ template <ggml_type type, int mmq_x, int nwarps, bool need_check>
 static __global__ void mul_mat_q(
         const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst, float * __restrict__ tmp_fixup,
         const int ncols_x, const int nrows_x, const int stride_row_x, const int ncols_y, const int nrows_dst,
-        const int channel_ratio, const int nchannels_y, const int stride_channel_x, const int stride_channel_y, const int stride_channel_dst,
-        const int sample_ratio, const int nsamples_y, const int stride_sample_x, const int stride_sample_y, const int stride_sample_dst) {
+        const int channel_ratio, const int nchannels_y, const int scx, const int scy, const int scdst,
+        const int sample_ratio, const int nsamples_y, const int ssx, const int ssy, const int ssdst) {
     const int * y = (const int *) yc;
 
     // Skip unused template specializations for faster compilation:
@@ -2621,16 +2621,16 @@ static __global__ void mul_mat_q(
         const int jt = blockIdx.y;
         const int it = blockIdx.x;
 
-        const int offset_x =         (wt/sample_ratio)*stride_sample_x   + (zt/channel_ratio)*stride_channel_x   + it*mmq_y*stride_row_x;
-        const int   * ycur   = y   +  wt              *stride_sample_y   +  zt               *stride_channel_y   + jt*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
-        float       * dstcur = dst +  wt              *stride_sample_dst +  zt               *stride_channel_dst + jt*mmq_x*nrows_dst + it*mmq_y;
+        const int offset_x   = (wt/sample_ratio)*ssx   + (zt/channel_ratio)*scx   + it*mmq_y*stride_row_x;
+        const int offset_y   =  wt              *ssy   +  zt               *scy   + jt*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
+        const int offset_dst =  wt              *ssdst +  zt               *scdst + jt*mmq_x*nrows_dst + it*mmq_y;
 
         const int tile_x_max_i = nrows_x - it*mmq_y - 1;
         const int tile_y_max_j = ncols_y - jt*mmq_x - 1;
 
         constexpr bool fixup = false;
         mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
-            (x, offset_x, ycur, dstcur, tmp_fixup, nrows_x, stride_row_x, ncols_y, nrows_dst,
+            (x, offset_x, y + offset_y, dst + offset_dst, tmp_fixup, nrows_x, stride_row_x, ncols_y, nrows_dst,
              tile_x_max_i, tile_y_max_j, 0, ncols_x/qk);
         return;
     }
@@ -2662,16 +2662,16 @@ static __global__ void mul_mat_q(
         tmp -= jt * (nty*blocks_per_ne00);
         const int it = tmp / blocks_per_ne00;
 
-        const int offset_x =         (wt/sample_ratio)*stride_sample_x   + (zt/channel_ratio)*stride_channel_x   + it*mmq_y*stride_row_x;
-        const int   * ycur   = y   +  wt              *stride_sample_y   +  zt               *stride_channel_y   + jt*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
-        float       * dstcur = dst +  wt              *stride_sample_dst +  zt               *stride_channel_dst + jt*mmq_x*nrows_dst + it*mmq_y;
+        const int offset_x   = (wt/sample_ratio)*ssx   + (zt/channel_ratio)*scx   + it*mmq_y*stride_row_x;
+        const int offset_y   =  wt              *ssy   +  zt               *scy   + jt*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
+        const int offset_dst =  wt              *ssdst +  zt               *scdst + jt*mmq_x*nrows_dst + it*mmq_y;
 
         const int tile_x_max_i = nrows_x - it*mmq_y - 1;
         const int tile_y_max_j = ncols_y - jt*mmq_x - 1;
 
         constexpr bool fixup = false; // All but (potentially) the last iterations write their data to dst rather than the fixup buffer.
         mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
-            (x, offset_x, ycur, dstcur, tmp_fixup, nrows_x, stride_row_x, ncols_y, nrows_dst,
+            (x, offset_x, y + offset_y, dst + offset_dst, tmp_fixup, nrows_x, stride_row_x, ncols_y, nrows_dst,
              tile_x_max_i, tile_y_max_j, kb0_start, kb0_stop);
 
         kbc += blocks_per_ne00;
@@ -2694,16 +2694,16 @@ static __global__ void mul_mat_q(
     tmp -= jt * (nty*blocks_per_ne00);
     const int it = tmp / blocks_per_ne00;
 
-    const int offset_x =         (wt/sample_ratio)*stride_sample_x   + (zt/channel_ratio)*stride_channel_x   + it*mmq_y*stride_row_x;
-    const int   * ycur   = y   +  wt              *stride_sample_y   +  zt               *stride_channel_y   + jt*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
-    float       * dstcur = dst +  wt              *stride_sample_dst +  zt               *stride_channel_dst + jt*mmq_x*nrows_dst + it*mmq_y;
+    const int offset_x   = (wt/sample_ratio)*ssx   + (zt/channel_ratio)*scx   + it*mmq_y*stride_row_x;
+    const int offset_y   =  wt              *ssy   +  zt               *scy   + jt*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
+    const int offset_dst =  wt              *ssdst +  zt               *scdst + jt*mmq_x*nrows_dst + it*mmq_y;
 
     const int tile_x_max_i = nrows_x - it*mmq_y - 1;
     const int tile_y_max_j = ncols_y - jt*mmq_x - 1;
 
     constexpr bool fixup = true; // Last index writes its data to fixup buffer to avoid data races with other blocks.
     mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
-        (x, offset_x, ycur, dstcur, tmp_fixup, nrows_x, stride_row_x, ncols_y, nrows_dst,
+        (x, offset_x, y + offset_y, dst + offset_dst, tmp_fixup, nrows_x, stride_row_x, ncols_y, nrows_dst,
          tile_x_max_i, tile_y_max_j, kb0_start, kb0_stop);
 }
 
