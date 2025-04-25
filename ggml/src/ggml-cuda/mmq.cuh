@@ -2725,20 +2725,22 @@ static __global__ void mul_mat_q_stream_k_fixup(
 
     float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
 
-    const int ntx  = (ncols_y + mmq_x - 1) / mmq_x;
-    const int nty  = (nrows_x + mmq_y - 1) / mmq_y;
     const int ntzw = gridDim.z;
+    const int ntx  = gridDim.y;
+    const int nty  = gridDim.x;
 
     const int wt_dst = blockIdx.z / nchannels_y;
     const int zt_dst = blockIdx.z - wt_dst*nchannels_y;
     const int jt_dst = blockIdx.y;
     const int it_dst = blockIdx.x;
 
-    bool any_fixup = false;
+    const int ntiles_grid = ntzw*ntx*nty;
+    // const int bidx_start = (((blockIdx.z*ntx + jt_dst)*nty + it_dst)     * block_num_mmq)                   / ntiles_grid;
+    // const int bidx_stop  = (((blockIdx.z*ntx + jt_dst)*nty + it_dst + 1) * block_num_mmq + ntiles_grid - 1) / ntiles_grid;
+    const int bidx_start = 0;
+    const int bidx_stop  = block_num_mmq;
 
-    const int ntiles_grid = gridDim.z*gridDim.y*gridDim.x;
-    const int bidx_start = (((blockIdx.z*ntx + blockIdx.y)*nty + blockIdx.x)     * block_num_mmq)                   / ntiles_grid;
-    const int bidx_stop  = (((blockIdx.z*ntx + blockIdx.y)*nty + blockIdx.x + 1) * block_num_mmq + ntiles_grid - 1) / ntiles_grid;
+    bool any_fixup = false;
 
     int64_t kbc_0;
     int64_t kbc_stop_0 = (int64_t) bidx_start*blocks_per_ne00*ntx*nty*ntzw / block_num_mmq;
@@ -2790,8 +2792,8 @@ static __global__ void mul_mat_q_stream_k_fixup(
 
     dst += wt_dst*stride_sample_dst + zt_dst*stride_channel_dst + jt_dst*mmq_x*stride_col_dst + it_dst*mmq_y;
 
-    const int i_max = nrows_x - blockIdx.x*mmq_y - 1;
-    const int j_max = ncols_y - blockIdx.y*mmq_x - 1;
+    const int i_max = nrows_x - it_dst*mmq_y - 1;
+    const int j_max = ncols_y - jt_dst*mmq_x - 1;
 
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
