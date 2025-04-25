@@ -2713,29 +2713,39 @@ static __global__ void mul_mat_q(
 
 template <ggml_type type, int mmq_x, int nwarps, bool need_check>
 static __global__ void mul_mat_q_stream_k_fixup(
-    float * __restrict__ dst, const float * __restrict__ tmp_last_tile, const int ne00, const int ne01, const int ne11, const int ne0, const int block_num_mmq) {
+        float * __restrict__ dst, const float * __restrict__ tmp_last_tile,
+        const int ncols_x, const int nrows_x, const int ncols_y, const int stride_col_dst,
+        const int nchannels_y, const int stride_channel_dst, const int stride_sample_dst,
+        const int block_num_mmq) {
 
     constexpr int     mmq_y           = get_mmq_y_device();
     constexpr int     qk              = ggml_cuda_type_traits<type>::qk;
     constexpr int     blocks_per_iter = MMQ_ITER_K / qk;
-    const     int64_t blocks_per_ne00 = ne00 / qk;
+    const     int64_t blocks_per_ne00 = ncols_x / qk;
 
     float sum[mmq_x*mmq_y / (nwarps*WARP_SIZE)] = {0.0f};
 
-    const int ntx = (ne11 + mmq_x - 1) / mmq_x;
-    const int nty = (ne01 + mmq_y - 1) / mmq_y;
+    const int ntx  = (ncols_y + mmq_x - 1) / mmq_x;
+    const int nty  = (nrows_x + mmq_y - 1) / mmq_y;
+    const int ntzw = gridDim.z;
+
+    const int wt_dst = blockIdx.z / nchannels_y;
+    const int zt_dst = blockIdx.z - wt_dst*nchannels_y;
+    const int jt_dst = blockIdx.y;
+    const int it_dst = blockIdx.x;
 
     bool any_fixup = false;
 
-    const int bidx_start = ((blockIdx.y*nty + blockIdx.x)     * block_num_mmq)                           / (gridDim.y*gridDim.x);
-    const int bidx_stop  = ((blockIdx.y*nty + blockIdx.x + 1) * block_num_mmq + gridDim.y*gridDim.x - 1) / (gridDim.y*gridDim.x);
+    const int ntiles_grid = gridDim.z*gridDim.y*gridDim.x;
+    const int bidx_start = (((blockIdx.z*ntx + blockIdx.y)*nty + blockIdx.x)     * block_num_mmq)                   / ntiles_grid;
+    const int bidx_stop  = (((blockIdx.z*ntx + blockIdx.y)*nty + blockIdx.x + 1) * block_num_mmq + ntiles_grid - 1) / ntiles_grid;
 
     int64_t kbc_0;
-    int64_t kbc_stop_0 = (int64_t) bidx_start*blocks_per_ne00*ntx*nty / block_num_mmq;
+    int64_t kbc_stop_0 = (int64_t) bidx_start*blocks_per_ne00*ntx*nty*ntzw / block_num_mmq;
 
     for (int bidx = bidx_start; bidx < bidx_stop; ++bidx) {
         kbc_0 = kbc_stop_0;
-        kbc_stop_0 = (int64_t) (bidx + 1)*blocks_per_ne00*ntx*nty / block_num_mmq;
+        kbc_stop_0 = (int64_t) (bidx + 1)*blocks_per_ne00*ntx*nty*ntzw / block_num_mmq;
 
         const int64_t kbc      = kbc_0      - (kbc_0      % blocks_per_ne00) % blocks_per_iter;
         const int64_t kbc_stop = kbc_stop_0 - (kbc_stop_0 % blocks_per_ne00) % blocks_per_iter;
@@ -2745,11 +2755,17 @@ static __global__ void mul_mat_q_stream_k_fixup(
             continue;
         }
 
-        const int jt =  kbc_stop /    (blocks_per_ne00*nty);
-        const int it = (kbc_stop - jt*(blocks_per_ne00*nty)) / blocks_per_ne00;
+        int tmp = kbc;
+        const int wt = tmp / (nchannels_y*ntx*nty*blocks_per_ne00);
+        tmp -= wt * (nchannels_y*ntx*nty*blocks_per_ne00);
+        const int zt = tmp / (ntx*nty*blocks_per_ne00);
+        tmp -= zt * (ntx*nty*blocks_per_ne00);
+        const int jt = tmp / (nty*blocks_per_ne00);
+        tmp -= jt * (nty*blocks_per_ne00);
+        const int it = tmp / blocks_per_ne00;
 
         // Skip fixup tile if it's unrelated to the output tile assigned to this CUDA block:
-        if ((unsigned)it != blockIdx.x || (unsigned)jt != blockIdx.y) {
+        if (it != it_dst || jt != jt_dst || zt != zt_dst || wt != wt_dst) {
             continue;
         }
 
@@ -2772,10 +2788,10 @@ static __global__ void mul_mat_q_stream_k_fixup(
         return;
     }
 
-    dst += blockIdx.y*mmq_x*ne0 + blockIdx.x*mmq_y;
+    dst += wt_dst*stride_sample_dst + zt_dst*stride_channel_dst + jt_dst*mmq_x*stride_col_dst + it_dst*mmq_y;
 
-    const int i_max = ne01 - blockIdx.x*mmq_y - 1;
-    const int j_max = ne11 - blockIdx.y*mmq_x - 1;
+    const int i_max = nrows_x - blockIdx.x*mmq_y - 1;
+    const int j_max = ncols_y - blockIdx.y*mmq_x - 1;
 
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
@@ -2793,7 +2809,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
                 continue;
             }
 
-            dst[j*ne0 + i] += sum[(j0/nwarps) * (mmq_y/WARP_SIZE) + i0/WARP_SIZE];
+            dst[j*stride_col_dst + i] += sum[(j0/nwarps) * (mmq_y/WARP_SIZE) + i0/WARP_SIZE];
         }
     }
 }
@@ -2876,7 +2892,8 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
              sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst);
 
         mul_mat_q_stream_k_fixup<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_xy_tiling, block_dims, 0, stream>>>
-            (args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.ncols_y, args.nrows_dst, block_nums_mmq.x);
+            (args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.ncols_y, args.nrows_dst,
+             args.nchannels_y, args.stride_channel_dst, args.stride_sample_dst, block_nums_mmq.x);
     } else {
         constexpr bool need_check = true;
 
@@ -2886,7 +2903,8 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
              sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst);
 
         mul_mat_q_stream_k_fixup<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_xy_tiling, block_dims, 0, stream>>>
-            (args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.ncols_y, args.nrows_dst, block_nums_mmq.x);
+            (args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.ncols_y, args.nrows_dst,
+             args.nchannels_y, args.stride_channel_dst, args.stride_sample_dst, block_nums_mmq.x);
     }
 }
 
