@@ -2743,11 +2743,11 @@ static __global__ void mul_mat_q_stream_k_fixup(
     bool any_fixup = false;
 
     int64_t kbc_0;
-    int64_t kbc_stop_0 = (int64_t) bidx_start*blocks_per_ne00*ntx*nty*ntzw / block_num_mmq;
+    int64_t kbc_stop_0 = (int64_t) bidx_start*ntiles_grid*blocks_per_ne00 / block_num_mmq;
 
     for (int bidx = bidx_start; bidx < bidx_stop; ++bidx) {
         kbc_0 = kbc_stop_0;
-        kbc_stop_0 = (int64_t) (bidx + 1)*blocks_per_ne00*ntx*nty*ntzw / block_num_mmq;
+        kbc_stop_0 = (int64_t) (bidx + 1)*ntiles_grid*blocks_per_ne00 / block_num_mmq;
 
         const int64_t kbc      = kbc_0      - (kbc_0      % blocks_per_ne00) % blocks_per_iter;
         const int64_t kbc_stop = kbc_stop_0 - (kbc_stop_0 % blocks_per_ne00) % blocks_per_iter;
