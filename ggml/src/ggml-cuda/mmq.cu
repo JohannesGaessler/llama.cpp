@@ -111,7 +111,7 @@ void ggml_cuda_mul_mat_q(
     const int64_t s12 = ne11*ne10_padded * sizeof(block_q8_1)/(QK8_1*sizeof(int));
     const int64_t s13 = ne12*s12;
 
-    const bool use_stream_k = GGML_CUDA_CC_IS_NVIDIA(cc) && ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_VOLTA && false;
+    const bool use_stream_k = GGML_CUDA_CC_IS_NVIDIA(cc) && ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_VOLTA;
 
     const mmq_args args = {
         src0_d, src0->type, src1_q8_1.ptr, dst_d,
