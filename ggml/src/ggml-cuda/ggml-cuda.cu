@@ -2167,9 +2167,8 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
                 const int32_t expert_to_use = *(const int32_t *)(ids_host.data() + i12*ids->nb[1] + iex*ids->nb[0]);
                 GGML_ASSERT(expert_to_use >= 0 && expert_to_use < ne02);
                 if (expert_to_use == i02) {
-                    const int32_t row_index_sorted = i12*ne11 + iex % ne11;
-                    get_rows_from_sorted_host[row_index_sorted] = get_rows_to_sorted_host.size();
-                    get_rows_to_sorted_host.push_back(row_index_sorted);
+                    get_rows_from_sorted_host[i12*n_expert_used + iex] = get_rows_to_sorted_host.size();
+                    get_rows_to_sorted_host.push_back(i12*ne11 + iex % ne11);
                     tokens_per_expert[i02]++;
                     break;
                 }

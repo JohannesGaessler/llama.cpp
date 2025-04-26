@@ -154,7 +154,7 @@ static __global__ void mul_mat_vec_q(
     const     int blocks_per_row_x = ncols_x / qk;
     constexpr int blocks_per_iter = vdr * nwarps*warp_size / qi;
 
-    // The MUL_MAT_ID code path with ids != nullptr is only implemetned for ncols_dst == 1.
+    // The MUL_MAT_ID code path with ids != nullptr is only implemented for ncols_dst == 1.
     const int channel_dst = blockIdx.y;
     const int channel_x   = ncols_dst == 1 && ids ? ids[channel_dst]          : channel_dst / channel_ratio;
     const int channel_y   = ncols_dst == 1 && ids ? channel_dst % nchannels_y : channel_dst;
