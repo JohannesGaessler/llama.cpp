@@ -2011,6 +2011,10 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
     const ggml_tensor * src1 = dst->src[1];
     const ggml_tensor * ids  = dst->src[2];
 
+    GGML_ASSERT(src1->type == GGML_TYPE_F32);
+    GGML_ASSERT(dst->type  == GGML_TYPE_F32);
+    GGML_ASSERT(!ggml_backend_buft_is_cuda_split(src0->buffer->buft) && "mul_mat_id does not support split buffers");
+
     GGML_TENSOR_BINARY_OP_LOCALS
 
     if (src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32 && ne2 == 1) {
@@ -2022,8 +2026,7 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
         return;
     }
 
-    GGML_ASSERT(!ggml_backend_buft_is_cuda_split(src0->buffer->buft) && "mul_mat_id does not support split buffers");
-
+    if (false) {
     cudaStream_t stream = ctx.stream();
 
     const int64_t n_as = ne02;
@@ -2129,6 +2132,118 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
             CUDA_CHECK(cudaGetLastError());
         }
     }
+    }
+
+    cudaStream_t stream = ctx.stream();
+
+    GGML_ASSERT(nb12 % nb11 == 0);
+    GGML_ASSERT(nb2  % nb1  == 0);
+
+    const ggml_type type_sorted = ggml_is_quantized(src0->type) ? GGML_TYPE_F32 : src0->type;
+    const size_t ts_sorted = ggml_type_size(type_sorted);
+
+    const int64_t n_expert_used = ids->ne[0];
+    const int64_t ne_get_rows = ne12 * n_expert_used;
+
+    std::vector<int32_t> get_rows_to_sorted_host;
+    get_rows_to_sorted_host.reserve(ne_get_rows);
+    std::vector<int32_t> get_rows_from_sorted_host(ne_get_rows);
+
+    ggml_cuda_pool_alloc<int32_t> get_rows_to_sorted_dev(ctx.pool(), ne_get_rows);
+    ggml_cuda_pool_alloc<int32_t> get_rows_from_sorted_dev(ctx.pool(), ne_get_rows);
+
+    std::vector<int> tokens_per_expert(ne02);
+
+    ggml_cuda_pool_alloc<char> src1_sorted(ctx.pool(), ne12*n_expert_used*ne10*ts_sorted);
+    ggml_cuda_pool_alloc<char>  dst_sorted(ctx.pool(), ne2 *n_expert_used* ne0*ts_sorted);
+
+    std::vector<char> ids_host(ggml_nbytes(ids));
+    CUDA_CHECK(cudaMemcpyAsync(ids_host.data(), ids->data, ggml_nbytes(ids), cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    for (int64_t i02 = 0; i02 < ne02; ++i02) { // expert matrices
+        for (int64_t i12 = 0; i12 < ne12; ++i12) { // tokens
+            for (int64_t iex = 0; iex < n_expert_used; ++iex) {
+                const int32_t expert_to_use = *(const int32_t *)(ids_host.data() + i12*ids->nb[1] + iex*ids->nb[0]);
+                GGML_ASSERT(expert_to_use >= 0 && expert_to_use < ne02);
+                if (expert_to_use == i02) {
+                    const int32_t row_index_sorted = i12*ne11 + iex % ne11;
+                    get_rows_from_sorted_host[row_index_sorted] = get_rows_to_sorted_host.size();
+                    get_rows_to_sorted_host.push_back(row_index_sorted);
+                    tokens_per_expert[i02]++;
+                    break;
+                }
+            }
+        }
+    }
+    GGML_ASSERT(get_rows_to_sorted_host.size() == get_rows_from_sorted_host.size());
+
+    CUDA_CHECK(cudaMemcpyAsync(get_rows_to_sorted_dev.ptr, get_rows_to_sorted_host.data(),
+        ne_get_rows*sizeof(int32_t), cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaMemcpyAsync(get_rows_from_sorted_dev.ptr, get_rows_from_sorted_host.data(),
+        ne_get_rows*sizeof(int32_t), cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    get_rows_cuda(src1->data, src1->type, get_rows_to_sorted_dev.ptr, src1_sorted.ptr, type_sorted,
+        ne10, nb11, nb12, nb13,
+        ne_get_rows, 1, 1, sizeof(int32_t), ne_get_rows*sizeof(int32_t), ne_get_rows*sizeof(int32_t),
+        ne10*ts_sorted, ne_get_rows*ne10*ts_sorted, ne_get_rows*ne10*ts_sorted, stream);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    char * src1_data_cur = (char *) src1_sorted.ptr;
+    char *  dst_data_cur = (char *)  dst_sorted.ptr;
+    for (int64_t i02 = 0; i02 < ne02; ++i02) {
+        if (tokens_per_expert[i02] == 0) {
+            continue;
+        }
+
+        ggml_tensor src0_slice = *src0;
+        src0_slice.ne[2] = 1;
+        src0_slice.nb[3] = src0_slice.nb[2];
+        src0_slice.data  = (char *) src0->data + i02*nb02;
+
+        ggml_tensor src1_slice;
+        memset(&src1_slice, 0, sizeof(src1_slice));
+        src1_slice.buffer = src1->buffer;
+        src1_slice.type   = type_sorted;
+        src1_slice.ne[0]  = ne10;
+        src1_slice.ne[1]  = tokens_per_expert[i02];
+        src1_slice.ne[2]  = 1;
+        src1_slice.ne[3]  = 1;
+        src1_slice.nb[0]  = ts_sorted;
+        src1_slice.nb[1]  = src1_slice.ne[0] * src1_slice.nb[0];
+        src1_slice.nb[2]  = src1_slice.ne[1] * src1_slice.nb[1];
+        src1_slice.nb[3]  = src1_slice.ne[2] * src1_slice.nb[2];
+        src1_slice.data   = src1_data_cur;
+
+        ggml_tensor dst_slice;
+        memset(&dst_slice, 0, sizeof(dst_slice));
+        dst_slice.buffer = dst->buffer;
+        dst_slice.type   = type_sorted;
+        dst_slice.ne[0]  = ne0;
+        dst_slice.ne[1]  = tokens_per_expert[i02];
+        dst_slice.ne[2]  = 1;
+        dst_slice.ne[3]  = 1;
+        dst_slice.nb[0]  = ts_sorted;
+        dst_slice.nb[1]  = dst_slice.ne[0] * dst_slice.nb[0];
+        dst_slice.nb[2]  = dst_slice.ne[1] * dst_slice.nb[1];
+        dst_slice.nb[3]  = dst_slice.ne[2] * dst_slice.nb[2];
+        dst_slice.data   = dst_data_cur;
+
+        ggml_cuda_mul_mat(ctx, &src0_slice, &src1_slice, &dst_slice);
+        CUDA_CHECK(cudaGetLastError());
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+
+        src1_data_cur += src1_slice.nb[2];
+        dst_data_cur  +=  dst_slice.nb[2];
+    }
+
+    get_rows_cuda(dst_sorted.ptr, type_sorted, get_rows_from_sorted_dev.ptr, dst->data, dst->type,
+        ne0, ne0*ts_sorted, ne_get_rows*ne0*ts_sorted, ne_get_rows*ne0*ts_sorted,
+        ne_get_rows, 1, 1, sizeof(int32_t), ne_get_rows*sizeof(int32_t), ne_get_rows*sizeof(int32_t),
+        nb1, nb2, nb3, stream);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
 }
 
 static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct ggml_tensor * dst) {
