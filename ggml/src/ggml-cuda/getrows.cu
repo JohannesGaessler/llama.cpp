@@ -33,8 +33,8 @@ static __global__ void k_get_rows(
     dfloat2 v;
     dequantize_kernel(src0_row, ib, iqs, v);
 
-    dst_row[iybs + iqs + 0]        = v.x;
-    dst_row[iybs + iqs + y_offset] = v.y;
+    dst_row[iybs + iqs + 0]        = float(v.x);
+    dst_row[iybs + iqs + y_offset] = float(v.y);
 }
 
 template<typename src0_t, typename dst_t>
@@ -60,7 +60,7 @@ static __global__ void k_get_rows_float(
     dst_t * dst_row = dst + i10*s1 + i11*s2 + i12*s3;
     const src0_t * src0_row = (const src0_t *)((const char *) src0 + i01*nb01 + i11*nb02 + i12*nb03);
 
-    dst_row[i00] = src0_row[i00];
+    dst_row[i00] = float(src0_row[i00]);
 }
 
 template<typename grad_t, typename dst_t>
@@ -86,10 +86,10 @@ static __global__ void k_get_rows_back_float(
     dst[dst_row*ncols + col] = sum;
 }
 
-template<int qk, int qr, dequantize_kernel_t dq>
+template<int qk, int qr, dequantize_kernel_t dq, typename dst_t>
 static void get_rows_cuda(
         const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst,
-        const void * src0_dd, const int32_t * src1_dd, float * dst_dd, cudaStream_t stream) {
+        const void * src0_dd, const int32_t * src1_dd, dst_t * dst_dd, cudaStream_t stream) {
 
     GGML_TENSOR_BINARY_OP_LOCALS
 
@@ -121,10 +121,10 @@ static void get_rows_cuda(
     GGML_UNUSED(dst);
 }
 
-template<typename src0_t>
+template<typename src0_t, typename dst_t>
 static void get_rows_cuda_float(
         const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst,
-        const src0_t * src0_dd, const int32_t * src1_dd, float * dst_dd, cudaStream_t stream) {
+        const src0_t * src0_dd, const int32_t * src1_dd, dst_t * dst_dd, cudaStream_t stream) {
 
     GGML_TENSOR_BINARY_OP_LOCALS
 
@@ -156,23 +156,10 @@ static void get_rows_cuda_float(
     GGML_UNUSED(dst);
 }
 
-void ggml_cuda_op_get_rows(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-    const ggml_tensor * src0 = dst->src[0];
-    const ggml_tensor * src1 = dst->src[1];
-
-    const void    * src0_d = (const void    *) src0->data;
-    const int32_t * src1_d = (const int32_t *) src1->data;
-    float         * dst_d  = (float         *) dst->data;
-
-    cudaStream_t stream = ctx.stream();
-
-    GGML_ASSERT(src1->type == GGML_TYPE_I32);
-    GGML_ASSERT(dst->type  == GGML_TYPE_F32);
-
-    GGML_ASSERT(src0->nb[0] == ggml_type_size(src0->type));
-    GGML_ASSERT(src1->nb[0] == ggml_type_size(src1->type));
-    GGML_ASSERT(dst->nb[0]  == ggml_type_size(dst->type));
-
+template <typename dst_t>
+static void ggml_cuda_get_rows_switch_src0_type(
+        const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst,
+        const void * src0_d, const int32_t * src1_d, dst_t * dst_d, cudaStream_t stream) {
     switch (src0->type) {
         case GGML_TYPE_F16:
             get_rows_cuda_float(src0, src1, dst, (const half *) src0_d, src1_d, dst_d, stream);
@@ -197,7 +184,38 @@ void ggml_cuda_op_get_rows(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
             break;
         default:
             // TODO: k-quants
-            GGML_ABORT("%s: unsupported type: %s\n", __func__, ggml_type_name(src0->type));
+            GGML_ABORT("%s: unsupported src0 type: %s\n", __func__, ggml_type_name(src0->type));
+            break;
+    }
+}
+
+void ggml_cuda_op_get_rows(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    const ggml_tensor * src0 = dst->src[0];
+    const ggml_tensor * src1 = dst->src[1];
+
+    const void    * src0_d = (const void    *) src0->data;
+    const int32_t * src1_d = (const int32_t *) src1->data;
+
+    cudaStream_t stream = ctx.stream();
+
+    GGML_ASSERT(src1->type == GGML_TYPE_I32);
+
+    GGML_ASSERT(src0->nb[0] == ggml_type_size(src0->type));
+    GGML_ASSERT(src1->nb[0] == ggml_type_size(src1->type));
+    GGML_ASSERT(dst->nb[0]  == ggml_type_size(dst->type));
+
+    switch (dst->type) {
+        case GGML_TYPE_F32:
+            ggml_cuda_get_rows_switch_src0_type(src0, src1, dst, src0_d, src1_d, (float *) dst->data, stream);
+            break;
+        case GGML_TYPE_F16:
+            ggml_cuda_get_rows_switch_src0_type(src0, src1, dst, src0_d, src1_d, (half *) dst->data, stream);
+            break;
+        case GGML_TYPE_BF16:
+            ggml_cuda_get_rows_switch_src0_type(src0, src1, dst, src0_d, src1_d, (nv_bfloat16 *) dst->data, stream);
+            break;
+        default:
+            GGML_ABORT("%s: unsupported dst type: %s\n", __func__, ggml_type_name(dst->type));
             break;
     }
 }
