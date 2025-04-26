@@ -2139,8 +2139,10 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
     GGML_ASSERT(nb12 % nb11 == 0);
     GGML_ASSERT(nb2  % nb1  == 0);
 
-    const ggml_type type_sorted = ggml_is_quantized(src0->type) ? GGML_TYPE_F32 : src0->type;
-    const size_t ts_sorted = ggml_type_size(type_sorted);
+    const ggml_type type_src1_sorted = ggml_is_quantized(src0->type) ? GGML_TYPE_F32 : src0->type;
+    const ggml_type type_dst_sorted  = GGML_TYPE_F32;
+    const size_t ts_src1_sorted = ggml_type_size(type_src1_sorted);
+    const size_t ts_dst_sorted  = ggml_type_size(type_dst_sorted);
 
     const int64_t n_expert_used = ids->ne[0];
     const int64_t ne_get_rows = ne12 * n_expert_used;
@@ -2154,8 +2156,8 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
 
     std::vector<int> tokens_per_expert(ne02);
 
-    ggml_cuda_pool_alloc<char> src1_sorted(ctx.pool(), ne12*n_expert_used*ne10*ts_sorted);
-    ggml_cuda_pool_alloc<char>  dst_sorted(ctx.pool(), ne2 *n_expert_used* ne0*ts_sorted);
+    ggml_cuda_pool_alloc<char> src1_sorted(ctx.pool(), ne12*n_expert_used*ne10*ts_src1_sorted);
+    ggml_cuda_pool_alloc<char>  dst_sorted(ctx.pool(), ne2 *n_expert_used* ne0*ts_dst_sorted);
 
     std::vector<char> ids_host(ggml_nbytes(ids));
     CUDA_CHECK(cudaMemcpyAsync(ids_host.data(), ids->data, ggml_nbytes(ids), cudaMemcpyDeviceToHost, stream));
@@ -2183,10 +2185,10 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
         ne_get_rows*sizeof(int32_t), cudaMemcpyHostToDevice, stream));
     CUDA_CHECK(cudaStreamSynchronize(stream));
 
-    get_rows_cuda(src1->data, src1->type, get_rows_to_sorted_dev.ptr, src1_sorted.ptr, type_sorted,
+    get_rows_cuda(src1->data, src1->type, get_rows_to_sorted_dev.ptr, src1_sorted.ptr, type_src1_sorted,
         ne10, nb11, nb12, nb13,
         ne_get_rows, 1, 1, sizeof(int32_t), ne_get_rows*sizeof(int32_t), ne_get_rows*sizeof(int32_t),
-        ne10*ts_sorted, ne_get_rows*ne10*ts_sorted, ne_get_rows*ne10*ts_sorted, stream);
+        ne10*ts_src1_sorted, ne_get_rows*ne10*ts_src1_sorted, ne_get_rows*ne10*ts_src1_sorted, stream);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaStreamSynchronize(stream));
 
@@ -2205,12 +2207,12 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
         ggml_tensor src1_slice;
         memset(&src1_slice, 0, sizeof(src1_slice));
         src1_slice.buffer = src1->buffer;
-        src1_slice.type   = type_sorted;
+        src1_slice.type   = type_src1_sorted;
         src1_slice.ne[0]  = ne10;
         src1_slice.ne[1]  = tokens_per_expert[i02];
         src1_slice.ne[2]  = 1;
         src1_slice.ne[3]  = 1;
-        src1_slice.nb[0]  = ts_sorted;
+        src1_slice.nb[0]  = ts_src1_sorted;
         src1_slice.nb[1]  = src1_slice.ne[0] * src1_slice.nb[0];
         src1_slice.nb[2]  = src1_slice.ne[1] * src1_slice.nb[1];
         src1_slice.nb[3]  = src1_slice.ne[2] * src1_slice.nb[2];
@@ -2219,12 +2221,12 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
         ggml_tensor dst_slice;
         memset(&dst_slice, 0, sizeof(dst_slice));
         dst_slice.buffer = dst->buffer;
-        dst_slice.type   = type_sorted;
+        dst_slice.type   = type_dst_sorted;
         dst_slice.ne[0]  = ne0;
         dst_slice.ne[1]  = tokens_per_expert[i02];
         dst_slice.ne[2]  = 1;
         dst_slice.ne[3]  = 1;
-        dst_slice.nb[0]  = ts_sorted;
+        dst_slice.nb[0]  = ts_dst_sorted;
         dst_slice.nb[1]  = dst_slice.ne[0] * dst_slice.nb[0];
         dst_slice.nb[2]  = dst_slice.ne[1] * dst_slice.nb[1];
         dst_slice.nb[3]  = dst_slice.ne[2] * dst_slice.nb[2];
@@ -2238,8 +2240,8 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
         dst_data_cur  +=  dst_slice.nb[2];
     }
 
-    get_rows_cuda(dst_sorted.ptr, type_sorted, get_rows_from_sorted_dev.ptr, dst->data, dst->type,
-        ne0, ne0*ts_sorted, ne_get_rows*ne0*ts_sorted, ne_get_rows*ne0*ts_sorted,
+    get_rows_cuda(dst_sorted.ptr, type_dst_sorted, get_rows_from_sorted_dev.ptr, dst->data, dst->type,
+        ne0, ne0*ts_dst_sorted, ne_get_rows*ne0*ts_dst_sorted, ne_get_rows*ne0*ts_dst_sorted,
         ne_get_rows, 1, 1, sizeof(int32_t), ne_get_rows*sizeof(int32_t), ne_get_rows*sizeof(int32_t),
         nb1, nb2, nb3, stream);
     CUDA_CHECK(cudaStreamSynchronize(stream));
