@@ -15,7 +15,8 @@ using namespace ggml_cuda_mma;
 
 typedef void (*load_tiles_mmq_t)(const char * __restrict__ x, int * x_tile, const int kbx0, const int i_max, const int stride);
 typedef void (*vec_dot_mmq_t)(const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00);
-typedef void (*mmq_write_back_t)(const float * __restrict__ sum, float * __restrict__ dst, const int stride, const int i_max, const int j_max);
+typedef void (*mmq_write_back_t)(const float * __restrict__ sum, const int32_t * __restrict__ get_rows_to_sorted,
+    float * __restrict__ dst, const int stride, const int i_max, const int j_max);
 
 enum mmq_q8_1_ds_layout {
     MMQ_Q8_1_DS_LAYOUT_D4,
@@ -2302,8 +2303,8 @@ template <int mmq_y, int nwarps, bool need_check> static __device__ __forceinlin
 
 template<int mmq_x, int mmq_y, int nwarps, bool need_check>
 static __device__ __forceinline__ void mmq_write_back_dp4a(
-    const float * __restrict__ sum, float * __restrict__ dst, const int stride, const int i_max, const int j_max) {
-
+        const float * __restrict__ sum, const int32_t * __restrict__ /*get_rows_to_sorted*/, float * __restrict__ dst,
+        const int stride, const int i_max, const int j_max) {
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
         const int j = j0 + threadIdx.y;
@@ -2327,8 +2328,8 @@ static __device__ __forceinline__ void mmq_write_back_dp4a(
 
 template<int mmq_x, int mmq_y, int nwarps, bool need_check>
 static __device__ __forceinline__ void mmq_write_back_mma(
-    const float * __restrict__ sum, float * __restrict__ dst, const int stride, const int i_max, const int j_max) {
-
+        const float * __restrict__ sum, const int32_t * __restrict__ get_rows_to_sorted, float * __restrict__ dst,
+        const int stride, const int i_max, const int j_max) {
     typedef tile<16, 8, int> tile_C;
 
     constexpr int granularity = mmq_get_granularity_device(mmq_x);
@@ -2358,7 +2359,7 @@ static __device__ __forceinline__ void mmq_write_back_mma(
                     continue;
                 }
 
-                dst[j*stride + i] = sum[(j0/tile_C::J + n)*tile_C::ne + l];
+                dst[(get_rows_to_sorted ? get_rows_to_sorted[j] : j)*stride + i] = sum[(j0/tile_C::J + n)*tile_C::ne + l];
             }
         }
     }
@@ -2515,9 +2516,10 @@ struct mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, GGML_TYPE_IQ4_XS> {
 
 template <ggml_type type, int mmq_x, int nwarps, bool need_check, bool fixup>
 static __device__ __forceinline__ void mul_mat_q_process_tile(
-    const char * __restrict__ x, const int offset_x, const int * __restrict__ y, float * __restrict__ dst, float * __restrict__ tmp_fixup,
-    const int nrows_x, const int ncols_y, const int stride_row_x, const int stride_col_dst,
-    const int tile_x_max_i, const int tile_y_max_j, const int kb0_start, const int kb0_stop) {
+        const char * __restrict__ x, const int offset_x, const int * __restrict__ y,
+        const int32_t * __restrict__ get_rows_to_sorted, float * __restrict__ dst, float * __restrict__ tmp_fixup,
+        const int nrows_x, const int ncols_y, const int stride_row_x, const int stride_col_dst,
+        const int tile_x_max_i, const int tile_y_max_j, const int kb0_start, const int kb0_stop) {
 
     constexpr int              qk         = ggml_cuda_type_traits<type>::qk;
     constexpr int              mmq_y      = get_mmq_y_device();
@@ -2576,9 +2578,9 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
     }
 
     if (fixup) {
-        write_back(sum, tmp_fixup + blockIdx.x*(mmq_x*mmq_y), mmq_y, mmq_y, mmq_x);
+        write_back(sum, get_rows_to_sorted, tmp_fixup + blockIdx.x*(mmq_x*mmq_y), mmq_y, mmq_y, mmq_x);
     } else {
-        write_back(sum, dst, stride_col_dst, tile_x_max_i, tile_y_max_j);
+        write_back(sum, get_rows_to_sorted, dst, stride_col_dst, tile_x_max_i, tile_y_max_j);
     }
 }
 
@@ -2598,7 +2600,8 @@ template <ggml_type type, int mmq_x, int nwarps, bool need_check>
 #endif // __CUDA_ARCH__ >= GGML_CUDA_CC_VOLTA
 #endif // defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__)
 static __global__ void mul_mat_q(
-        const char * __restrict__ x, const char * __restrict__ yc, float * __restrict__ dst, float * __restrict__ tmp_fixup,
+        const char * __restrict__ x, const char * __restrict__ yc, const int32_t * __restrict__ get_rows_to_sorted,
+        const int32_t * __restrict__ tokens_per_expert_cum, float * __restrict__ dst, float * __restrict__ tmp_fixup,
         const int ncols_x, const int nrows_x, const int ncols_y, const int stride_row_x, const int stride_col_dst,
         const int channel_ratio, const int nchannels_y, const int scx, const int scy, const int scdst,
         const int sample_ratio, const int nsamples_y, const int ssx, const int ssy, const int ssdst) {
@@ -2617,28 +2620,36 @@ static __global__ void mul_mat_q(
     const int nty = (nrows_x + mmq_y - 1) / mmq_y; // Number of tiles y
 
     // On AMD or old CUDA the performance with stream-k was worse, use conventional tiling instead:
-#if (defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__)) || __CUDA_ARCH__ < GGML_CUDA_CC_VOLTA
+// #if (defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__)) || __CUDA_ARCH__ < GGML_CUDA_CC_VOLTA
     {
         const int wt = blockIdx.z / nchannels_y;
         const int zt = blockIdx.z - wt*nchannels_y;
         const int jt = blockIdx.y;
         const int it = blockIdx.x;
 
-        const int offset_x   = (wt/sample_ratio)*ssx   + (zt/channel_ratio)*scx                             + it*mmq_y*stride_row_x;
-        const int offset_dst =  wt              *ssdst +  zt               *scdst + jt*mmq_x*stride_col_dst + it*mmq_y;
+        const int tpecl = tokens_per_expert_cum ? tokens_per_expert_cum[zt]     : 0;
+        const int tpech = tokens_per_expert_cum ? tokens_per_expert_cum[zt + 1] : ncols_y;
+        const int ncols_eff = tpech - tpecl;
 
-        const int offset_y = wt*ssy + zt*scy + jt*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
+        if (jt*mmq_x >= ncols_eff) {
+            return;
+        }
 
-        const int tile_x_max_i = nrows_x - it*mmq_y - 1;
-        const int tile_y_max_j = ncols_y - jt*mmq_x - 1;
+        const int offset_x = (wt/sample_ratio)*ssx + (zt/channel_ratio)*scx + it*mmq_y*stride_row_x;
+        const int offset_dst = (tokens_per_expert_cum ? 0 : wt*ssdst + zt*scdst + jt*mmq_x*stride_col_dst) + it*mmq_y;
+
+        const int offset_y = (tokens_per_expert_cum ? 0 : wt*ssy + zt*scy) + (tpecl + jt*mmq_x)*(sizeof(block_q8_1_mmq)/sizeof(int));
+
+        const int tile_x_max_i = nrows_x   - it*mmq_y - 1;
+        const int tile_y_max_j = ncols_eff - jt*mmq_x - 1;
 
         constexpr bool fixup = false;
         mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
-            (x, offset_x, y + offset_y, dst + offset_dst, tmp_fixup, nrows_x, ncols_y, stride_row_x, stride_col_dst,
+            (x, offset_x, y + offset_y, get_rows_to_sorted + tpecl, dst + offset_dst, tmp_fixup, nrows_x, ncols_y, stride_row_x, stride_col_dst,
              tile_x_max_i, tile_y_max_j, 0, ncols_x/qk);
         return;
     }
-#endif // (defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__)) || __CUDA_ARCH__ < GGML_CUDA_CC_VOLTA
+// #endif // (defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__)) || __CUDA_ARCH__ < GGML_CUDA_CC_VOLTA
 
     const     int64_t blocks_per_ne00 = ncols_x / qk;
     constexpr int     blocks_per_iter = MMQ_ITER_K / qk;
@@ -2673,7 +2684,7 @@ static __global__ void mul_mat_q(
 
         constexpr bool fixup = false; // All but (potentially) the last iterations write their data to dst rather than the fixup buffer.
         mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
-            (x, offset_x, y + offset_y, dst + offset_dst, tmp_fixup, nrows_x, ncols_y, stride_row_x, stride_col_dst,
+            (x, offset_x, y + offset_y, nullptr, dst + offset_dst, tmp_fixup, nrows_x, ncols_y, stride_row_x, stride_col_dst,
              tile_x_max_i, tile_y_max_j, kb0_start, kb0_stop);
 
         kbc += blocks_per_ne00;
@@ -2706,7 +2717,7 @@ static __global__ void mul_mat_q(
 
     constexpr bool fixup = true; // Last index writes its data to fixup buffer to avoid data races with other blocks.
     mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
-        (x, offset_x, y + offset_y, dst + offset_dst, tmp_fixup, nrows_x, ncols_y, stride_row_x, stride_col_dst,
+        (x, offset_x, y + offset_y, nullptr, dst + offset_dst, tmp_fixup, nrows_x, ncols_y, stride_row_x, stride_col_dst,
          tile_x_max_i, tile_y_max_j, kb0_start, kb0_stop);
 }
 
@@ -2821,7 +2832,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
 }
 
 struct mmq_args {
-    const char * x; ggml_type type_x; const char * y; float * dst;
+    const char * x; ggml_type type_x; const char * y; const int32_t * get_rows_to_sorted; const int32_t * tokens_per_expert_cum; float * dst;
     int64_t ncols_x; int64_t nrows_x; int64_t ncols_y; int64_t stride_row_x; int64_t nrows_dst;
     int64_t nchannels_x; int64_t nchannels_y; int64_t stride_channel_x; int64_t stride_channel_y; int64_t stride_channel_dst;
     int64_t nsamples_x; int64_t nsamples_y; int64_t stride_sample_x; int64_t stride_sample_y; int64_t stride_sample_dst;
@@ -2871,13 +2882,15 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
         if (args.nrows_x % mmq_y == 0) {
             constexpr bool need_check = false;
             mul_mat_q<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_xy_tiling, block_dims, shmem, stream>>>
-                (args.x, args.y, args.dst, nullptr, args.ncols_x, args.nrows_x, args.ncols_y, args.stride_row_x, args.nrows_dst,
+                (args.x, args.y, args.get_rows_to_sorted, args.tokens_per_expert_cum, args.dst, nullptr,
+                 args.ncols_x, args.nrows_x, args.ncols_y, args.stride_row_x, args.nrows_dst,
                  channel_ratio, args.nchannels_y, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
                  sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst);
         } else {
             constexpr bool need_check = true;
             mul_mat_q<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_xy_tiling, block_dims, shmem, stream>>>
-                (args.x, args.y, args.dst, nullptr, args.ncols_x, args.nrows_x, args.ncols_y, args.stride_row_x, args.nrows_dst,
+                (args.x, args.y, args.get_rows_to_sorted, args.tokens_per_expert_cum, args.dst, nullptr,
+                 args.ncols_x, args.nrows_x, args.ncols_y, args.stride_row_x, args.nrows_dst,
                  channel_ratio, args.nchannels_y, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
                  sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst);
         }
@@ -2893,7 +2906,8 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
         constexpr bool need_check = false;
 
         mul_mat_q<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_stream_k, block_dims, shmem, stream>>>
-            (args.x, args.y, args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.ncols_y, args.stride_row_x, args.nrows_dst,
+            (args.x, args.y, args.get_rows_to_sorted, args.tokens_per_expert_cum, args.dst, tmp_fixup.ptr,
+             args.ncols_x, args.nrows_x, args.ncols_y, args.stride_row_x, args.nrows_dst,
              channel_ratio, args.nchannels_y, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
              sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst);
 
@@ -2904,7 +2918,8 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
         constexpr bool need_check = true;
 
         mul_mat_q<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_stream_k, block_dims, shmem, stream>>>
-            (args.x, args.y, args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.ncols_y, args.stride_row_x, args.nrows_dst,
+            (args.x, args.y, args.get_rows_to_sorted, args.tokens_per_expert_cum, args.dst, tmp_fixup.ptr,
+             args.ncols_x, args.nrows_x, args.ncols_y, args.stride_row_x, args.nrows_dst,
              channel_ratio, args.nchannels_y, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
              sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst);
 

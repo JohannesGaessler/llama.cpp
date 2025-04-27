@@ -49,7 +49,7 @@ static __global__ void quantize_q8_1(
 
 template <mmq_q8_1_ds_layout ds_layout>
 static __global__ void quantize_mmq_q8_1(
-        const float * __restrict__ x, void * __restrict__ vy,
+        const float * __restrict__ x, const int32_t * __restrict__ get_rows_to_sorted, void * __restrict__ vy,
         const int64_t ne00, const int64_t s01, const int64_t s02, const int64_t s03,
         const int64_t ne0, const int ne1, const int ne2) {
 
@@ -66,10 +66,10 @@ static __global__ void quantize_mmq_q8_1(
     const int64_t i2 = blockIdx.z % ne2;
     const int64_t i3 = blockIdx.z / ne2;
 
-    const int64_t & i00 = i0;
-    const int64_t & i01 = i1;
-    const int64_t & i02 = i2;
-    const int64_t & i03 = i3;
+    const int64_t i00 = i0;
+    const int64_t i01 = get_rows_to_sorted ? get_rows_to_sorted[i1] : i1;
+    const int64_t i02 = i2;
+    const int64_t i03 = i3;
 
     const float4 * x4 = (const float4 *) x;
 
@@ -146,9 +146,10 @@ static __global__ void quantize_mmq_q8_1(
 }
 
 void quantize_row_q8_1_cuda(
-    const float * x, void * vy, const ggml_type type_src0, const int64_t ne00, const int64_t s01, const int64_t s02, const int64_t s03,
-    const int64_t ne0, const int64_t ne1, const int64_t ne2, const int64_t ne3, cudaStream_t stream) {
-
+        const float * x, const int32_t * get_rows_to_sorted, void * vy, const ggml_type type_src0,
+        const int64_t ne00, const int64_t s01, const int64_t s02, const int64_t s03,
+        const int64_t ne0, const int64_t ne1, const int64_t ne2, const int64_t ne3, cudaStream_t stream) {
+    GGML_ASSERT(!get_rows_to_sorted);
     GGML_ASSERT(ne0 % QK8_1 == 0);
 
     const int64_t block_num_x = (ne0 + CUDA_QUANTIZE_BLOCK_SIZE - 1) / CUDA_QUANTIZE_BLOCK_SIZE;
@@ -159,9 +160,9 @@ void quantize_row_q8_1_cuda(
 }
 
 void quantize_mmq_q8_1_cuda(
-    const float * x, void * vy, const ggml_type type_src0, const int64_t ne00, const int64_t s01, const int64_t s02, const int64_t s03,
-    const int64_t ne0, const int64_t ne1, const int64_t ne2, const int64_t ne3, cudaStream_t stream) {
-
+        const float * x, const int32_t * get_rows_to_sorted, void * vy, const ggml_type type_src0,
+        const int64_t ne00, const int64_t s01, const int64_t s02, const int64_t s03,
+        const int64_t ne0, const int64_t ne1, const int64_t ne2, const int64_t ne3, cudaStream_t stream) {
     GGML_ASSERT(ne0 % (4*QK8_1) == 0);
 
     const int64_t block_num_x = (ne0 + 4*CUDA_QUANTIZE_BLOCK_SIZE_MMQ - 1) / (4*CUDA_QUANTIZE_BLOCK_SIZE_MMQ);
@@ -170,15 +171,15 @@ void quantize_mmq_q8_1_cuda(
     switch (mmq_get_q8_1_ds_layout(type_src0)) {
         case MMQ_Q8_1_DS_LAYOUT_D4:
             quantize_mmq_q8_1<MMQ_Q8_1_DS_LAYOUT_D4>
-                <<<num_blocks, block_size, 0, stream>>>(x, vy, ne00, s01, s02, s03, ne0, ne1, ne2);
+                <<<num_blocks, block_size, 0, stream>>>(x, get_rows_to_sorted, vy, ne00, s01, s02, s03, ne0, ne1, ne2);
             break;
         case MMQ_Q8_1_DS_LAYOUT_DS4:
             quantize_mmq_q8_1<MMQ_Q8_1_DS_LAYOUT_DS4>
-                <<<num_blocks, block_size, 0, stream>>>(x, vy, ne00, s01, s02, s03, ne0, ne1, ne2);
+                <<<num_blocks, block_size, 0, stream>>>(x, get_rows_to_sorted, vy, ne00, s01, s02, s03, ne0, ne1, ne2);
             break;
         case MMQ_Q8_1_DS_LAYOUT_D2S6:
             quantize_mmq_q8_1<MMQ_Q8_1_DS_LAYOUT_D2S6>
-                <<<num_blocks, block_size, 0, stream>>>(x, vy, ne00, s01, s02, s03, ne0, ne1, ne2);
+                <<<num_blocks, block_size, 0, stream>>>(x, get_rows_to_sorted, vy, ne00, s01, s02, s03, ne0, ne1, ne2);
             break;
         default:
             GGML_ABORT("fatal error");
