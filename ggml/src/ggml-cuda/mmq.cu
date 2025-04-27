@@ -83,18 +83,21 @@ void ggml_cuda_mul_mat_q(
     GGML_ASSERT(        nb0        == ts_dst);
     GGML_ASSERT(!ids || ids->nb[0] == ggml_type_size(ids->type));
 
-    const char    * src0_d = (const char    *) src0->data;
-    const float   * src1_d = (const float   *) src1->data;
-    float         *  dst_d = (float         *)  dst->data;
+    const char  * src0_d = (const char  *) src0->data;
+    const float * src1_d = (const float *) src1->data;
+    float       *  dst_d = (float       *)  dst->data;
 
     std::vector<char> ids_host;
     std::vector<int32_t> get_rows_to_sorted_host;
+    std::vector<int32_t> get_rows_to_sorted_host2;
     std::vector<int32_t> tokens_per_expert_host;
     std::vector<int32_t> tokens_per_expert_cum_host;
     ggml_cuda_pool_alloc<int32_t> get_rows_to_sorted_dev(ctx.pool());
+    ggml_cuda_pool_alloc<int32_t> get_rows_to_sorted_dev2(ctx.pool());
     ggml_cuda_pool_alloc<int32_t> tokens_per_expert_cum_dev(ctx.pool());
 
     const int32_t * get_rows_to_sorted_ptr    = nullptr;
+    const int32_t * get_rows_to_sorted_ptr2   = nullptr;
     const int32_t * tokens_per_expert_cum_ptr = nullptr;
 
     const int64_t n_expert_used = ids ? ids->ne[0] : 1;
@@ -103,10 +106,12 @@ void ggml_cuda_mul_mat_q(
     if (ids) {
         ids_host.resize(ggml_nbytes(ids));
         get_rows_to_sorted_host.reserve(ne_get_rows);
+        get_rows_to_sorted_host2.reserve(ne_get_rows);
         tokens_per_expert_host.resize(ne02);
         tokens_per_expert_cum_host.resize(ne02 + 1);
 
         get_rows_to_sorted_dev.alloc(ne_get_rows);
+        get_rows_to_sorted_dev2.alloc(ne_get_rows);
         tokens_per_expert_cum_dev.alloc(ne02 + 1);
 
         CUDA_CHECK(cudaMemcpyAsync(ids_host.data(), ids->data, ggml_nbytes(ids), cudaMemcpyDeviceToHost, stream));
@@ -118,7 +123,8 @@ void ggml_cuda_mul_mat_q(
                     const int32_t expert_to_use = *(const int32_t *)(ids_host.data() + i12*ids->nb[1] + iex*ids->nb[0]);
                     assert(expert_to_use >= 0 && expert_to_use < ne02);
                     if (expert_to_use == i02) {
-                        get_rows_to_sorted_host.push_back(i12*ne11 + iex % ne11);
+                        get_rows_to_sorted_host.push_back(i12*(nb12/nb11) + iex % ne11);
+                        get_rows_to_sorted_host2.push_back(i12*ne1 + iex);
                         tokens_per_expert_host[i02]++;
                         break;
                     }
@@ -135,11 +141,14 @@ void ggml_cuda_mul_mat_q(
 
         CUDA_CHECK(cudaMemcpyAsync(get_rows_to_sorted_dev.ptr, get_rows_to_sorted_host.data(),
             ne_get_rows*sizeof(int32_t), cudaMemcpyHostToDevice, stream));
+        CUDA_CHECK(cudaMemcpyAsync(get_rows_to_sorted_dev2.ptr, get_rows_to_sorted_host2.data(),
+            ne_get_rows*sizeof(int32_t), cudaMemcpyHostToDevice, stream));
         CUDA_CHECK(cudaMemcpyAsync(tokens_per_expert_cum_dev.ptr, tokens_per_expert_cum_host.data(),
             (ne02 + 1)*sizeof(int32_t), cudaMemcpyHostToDevice, stream));
         CUDA_CHECK(cudaStreamSynchronize(stream));
 
         get_rows_to_sorted_ptr    = get_rows_to_sorted_dev.ptr;
+        get_rows_to_sorted_ptr2   = get_rows_to_sorted_dev2.ptr;
         tokens_per_expert_cum_ptr = tokens_per_expert_cum_dev.ptr;
     }
 
@@ -152,6 +161,7 @@ void ggml_cuda_mul_mat_q(
             get_mmq_x_max_host(cc)*sizeof(block_q8_1_mmq);
         src1_q8_1.alloc(nbytes_src1_q8_1);
 
+        GGML_ASSERT(nb1 == ne0*ts_dst);
         GGML_ASSERT(nb12 % nb11 == 0);
         GGML_ASSERT(nb2  % nb1  == 0);
         const int64_t ne11_flat = ne12*n_expert_used;
@@ -191,7 +201,7 @@ void ggml_cuda_mul_mat_q(
     const int64_t nchannels_y = ids ? ne02        : ne12;
 
     const mmq_args args = {
-        src0_d, src0->type, src1_q8_1.ptr, get_rows_to_sorted_ptr, tokens_per_expert_cum_ptr, dst_d,
+        src0_d, src0->type, src1_q8_1.ptr, get_rows_to_sorted_ptr2, tokens_per_expert_cum_ptr, dst_d,
         ne00, ne01, ncols_y, s01, s1,
         ne02, nchannels_y, s02, s12, s2,
         ne03, ne13,        s03, s13, s3,
