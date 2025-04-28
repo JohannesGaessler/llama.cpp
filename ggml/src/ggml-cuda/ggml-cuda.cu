@@ -1750,11 +1750,11 @@ static void ggml_cuda_mul_mat_batched_cublas(ggml_backend_cuda_context & ctx, co
     float * src1_ddf = (float *) src1->data;
     float * dst_ddf  = (float *) dst->data;
 
-    const float alpha_f32 = 1.0f;
-    const float beta_f32  = 0.0f;
+    float alpha_f32 = 1.0f;
+    float beta_f32  = 0.0f;
 
-    const half  alpha_f16 = alpha_f32;
-    const half  beta_f16  = beta_f32;
+    half  alpha_f16 = alpha_f32;
+    half  beta_f16  = beta_f32;
 
     const void * alpha = &alpha_f16;
     const void * beta  = &beta_f16;
@@ -1762,6 +1762,9 @@ static void ggml_cuda_mul_mat_batched_cublas(ggml_backend_cuda_context & ctx, co
     // convert src1 to fp16
     ggml_cuda_pool_alloc<half> src1_f16_alloc(ctx.pool());
     if (src1->type != GGML_TYPE_F16) {
+        alpha_f32 = 16.0f;
+        alpha_f16 = alpha_f32;
+
         const to_fp16_cuda_t to_fp16_cuda = ggml_get_to_fp16_cuda(src1->type);
         const int64_t ne_src1 = ggml_nelements(src1);
         src1_f16_alloc.alloc(ne_src1);
