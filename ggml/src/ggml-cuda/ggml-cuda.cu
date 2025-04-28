@@ -1759,17 +1759,17 @@ static void ggml_cuda_mul_mat_batched_cublas(ggml_backend_cuda_context & ctx, co
     const void * alpha = &alpha_f16;
     const void * beta  = &beta_f16;
 
+    bool test = false;
+
     // convert src1 to fp16
     ggml_cuda_pool_alloc<half> src1_f16_alloc(ctx.pool());
     if (src1->type != GGML_TYPE_F16) {
-        alpha_f32 = 16.0f;
-        alpha_f16 = alpha_f32;
-
         const to_fp16_cuda_t to_fp16_cuda = ggml_get_to_fp16_cuda(src1->type);
         const int64_t ne_src1 = ggml_nelements(src1);
         src1_f16_alloc.alloc(ne_src1);
         GGML_ASSERT(to_fp16_cuda != nullptr);
-        to_fp16_cuda(src1_ddf, src1_f16_alloc.get(), ne_src1, 1.0f/alpha_f32, main_stream);
+        to_fp16_cuda(src1_ddf, src1_f16_alloc.get(), ne_src1, 1.0f/16.0f, main_stream);
+        test = true;
     }
     half * src1_f16 = src1->type == GGML_TYPE_F16 ? (half *) src1_ddf : src1_f16_alloc.get();
 
@@ -1879,7 +1879,7 @@ static void ggml_cuda_mul_mat_batched_cublas(ggml_backend_cuda_context & ctx, co
 
     if (dst->op_params[0] == GGML_PREC_DEFAULT && cu_data_type == CUDA_R_16F) {
         const to_fp32_cuda_t to_fp32_cuda = ggml_get_to_fp32_cuda(GGML_TYPE_F16);
-        to_fp32_cuda(dst_f16.get(), dst_ddf, ne_dst, 1.0f, main_stream);
+        to_fp32_cuda(dst_f16.get(), dst_ddf, ne_dst, test ? 16.0f : 1.0f, main_stream);
     }
 }
 
