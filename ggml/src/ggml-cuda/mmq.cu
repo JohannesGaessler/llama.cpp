@@ -88,7 +88,6 @@ void ggml_cuda_mul_mat_q(
     float       *  dst_d = (float       *)  dst->data;
 
     const int64_t ne10_padded = GGML_PAD(ne10, MATRIX_ROW_PADDING);
-    ggml_cuda_pool_alloc<char> src1_q8_1(ctx.pool());
 
     const int64_t s01 = src0->nb[1] / ts_src0;
     const int64_t s1  =  dst->nb[1] / ts_dst;
@@ -102,7 +101,7 @@ void ggml_cuda_mul_mat_q(
     if (!ids) {
         const size_t nbytes_src1_q8_1 = ne13*ne12 * ne11*ne10_padded * sizeof(block_q8_1)/QK8_1 +
             get_mmq_x_max_host(cc)*sizeof(block_q8_1_mmq);
-        src1_q8_1.alloc(nbytes_src1_q8_1);
+        ggml_cuda_pool_alloc<char> src1_q8_1(ctx.pool(), nbytes_src1_q8_1);
 
         {
             const int64_t s11 = src1->nb[1] / ts_src1;
@@ -175,7 +174,7 @@ void ggml_cuda_mul_mat_q(
     GGML_ASSERT(ne13 == 1);
     const size_t nbytes_src1_q8_1 = ne12*n_expert_used*ne10_padded * sizeof(block_q8_1)/QK8_1 +
         get_mmq_x_max_host(cc)*sizeof(block_q8_1_mmq);
-    src1_q8_1.alloc(nbytes_src1_q8_1);
+    ggml_cuda_pool_alloc<char> src1_q8_1(ctx.pool(), nbytes_src1_q8_1);
 
     GGML_ASSERT(nb1 == ne0*ts_dst);
     GGML_ASSERT(nb12 % nb11 == 0);
