@@ -735,7 +735,7 @@ void launch_fattn(
     if (need_f16_V && V->type != GGML_TYPE_F16) {
         V_f16.alloc(ggml_nelements(V));
         to_fp16_cuda_t to_fp16 = ggml_get_to_fp16_cuda(V->type);
-        to_fp16(V_data, V_f16.ptr, ggml_nelements(V), main_stream);
+        to_fp16(V_data, V_f16.ptr, ggml_nelements(V), 1.0f, main_stream);
         V_data = (char *) V_f16.ptr;
 
         const size_t bs = ggml_blck_size(V->type);
