@@ -128,15 +128,15 @@ void ggml_cuda_mul_mat_q(
     const int64_t ne_get_rows = ne12 * n_expert_used;
 
     std::vector<char> ids_host(ggml_nbytes(ids));
-    std::vector<int32_t> get_rows_to_sorted_host;
-    get_rows_to_sorted_host.reserve(ne_get_rows);
-    std::vector<int32_t> get_rows_to_sorted_host2;
-    get_rows_to_sorted_host2.reserve(ne_get_rows);
+    std::vector<int32_t> ids_src1_host;
+    ids_src1_host.reserve(ne_get_rows);
+    std::vector<int32_t> ids_dst_host;
+    ids_dst_host.reserve(ne_get_rows);
     std::vector<int32_t> tokens_per_expert_host(ne02);
-    std::vector<int32_t> tokens_per_expert_cum_host(ne02 + 1);
-    ggml_cuda_pool_alloc<int32_t> get_rows_to_sorted_dev(ctx.pool(), ne_get_rows);
-    ggml_cuda_pool_alloc<int32_t> get_rows_to_sorted_dev2(ctx.pool(), ne_get_rows);
-    ggml_cuda_pool_alloc<int32_t> tokens_per_expert_cum_dev(ctx.pool(), ne02 + 1);
+    std::vector<int32_t> expert_bounds_host(ne02 + 1);
+    ggml_cuda_pool_alloc<int32_t> ids_src1_dev(ctx.pool(), ne_get_rows);
+    ggml_cuda_pool_alloc<int32_t> ids_dst_dev(ctx.pool(), ne_get_rows);
+    ggml_cuda_pool_alloc<int32_t> expert_bounds_dev(ctx.pool(), ne02 + 1);
 
     CUDA_CHECK(cudaMemcpyAsync(ids_host.data(), ids->data, ggml_nbytes(ids), cudaMemcpyDeviceToHost, stream));
     CUDA_CHECK(cudaStreamSynchronize(stream));
@@ -147,8 +147,8 @@ void ggml_cuda_mul_mat_q(
                 const int32_t expert_to_use = *(const int32_t *)(ids_host.data() + i12*ids->nb[1] + iex*ids->nb[0]);
                 assert(expert_to_use >= 0 && expert_to_use < ne02);
                 if (expert_to_use == i02) {
-                    get_rows_to_sorted_host.push_back(i12*(nb12/nb11) + iex % ne11);
-                    get_rows_to_sorted_host2.push_back(i12*ne1 + iex);
+                    ids_src1_host.push_back(i12*(nb12/nb11) + iex % ne11);
+                    ids_dst_host.push_back(i12*ne1 + iex);
                     tokens_per_expert_host[i02]++;
                     break;
                 }
@@ -158,16 +158,14 @@ void ggml_cuda_mul_mat_q(
 
     int32_t cumsum = 0;
     for (size_t i = 0; i < ne02; ++i) {
-        tokens_per_expert_cum_host[i] = cumsum;
+        expert_bounds_host[i] = cumsum;
         cumsum += tokens_per_expert_host[i];
     }
-    tokens_per_expert_cum_host[ne02] = cumsum;
+    expert_bounds_host[ne02] = cumsum;
 
-    CUDA_CHECK(cudaMemcpyAsync(get_rows_to_sorted_dev.ptr, get_rows_to_sorted_host.data(),
-        ne_get_rows*sizeof(int32_t), cudaMemcpyHostToDevice, stream));
-    CUDA_CHECK(cudaMemcpyAsync(get_rows_to_sorted_dev2.ptr, get_rows_to_sorted_host2.data(),
-        ne_get_rows*sizeof(int32_t), cudaMemcpyHostToDevice, stream));
-    CUDA_CHECK(cudaMemcpyAsync(tokens_per_expert_cum_dev.ptr, tokens_per_expert_cum_host.data(),
+    CUDA_CHECK(cudaMemcpyAsync(ids_src1_dev.ptr, ids_src1_host.data(), ne_get_rows*sizeof(int32_t), cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaMemcpyAsync(ids_dst_dev.ptr,  ids_dst_host.data(),  ne_get_rows*sizeof(int32_t), cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaMemcpyAsync(expert_bounds_dev.ptr, expert_bounds_host.data(),
         (ne02 + 1)*sizeof(int32_t), cudaMemcpyHostToDevice, stream));
     CUDA_CHECK(cudaStreamSynchronize(stream));
 
@@ -187,7 +185,7 @@ void ggml_cuda_mul_mat_q(
         const int64_t s11 = src1->nb[1] / ts_src1;
         const int64_t s12 = src1->nb[2] / ts_src1;
         const int64_t s13 = src1->nb[2] / ts_src1;
-        quantize_mmq_q8_1_cuda(src1_d, get_rows_to_sorted_dev.ptr, src1_q8_1.get(), src0->type,
+        quantize_mmq_q8_1_cuda(src1_d, ids_src1_dev.ptr, src1_q8_1.get(), src0->type,
             ne10, s11, s12, s13, ne10_padded, ne11_flat, ne12_flat, ne13_flat, stream);
     }
 
@@ -196,7 +194,7 @@ void ggml_cuda_mul_mat_q(
 
     // Note that ne02 is used instead of ne12 because the number of y channels determines the z dimension of the CUDA grid.
     const mmq_args args = {
-        src0_d, src0->type, src1_q8_1.ptr, get_rows_to_sorted_dev2.ptr, tokens_per_expert_cum_dev.ptr, dst_d,
+        src0_d, src0->type, src1_q8_1.ptr, ids_dst_dev.ptr, expert_bounds_dev.ptr, dst_d,
         ne00, ne01, ne_get_rows, s01, s1,
         ne02, ne02, s02, s12, s2,
         ne03, ne13, s03, s13, s3,
