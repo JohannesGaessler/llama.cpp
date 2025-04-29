@@ -139,7 +139,7 @@ void ggml_cuda_mul_mat_q(
     std::vector<int32_t> tokens_per_expert_host(ne02);
     std::vector<int32_t> expert_bounds_host(ne02 + 1);
     ggml_cuda_pool_alloc<int32_t> ids_src1_dev(ctx.pool(), ne_get_rows);
-    ggml_cuda_pool_alloc<int32_t> ids_dst_dev(ctx.pool(), ne_get_rows);
+    ggml_cuda_pool_alloc<int32_t> ids_dst_dev(ctx.pool(), ne_get_rows + 128); // FIXME
     ggml_cuda_pool_alloc<int32_t> expert_bounds_dev(ctx.pool(), ne02 + 1);
 
     CUDA_CHECK(cudaMemcpyAsync(ids_host.data(), ids->data, ggml_nbytes(ids), cudaMemcpyDeviceToHost, stream));

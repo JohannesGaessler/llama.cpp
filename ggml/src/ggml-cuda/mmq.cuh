@@ -2525,8 +2525,8 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
     constexpr int              mmq_y      = get_mmq_y_device();
     constexpr load_tiles_mmq_t load_tiles = mmq_type_traits<mmq_x, mmq_y, nwarps, need_check, type>::load_tiles;
 
-    extern __shared__ char data_mul_mat_q[];
-    int * tile_y = (int *) data_mul_mat_q;
+    extern __shared__ int data_mul_mat_q[];
+    int * tile_y = data_mul_mat_q + mmq_x;
     int * tile_x = tile_y + GGML_PAD(mmq_x*(WARP_SIZE + WARP_SIZE/QI8_1), nwarps*WARP_SIZE);
 
 #ifdef NEW_MMA_AVAILABLE
@@ -2622,7 +2622,7 @@ static __global__ void mul_mat_q(
     // Initialize the ids for writing back data with just the index.
     // For regular matrix multiplications this is never changed.
     // For MoE the correct indices are loaded from ids_dst.
-    __shared__ int ids_dst_shared[mmq_x];
+    extern __shared__ int ids_dst_shared[]; // Stored at beginning of shared memory.
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += nwarps*WARP_SIZE) {
         const int j = j0 + threadIdx.y*WARP_SIZE + threadIdx.x;
@@ -2661,7 +2661,7 @@ static __global__ void mul_mat_q(
                 return;
             }
 
-            for (int j = threadIdx.y*WARP_SIZE + threadIdx.x; j < col_diff; j += nwarps*WARP_SIZE) {
+            for (int j = threadIdx.y*WARP_SIZE + threadIdx.x; j < mmq_x; j += nwarps*WARP_SIZE) {
                 ids_dst_shared[j] = ids_dst[col_low + j];
             }
         }
@@ -2721,10 +2721,16 @@ static __global__ void mul_mat_q(
             offset_dst = 0;
 
             if (jt*mmq_x >= col_diff) {
-                return;
+                kbc += blocks_per_ne00;
+                kbc -= kbc % blocks_per_ne00;
+
+                kb0_start = 0;
+                kb0_stop  = min(blocks_per_ne00, kbc_stop - kbc);
+
+                continue;
             }
 
-            for (int j = threadIdx.y*WARP_SIZE + threadIdx.x; j < col_diff; j += nwarps*WARP_SIZE) {
+            for (int j = threadIdx.y*WARP_SIZE + threadIdx.x; j < mmq_x; j += nwarps*WARP_SIZE) {
                 ids_dst_shared[j] = ids_dst[col_low + j];
             }
         }
@@ -2739,7 +2745,7 @@ static __global__ void mul_mat_q(
 
         constexpr bool fixup = false; // All but (potentially) the last iterations write their data to dst rather than the fixup buffer.
         mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
-            (x, offset_x, y + offset_y, nullptr, dst + offset_dst, tmp_fixup, nrows_x, ncols_y, stride_row_x, stride_col_dst,
+            (x, offset_x, y + offset_y, ids_dst_shared, dst + offset_dst, tmp_fixup, nrows_x, ncols_y, stride_row_x, stride_col_dst,
              tile_x_max_i, tile_y_max_j, kb0_start, kb0_stop);
 
         kbc += blocks_per_ne00;
@@ -2781,8 +2787,16 @@ static __global__ void mul_mat_q(
             return;
         }
 
-        for (int j = threadIdx.y*WARP_SIZE + threadIdx.x; j < col_diff; j += nwarps*WARP_SIZE) {
-            ids_dst_shared[j] = ids_dst[col_low + j];
+        // The memory layout for the fixup buffer is always contiguous, therefore reset ids:
+#pragma unroll
+        for (int j0 = 0; j0 < mmq_x; j0 += nwarps*WARP_SIZE) {
+            const int j = j0 + threadIdx.y*WARP_SIZE + threadIdx.x;
+
+            if (j0 + nwarps*WARP_SIZE > mmq_x && j >= mmq_x) {
+                break;
+            }
+
+            ids_dst_shared[j] = j;
         }
     }
 
@@ -2796,14 +2810,14 @@ static __global__ void mul_mat_q(
 
     constexpr bool fixup = true; // Last index writes its data to fixup buffer to avoid data races with other blocks.
     mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
-        (x, offset_x, y + offset_y, nullptr, dst + offset_dst, tmp_fixup, nrows_x, ncols_y, stride_row_x, stride_col_dst,
+        (x, offset_x, y + offset_y, ids_dst_shared, dst + offset_dst, tmp_fixup, nrows_x, ncols_y, stride_row_x, stride_col_dst,
          tile_x_max_i, tile_y_max_j, kb0_start, kb0_stop);
 }
 
 
 template <ggml_type type, int mmq_x, int nwarps, bool need_check>
 static __global__ void mul_mat_q_stream_k_fixup(
-        float * __restrict__ dst, const float * __restrict__ tmp_last_tile,
+        const int32_t * ids_dst, const int32_t * expert_bounds, float * __restrict__ dst, const float * __restrict__ tmp_last_tile,
         const int ncols_x, const int nrows_x, const int ncols_y, const int stride_col_dst,
         const int nchannels_y, const int stride_channel_dst, const int nsamples_y, const int stride_sample_dst) {
     constexpr int     mmq_y           = get_mmq_y_device();
@@ -2883,11 +2897,49 @@ static __global__ void mul_mat_q_stream_k_fixup(
     tmp -= jt * (nty*blocks_per_ne00);
     const int it = tmp / blocks_per_ne00;
 
-    const int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*mmq_x*stride_col_dst + it*mmq_y;
+    if (!ids_dst) {
+        const int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*mmq_x*stride_col_dst + it*mmq_y;
+        dst += offset_dst;
+
+        const int i_max = nrows_x - it*mmq_y - 1;
+        const int j_max = ncols_y - jt*mmq_x - 1;
+
+#pragma unroll
+        for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
+            const int j = j0 + threadIdx.y;
+
+            if (j > j_max) {
+                return;
+            }
+
+#pragma unroll
+            for (int i0 = 0; i0 < mmq_y; i0 += WARP_SIZE) {
+                const int i = i0 + threadIdx.x;
+
+                if (need_check && i > i_max) {
+                    continue;
+                }
+
+                dst[j*stride_col_dst + i] += sum[(j0/nwarps) * (mmq_y/WARP_SIZE) + i0/WARP_SIZE];
+            }
+        }
+        return;
+    }
+
+    __shared__ int ids_dst_shared[mmq_x];
+    const int col_low  = expert_bounds[zt + 0];
+    const int col_high = expert_bounds[zt + 1];
+    const int col_diff = col_high - col_low;
+
+    for (int j = threadIdx.y*WARP_SIZE + threadIdx.x; j < mmq_x; j += nwarps*WARP_SIZE) {
+        ids_dst_shared[j] = ids_dst[col_low + j];
+    }
+
+    const int offset_dst = it*mmq_y;
     dst += offset_dst;
 
-    const int i_max = nrows_x - it*mmq_y - 1;
-    const int j_max = ncols_y - jt*mmq_x - 1;
+    const int i_max = nrows_x  - it*mmq_y - 1;
+    const int j_max = col_diff - jt*mmq_x - 1;
 
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
@@ -2905,7 +2957,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
                 continue;
             }
 
-            dst[j*stride_col_dst + i] += sum[(j0/nwarps) * (mmq_y/WARP_SIZE) + i0/WARP_SIZE];
+            dst[ids_dst_shared[j]*stride_col_dst + i] += sum[(j0/nwarps) * (mmq_y/WARP_SIZE) + i0/WARP_SIZE];
         }
     }
 }
@@ -2922,9 +2974,10 @@ template<ggml_type type>
 static int mmq_get_shmem(const int mmq_x, const int mmq_y, const int cc) {
     const tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(type, mmq_y);
     const int mmq_tile_x_k = mmq_get_mma_tile_x_k(type);
+    const int shmem_ids = mmq_x*sizeof(int);
     const int shmem_x = new_mma_available(cc) ? mmq_y*mmq_tile_x_k*sizeof(int) : txs.qs*sizeof(int) + txs.dm*sizeof(half2) + txs.sc*sizeof(int);
     const int shmem_y = mmq_x*sizeof(block_q8_1_mmq);
-    return shmem_x + GGML_PAD(shmem_y, MMQ_NWARPS*WARP_SIZE*sizeof(int));
+    return shmem_ids + shmem_x + GGML_PAD(shmem_y, MMQ_NWARPS*WARP_SIZE*sizeof(int));
 }
 
 template <ggml_type type, int mmq_x>
@@ -2991,8 +3044,8 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
              sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst);
 
         mul_mat_q_stream_k_fixup<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_stream_k, block_dims, 0, stream>>>
-            (args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.ncols_y, args.nrows_dst,
-             args.nchannels_y, args.stride_channel_dst, args.nsamples_y, args.stride_sample_dst);
+            (args.ids_dst, args.expert_bounds, args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.ncols_y,
+             args.nrows_dst, args.nchannels_y, args.stride_channel_dst, args.nsamples_y, args.stride_sample_dst);
     } else {
         constexpr bool need_check = true;
 
@@ -3003,8 +3056,8 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
              sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst);
 
         mul_mat_q_stream_k_fixup<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_stream_k, block_dims, 0, stream>>>
-            (args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.ncols_y, args.nrows_dst,
-             args.nchannels_y, args.stride_channel_dst, args.nsamples_y, args.stride_sample_dst);
+            (args.ids_dst, args.expert_bounds, args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.ncols_y,
+             args.nrows_dst, args.nchannels_y, args.stride_channel_dst, args.nsamples_y, args.stride_sample_dst);
     }
 }
 
