@@ -2603,8 +2603,8 @@ static __global__ void mul_mat_q(
         const char * __restrict__ x, const char * __restrict__ yc, const int32_t * __restrict__ ids_dst,
         const int32_t * __restrict__ expert_bounds, float * __restrict__ dst, float * __restrict__ tmp_fixup,
         const int ncols_x, const int nrows_x, const int ncols_y, const int stride_row_x, const int stride_col_dst,
-        const int channel_ratio, const int nchannels_y, const int scx, const int scy, const int scdst,
-        const int sample_ratio, const int nsamples_y, const int ssx, const int ssy, const int ssdst) {
+        const int channel_ratio, const int nchannels_y, const int stride_channel_x, const int stride_channel_y, const int stride_channel_dst,
+        const int sample_ratio, const int nsamples_y, const int stride_sample_x, const int stride_sample_y, const int stride_sample_dst) {
     const int * y = (const int *) yc;
 
     // Skip unused template specializations for faster compilation:
@@ -2642,12 +2642,12 @@ static __global__ void mul_mat_q(
         const int jt = blockIdx.y;
         const int it = blockIdx.x;
 
-        int col_low  = 0;
-        int col_high = ncols_y;
-        int col_diff = ncols_y;
-
-        int offset_y   = wt*ssy   + zt*scy;
-        int offset_dst = wt*ssdst + zt*scdst + jt*mmq_x*stride_col_dst;
+        // Defaults for regular matrix multiplication:
+        int col_low    = 0;
+        int col_high   = ncols_y;
+        int col_diff   = ncols_y;
+        int offset_y   = wt*stride_sample_y   + zt*stride_channel_y;
+        int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*mmq_x*stride_col_dst;
 
         if (ids_dst) {
             col_low  = expert_bounds[zt + 0];
@@ -2672,7 +2672,7 @@ static __global__ void mul_mat_q(
         const int tile_x_max_i = nrows_x  - it*mmq_y - 1;
         const int tile_y_max_j = col_diff - jt*mmq_x - 1;
 
-        const int offset_x = (wt/sample_ratio)*ssx + (zt/channel_ratio)*scx + it*mmq_y*stride_row_x;
+        const int offset_x = (wt/sample_ratio)*stride_sample_x + (zt/channel_ratio)*stride_channel_x + it*mmq_y*stride_row_x;
 
         constexpr bool fixup = false;
         mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
@@ -2705,13 +2705,37 @@ static __global__ void mul_mat_q(
         tmp -= jt * (nty*blocks_per_ne00);
         const int it = tmp / blocks_per_ne00;
 
-        const int offset_x   = (wt/sample_ratio)*ssx   + (zt/channel_ratio)*scx                             + it*mmq_y*stride_row_x;
-        const int offset_dst =  wt              *ssdst +  zt               *scdst + jt*mmq_x*stride_col_dst + it*mmq_y;
+        // Defaults for regular matrix multiplication:
+        int col_low    = 0;
+        int col_high   = ncols_y;
+        int col_diff   = ncols_y;
+        int offset_y   = wt*stride_sample_y   + zt*stride_channel_y;
+        int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*mmq_x*stride_col_dst;
 
-        const int offset_y = wt*ssy + zt*scy + jt*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
+        if (ids_dst) {
+            col_low  = expert_bounds[zt + 0];
+            col_high = expert_bounds[zt + 1];
+            col_diff = col_high - col_low;
 
-        const int tile_x_max_i = nrows_x - it*mmq_y - 1;
-        const int tile_y_max_j = ncols_y - jt*mmq_x - 1;
+            offset_y   = 0;
+            offset_dst = 0;
+
+            if (jt*mmq_x >= col_diff) {
+                return;
+            }
+
+            for (int j = threadIdx.y*WARP_SIZE + threadIdx.x; j < col_diff; j += nwarps*WARP_SIZE) {
+                ids_dst_shared[j] = ids_dst[col_low + j];
+            }
+        }
+
+        offset_y   += (col_low + jt*mmq_x)*(sizeof(block_q8_1_mmq)/sizeof(int));
+        offset_dst += it*mmq_y;
+
+        const int tile_x_max_i = nrows_x  - it*mmq_y - 1;
+        const int tile_y_max_j = col_diff - jt*mmq_x - 1;
+
+        const int offset_x = (wt/sample_ratio)*stride_sample_x + (zt/channel_ratio)*stride_channel_x + it*mmq_y*stride_row_x;
 
         constexpr bool fixup = false; // All but (potentially) the last iterations write their data to dst rather than the fixup buffer.
         mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
@@ -2738,13 +2762,37 @@ static __global__ void mul_mat_q(
     tmp -= jt * (nty*blocks_per_ne00);
     const int it = tmp / blocks_per_ne00;
 
-    const int offset_x   = (wt/sample_ratio)*ssx   + (zt/channel_ratio)*scx                             + it*mmq_y*stride_row_x;
-    const int offset_dst =  wt              *ssdst +  zt               *scdst + jt*mmq_x*stride_col_dst + it*mmq_y;
+    // Defaults for regular matrix multiplication:
+    int col_low    = 0;
+    int col_high   = ncols_y;
+    int col_diff   = ncols_y;
+    int offset_y   = wt*stride_sample_y   + zt*stride_channel_y;
+    int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*mmq_x*stride_col_dst;
 
-    const int offset_y = wt*ssy + zt*scy + jt*(mmq_x*sizeof(block_q8_1_mmq)/sizeof(int));
+    if (ids_dst) {
+        col_low  = expert_bounds[zt + 0];
+        col_high = expert_bounds[zt + 1];
+        col_diff = col_high - col_low;
 
-    const int tile_x_max_i = nrows_x - it*mmq_y - 1;
-    const int tile_y_max_j = ncols_y - jt*mmq_x - 1;
+        offset_y   = 0;
+        offset_dst = 0;
+
+        if (jt*mmq_x >= col_diff) {
+            return;
+        }
+
+        for (int j = threadIdx.y*WARP_SIZE + threadIdx.x; j < col_diff; j += nwarps*WARP_SIZE) {
+            ids_dst_shared[j] = ids_dst[col_low + j];
+        }
+    }
+
+    offset_y   += (col_low + jt*mmq_x)*(sizeof(block_q8_1_mmq)/sizeof(int));
+    offset_dst += it*mmq_y;
+
+    const int tile_x_max_i = nrows_x  - it*mmq_y - 1;
+    const int tile_y_max_j = col_diff - jt*mmq_x - 1;
+
+    const int offset_x = (wt/sample_ratio)*stride_sample_x + (zt/channel_ratio)*stride_channel_x + it*mmq_y*stride_row_x;
 
     constexpr bool fixup = true; // Last index writes its data to fixup buffer to avoid data races with other blocks.
     mul_mat_q_process_tile<type, mmq_x, nwarps, need_check, fixup>
