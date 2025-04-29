@@ -1,6 +1,8 @@
 #include "mmq.cuh"
 #include "quantize.cuh"
 
+#include <vector>
+
 static void ggml_cuda_mul_mat_q_switch_type(ggml_backend_cuda_context & ctx, const mmq_args & args, cudaStream_t stream) {
     switch (args.type_x) {
         case GGML_TYPE_Q4_0:
@@ -138,9 +140,7 @@ void ggml_cuda_mul_mat_q(
     ids_dst_host.reserve(ne_get_rows);
     std::vector<int32_t> tokens_per_expert_host(ne02);
     std::vector<int32_t> expert_bounds_host(ne02 + 1);
-    ggml_cuda_pool_alloc<int32_t> ids_src1_dev(ctx.pool(), ne_get_rows);
-    ggml_cuda_pool_alloc<int32_t> ids_dst_dev(ctx.pool(), ne_get_rows + 128); // FIXME
-    ggml_cuda_pool_alloc<int32_t> expert_bounds_dev(ctx.pool(), ne02 + 1);
+    ggml_cuda_pool_alloc<int32_t> ids_buf_dev(ctx.pool());
 
     CUDA_CHECK(cudaMemcpyAsync(ids_host.data(), ids->data, ggml_nbytes(ids), cudaMemcpyDeviceToHost, stream));
     CUDA_CHECK(cudaStreamSynchronize(stream));
@@ -167,11 +167,18 @@ void ggml_cuda_mul_mat_q(
     }
     expert_bounds_host[ne02] = cumsum;
 
-    CUDA_CHECK(cudaMemcpyAsync(ids_src1_dev.ptr, ids_src1_host.data(), ne_get_rows*sizeof(int32_t), cudaMemcpyHostToDevice, stream));
-    CUDA_CHECK(cudaMemcpyAsync(ids_dst_dev.ptr,  ids_dst_host.data(),  ne_get_rows*sizeof(int32_t), cudaMemcpyHostToDevice, stream));
-    CUDA_CHECK(cudaMemcpyAsync(expert_bounds_dev.ptr, expert_bounds_host.data(),
-        (ne02 + 1)*sizeof(int32_t), cudaMemcpyHostToDevice, stream));
+    std::vector<int32_t> ids_buf_host;
+    ids_buf_host.reserve(ids_src1_host.size() + ids_dst_host.size() + expert_bounds_host.size());
+    ids_buf_host.insert(ids_buf_host.end(), ids_src1_host.begin(), ids_src1_host.end());
+    ids_buf_host.insert(ids_buf_host.end(), ids_dst_host.begin(), ids_dst_host.end());
+    ids_buf_host.insert(ids_buf_host.end(), expert_bounds_host.begin(), expert_bounds_host.end());
+    ids_buf_dev.alloc(ids_buf_host.size() + get_mmq_x_max_host(cc)); // Expert bounds are padded on device.
+    CUDA_CHECK(cudaMemcpyAsync(ids_buf_dev.ptr, ids_buf_host.data(), ids_buf_host.size()*sizeof(int32_t), cudaMemcpyHostToDevice, stream));
     CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    const int32_t * ids_src1_dev      = ids_buf_dev.ptr;
+    const int32_t * ids_dst_dev       = ids_src1_dev + ids_src1_host.size();
+    const int32_t * expert_bounds_dev = ids_dst_dev + ids_dst_host.size();
 
     const size_t nbytes_src1_q8_1 = ne12*n_expert_used*ne10_padded * sizeof(block_q8_1)/QK8_1 +
         get_mmq_x_max_host(cc)*sizeof(block_q8_1_mmq);
@@ -185,7 +192,7 @@ void ggml_cuda_mul_mat_q(
         const int64_t s11 = src1->nb[1] / ts_src1;
         const int64_t s12 = src1->nb[2] / ts_src1;
         const int64_t s13 = src1->nb[2] / ts_src1;
-        quantize_mmq_q8_1_cuda(src1_d, ids_src1_dev.ptr, src1_q8_1.get(), src0->type,
+        quantize_mmq_q8_1_cuda(src1_d, ids_src1_dev, src1_q8_1.get(), src0->type,
             ne10, s11, s12, s13, ne10_padded, ne11_flat, ne12_flat, ne13_flat, stream);
     }
 
@@ -194,7 +201,7 @@ void ggml_cuda_mul_mat_q(
 
     // Note that ne02 is used instead of ne12 because the number of y channels determines the z dimension of the CUDA grid.
     const mmq_args args = {
-        src0_d, src0->type, src1_q8_1.ptr, ids_dst_dev.ptr, expert_bounds_dev.ptr, dst_d,
+        src0_d, src0->type, src1_q8_1.ptr, ids_dst_dev, expert_bounds_dev, dst_d,
         ne00, ne01, ne_get_rows, s01, s1,
         ne02, ne02, s02, s12, s2,
         ne03, ne13, s03, s13, s3,

@@ -3083,7 +3083,7 @@ void mul_mat_q_case(ggml_backend_cuda_context & ctx, const mmq_args & args, cuda
         const int ntiles_x = (args.ncols_y + mmq_x - 1) / mmq_x;
 
         if (ntiles_x < ntiles_x_best) {
-            mmq_x_best  = mmq_x;
+            mmq_x_best = mmq_x;
             ntiles_x_best = ntiles_x;
         }
     }
