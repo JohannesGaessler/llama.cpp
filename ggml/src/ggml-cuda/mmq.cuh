@@ -3036,9 +3036,13 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     }
 
     const dim3 block_nums_stream_k(nsm, 1, 1);
+    const bool fixup_needed = ntx*nty*ntzw % nsm != 0;
 
     ggml_cuda_pool & pool = ctx.pool(id);
-    ggml_cuda_pool_alloc<float> tmp_fixup(pool, block_nums_stream_k.x * mmq_x*mmq_y);
+    ggml_cuda_pool_alloc<float> tmp_fixup(pool);
+    if (fixup_needed) {
+        tmp_fixup.alloc(block_nums_stream_k.x * mmq_x*mmq_y);
+    }
 
     if (args.nrows_x % mmq_y == 0) {
         constexpr bool need_check = false;
@@ -3048,6 +3052,10 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
              args.ncols_x, args.nrows_x, args.ncols_y, args.stride_row_x, args.nrows_dst,
              channel_ratio, args.nchannels_y, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
              sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst);
+
+        if (!fixup_needed) {
+            return;
+        }
 
         mul_mat_q_stream_k_fixup<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_stream_k, block_dims, 0, stream>>>
             (args.ids_dst, args.expert_bounds, args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.ncols_y,
@@ -3060,6 +3068,10 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
              args.ncols_x, args.nrows_x, args.ncols_y, args.stride_row_x, args.nrows_dst,
              channel_ratio, args.nchannels_y, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
              sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst);
+
+        if (!fixup_needed) {
+            return;
+        }
 
         mul_mat_q_stream_k_fixup<type, mmq_x, MMQ_NWARPS, need_check><<<block_nums_stream_k, block_dims, 0, stream>>>
             (args.ids_dst, args.expert_bounds, args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.ncols_y,
