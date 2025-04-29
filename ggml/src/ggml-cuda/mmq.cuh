@@ -2661,7 +2661,14 @@ static __global__ void mul_mat_q(
                 return;
             }
 
-            for (int j = threadIdx.y*WARP_SIZE + threadIdx.x; j < mmq_x; j += nwarps*WARP_SIZE) {
+#pragma unroll
+            for (int j0 = 0; j0 < mmq_x; j0 += nwarps*WARP_SIZE) {
+                const int j = j0 + threadIdx.y*WARP_SIZE + threadIdx.x;
+
+                if (j0 + nwarps*WARP_SIZE > mmq_x && j >= mmq_x) {
+                    break;
+                }
+
                 ids_dst_shared[j] = ids_dst[col_low + jt*mmq_x + j];
             }
         }
