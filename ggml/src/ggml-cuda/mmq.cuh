@@ -2662,7 +2662,7 @@ static __global__ void mul_mat_q(
             }
 
             for (int j = threadIdx.y*WARP_SIZE + threadIdx.x; j < mmq_x; j += nwarps*WARP_SIZE) {
-                ids_dst_shared[j] = ids_dst[col_low + j];
+                ids_dst_shared[j] = ids_dst[col_low + jt*mmq_x + j];
             }
         }
 
@@ -2731,7 +2731,7 @@ static __global__ void mul_mat_q(
             }
 
             for (int j = threadIdx.y*WARP_SIZE + threadIdx.x; j < mmq_x; j += nwarps*WARP_SIZE) {
-                ids_dst_shared[j] = ids_dst[col_low + j];
+                ids_dst_shared[j] = ids_dst[col_low + jt*mmq_x + j];
             }
         }
 
