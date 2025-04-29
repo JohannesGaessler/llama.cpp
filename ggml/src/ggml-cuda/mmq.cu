@@ -124,6 +124,10 @@ void ggml_cuda_mul_mat_q(
         return;
     }
 
+    GGML_ASSERT(ne13 == 1);
+    GGML_ASSERT(nb12 % nb11 == 0);
+    GGML_ASSERT(nb2  % nb1  == 0);
+
     const int64_t n_expert_used = ids->ne[0];
     const int64_t ne_get_rows = ne12 * n_expert_used;
 
@@ -157,7 +161,7 @@ void ggml_cuda_mul_mat_q(
     }
 
     int32_t cumsum = 0;
-    for (size_t i = 0; i < ne02; ++i) {
+    for (int64_t i = 0; i < ne02; ++i) {
         expert_bounds_host[i] = cumsum;
         cumsum += tokens_per_expert_host[i];
     }
@@ -169,14 +173,10 @@ void ggml_cuda_mul_mat_q(
         (ne02 + 1)*sizeof(int32_t), cudaMemcpyHostToDevice, stream));
     CUDA_CHECK(cudaStreamSynchronize(stream));
 
-    GGML_ASSERT(ne13 == 1);
     const size_t nbytes_src1_q8_1 = ne12*n_expert_used*ne10_padded * sizeof(block_q8_1)/QK8_1 +
         get_mmq_x_max_host(cc)*sizeof(block_q8_1_mmq);
     ggml_cuda_pool_alloc<char> src1_q8_1(ctx.pool(), nbytes_src1_q8_1);
 
-    GGML_ASSERT(nb1 == ne0*ts_dst);
-    GGML_ASSERT(nb12 % nb11 == 0);
-    GGML_ASSERT(nb2  % nb1  == 0);
     const int64_t ne11_flat = ne12*n_expert_used;
     const int64_t ne12_flat = 1;
     const int64_t ne13_flat = 1;
