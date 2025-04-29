@@ -2017,6 +2017,8 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
 
     GGML_TENSOR_BINARY_OP_LOCALS
 
+    const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
+
     if (src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32) {
         if (ne2 == 1) {
             if (ggml_is_quantized(src0->type)) {
@@ -2027,7 +2029,7 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
             return;
         }
 
-        if (ggml_is_quantized(src0->type)) {
+        if (ggml_cuda_should_use_mmq(src0->type, cc, ne12)) {
             ggml_cuda_mul_mat_q(ctx, src0, src1, ids, dst);
             return;
         }
