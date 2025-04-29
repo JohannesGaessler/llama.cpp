@@ -2697,13 +2697,13 @@ static __global__ void mul_mat_q(
     int kb0_stop  = min(blocks_per_ne00, kb0_start + kbc_stop - kbc);
     while (kbc < kbc_stop && kb0_stop == blocks_per_ne00) {
         int tmp = kbc;
-        const int wt = tmp / (nchannels_y*ntx*nty*blocks_per_ne00);
-        tmp -= wt * (nchannels_y*ntx*nty*blocks_per_ne00);
-        const int zt = tmp / (ntx*nty*blocks_per_ne00);
-        tmp -= zt * (ntx*nty*blocks_per_ne00);
-        const int jt = tmp / (nty*blocks_per_ne00);
-        tmp -= jt * (nty*blocks_per_ne00);
-        const int it = tmp / blocks_per_ne00;
+        const int it = tmp / (nsamples_y*nchannels_y*ntx*blocks_per_ne00);
+        tmp -= it * (nsamples_y*nchannels_y*ntx*blocks_per_ne00);
+        const int wt = tmp / (nchannels_y*ntx*blocks_per_ne00);
+        tmp -= wt * (nchannels_y*ntx*blocks_per_ne00);
+        const int zt = tmp / (ntx*blocks_per_ne00);
+        tmp -= zt * (ntx*blocks_per_ne00);
+        const int jt = tmp / blocks_per_ne00;
 
         // Defaults for regular matrix multiplication:
         int col_low    = 0;
@@ -2760,13 +2760,13 @@ static __global__ void mul_mat_q(
     }
 
     int tmp = kbc;
-    const int wt = tmp / (nchannels_y*ntx*nty*blocks_per_ne00);
-    tmp -= wt * (nchannels_y*ntx*nty*blocks_per_ne00);
-    const int zt = tmp / (ntx*nty*blocks_per_ne00);
-    tmp -= zt * (ntx*nty*blocks_per_ne00);
-    const int jt = tmp / (nty*blocks_per_ne00);
-    tmp -= jt * (nty*blocks_per_ne00);
-    const int it = tmp / blocks_per_ne00;
+    const int it = tmp / (nsamples_y*nchannels_y*ntx*blocks_per_ne00);
+    tmp -= it * (nsamples_y*nchannels_y*ntx*blocks_per_ne00);
+    const int wt = tmp / (nchannels_y*ntx*blocks_per_ne00);
+    tmp -= wt * (nchannels_y*ntx*blocks_per_ne00);
+    const int zt = tmp / (ntx*blocks_per_ne00);
+    tmp -= zt * (ntx*blocks_per_ne00);
+    const int jt = tmp / blocks_per_ne00;
 
     // Defaults for regular matrix multiplication:
     int col_low    = 0;
@@ -2889,13 +2889,13 @@ static __global__ void mul_mat_q_stream_k_fixup(
     }
 
     int tmp = kbc0;
-    const int wt = tmp / (nchannels_y*ntx*nty*blocks_per_ne00);
-    tmp -= wt * (nchannels_y*ntx*nty*blocks_per_ne00);
-    const int zt = tmp / (ntx*nty*blocks_per_ne00);
-    tmp -= zt * (ntx*nty*blocks_per_ne00);
-    const int jt = tmp / (nty*blocks_per_ne00);
-    tmp -= jt * (nty*blocks_per_ne00);
-    const int it = tmp / blocks_per_ne00;
+    const int it = tmp / (nsamples_y*nchannels_y*ntx*blocks_per_ne00);
+    tmp -= it * (nsamples_y*nchannels_y*ntx*blocks_per_ne00);
+    const int wt = tmp / (nchannels_y*ntx*blocks_per_ne00);
+    tmp -= wt * (nchannels_y*ntx*blocks_per_ne00);
+    const int zt = tmp / (ntx*blocks_per_ne00);
+    tmp -= zt * (ntx*blocks_per_ne00);
+    const int jt = tmp / blocks_per_ne00;
 
     if (!ids_dst) {
         const int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*mmq_x*stride_col_dst + it*mmq_y;
