@@ -20,22 +20,37 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
 
     // If cp.async is available, load up to the highest power of 2 in D asynchronously:
 #ifdef CP_ASYNC_AVAILABLE
-    static_assert(D >= 64, "bad D");
-    constexpr int k0_sync_start = D/2 < 64 ? 32 : D/2 - (D/2) % 64;
-
     const unsigned int tile_KV_32 = __cvta_generic_to_shared(tile_KV);
 
     constexpr int preload = 64;
     constexpr int h2_per_chunk = 16/sizeof(half2);
-    constexpr int chunks_per_row = k0_sync_start / h2_per_chunk;
-    constexpr int stride_i = WARP_SIZE / chunks_per_row;
-#pragma unroll
-    for (int i0 = 0; i0 < KQ_per_iter; i0 += nwarps*stride_i) {
-        const int i = i0 + threadIdx.y*stride_i + (chunks_per_row % WARP_SIZE == 0 ? 0 : threadIdx.x / chunks_per_row);
-        const int k = (chunks_per_row == WARP_SIZE ? threadIdx.x : threadIdx.x % chunks_per_row)*h2_per_chunk;
+    static_assert((D/2) % h2_per_chunk == 0, "bad D");
+    constexpr int chunks_per_row = (D/2) / h2_per_chunk;
 
-        cp_async_cg_16<preload>(tile_KV_32 + (i*D2_padded + k)*sizeof(half2), KV + i*stride_KV + k);
+#pragma unroll
+    for (int stride_k : {WARP_SIZE, WARP_SIZE/2, WARP_SIZE/4}) {
+        const int k0_start = stride_k == WARP_SIZE ? 0 : chunks_per_row - chunks_per_row % (2*stride_k);
+        const int k0_stop  =                             chunks_per_row - chunks_per_row % (1*stride_k);
+        const int stride_i = WARP_SIZE / stride_k;
+
+        if (k0_start == k0_stop) {
+            continue;
+        }
+
+#pragma unroll
+        for (int i0 = 0; i0 < KQ_per_iter; i0 += nwarps*stride_i) {
+            const int i = i0 + threadIdx.y*stride_i + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
+
+#pragma unroll
+            for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
+                const int k = k0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
+
+                cp_async_cg_16<preload>(tile_KV_32 + i*(D2_padded*sizeof(half2)) + k*16, KV + i*stride_KV + k*h2_per_chunk);
+            }
+        }
     }
+
+    constexpr int k0_sync_start = h2_per_chunk * (chunks_per_row - chunks_per_row % (WARP_SIZE/4));
 #else
     constexpr int k0_sync_start = 0;
 #endif // CP_ASYNC_AVAILABLE
