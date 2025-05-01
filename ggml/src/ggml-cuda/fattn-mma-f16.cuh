@@ -988,12 +988,13 @@ static __global__ void flash_attn_ext_f16(
 template <int DKQ, int DV, int ncols1, int ncols2>
 void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     constexpr int ncols         = ncols1 * ncols2;
-    constexpr int KQ_per_iter   = DKQ <= 128 && ncols1 <= 64 ? 64 : (DKQ <= 256 ? 32 : 16);
+    constexpr int KQ_per_iter   = DKQ <= 128 && ncols1 <= 64 ? 64 : 32;
     constexpr int ntiles        = ncols <= 8 ? 1 : (ncols <= 64 ? 2 : 4); // Number of tiles per warp.
     constexpr int cols_per_warp = ntiles * tile_B::I;
     constexpr int nwarps_x      = ncols / cols_per_warp;
     constexpr int nwarps_y      = KQ_per_iter / tile_A::I;
-    constexpr int nwarps        = nwarps_x*nwarps_y <= 4 ? nwarps_x*nwarps_y : 4;
+    constexpr int nwarps_max    = 4;
+    constexpr int nwarps        = nwarps_x*nwarps_y <= nwarps_max ? nwarps_x*nwarps_y : nwarps_max;
 
     static_assert(DKQ   % tile_B::J  == 0,    "bad DKQ");
     static_assert(DV    % tile_A::J  == 0,    "bad DV");
