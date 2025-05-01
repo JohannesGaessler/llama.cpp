@@ -58,7 +58,9 @@ for vkq_size in [16, 32]:
                     f.write(SOURCE_FATTN_VEC.format(vkq_size=vkq_size, head_size=head_size, type_k=type_k, type_v=type_v))
 
 for ncols in [8, 16, 32, 64, 128]:
-    for ncols2 in [1, 2, 4, 8]:
+    for ncols2 in [1, 2, 4, 8, 16]:
+        if ncols2 > ncols:
+            continue
         ncols1 = ncols // ncols2
         if ncols == 128:
             continue  # Too much register pressure.
