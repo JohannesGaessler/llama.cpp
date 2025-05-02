@@ -644,6 +644,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     // It's faster to do small writes to shared memory, then large write to VRAM than to do small writes to VRAM.
     // Also for np > 1 the combination is done via these values in shared memory.
 
+    constexpr int nbatch_combine = Q_reg ? DV/2 : DV/4;
+    constexpr int tile_stride    = nbatch_combine + 4;
+
     if constexpr (ntiles == 1) {
         const int jc_cwmo = (threadIdx.x % (2*tile_C_VKQ::J)) / tile_C_VKQ::J; // jc combine write meta offset
         const int jc_cwm = threadIdx.y*(2*tile_C_VKQ::J) + 2*tile_C_VKQ::get_j(-1) + jc_cwmo; // jc combine write meta
@@ -651,7 +654,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
         if (((!needs_fixup && !is_fixup) || np > 1) && threadIdx.x < 2*tile_C_VKQ::J) {
             // Use the 16 bytes of padding in each row to store the meta data: KQ max, KQ rowsum, KQ max scale.
-            ((float2 *) tile_Q)[jc_cwm*(DV2_padded/2) + DV/4] = KQ_cmr;
+            ((float2 *) tile_Q)[jc_cwm*(tile_stride/2) + nbatch_combine/2] = KQ_cmr;
         }
 
         __syncthreads();
@@ -676,7 +679,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
         if (((!needs_fixup && !is_fixup) || np > 1) && (ntiles == 4 || threadIdx.x % 4 < cols_per_thread)) {
             // Use the 16 bytes of padding in each row to store the meta data: KQ max, KQ rowsum, KQ max scale.
-            ((float2 *) tile_Q)[jc_cwm*(DV2_padded/2) + DV/4] = KQ_cmr;
+            ((float2 *) tile_Q)[jc_cwm*(tile_stride/2) + nbatch_combine/2] = KQ_cmr;
         }
 
         __syncthreads();
@@ -703,11 +706,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         constexpr int nmeta = np*cols_per_warp >= WARP_SIZE ? np*cols_per_warp/WARP_SIZE : 1;
 
         const int jc_meta = threadIdx.y*cols_per_warp + (np*cols_per_warp < WARP_SIZE ? threadIdx.x % (np*cols_per_warp) : threadIdx.x);
-        float2 * const meta_ptr = ((float2 *) tile_Q) + jc_meta*(DV2_padded/2) + DV/4;
+        float2 * const meta_ptr = ((float2 *) tile_Q) + jc_meta*(tile_stride/2) + nbatch_combine/2;
         float2 meta[nmeta];
 #pragma unroll
         for (int imeta = 0; imeta < nmeta; ++imeta) {
-            meta[imeta] = meta_ptr[imeta * WARP_SIZE * DV2_padded/2];
+            meta[imeta] = meta_ptr[imeta * WARP_SIZE * tile_stride/2];
         }
 
         float KQ_cmn = meta[0].x; // KQ combine max new, max between all parallel warps.
@@ -747,7 +750,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         for (int imeta = 0; imeta < nmeta; ++imeta) {
             if (np*cols_per_warp >= WARP_SIZE || threadIdx.x < np*cols_per_warp) {
                 // Combined KQ max scale + rowsum.
-                meta_ptr[imeta * WARP_SIZE * DV2_padded/2] = make_float2(KQ_cms[imeta], KQ_crs);
+                meta_ptr[imeta * WARP_SIZE * tile_stride/2] = make_float2(KQ_cms[imeta], KQ_crs);
             }
         }
 
@@ -763,17 +766,20 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         }
     }
 
+#pragma unroll
+    for (int k00 = 0; k00 < DV/2; k00 += nbatch_combine) {
+
     if (ntiles == 1) {
         const int jc_cwd = threadIdx.y*tile_B::I + tile_B::get_i(-1); // jc combine write data
 #pragma unroll
-        for (int k0 = 0; k0 < DV/2; k0 += tile_B::J) {
-            const tile_B B = get_transposed(VKQ_C[k0/tile_B::J]); // Conversion of C to B matrix puts it in column-major format.
+        for (int k0 = 0; k0 < nbatch_combine; k0 += tile_B::J) {
+            const tile_B B = get_transposed(VKQ_C[(k00 + k0)/tile_B::J]); // Conversion of C to B matrix puts it in column-major format.
 
 #pragma unroll
             for (int l = 0; l < tile_B::ne; ++l) {
                 const int k = k0 + tile_B::get_j(l);
 
-                tile_Q[jc_cwd*DV2_padded + k] = B.x[l];
+                tile_Q[jc_cwd*tile_stride + k] = B.x[l];
             }
         }
     } else {
@@ -781,20 +787,19 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         for (int t = 0; t < ntiles/2; ++t) {
             const int j0 = threadIdx.y*cols_per_warp + t*tile_C_VKQ_16::I;
 #pragma unroll
-            for (int k0 = 0; k0 < DV/2; k0 += tile_C_VKQ_16::J) {
+            for (int k0 = 0; k0 < nbatch_combine; k0 += tile_C_VKQ_16::J) {
 #pragma unroll
                 for (int l = 0; l < tile_C_VKQ_16::ne; ++l) {
                     const int j = j0 + tile_C_VKQ_16::get_i(l);
                     const int k = k0 + tile_C_VKQ_16::get_j(l);
 
-                    tile_Q[j*DV2_padded + k] = VKQ_C_16[k0/tile_C_VKQ_16::J * ntiles/2 + t].x[l];
+                    tile_Q[j*tile_stride + k] = VKQ_C_16[(k00 + k0)/tile_C_VKQ_16::J * ntiles/2 + t].x[l];
                 }
             }
         }
     }
 
     __syncthreads();
-
 
     if (np == 1 || threadIdx.y % np == 0) {
         // The first 2*2*gridDim.x*ncols floats in dstk_fixup are for storing max. values and row sums.
@@ -803,8 +808,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
 #pragma unroll
         for (int stride_k : {WARP_SIZE, WARP_SIZE/2, WARP_SIZE/4}) {
-            const int k0_start  = stride_k == WARP_SIZE ? 0 : DV/2 - (DV/2) % (2*stride_k);
-            const int k0_stop   =                             DV/2 - (DV/2) % (1*stride_k);
+            const int k0_start  = stride_k == WARP_SIZE ? 0 : nbatch_combine - nbatch_combine % (2*stride_k);
+            const int k0_stop   =                             nbatch_combine - nbatch_combine % (1*stride_k);
             const int stride_jc = WARP_SIZE / stride_k;
 
             if (k0_start == k0_stop) {
@@ -828,7 +833,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
                     continue;
                 }
 
-                const float * meta_j = (const float *) tile_Q + jc_tile_K*DV2_padded + DV/2;
+                const float * meta_j = (const float *) tile_Q + jc_tile_K*tile_stride + nbatch_combine;
 #pragma unroll
                 for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
                     const int k = k0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
@@ -836,8 +841,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
                     float2 dstk_val = make_float2(0.0f, 0.0f);
 #pragma unroll
                     for (int ip = 0; ip < np; ++ip) {
-                        const float KQ_crs = np == 1 ? 1.0f : meta_j[ip*cols_per_warp * DV2_padded + 0];
-                        const float2 dstk_val_add = __half22float2(tile_Q[(jc_tile_K + ip*cols_per_warp) * DV2_padded + k]);
+                        const float KQ_crs = np == 1 ? 1.0f : meta_j[ip*cols_per_warp * tile_stride + 0];
+                        const float2 dstk_val_add = __half22float2(tile_Q[(jc_tile_K + ip*cols_per_warp) * tile_stride + k]);
                         dstk_val.x += dstk_val_add.x*KQ_crs;
                         dstk_val.y += dstk_val_add.y*KQ_crs;
                     }
@@ -849,17 +854,17 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
                     }
 
                     if (is_fixup) {
-                        dstk_fixup_data[jc_dst*(DV/2) + k] = dstk_val;
+                        dstk_fixup_data[jc_dst*(DV/2) + k00 + k] = dstk_val;
                     } else {
-                        dstk[((jt*ncols1 + j_dst)*ne02 + c_dst)*(DV/2) + k] = dstk_val;
+                        dstk[((jt*ncols1 + j_dst)*ne02 + c_dst)*(DV/2) + k00 + k] = dstk_val;
                     }
                 }
             }
         }
     }
-
     if (np > 1) {
         __syncthreads();
+    }
     }
 #else
     GGML_UNUSED(Q_f2); GGML_UNUSED(K_h2); GGML_UNUSED(V_h2);
