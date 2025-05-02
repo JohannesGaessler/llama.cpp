@@ -769,102 +769,102 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 #pragma unroll
     for (int k00 = 0; k00 < DV/2; k00 += nbatch_combine) {
 
-    if (ntiles == 1) {
-        const int jc_cwd = threadIdx.y*tile_B::I + tile_B::get_i(-1); // jc combine write data
+        if (ntiles == 1) {
+            const int jc_cwd = threadIdx.y*tile_B::I + tile_B::get_i(-1); // jc combine write data
 #pragma unroll
-        for (int k0 = 0; k0 < nbatch_combine; k0 += tile_B::J) {
-            const tile_B B = get_transposed(VKQ_C[(k00 + k0)/tile_B::J]); // Conversion of C to B matrix puts it in column-major format.
+            for (int k0 = 0; k0 < nbatch_combine; k0 += tile_B::J) {
+                const tile_B B = get_transposed(VKQ_C[(k00 + k0)/tile_B::J]); // Conversion of C to B matrix puts it in column-major format.
 
 #pragma unroll
-            for (int l = 0; l < tile_B::ne; ++l) {
-                const int k = k0 + tile_B::get_j(l);
+                for (int l = 0; l < tile_B::ne; ++l) {
+                    const int k = k0 + tile_B::get_j(l);
 
-                tile_Q[jc_cwd*tile_stride + k] = B.x[l];
+                    tile_Q[jc_cwd*tile_stride + k] = B.x[l];
+                }
             }
-        }
-    } else {
+        } else {
 #pragma unroll
-        for (int t = 0; t < ntiles/2; ++t) {
-            const int j0 = threadIdx.y*cols_per_warp + t*tile_C_VKQ_16::I;
+            for (int t = 0; t < ntiles/2; ++t) {
+                const int j0 = threadIdx.y*cols_per_warp + t*tile_C_VKQ_16::I;
 #pragma unroll
-            for (int k0 = 0; k0 < nbatch_combine; k0 += tile_C_VKQ_16::J) {
+                for (int k0 = 0; k0 < nbatch_combine; k0 += tile_C_VKQ_16::J) {
 #pragma unroll
-                for (int l = 0; l < tile_C_VKQ_16::ne; ++l) {
-                    const int j = j0 + tile_C_VKQ_16::get_i(l);
-                    const int k = k0 + tile_C_VKQ_16::get_j(l);
+                    for (int l = 0; l < tile_C_VKQ_16::ne; ++l) {
+                        const int j = j0 + tile_C_VKQ_16::get_i(l);
+                        const int k = k0 + tile_C_VKQ_16::get_j(l);
 
-                    tile_Q[j*tile_stride + k] = VKQ_C_16[(k00 + k0)/tile_C_VKQ_16::J * ntiles/2 + t].x[l];
+                        tile_Q[j*tile_stride + k] = VKQ_C_16[(k00 + k0)/tile_C_VKQ_16::J * ntiles/2 + t].x[l];
+                    }
                 }
             }
         }
-    }
 
-    __syncthreads();
+        __syncthreads();
 
-    if (np == 1 || threadIdx.y % np == 0) {
-        // The first 2*2*gridDim.x*ncols floats in dstk_fixup are for storing max. values and row sums.
-        // The values after that are for the partial results of the individual blocks.
-        float2 * dstk_fixup_data = dstk_fixup + gridDim.x*(2*ncols) + blockIdx.x*(ncols*(DV/2));
-
-#pragma unroll
-        for (int stride_k : {WARP_SIZE, WARP_SIZE/2, WARP_SIZE/4}) {
-            const int k0_start  = stride_k == WARP_SIZE ? 0 : nbatch_combine - nbatch_combine % (2*stride_k);
-            const int k0_stop   =                             nbatch_combine - nbatch_combine % (1*stride_k);
-            const int stride_jc = WARP_SIZE / stride_k;
-
-            if (k0_start == k0_stop) {
-                continue;
-            }
+        if (np == 1 || threadIdx.y % np == 0) {
+            // The first 2*2*gridDim.x*ncols floats in dstk_fixup are for storing max. values and row sums.
+            // The values after that are for the partial results of the individual blocks.
+            float2 * dstk_fixup_data = dstk_fixup + gridDim.x*(2*ncols) + blockIdx.x*(ncols*(DV/2));
 
 #pragma unroll
-            for (int jc0_dst = 0; jc0_dst < ncols; jc0_dst += (nwarps/np)*stride_jc) {
-                const int jc_dst = jc0_dst + (threadIdx.y/np)*stride_jc + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
+            for (int stride_k : {WARP_SIZE, WARP_SIZE/2, WARP_SIZE/4}) {
+                const int k0_start  = stride_k == WARP_SIZE ? 0 : nbatch_combine - nbatch_combine % (2*stride_k);
+                const int k0_stop   =                             nbatch_combine - nbatch_combine % (1*stride_k);
+                const int stride_jc = WARP_SIZE / stride_k;
 
-                if (jc0_dst + (nwarps/np)*stride_jc > ncols && jc_dst >= ncols) {
-                    break;
-                }
-
-                const int jc_tile_K = (jc_dst/cols_per_warp)*(np*cols_per_warp) + jc_dst % cols_per_warp;
-
-                const int j_dst = jc_dst / ncols2;
-                const int c_dst = jc_dst % ncols2;
-
-                if (!is_fixup && jt*ncols1 + j_dst >= ne01) {
+                if (k0_start == k0_stop) {
                     continue;
                 }
 
-                const float * meta_j = (const float *) tile_Q + jc_tile_K*tile_stride + nbatch_combine;
 #pragma unroll
-                for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
-                    const int k = k0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
+                for (int jc0_dst = 0; jc0_dst < ncols; jc0_dst += (nwarps/np)*stride_jc) {
+                    const int jc_dst = jc0_dst + (threadIdx.y/np)*stride_jc + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
 
-                    float2 dstk_val = make_float2(0.0f, 0.0f);
-#pragma unroll
-                    for (int ip = 0; ip < np; ++ip) {
-                        const float KQ_crs = np == 1 ? 1.0f : meta_j[ip*cols_per_warp * tile_stride + 0];
-                        const float2 dstk_val_add = __half22float2(tile_Q[(jc_tile_K + ip*cols_per_warp) * tile_stride + k]);
-                        dstk_val.x += dstk_val_add.x*KQ_crs;
-                        dstk_val.y += dstk_val_add.y*KQ_crs;
+                    if (jc0_dst + (nwarps/np)*stride_jc > ncols && jc_dst >= ncols) {
+                        break;
                     }
 
-                    if (!needs_fixup && !is_fixup) {
-                        const float KQ_rowsum_j = meta_j[1];
-                        dstk_val.x /= KQ_rowsum_j;
-                        dstk_val.y /= KQ_rowsum_j;
+                    const int jc_tile_K = (jc_dst/cols_per_warp)*(np*cols_per_warp) + jc_dst % cols_per_warp;
+
+                    const int j_dst = jc_dst / ncols2;
+                    const int c_dst = jc_dst % ncols2;
+
+                    if (!is_fixup && jt*ncols1 + j_dst >= ne01) {
+                        continue;
                     }
 
-                    if (is_fixup) {
-                        dstk_fixup_data[jc_dst*(DV/2) + k00 + k] = dstk_val;
-                    } else {
-                        dstk[((jt*ncols1 + j_dst)*ne02 + c_dst)*(DV/2) + k00 + k] = dstk_val;
+                    const float * meta_j = (const float *) tile_Q + jc_tile_K*tile_stride + nbatch_combine;
+#pragma unroll
+                    for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
+                        const int k = k0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
+
+                        float2 dstk_val = make_float2(0.0f, 0.0f);
+#pragma unroll
+                        for (int ip = 0; ip < np; ++ip) {
+                            const float KQ_crs = np == 1 ? 1.0f : meta_j[ip*cols_per_warp * tile_stride + 0];
+                            const float2 dstk_val_add = __half22float2(tile_Q[(jc_tile_K + ip*cols_per_warp) * tile_stride + k]);
+                            dstk_val.x += dstk_val_add.x*KQ_crs;
+                            dstk_val.y += dstk_val_add.y*KQ_crs;
+                        }
+
+                        if (!needs_fixup && !is_fixup) {
+                            const float KQ_rowsum_j = meta_j[1];
+                            dstk_val.x /= KQ_rowsum_j;
+                            dstk_val.y /= KQ_rowsum_j;
+                        }
+
+                        if (is_fixup) {
+                            dstk_fixup_data[jc_dst*(DV/2) + k00 + k] = dstk_val;
+                        } else {
+                            dstk[((jt*ncols1 + j_dst)*ne02 + c_dst)*(DV/2) + k00 + k] = dstk_val;
+                        }
                     }
                 }
             }
         }
-    }
-    if (np > 1) {
-        __syncthreads();
-    }
+        if (np > 1) {
+            __syncthreads();
+        }
     }
 #else
     GGML_UNUSED(Q_f2); GGML_UNUSED(K_h2); GGML_UNUSED(V_h2);
