@@ -694,38 +694,6 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         }
     }
 
-    if (ntiles == 1) {
-        const int jc_cwd = threadIdx.y*tile_B::I + tile_B::get_i(-1); // jc combine write data
-#pragma unroll
-        for (int k0 = 0; k0 < DV/2; k0 += tile_B::J) {
-            const tile_B B = get_transposed(VKQ_C[k0/tile_B::J]); // Conversion of C to B matrix puts it in column-major format.
-
-#pragma unroll
-            for (int l = 0; l < tile_B::ne; ++l) {
-                const int k = k0 + tile_B::get_j(l);
-
-                tile_Q[jc_cwd*DV2_padded + k] = B.x[l];
-            }
-        }
-    } else {
-#pragma unroll
-        for (int t = 0; t < ntiles/2; ++t) {
-            const int j0 = threadIdx.y*cols_per_warp + t*tile_C_VKQ_16::I;
-#pragma unroll
-            for (int k0 = 0; k0 < DV/2; k0 += tile_C_VKQ_16::J) {
-#pragma unroll
-                for (int l = 0; l < tile_C_VKQ_16::ne; ++l) {
-                    const int j = j0 + tile_C_VKQ_16::get_i(l);
-                    const int k = k0 + tile_C_VKQ_16::get_j(l);
-
-                    tile_Q[j*DV2_padded + k] = VKQ_C_16[k0/tile_C_VKQ_16::J * ntiles/2 + t].x[l];
-                }
-            }
-        }
-    }
-
-    __syncthreads();
-
     static_assert(np == 1 || ntiles == 1 || ntiles == 2, "bad ntiles");
     if (np > 1 && threadIdx.y % np == 0) {
         // Combine the meta data for parallel warps via shared memory.
@@ -795,9 +763,38 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         }
     }
 
-    if (np > 1) {
-        __syncthreads();
+    if (ntiles == 1) {
+        const int jc_cwd = threadIdx.y*tile_B::I + tile_B::get_i(-1); // jc combine write data
+#pragma unroll
+        for (int k0 = 0; k0 < DV/2; k0 += tile_B::J) {
+            const tile_B B = get_transposed(VKQ_C[k0/tile_B::J]); // Conversion of C to B matrix puts it in column-major format.
+
+#pragma unroll
+            for (int l = 0; l < tile_B::ne; ++l) {
+                const int k = k0 + tile_B::get_j(l);
+
+                tile_Q[jc_cwd*DV2_padded + k] = B.x[l];
+            }
+        }
+    } else {
+#pragma unroll
+        for (int t = 0; t < ntiles/2; ++t) {
+            const int j0 = threadIdx.y*cols_per_warp + t*tile_C_VKQ_16::I;
+#pragma unroll
+            for (int k0 = 0; k0 < DV/2; k0 += tile_C_VKQ_16::J) {
+#pragma unroll
+                for (int l = 0; l < tile_C_VKQ_16::ne; ++l) {
+                    const int j = j0 + tile_C_VKQ_16::get_i(l);
+                    const int k = k0 + tile_C_VKQ_16::get_j(l);
+
+                    tile_Q[j*DV2_padded + k] = VKQ_C_16[k0/tile_C_VKQ_16::J * ntiles/2 + t].x[l];
+                }
+            }
+        }
     }
+
+    __syncthreads();
+
 
     if (np == 1 || threadIdx.y % np == 0) {
         // The first 2*2*gridDim.x*ncols floats in dstk_fixup are for storing max. values and row sums.
