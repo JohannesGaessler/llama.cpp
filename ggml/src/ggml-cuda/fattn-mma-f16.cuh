@@ -1051,11 +1051,12 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     const int KQ_shared_ne = KQ_per_iter * (nstages > 1 ? DKQ + 8 + DV + 8 : std::max(DKQ, DV) + 8);
 
     const bool Q_reg = DKQ <= 256;
+    const int D_combine = Q_reg ? DV : DV/2;
 
     const size_t nbytes_shared_Q_load  = ncols                * (DKQ         + 8) * sizeof(half);
     const size_t nbytes_shared_KV      = KQ_shared_ne                             * sizeof(half);
     const size_t nbytes_shared_mask    = ncols1               * (KQ_per_iter + 8) * sizeof(half);
-    const size_t nbytes_shared_combine = nwarps*cols_per_warp * (DV          + 8) * sizeof(half);
+    const size_t nbytes_shared_combine = nwarps*cols_per_warp * (D_combine   + 8) * sizeof(half);
 
     const size_t nbytes_shared_total = std::max(nbytes_shared_combine, Q_reg ?
         std::max(nbytes_shared_Q_load,  nbytes_shared_KV + nbytes_shared_mask) :
