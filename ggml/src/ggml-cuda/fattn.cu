@@ -24,12 +24,16 @@ static void ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1(ggml_backend_cuda_con
         return;
     }
 
-    if (DKQ > 256 || Q->ne[1] <= 32/ncols2) {
-        ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, 32/ncols2, ncols2>(ctx, dst);
-        return;
-    }
+    if constexpr (DKQ <= 256) {
+        if (Q->ne[1] <= 32/ncols2) {
+            ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, 32/ncols2, ncols2>(ctx, dst);
+            return;
+        }
 
-    ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, 64/ncols2, ncols2>(ctx, dst);
+        ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, 64/ncols2, ncols2>(ctx, dst);
+    } else {
+        ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, 32/ncols2, ncols2>(ctx, dst);
+    }
 }
 
 template <int ncols2>
@@ -64,7 +68,11 @@ static void ggml_cuda_flash_attn_ext_mma_f16_switch_hs(ggml_backend_cuda_context
             break;
         case 576:
             GGML_ASSERT(V->ne[0] == 512);
-            ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<576, 512, ncols2>(ctx, dst);
+            if constexpr (ncols2 == 16) {
+                ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<576, 512, ncols2>(ctx, dst);
+            } else {
+                GGML_ABORT("fatal error");
+            }
             break;
         default:
             GGML_ABORT("fatal error");

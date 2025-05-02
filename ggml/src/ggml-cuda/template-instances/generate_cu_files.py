@@ -57,19 +57,17 @@ for vkq_size in [16, 32]:
                 with open(f"fattn-vec-f{vkq_size}-instance-hs{head_size}-{get_short_name(type_k)}-{get_short_name(type_v)}.cu", "w") as f:
                     f.write(SOURCE_FATTN_VEC.format(vkq_size=vkq_size, head_size=head_size, type_k=type_k, type_v=type_v))
 
-for ncols in [8, 16, 32, 64, 128]:
+for ncols in [8, 16, 32, 64]:
     for ncols2 in [1, 2, 4, 8, 16]:
         if ncols2 > ncols:
             continue
         ncols1 = ncols // ncols2
-        if ncols == 128:
-            continue  # Too much register pressure.
         with open(f"fattn-mma-f16-instance-ncols1_{ncols1}-ncols2_{ncols2}.cu", "w") as f:
             f.write(SOURCE_FATTN_MMA_START)
 
             for head_size_kq in [64, 80, 96, 112, 128, 256, 576]:
-                if head_size == 256 and ncols >= 128:
-                    continue  # Needs too much shared memory.
+                if head_size_kq == 576 and (ncols2 != 16 or ncols1 not in [1, 2]):
+                    continue
                 head_size_v = head_size_kq if head_size_kq != 576 else 512
                 f.write(SOURCE_FATTN_MMA_CASE.format(ncols1=ncols1, ncols2=ncols2, head_size_kq=head_size_kq, head_size_v=head_size_v))
 

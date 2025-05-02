@@ -3206,7 +3206,8 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
             return false;
 #endif // FLASH_ATTN_AVAILABLE
             if (op->src[1]->ne[0] != op->src[2]->ne[0]) {
-                return op->src[1]->ne[0] == 576 && op->src[2]->ne[0] == 512;
+                const int gqa_ratio = op->src[0]->ne[2] / op->src[1]->ne[2];
+                return op->src[1]->ne[0] == 576 && op->src[2]->ne[0] == 512 && op->src[3] && gqa_ratio % 16 == 0;
             }
             if (op->src[0]->ne[0] == 192) {
                 return false;
