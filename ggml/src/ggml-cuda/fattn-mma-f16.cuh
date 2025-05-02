@@ -123,7 +123,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_mask(
 }
 
 template<int DKQ, int DV, int ncols1, int ncols2, int nwarps, int KQ_per_iter, int ntiles,
-    bool use_cp_async, bool use_logit_softcap, bool needs_fixup, bool is_fixup, bool last_iter>
+    int nstages, bool use_logit_softcap, bool needs_fixup, bool is_fixup, bool last_iter>
 static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         const float2 * const __restrict__ Q_f2,
         const half2  * const __restrict__ K_h2,
@@ -165,15 +165,20 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     tile_C_VKQ_16 * VKQ_C_16 = (tile_C_VKQ_16 *) VKQ_C;
     tile_C_KQ_16  * KQ_C_16  = (tile_C_KQ_16  *) KQ_C;
 
-    if (use_cp_async) {
+    if (nstages > 1) {
+        constexpr bool use_cp_async = true;
         cp_async_wait_all();
         __syncthreads();
         flash_attn_ext_f16_load_tile<DV, nwarps, KQ_per_iter, use_cp_async>(V_h2 + k_VKQ_0*stride_V, tile_V, stride_V);
     } else {
+        constexpr bool use_cp_async = nstages == 1;
         if (ncols2 > 1 || mask_h2) {
             flash_attn_ext_f16_load_mask<ncols1, nwarps, KQ_per_iter, use_cp_async>(mask_h2 + k_VKQ_0/2, tile_mask, stride_mask);
         }
         flash_attn_ext_f16_load_tile<DKQ, nwarps, KQ_per_iter, use_cp_async>(K_h2 + k_VKQ_0*stride_K, tile_K, stride_K);
+        if (use_cp_async) {
+            cp_async_wait_all();
+        }
         __syncthreads();
     }
 
@@ -197,7 +202,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         }
     }
 
-    if (!use_cp_async) {
+    if (nstages <= 1) {
         __syncthreads(); // Only needed if tile_K == tile_V.
     }
 
@@ -381,8 +386,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         }
     }
 
-    if (use_cp_async) {
+    if (nstages > 1) {
         // Preload K tile for next iteration:
+        constexpr bool use_cp_async = true;
         cp_async_wait_all();
         __syncthreads();
         if (!last_iter) {
@@ -393,8 +399,12 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             flash_attn_ext_f16_load_tile<DKQ, nwarps, KQ_per_iter, use_cp_async>
                 (K_h2 + (k_VKQ_0 + KQ_per_iter)*stride_K, tile_K, stride_K);
         }
-    } else {
+    } else if (nstages == 1) {
+        constexpr bool use_cp_async = nstages == 1;
         flash_attn_ext_f16_load_tile<DV, nwarps, KQ_per_iter, use_cp_async>(V_h2 + k_VKQ_0*stride_V, tile_V, stride_V);
+        if (use_cp_async) {
+            cp_async_wait_all();
+        }
         __syncthreads();
     }
 
@@ -420,7 +430,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         }
     }
 
-    if (!use_cp_async) {
+    if (nstages <= 1) {
         __syncthreads(); // Only needed if tile_K == tile_V.
     }
 
@@ -439,7 +449,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 }
 
 template<int DKQ, int DV, int ncols1, int ncols2, int nwarps, int KQ_per_iter, int ntiles,
-    bool use_cp_async, bool use_logit_softcap, bool needs_fixup, bool is_fixup>
+    int nstages, bool use_logit_softcap, bool needs_fixup, bool is_fixup>
 static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const float2 * const __restrict__ Q_f2,
         const half2  * const __restrict__ K_h2,
@@ -479,8 +489,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
     // Temporary shared buffer for loading K/V data with KQ_per_iter*D logical elements:
     extern __shared__ half2 tile_K[];
-    half2 * tile_V    = use_cp_async ? tile_K + KQ_per_iter * DKQ2_padded : tile_K;
-    half2 * tile_mask = use_cp_async ? tile_V + KQ_per_iter * DV2_padded  :
+    half2 * tile_V    = nstages > 1 ? tile_K + KQ_per_iter * DKQ2_padded : tile_K;
+    half2 * tile_mask = nstages > 1 ? tile_V + KQ_per_iter * DV2_padded  :
         tile_V + KQ_per_iter * (DKQ2_padded > DV2_padded ? DKQ2_padded : DV2_padded);
 
     tile_B       Q_B[DKQ/(2*tile_B::J) * ntiles];
@@ -560,8 +570,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
     __syncthreads();
 
-    // Preload mask and K data for first iteration when using cp_async:
-    if (use_cp_async) {
+    // Preload mask and K data for first iteration when using cp_async with multiple stages:
+    if (nstages > 1) {
+        constexpr bool use_cp_async = true;
         if (ncols2 > 1 || mask_h2) {
             flash_attn_ext_f16_load_mask<ncols1, nwarps, KQ_per_iter, use_cp_async>
                 (mask_h2 + kb0_start*KQ_per_iter/2, tile_mask, stride_mask);
@@ -574,21 +585,21 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     for (int kb0 = kb0_start; kb0 < kb0_stop-1; ++kb0) {
         constexpr bool last_iter = false;
         flash_attn_ext_f16_iter<DKQ, DV, ncols1, ncols2, nwarps, KQ_per_iter, ntiles,
-                use_cp_async, use_logit_softcap, needs_fixup, is_fixup, last_iter>
+                nstages, use_logit_softcap, needs_fixup, is_fixup, last_iter>
             (Q_f2, K_h2, V_h2, mask_h2, dstk, dstk_fixup, scale, slope, logit_softcap,
              ne01, ne02, stride_K, stride_V, stride_mask, jt, tile_K, tile_V, tile_mask, Q_B, VKQ_C, KQ_max, KQ_rowsum, kb0);
     }
     { // kb0_start is always < kb0_stop so the last iter can be executed unconditionally.
         constexpr bool last_iter = true;
         flash_attn_ext_f16_iter<DKQ, DV, ncols1, ncols2, nwarps, KQ_per_iter, ntiles,
-                use_cp_async, use_logit_softcap, needs_fixup, is_fixup, last_iter>
+                nstages, use_logit_softcap, needs_fixup, is_fixup, last_iter>
             (Q_f2, K_h2, V_h2, mask_h2, dstk, dstk_fixup, scale, slope, logit_softcap,
              ne01, ne02, stride_K, stride_V, stride_mask, jt, tile_K, tile_V, tile_mask, Q_B, VKQ_C, KQ_max, KQ_rowsum, kb0_stop-1);
     }
 
-    // With cp_async there is no __syncthreads at the end of the iter,
+    // With multi-stage loading there is no __syncthreads at the end of the iter,
     //     there can be a race condition on shared memory access for combining/writing back results.
-    if (use_cp_async && nwarps*cols_per_warp > KQ_per_iter) {
+    if (nstages > 1 && nwarps*cols_per_warp > KQ_per_iter) {
         __syncthreads();
     }
 
@@ -900,10 +911,10 @@ static __global__ void flash_attn_ext_f16(
     constexpr int kb_niter = FATTN_KQ_STRIDE / KQ_per_iter; // Number of kernel iterations per assigned KQ slice.
 
 #ifdef CP_ASYNC_AVAILABLE
-    constexpr bool use_cp_async = true;
+    constexpr int nstages = DKQ <= 256 ? 2 : 1;
 #else
-    constexpr bool use_cp_async = false;
-#endif
+    constexpr int nstages = 0;
+#endif // CP_ASYNC_AVAILABLE
 
     // kbc == k block continuous, current index in continuous ijk space.
     int       kbc      = (blockIdx.x + 0)*iter_k*iter_j*(ne02/ncols2) / gridDim.x;
@@ -934,12 +945,12 @@ static __global__ void flash_attn_ext_f16(
         constexpr bool is_fixup = false; // All but (potentially) the last iterations write their data to dst rather than the fixup buffer.
         if (kb0_start == 0) {
             constexpr bool needs_fixup = false; // CUDA block is working on an entire tile.
-            flash_attn_ext_f16_process_tile<DKQ, DV, ncols1, ncols2, nwarps, KQ_per_iter, ntiles, use_cp_async, use_logit_softcap, needs_fixup, is_fixup>
+            flash_attn_ext_f16_process_tile<DKQ, DV, ncols1, ncols2, nwarps, KQ_per_iter, ntiles, nstages, use_logit_softcap, needs_fixup, is_fixup>
                 (Q_f2, K_h2, V_h2, mask_h2, dstk, dst_meta, scale, slope, logit_softcap,
                  ne01, ne02, stride_Q1, stride_Q2, stride_K, stride_V, stride_mask, jt, kb0_start_kernel, kb0_stop_kernel);
         } else {
             constexpr bool needs_fixup = true; // CUDA block is working on the beginning of a tile.
-            flash_attn_ext_f16_process_tile<DKQ, DV, ncols1, ncols2, nwarps, KQ_per_iter, ntiles, use_cp_async, use_logit_softcap, needs_fixup, is_fixup>
+            flash_attn_ext_f16_process_tile<DKQ, DV, ncols1, ncols2, nwarps, KQ_per_iter, ntiles, nstages, use_logit_softcap, needs_fixup, is_fixup>
                 (Q_f2, K_h2, V_h2, mask_h2, dstk, dst_meta, scale, slope, logit_softcap,
                  ne01, ne02, stride_Q1, stride_Q2, stride_K, stride_V, stride_mask, jt, kb0_start_kernel, kb0_stop_kernel);
         }
@@ -971,7 +982,7 @@ static __global__ void flash_attn_ext_f16(
 
     constexpr bool is_fixup = true; // Last index writes its data to fixup buffer to avoid data races with other blocks.
     constexpr bool needs_fixup = false;
-    flash_attn_ext_f16_process_tile<DKQ, DV, ncols1, ncols2, nwarps, KQ_per_iter, ntiles, use_cp_async, use_logit_softcap, needs_fixup, is_fixup>
+    flash_attn_ext_f16_process_tile<DKQ, DV, ncols1, ncols2, nwarps, KQ_per_iter, ntiles, nstages, use_logit_softcap, needs_fixup, is_fixup>
         (Q_f2, K_h2, V_h2, mask_h2, dstk, dst_meta, scale, slope, logit_softcap,
          ne01, ne02, stride_Q1, stride_Q2, stride_K, stride_V, stride_mask, jt, kb0_start_kernel, kb0_stop_kernel);
 #else
@@ -1005,8 +1016,8 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     static_assert(ncols % cols_per_warp == 0, "bad ncols");
 
     const ggml_tensor * KQV = dst;
-    const int id    = ggml_cuda_get_device();
-    const int cc    = ggml_cuda_info().devices[id].cc;
+    const int id = ggml_cuda_get_device();
+    const int cc = ggml_cuda_info().devices[id].cc;
 
     const int KQ_shared_ne = KQ_per_iter * (cp_async_available(cc) ? DKQ + 8 + DV + 8 : std::max(DKQ, DV) + 8);
 
