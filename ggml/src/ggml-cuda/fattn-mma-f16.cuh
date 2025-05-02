@@ -1019,7 +1019,8 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     const int id = ggml_cuda_get_device();
     const int cc = ggml_cuda_info().devices[id].cc;
 
-    const int KQ_shared_ne = KQ_per_iter * (cp_async_available(cc) ? DKQ + 8 + DV + 8 : std::max(DKQ, DV) + 8);
+    const int nstages = cp_async_available(cc) ? (DKQ <= 256 ? 2 : 1) : 0;
+    const int KQ_shared_ne = KQ_per_iter * (nstages > 1 ? DKQ + 8 + DV + 8 : std::max(DKQ, DV) + 8);
 
     const size_t nbytes_shared_Q_load  = ncols                * (DKQ         + 8) * sizeof(half);
     const size_t nbytes_shared_KV      = KQ_shared_ne                             * sizeof(half);
@@ -1101,7 +1102,7 @@ DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 96,  96,  64)
 DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(112, 112,  64)
 DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(128, 128,  64)
 DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(256, 256,  64)
-// DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(576, 512,  64) // Needs too much shared memory.
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(576, 512,  64)
 
 // Kernels with ncols == 128 are only 4% faster due to register pressure.
 // DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 64, 128)

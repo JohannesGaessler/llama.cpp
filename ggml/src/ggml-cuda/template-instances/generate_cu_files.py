@@ -68,7 +68,7 @@ for ncols in [8, 16, 32, 64, 128]:
             f.write(SOURCE_FATTN_MMA_START)
 
             for head_size_kq in [64, 80, 96, 112, 128, 256, 576]:
-                if (head_size == 256 and ncols >= 128) or (head_size >= 512 and ncols >= 64):
+                if head_size == 256 and ncols >= 128:
                     continue  # Needs too much shared memory.
                 head_size_v = head_size_kq if head_size_kq != 576 else 512
                 f.write(SOURCE_FATTN_MMA_CASE.format(ncols1=ncols1, ncols2=ncols2, head_size_kq=head_size_kq, head_size_v=head_size_v))
