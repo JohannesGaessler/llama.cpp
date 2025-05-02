@@ -122,8 +122,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_mask(
     }
 }
 
-template<int DKQ, int DV, int ncols1, int ncols2, int nwarps, int KQ_per_iter, int ntiles,
-    int nstages, bool use_logit_softcap, bool needs_fixup, bool is_fixup, bool last_iter>
+template<int DKQ, int DV, int ncols1, int ncols2, int nwarps, int KQ_per_iter, int ntiles, int nstages,
+        bool Q_reg, bool use_logit_softcap, bool needs_fixup, bool is_fixup, bool last_iter>
 static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         const float2 * const __restrict__ Q_f2,
         const half2  * const __restrict__ K_h2,
@@ -140,6 +140,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         const int stride_V,
         const int stride_mask,
         const int jt,
+        half2        * const __restrict__ tile_Q,
         half2        * const __restrict__ tile_K,
         half2        * const __restrict__ tile_V,
         half2        * const __restrict__ tile_mask,
@@ -183,21 +184,39 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     }
 
     // Calculate tile of KQ:
+    if constexpr (Q_reg) {
 #pragma unroll
-    for (int i_KQ_00 = 0; i_KQ_00 < KQ_per_iter; i_KQ_00 += np*tile_A::I) {
-        const int i_KQ_0 = i_KQ_00 + (threadIdx.y % np)*tile_A::I;
+        for (int i_KQ_00 = 0; i_KQ_00 < KQ_per_iter; i_KQ_00 += np*tile_A::I) {
+            const int i_KQ_0 = i_KQ_00 + (threadIdx.y % np)*tile_A::I;
+#pragma unroll
+            for (int k_KQ_0 = 0; k_KQ_0 < DKQ/2; k_KQ_0 += tile_A::J) {
+                tile_A K_A;
+                load_ldmatrix(K_A, tile_K + i_KQ_0*DKQ2_padded + k_KQ_0, DKQ2_padded);
+                if (ntiles == 1) {
+                    mma(KQ_C[i_KQ_00/(np*tile_A::I)], K_A, Q_B[k_KQ_0/tile_A::J]);
+                } else {
+#pragma unroll
+                    for (int t = 0; t < ntiles/2; ++t) {
+                        // Wide version of KQ_C is column-major => swap A and B.
+                        mma(KQ_C_16[i_KQ_00/(np*tile_A::I) * ntiles/2 + t], Q_B_16[k_KQ_0/tile_A::J * ntiles/2 + t], K_A);
+                    }
+                }
+            }
+        }
+    } else {
 #pragma unroll
         for (int k_KQ_0 = 0; k_KQ_0 < DKQ/2; k_KQ_0 += tile_A::J) {
-            tile_A K_A;
-            load_ldmatrix(K_A, tile_K + i_KQ_0*DKQ2_padded + k_KQ_0, DKQ2_padded);
-            if (ntiles == 1) {
-                mma(KQ_C[i_KQ_00/(np*tile_A::I)], K_A, Q_B[k_KQ_0/tile_A::J]);
-            } else {
+            load_ldmatrix(Q_B_16[0], tile_Q + (threadIdx.y / np)*(tile_B_16::I*DKQ2_padded) + k_KQ_0, DKQ2_padded);
+
 #pragma unroll
-                for (int t = 0; t < ntiles/2; ++t) {
-                    // Wide version of KQ_C is column-major => swap A and B.
-                    mma(KQ_C_16[i_KQ_00/(np*tile_A::I) * ntiles/2 + t], Q_B_16[k_KQ_0/tile_A::J * ntiles/2 + t], K_A);
-                }
+            for (int i_KQ_00 = 0; i_KQ_00 < KQ_per_iter; i_KQ_00 += np*tile_A::I) {
+                const int i_KQ_0 = i_KQ_00 + (threadIdx.y % np)*tile_A::I;
+
+                tile_A K_A;
+                load_ldmatrix(K_A, tile_K + i_KQ_0*DKQ2_padded + k_KQ_0, DKQ2_padded);
+
+                // Wide version of KQ_C is column-major => swap A and B.
+                mma(KQ_C_16[i_KQ_00/(np*tile_A::I)], Q_B_16[0], K_A);
             }
         }
     }
@@ -487,13 +506,16 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     constexpr int DKQ2_padded = DKQ/2 + 4;
     constexpr int DV2_padded  =  DV/2 + 4;
 
+    constexpr bool Q_reg = ntiles == 1 || DKQ <= 256;
+
     // Temporary shared buffer for loading K/V data with KQ_per_iter*D logical elements:
-    extern __shared__ half2 tile_K[];
+    extern __shared__ half2 tile_Q[];
+    half2 * tile_K    = Q_reg ? tile_Q : tile_Q + ncols * DKQ2_padded;
     half2 * tile_V    = nstages > 1 ? tile_K + KQ_per_iter * DKQ2_padded : tile_K;
     half2 * tile_mask = nstages > 1 ? tile_V + KQ_per_iter * DV2_padded  :
         tile_V + KQ_per_iter * (DKQ2_padded > DV2_padded ? DKQ2_padded : DV2_padded);
 
-    tile_B       Q_B[DKQ/(2*tile_B::J) * ntiles];
+    tile_B       Q_B[(Q_reg ? DKQ/(2*tile_B::J) : 1) * ntiles];
     tile_C_VKQ VKQ_C[DV/tile_C_VKQ::I  * ntiles];
 
     tile_B_16     * Q_B_16   = (tile_B_16     *) Q_B;
@@ -506,7 +528,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         KQ_max[col] = -FLT_MAX/2.0f;
     }
 
-    // Temporarily load Q data into tile_K, will be loaded into registers afterwards.
+    // Temporarily load Q data into tile_K, will be loaded into registers afterwards. FIXME
     // The loading is done with decreasing granularity for D for better memory bandwidth.
     const half2 scale_h2 = make_half2(scale, scale);
 #pragma unroll
@@ -536,14 +558,14 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
                     const int k = k0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
 
                     const float2 tmp = Q_f2[(jt*ncols1 + j)*stride_Q1 + c*stride_Q2 + k];
-                    tile_K[jc*DKQ2_padded + k] = scale_h2 * make_half2(tmp.x, tmp.y);
+                    tile_Q[jc*DKQ2_padded + k] = scale_h2 * make_half2(tmp.x, tmp.y);
                 }
             } else {
 #pragma unroll
                 for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
                     const int k = k0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
 
-                    tile_K[jc*DKQ2_padded + k] = make_half2(0.0f, 0.0f);
+                    tile_Q[jc*DKQ2_padded + k] = make_half2(0.0f, 0.0f);
                 }
             }
         }
@@ -551,18 +573,18 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
     __syncthreads();
 
-    {
+    if (Q_reg) {
         const int j0 = (threadIdx.y / np) * cols_per_warp;
 
 #pragma unroll
         for (int k0 = 0; k0 < DKQ/2; k0 += tile_B::J) {
             if (ntiles == 1) {
-                load_ldmatrix(Q_B[k0/tile_B::J], tile_K + j0*DKQ2_padded + k0, DKQ2_padded);
+                load_ldmatrix(Q_B[k0/tile_B::J], tile_Q + j0*DKQ2_padded + k0, DKQ2_padded);
             } else {
 #pragma unroll
                 for (int t = 0; t < ntiles/2; ++t) {
                     load_ldmatrix(Q_B_16[k0/tile_B_16::J * ntiles/2 + t],
-                        tile_K + (j0 + t*tile_B_16::I)*DKQ2_padded + k0, DKQ2_padded);
+                        tile_Q + (j0 + t*tile_B_16::I)*DKQ2_padded + k0, DKQ2_padded);
                 }
             }
         }
@@ -584,17 +606,17 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     // Iterate over ne11 == previous tokens:
     for (int kb0 = kb0_start; kb0 < kb0_stop-1; ++kb0) {
         constexpr bool last_iter = false;
-        flash_attn_ext_f16_iter<DKQ, DV, ncols1, ncols2, nwarps, KQ_per_iter, ntiles,
-                nstages, use_logit_softcap, needs_fixup, is_fixup, last_iter>
+        flash_attn_ext_f16_iter<DKQ, DV, ncols1, ncols2, nwarps, KQ_per_iter, ntiles, nstages,
+                Q_reg, use_logit_softcap, needs_fixup, is_fixup, last_iter>
             (Q_f2, K_h2, V_h2, mask_h2, dstk, dstk_fixup, scale, slope, logit_softcap,
-             ne01, ne02, stride_K, stride_V, stride_mask, jt, tile_K, tile_V, tile_mask, Q_B, VKQ_C, KQ_max, KQ_rowsum, kb0);
+             ne01, ne02, stride_K, stride_V, stride_mask, jt, tile_Q, tile_K, tile_V, tile_mask, Q_B, VKQ_C, KQ_max, KQ_rowsum, kb0);
     }
     { // kb0_start is always < kb0_stop so the last iter can be executed unconditionally.
         constexpr bool last_iter = true;
-        flash_attn_ext_f16_iter<DKQ, DV, ncols1, ncols2, nwarps, KQ_per_iter, ntiles,
-                nstages, use_logit_softcap, needs_fixup, is_fixup, last_iter>
+        flash_attn_ext_f16_iter<DKQ, DV, ncols1, ncols2, nwarps, KQ_per_iter, ntiles, nstages,
+                Q_reg, use_logit_softcap, needs_fixup, is_fixup, last_iter>
             (Q_f2, K_h2, V_h2, mask_h2, dstk, dstk_fixup, scale, slope, logit_softcap,
-             ne01, ne02, stride_K, stride_V, stride_mask, jt, tile_K, tile_V, tile_mask, Q_B, VKQ_C, KQ_max, KQ_rowsum, kb0_stop-1);
+             ne01, ne02, stride_K, stride_V, stride_mask, jt, tile_Q, tile_K, tile_V, tile_mask, Q_B, VKQ_C, KQ_max, KQ_rowsum, kb0_stop-1);
     }
 
     // With multi-stage loading there is no __syncthreads at the end of the iter,
@@ -630,7 +652,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
             for (int l = 0; l < tile_B::ne; ++l) {
                 const int k = k0 + tile_B::get_j(l);
 
-                tile_K[jc_cwd*DV2_padded + k] = B.x[l];
+                tile_Q[jc_cwd*DV2_padded + k] = B.x[l];
             }
         }
     } else {
@@ -644,7 +666,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
                     const int j = j0 + tile_C_VKQ_16::get_i(l);
                     const int k = k0 + tile_C_VKQ_16::get_j(l);
 
-                    tile_K[j*DV2_padded + k] = VKQ_C_16[k0/tile_C_VKQ_16::J * ntiles/2 + t].x[l];
+                    tile_Q[j*DV2_padded + k] = VKQ_C_16[k0/tile_C_VKQ_16::J * ntiles/2 + t].x[l];
                 }
             }
         }
@@ -657,7 +679,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
         if (((!needs_fixup && !is_fixup) || np > 1) && threadIdx.x < 2*tile_C_VKQ::J) {
             // Use the 16 bytes of padding in each row to store the meta data: KQ max, KQ rowsum, KQ max scale.
-            ((float2 *) tile_K)[jc_cwm*(DV2_padded/2) + DV/4] = KQ_cmr;
+            ((float2 *) tile_Q)[jc_cwm*(DV2_padded/2) + DV/4] = KQ_cmr;
         }
 
         __syncthreads();
@@ -682,7 +704,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
         if (((!needs_fixup && !is_fixup) || np > 1) && (ntiles == 4 || threadIdx.x % 4 < cols_per_thread)) {
             // Use the 16 bytes of padding in each row to store the meta data: KQ max, KQ rowsum, KQ max scale.
-            ((float2 *) tile_K)[jc_cwm*(DV2_padded/2) + DV/4] = KQ_cmr;
+            ((float2 *) tile_Q)[jc_cwm*(DV2_padded/2) + DV/4] = KQ_cmr;
         }
 
         __syncthreads();
@@ -709,7 +731,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         constexpr int nmeta = np*cols_per_warp >= WARP_SIZE ? np*cols_per_warp/WARP_SIZE : 1;
 
         const int jc_meta = threadIdx.y*cols_per_warp + (np*cols_per_warp < WARP_SIZE ? threadIdx.x % (np*cols_per_warp) : threadIdx.x);
-        float2 * const meta_ptr = ((float2 *) tile_K) + jc_meta*(DV2_padded/2) + DV/4;
+        float2 * const meta_ptr = ((float2 *) tile_Q) + jc_meta*(DV2_padded/2) + DV/4;
         float2 meta[nmeta];
 #pragma unroll
         for (int imeta = 0; imeta < nmeta; ++imeta) {
@@ -805,7 +827,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
                     continue;
                 }
 
-                const float * meta_j = (const float *) tile_K + jc_tile_K*DV2_padded + DV/2;
+                const float * meta_j = (const float *) tile_Q + jc_tile_K*DV2_padded + DV/2;
 #pragma unroll
                 for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
                     const int k = k0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
@@ -814,7 +836,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 #pragma unroll
                     for (int ip = 0; ip < np; ++ip) {
                         const float KQ_crs = np == 1 ? 1.0f : meta_j[ip*cols_per_warp * DV2_padded + 0];
-                        const float2 dstk_val_add = __half22float2(tile_K[(jc_tile_K + ip*cols_per_warp) * DV2_padded + k]);
+                        const float2 dstk_val_add = __half22float2(tile_Q[(jc_tile_K + ip*cols_per_warp) * DV2_padded + k]);
                         dstk_val.x += dstk_val_add.x*KQ_crs;
                         dstk_val.y += dstk_val_add.y*KQ_crs;
                     }
@@ -1022,12 +1044,16 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     const int nstages = cp_async_available(cc) ? (DKQ <= 256 ? 2 : 1) : 0;
     const int KQ_shared_ne = KQ_per_iter * (nstages > 1 ? DKQ + 8 + DV + 8 : std::max(DKQ, DV) + 8);
 
+    const bool Q_reg = ntiles == 1 || DKQ <= 256;
+
     const size_t nbytes_shared_Q_load  = ncols                * (DKQ         + 8) * sizeof(half);
     const size_t nbytes_shared_KV      = KQ_shared_ne                             * sizeof(half);
     const size_t nbytes_shared_mask    = ncols1               * (KQ_per_iter + 8) * sizeof(half);
     const size_t nbytes_shared_combine = nwarps*cols_per_warp * (DV          + 8) * sizeof(half);
 
-    const size_t nbytes_shared_total = std::max(nbytes_shared_Q_load, std::max(nbytes_shared_KV + nbytes_shared_mask, nbytes_shared_combine));
+    const size_t nbytes_shared_total = std::max(nbytes_shared_combine, Q_reg ?
+        std::max(nbytes_shared_Q_load,  nbytes_shared_KV + nbytes_shared_mask) :
+                 nbytes_shared_Q_load + nbytes_shared_KV + nbytes_shared_mask);
 
     float logit_softcap;
     memcpy(&logit_softcap, (const float *) KQV->op_params + 2, sizeof(float));
