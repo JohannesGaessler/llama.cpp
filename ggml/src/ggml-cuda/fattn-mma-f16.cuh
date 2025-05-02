@@ -900,7 +900,7 @@ static __global__ void flash_attn_ext_f16(
     constexpr int kb_niter = FATTN_KQ_STRIDE / KQ_per_iter; // Number of kernel iterations per assigned KQ slice.
 
 #ifdef CP_ASYNC_AVAILABLE
-    constexpr bool use_cp_async = DKQ <= 256;
+    constexpr bool use_cp_async = true;
 #else
     constexpr bool use_cp_async = false;
 #endif
@@ -1008,7 +1008,7 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     const int id    = ggml_cuda_get_device();
     const int cc    = ggml_cuda_info().devices[id].cc;
 
-    const int KQ_shared_ne = KQ_per_iter * (cp_async_available(cc) && DKQ <= 256 ? DKQ + 8 + DV + 8 : std::max(DKQ, DV) + 8);
+    const int KQ_shared_ne = KQ_per_iter * (cp_async_available(cc) ? DKQ + 8 + DV + 8 : std::max(DKQ, DV) + 8);
 
     const size_t nbytes_shared_Q_load  = ncols                * (DKQ         + 8) * sizeof(half);
     const size_t nbytes_shared_KV      = KQ_shared_ne                             * sizeof(half);
