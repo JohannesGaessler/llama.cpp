@@ -96,12 +96,12 @@ struct fattn_mma_f16_config<576, 512> {
     static constexpr int  nbatch_combine = 128;
 };
 
-template<int stride_tile, int nwarps, int KQ_per_iter, bool use_cp_async>
+template<int stride_tile, int nwarps, int nbatch_fa, bool use_cp_async>
 static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
         const half2 * const __restrict__ KV, half2 * const __restrict__ tile_KV, const int D2, const int stride_KV) {
 
     // K/V data is loaded with decreasing granularity for D for better memory bandwidth.
-    // The granularity with cp.async is 16 bytes, with synchronous data loading it's 4 bytes.
+    // The minimum granularity with cp.async is 16 bytes, with synchronous data loading it's 4 bytes.
 
     if (use_cp_async) {
         const unsigned int tile_KV_32 = __cvta_generic_to_shared(tile_KV);
@@ -122,10 +122,10 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
             }
 
 #pragma unroll
-            for (int i0 = 0; i0 < KQ_per_iter; i0 += nwarps*stride_i) {
+            for (int i0 = 0; i0 < nbatch_fa; i0 += nwarps*stride_i) {
                 const int i = i0 + threadIdx.y*stride_i + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
 
-                if (i0 + nwarps*stride_i > KQ_per_iter && i >= KQ_per_iter) {
+                if (i0 + nwarps*stride_i > nbatch_fa && i >= nbatch_fa) {
                     break;
                 }
 
@@ -138,7 +138,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
             }
         }
     } else {
-        static_assert(KQ_per_iter % (4*nwarps) == 0, "out of bounds");
+        static_assert(nbatch_fa % (4*nwarps) == 0, "out of bounds");
 #pragma unroll
         for (int stride_k : {WARP_SIZE, WARP_SIZE/2, WARP_SIZE/4}) {
             const int k0_start = stride_k == WARP_SIZE ? 0 : D2 - D2 % (2*stride_k);
@@ -150,10 +150,10 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
             }
 
 #pragma unroll
-            for (int i0 = 0; i0 < KQ_per_iter; i0 += nwarps*stride_i) {
+            for (int i0 = 0; i0 < nbatch_fa; i0 += nwarps*stride_i) {
                 const int i = i0 + threadIdx.y*stride_i + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
 
-                if (i0 + nwarps*stride_i > KQ_per_iter && i >= KQ_per_iter) {
+                if (i0 + nwarps*stride_i > nbatch_fa && i >= nbatch_fa) {
                     break;
                 }
 
@@ -168,14 +168,14 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
     }
 }
 
-template<int ncols1, int nwarps, int KQ_per_iter, bool use_cp_async>
+template<int ncols1, int nwarps, int nbatch_fa, bool use_cp_async>
 static __device__ __forceinline__ void flash_attn_ext_f16_load_mask(
         const half2 * const __restrict__ mask_h2, half2 * const __restrict__ tile_mask, const int stride_mask) {
-    static_assert(KQ_per_iter == 2*WARP_SIZE || WARP_SIZE % KQ_per_iter == 0, "bad KQ_per_iter");
+    static_assert(nbatch_fa == 2*WARP_SIZE || WARP_SIZE % nbatch_fa == 0, "bad KQ_per_iter");
 
     if (use_cp_async) {
-        constexpr int preload = KQ_per_iter >= 32 ? KQ_per_iter * sizeof(half) : 64;
-        constexpr int cols_per_warp = 8*WARP_SIZE/KQ_per_iter;
+        constexpr int preload = nbatch_fa >= 32 ? nbatch_fa * sizeof(half) : 64;
+        constexpr int cols_per_warp = 8*WARP_SIZE/nbatch_fa;
         constexpr int stride_j = nwarps * cols_per_warp;
 
         const unsigned int tile_mask_32 = __cvta_generic_to_shared(tile_mask);
@@ -183,32 +183,32 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_mask(
 #pragma unroll
         for (int j0 = 0; j0 < ncols1; j0 += stride_j) {
             const int j = j0 + threadIdx.y*cols_per_warp +
-                (KQ_per_iter == 2*WARP_SIZE ? threadIdx.x / (WARP_SIZE/4) : threadIdx.x / (WARP_SIZE/cols_per_warp));
+                (nbatch_fa == 2*WARP_SIZE ? threadIdx.x / (WARP_SIZE/4) : threadIdx.x / (WARP_SIZE/cols_per_warp));
 
             if (j0 + stride_j > ncols1 && j >= ncols1) {
                 break;
             }
 
-            const int i = 4 * (threadIdx.x % (KQ_per_iter/8));
+            const int i = 4 * (threadIdx.x % (nbatch_fa/8));
 
-            cp_async_cg_16<preload>(tile_mask_32 + j*(KQ_per_iter*sizeof(half) + 16) + i*sizeof(half2), mask_h2 + j*stride_mask + i);
+            cp_async_cg_16<preload>(tile_mask_32 + j*(nbatch_fa*sizeof(half) + 16) + i*sizeof(half2), mask_h2 + j*stride_mask + i);
         }
         return;
     }
 
-    constexpr int cols_per_warp = 2*WARP_SIZE/KQ_per_iter;
+    constexpr int cols_per_warp = 2*WARP_SIZE/nbatch_fa;
     constexpr int stride_j = nwarps * cols_per_warp;
 #pragma unroll
     for (int j0 = 0; j0 < ncols1; j0 += stride_j) {
-        const int j = j0 + threadIdx.y*cols_per_warp + (KQ_per_iter == 2*WARP_SIZE ? 0 : threadIdx.x / (WARP_SIZE/cols_per_warp));
+        const int j = j0 + threadIdx.y*cols_per_warp + (nbatch_fa == 2*WARP_SIZE ? 0 : threadIdx.x / (WARP_SIZE/cols_per_warp));
 
         if (j0 + stride_j > ncols1 && j >= ncols1) {
             break;
         }
 
-        const int i = KQ_per_iter == 2*WARP_SIZE ? threadIdx.x : threadIdx.x % (WARP_SIZE/cols_per_warp);
+        const int i = nbatch_fa == 2*WARP_SIZE ? threadIdx.x : threadIdx.x % (WARP_SIZE/cols_per_warp);
 
-        tile_mask[j*(KQ_per_iter/2 + 4) + i] = mask_h2[j*stride_mask + i];
+        tile_mask[j*(nbatch_fa/2 + 4) + i] = mask_h2[j*stride_mask + i];
     }
 }
 
