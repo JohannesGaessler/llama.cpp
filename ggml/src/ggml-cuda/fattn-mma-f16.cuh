@@ -13,6 +13,89 @@ typedef tile<16, 16, float> tile_C_KQ_16;
 typedef tile<16,  4, half2> tile_C_VKQ;
 typedef tile<16,  8, half2> tile_C_VKQ_16;
 
+// Config options for specific head sizes.
+// Should not affect results, only speed/register pressure/shared memory use.
+//
+// nbatch_fa: number of KV rows per softmax rescaling of KQ rowsums and VKQ accumulators.
+// Q_in_reg: whether the Q values should be kept permanently in registers.
+// nstages: number of pipeline stages for cp_async, 0 means synchronous data loading.
+// nbatch_K: number of K half2 values in direction of DKQ to load in parallel, -1 means no limit.
+// nbatch_V: number of V half2 values in direction of DV to load in parallel, -1 means no limit.
+// nbatch_combine: number of VKQ half2 values in direction of DV to combine in parallel, -1 means no limit.
+
+template <int DKQ, int DV>
+struct fattn_mma_f16_config;
+
+template <>
+struct fattn_mma_f16_config< 64,  64> {
+    static constexpr int  nbatch_fa      = 64;
+    static constexpr bool Q_in_reg       = true;
+    static constexpr int  nstages        = 2;
+    static constexpr int  nbatch_K       = -1;
+    static constexpr int  nbatch_V       = -1;
+    static constexpr int  nbatch_combine = -1;
+};
+
+template <>
+struct fattn_mma_f16_config< 80,  80> {
+    static constexpr int  nbatch_fa      = 64;
+    static constexpr bool Q_in_reg       = true;
+    static constexpr int  nstages        = 2;
+    static constexpr int  nbatch_K       = -1;
+    static constexpr int  nbatch_V       = -1;
+    static constexpr int  nbatch_combine = -1;
+};
+
+template <>
+struct fattn_mma_f16_config< 96,  96> {
+    static constexpr int  nbatch_fa      = 64;
+    static constexpr bool Q_in_reg       = true;
+    static constexpr int  nstages        = 2;
+    static constexpr int  nbatch_K       = -1;
+    static constexpr int  nbatch_V       = -1;
+    static constexpr int  nbatch_combine = -1;
+};
+
+template <>
+struct fattn_mma_f16_config<112, 112> {
+    static constexpr int  nbatch_fa      = 64;
+    static constexpr bool Q_in_reg       = true;
+    static constexpr int  nstages        = 2;
+    static constexpr int  nbatch_K       = -1;
+    static constexpr int  nbatch_V       = -1;
+    static constexpr int  nbatch_combine = -1;
+};
+
+template <>
+struct fattn_mma_f16_config<128, 128> {
+    static constexpr int  nbatch_fa      = 64;
+    static constexpr bool Q_in_reg       = true;
+    static constexpr int  nstages        = 2;
+    static constexpr int  nbatch_K       = -1;
+    static constexpr int  nbatch_V       = -1;
+    static constexpr int  nbatch_combine = -1;
+};
+
+template <>
+struct fattn_mma_f16_config<256, 256> {
+    static constexpr int  nbatch_fa      = 32;
+    static constexpr bool Q_in_reg       = true;
+    static constexpr int  nstages        = 2;
+    static constexpr int  nbatch_K       = -1;
+    static constexpr int  nbatch_V       = -1;
+    static constexpr int  nbatch_combine = -1;
+};
+
+template <>
+struct fattn_mma_f16_config<576, 512> {
+    static constexpr int  nbatch_fa      = 32;
+    static constexpr bool Q_in_reg       = false;
+    static constexpr int  nstages        = 1;
+    static constexpr int  nbatch_K       = 312;
+    static constexpr int  nbatch_V       = 256;
+    static constexpr int  nbatch_combine = 256;
+};
+
 template<int stride_tile, int nwarps, int KQ_per_iter, bool use_cp_async>
 static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
         const half2 * const __restrict__ KV, half2 * const __restrict__ tile_KV, const int D2, const int stride_KV) {
@@ -914,7 +997,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 #endif // NEW_MMA_AVAILABLE
 }
 
-template<int DKQ, int DV, int ncols1, int ncols2, int nwarps, int KQ_per_iter, int ntiles, bool use_logit_softcap>
+template<int DKQ, int DV, int ncols1, int ncols2, int nwarps, int ntiles, bool use_logit_softcap>
 __launch_bounds__(nwarps*WARP_SIZE, 8/nwarps)
 static __global__ void flash_attn_ext_f16(
         const char * __restrict__ Q,
@@ -960,7 +1043,9 @@ static __global__ void flash_attn_ext_f16(
         return;
     }
 
-    static_assert(FATTN_KQ_STRIDE % KQ_per_iter == 0, "bad KQ_per_iter");
+    constexpr int nbatch_fa = fattn_mma_f16_config<DKQ, DV>::nbatch_fa;
+
+    static_assert(FATTN_KQ_STRIDE % nbatch_fa == 0, "bad nbatch_fa");
 
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
 
@@ -973,7 +1058,7 @@ static __global__ void flash_attn_ext_f16(
     const int iter_k = ne11 / FATTN_KQ_STRIDE;
     const int iter_j = (ne01 + (ncols1 - 1)) / ncols1;
 
-    constexpr int kb_niter = FATTN_KQ_STRIDE / KQ_per_iter; // Number of kernel iterations per assigned KQ slice.
+    constexpr int kb_niter = FATTN_KQ_STRIDE / nbatch_fa; // Number of kernel iterations per assigned KQ slice.
 
 #ifdef CP_ASYNC_AVAILABLE
     constexpr int nstages = DKQ <= 256 ? 2 : 1;
@@ -1010,12 +1095,12 @@ static __global__ void flash_attn_ext_f16(
         constexpr bool is_fixup = false; // All but (potentially) the last iterations write their data to dst rather than the fixup buffer.
         if (kb0_start == 0) {
             constexpr bool needs_fixup = false; // CUDA block is working on an entire tile.
-            flash_attn_ext_f16_process_tile<DKQ, DV, ncols1, ncols2, nwarps, KQ_per_iter, ntiles, nstages, use_logit_softcap, needs_fixup, is_fixup>
+            flash_attn_ext_f16_process_tile<DKQ, DV, ncols1, ncols2, nwarps, nbatch_fa, ntiles, nstages, use_logit_softcap, needs_fixup, is_fixup>
                 (Q_f2, K_h2, V_h2, mask_h2, dstk, dst_meta, scale, slope, logit_softcap,
                  ne01, ne02, stride_Q1, stride_Q2, stride_K, stride_V, stride_mask, jt, kb0_start_kernel, kb0_stop_kernel);
         } else {
             constexpr bool needs_fixup = true; // CUDA block is working on the beginning of a tile.
-            flash_attn_ext_f16_process_tile<DKQ, DV, ncols1, ncols2, nwarps, KQ_per_iter, ntiles, nstages, use_logit_softcap, needs_fixup, is_fixup>
+            flash_attn_ext_f16_process_tile<DKQ, DV, ncols1, ncols2, nwarps, nbatch_fa, ntiles, nstages, use_logit_softcap, needs_fixup, is_fixup>
                 (Q_f2, K_h2, V_h2, mask_h2, dstk, dst_meta, scale, slope, logit_softcap,
                  ne01, ne02, stride_Q1, stride_Q2, stride_K, stride_V, stride_mask, jt, kb0_start_kernel, kb0_stop_kernel);
         }
@@ -1047,7 +1132,7 @@ static __global__ void flash_attn_ext_f16(
 
     constexpr bool is_fixup = true; // Last index writes its data to fixup buffer to avoid data races with other blocks.
     constexpr bool needs_fixup = false;
-    flash_attn_ext_f16_process_tile<DKQ, DV, ncols1, ncols2, nwarps, KQ_per_iter, ntiles, nstages, use_logit_softcap, needs_fixup, is_fixup>
+    flash_attn_ext_f16_process_tile<DKQ, DV, ncols1, ncols2, nwarps, nbatch_fa, ntiles, nstages, use_logit_softcap, needs_fixup, is_fixup>
         (Q_f2, K_h2, V_h2, mask_h2, dstk, dst_meta, scale, slope, logit_softcap,
          ne01, ne02, stride_Q1, stride_Q2, stride_K, stride_V, stride_mask, jt, kb0_start_kernel, kb0_stop_kernel);
 #else
@@ -1067,12 +1152,23 @@ static __global__ void flash_attn_ext_f16(
 
 template <int DKQ, int DV, int ncols1, int ncols2>
 void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    const ggml_tensor * KQV = dst;
+    const int id = ggml_cuda_get_device();
+    const int cc = ggml_cuda_info().devices[id].cc;
+
+    typedef fattn_mma_f16_config<DKQ, DV> c;
+
+    constexpr int nbatch_K       = c::nbatch_K       < 1 ? DKQ/2 : c::nbatch_K;
+    constexpr int nbatch_V       = c::nbatch_V       < 1 ? DV /2 : c::nbatch_V;
+    constexpr int nbatch_combine = c::nbatch_combine < 1 ? DV /2 : c::nbatch_combine;
+
+    const int nstages = cp_async_available(cc) ? c::nstages : 0;
+
     constexpr int ncols         = ncols1 * ncols2;
-    constexpr int KQ_per_iter   = DKQ <= 128 && ncols1 <= 64 ? 64 : 32;
-    constexpr int ntiles        = ncols <= 8 ? 1 : (ncols <= 64 ? 2 : 4); // Number of tiles per warp.
+    constexpr int ntiles        = ncols <= 8 ? 1 : 2; // Number of tiles per warp.
     constexpr int cols_per_warp = ntiles * tile_B::I;
     constexpr int nwarps_x      = ncols / cols_per_warp;
-    constexpr int nwarps_y      = KQ_per_iter / tile_A::I;
+    constexpr int nwarps_y      = c::nbatch_fa / tile_A::I;
     constexpr int nwarps_max    = 8;
     constexpr int nwarps        = nwarps_x*nwarps_y <= nwarps_max ? nwarps_x*nwarps_y : nwarps_max;
 
@@ -1080,28 +1176,18 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     static_assert(DV    % tile_A::J     == 0, "bad DV");
     static_assert(ncols % cols_per_warp == 0, "bad ncols");
 
-    const ggml_tensor * KQV = dst;
-    const int id = ggml_cuda_get_device();
-    const int cc = ggml_cuda_info().devices[id].cc;
-
-    const int nstages = cp_async_available(cc) ? (DKQ <= 256 ? 2 : 1) : 0;
     const int D_max = std::max(DKQ, DV);
 
-    const bool Q_reg = DKQ <= 256;
-    const int nbatch_KV      = Q_reg ? D_max : GGML_PAD(D_max/2, 64);
-    const int nbatch_combine = Q_reg ? DV    : DV/2;
+    const int KQ_shared_ne = c::nbatch_fa * (c::nstages > 1 ? DKQ/2 + 4 + DV/2 + 4 : D_max/2 + 4);
 
-    GGML_ASSERT((nstages <= 1 || nbatch_KV == D_max) && "unsupported nstages nbatch_KV combination");
-    const int KQ_shared_ne = KQ_per_iter * (nstages > 1 ? DKQ + 8 + DV + 8 : nbatch_KV + 8);
+    const size_t nbytes_shared_Q       = ncols                * (DKQ/2          + 4) * sizeof(half2);
+    const size_t nbytes_shared_KV      = KQ_shared_ne                                * sizeof(half2);
+    const size_t nbytes_shared_mask    = ncols1               * (c::nbatch_fa/2 + 4) * sizeof(half2);
+    const size_t nbytes_shared_combine = nwarps*cols_per_warp * (nbatch_combine + 4) * sizeof(half2);
 
-    const size_t nbytes_shared_Q_load  = ncols                * (DKQ            + 8) * sizeof(half);
-    const size_t nbytes_shared_KV      = KQ_shared_ne                                * sizeof(half);
-    const size_t nbytes_shared_mask    = ncols1               * (KQ_per_iter    + 8) * sizeof(half);
-    const size_t nbytes_shared_combine = nwarps*cols_per_warp * (nbatch_combine + 8) * sizeof(half);
-
-    const size_t nbytes_shared_total = std::max(nbytes_shared_combine, Q_reg ?
-        std::max(nbytes_shared_Q_load,  nbytes_shared_KV + nbytes_shared_mask) :
-                 nbytes_shared_Q_load + nbytes_shared_KV + nbytes_shared_mask);
+    const size_t nbytes_shared_total = std::max(nbytes_shared_combine, c::Q_in_reg ?
+        std::max(nbytes_shared_Q,  nbytes_shared_KV + nbytes_shared_mask) :
+                 nbytes_shared_Q + nbytes_shared_KV + nbytes_shared_mask);
 
     float logit_softcap;
     memcpy(&logit_softcap, (const float *) KQV->op_params + 2, sizeof(float));
@@ -1109,7 +1195,7 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     fattn_kernel_t fattn_kernel;
     if (logit_softcap == 0.0f) {
         constexpr bool use_logit_softcap = false;
-        fattn_kernel = flash_attn_ext_f16<DKQ, DV, ncols1, ncols2, nwarps, KQ_per_iter, ntiles, use_logit_softcap>;
+        fattn_kernel = flash_attn_ext_f16<DKQ, DV, ncols1, ncols2, nwarps, ntiles, use_logit_softcap>;
 
 #if !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__)) && !defined(GGML_USE_MUSA)
         static bool shared_memory_limit_raised[GGML_CUDA_MAX_DEVICES] = {false};
@@ -1120,7 +1206,7 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
 #endif // !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__)) && !defined(GGML_USE_MUSA)
     } else {
         constexpr bool use_logit_softcap = true;
-        fattn_kernel = flash_attn_ext_f16<DKQ, DV, ncols1, ncols2, nwarps, KQ_per_iter, ntiles, use_logit_softcap>;
+        fattn_kernel = flash_attn_ext_f16<DKQ, DV, ncols1, ncols2, nwarps, ntiles, use_logit_softcap>;
 
 #if !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__)) && !defined(GGML_USE_MUSA)
         static bool shared_memory_limit_raised[GGML_CUDA_MAX_DEVICES] = {false};
