@@ -42,6 +42,10 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
             for (int i0 = 0; i0 < KQ_per_iter; i0 += nwarps*stride_i) {
                 const int i = i0 + threadIdx.y*stride_i + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
 
+                if (i0 + nwarps*stride_i > KQ_per_iter && i >= KQ_per_iter) {
+                    break;
+                }
+
 #pragma unroll
                 for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
                     const int k = k0 + (stride_k == WARP_SIZE ? threadIdx.x : threadIdx.x % stride_k);
@@ -65,6 +69,10 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
 #pragma unroll
             for (int i0 = 0; i0 < KQ_per_iter; i0 += nwarps*stride_i) {
                 const int i = i0 + threadIdx.y*stride_i + (stride_k == WARP_SIZE ? 0 : threadIdx.x / stride_k);
+
+                if (i0 + nwarps*stride_i > KQ_per_iter && i >= KQ_per_iter) {
+                    break;
+                }
 
 #pragma unroll
                 for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
@@ -1065,7 +1073,7 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     constexpr int cols_per_warp = ntiles * tile_B::I;
     constexpr int nwarps_x      = ncols / cols_per_warp;
     constexpr int nwarps_y      = KQ_per_iter / tile_A::I;
-    constexpr int nwarps_max    = 4;
+    constexpr int nwarps_max    = 8;
     constexpr int nwarps        = nwarps_x*nwarps_y <= nwarps_max ? nwarps_x*nwarps_y : nwarps_max;
 
     static_assert(DKQ   % tile_B::J     == 0, "bad DKQ");
@@ -1170,3 +1178,4 @@ DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(256, 256,  64)
 // The number of viable configurations for Deepseek is very limited:
 extern DECL_FATTN_MMA_F16_CASE(576, 512, 1, 16);
 extern DECL_FATTN_MMA_F16_CASE(576, 512, 2, 16);
+extern DECL_FATTN_MMA_F16_CASE(576, 512, 4, 16);
