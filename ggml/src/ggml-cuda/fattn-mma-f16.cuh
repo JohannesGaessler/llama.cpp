@@ -436,45 +436,45 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     }
 
 #pragma unroll
-    for (int i0_start = 0; i0_start < DV; i0_start += 2*nbatch_V) {
-        const int i0_stop = i0_start + 2*nbatch_V < DV ? i0_start + 2*nbatch_V : DV;
-        const int i0_diff = i0_stop - i0_start;
+        for (int i0_start = 0; i0_start < DV; i0_start += 2*nbatch_V) {
+            const int i0_stop = i0_start + 2*nbatch_V < DV ? i0_start + 2*nbatch_V : DV;
+            const int i0_diff = i0_stop - i0_start;
 
-    if (nstages == 1) {
-        constexpr bool use_cp_async = nstages == 1;
-        flash_attn_ext_f16_load_tile<stride_tile_V, nwarps, KQ_per_iter, use_cp_async>
-            (V_h2 + k_VKQ_0*stride_V + i0_start/2, tile_V, i0_diff/2, stride_V);
-        if (use_cp_async) {
-            cp_async_wait_all();
+        if (nstages == 1) {
+            constexpr bool use_cp_async = nstages == 1;
+            flash_attn_ext_f16_load_tile<stride_tile_V, nwarps, KQ_per_iter, use_cp_async>
+                (V_h2 + k_VKQ_0*stride_V + i0_start/2, tile_V, i0_diff/2, stride_V);
+            if (use_cp_async) {
+                cp_async_wait_all();
+            }
+            __syncthreads();
         }
-        __syncthreads();
-    }
 
-    // Calculate VKQ tile:
+        // Calculate VKQ tile:
 #pragma unroll
-    for (int i_VKQ_0 = i0_start; i_VKQ_0 < i0_stop; i_VKQ_0 += tile_C_VKQ::I) {
-        static_assert((KQ_per_iter/2) % (np*tile_A::J) == 0, "bad loop size");
+        for (int i_VKQ_0 = i0_start; i_VKQ_0 < i0_stop; i_VKQ_0 += tile_C_VKQ::I) {
+            static_assert((KQ_per_iter/2) % (np*tile_A::J) == 0, "bad loop size");
 #pragma unroll
-        for (int k00 = 0; k00 < KQ_per_iter/2; k00 += np*tile_A::J) {
-            const int k0 = k00 + (threadIdx.y % np)*tile_A::J;
+            for (int k00 = 0; k00 < KQ_per_iter/2; k00 += np*tile_A::J) {
+                const int k0 = k00 + (threadIdx.y % np)*tile_A::J;
 
-            tile_A A;
-            load_ldmatrix_trans(A, tile_V + 2*k0*stride_tile_V + (i_VKQ_0 - i0_start)/2, stride_tile_V);
-            if (ntiles == 1) {
-                mma(VKQ_C[i_VKQ_0/tile_C_VKQ::I], A, B[k00/(np*tile_A::J)]);
-            } else {
+                tile_A A;
+                load_ldmatrix_trans(A, tile_V + 2*k0*stride_tile_V + (i_VKQ_0 - i0_start)/2, stride_tile_V);
+                if (ntiles == 1) {
+                    mma(VKQ_C[i_VKQ_0/tile_C_VKQ::I], A, B[k00/(np*tile_A::J)]);
+                } else {
 #pragma unroll
-                for (int t = 0; t < ntiles/2; ++t) {
-                    // Wide version of VKQ_C is column-major => swap A and B.
-                    mma(VKQ_C_16[i_VKQ_0/tile_C_VKQ::I * ntiles/2 + t], B_16[k00/(np*tile_A::J) * ntiles/2 + t], A);
+                    for (int t = 0; t < ntiles/2; ++t) {
+                        // Wide version of VKQ_C is column-major => swap A and B.
+                        mma(VKQ_C_16[i_VKQ_0/tile_C_VKQ::I * ntiles/2 + t], B_16[k00/(np*tile_A::J) * ntiles/2 + t], A);
+                    }
                 }
             }
         }
-    }
 
-    if (nstages <= 1) {
-        __syncthreads(); // Only needed if tile_K == tile_V.
-    }
+        if (nstages <= 1) {
+            __syncthreads(); // Only needed if tile_K == tile_V.
+        }
     }
 #else
     GGML_UNUSED(Q_f2); GGML_UNUSED(K_h2); GGML_UNUSED(V_h2);
