@@ -154,7 +154,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     constexpr int np              = nwarps * (cols_per_warp/ncols2) / ncols1; // Number of parallel CUDA warps per Q column.
 
     constexpr int nbatch_K = Q_reg ? DKQ/2 : DKQ/4 + (DKQ/4) % 32;
-    constexpr int nbatch_V = true || Q_reg ? DV /2 : DV /4 + (DV /4) % 32;
+    constexpr int nbatch_V = Q_reg ? DV /2 : DV /4 + (DV /4) % 32;
 
     constexpr int stride_tile_Q = DKQ/2    + 4;
     constexpr int stride_tile_K = nbatch_K + 4;
@@ -433,10 +433,17 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             flash_attn_ext_f16_load_tile<stride_tile_K, nwarps, KQ_per_iter, use_cp_async>
                 (K_h2 + (k_VKQ_0 + KQ_per_iter)*stride_K, tile_K, nbatch_K, stride_K);
         }
-    } else if (nstages == 1) {
+    }
+
+#pragma unroll
+    for (int i0_start = 0; i0_start < DV; i0_start += 2*nbatch_V) {
+        const int i0_stop = i0_start + 2*nbatch_V < DV ? i0_start + 2*nbatch_V : DV;
+        const int i0_diff = i0_stop - i0_start;
+
+    if (nstages == 1) {
         constexpr bool use_cp_async = nstages == 1;
         flash_attn_ext_f16_load_tile<stride_tile_V, nwarps, KQ_per_iter, use_cp_async>
-            (V_h2 + k_VKQ_0*stride_V, tile_V, nbatch_V, stride_V);
+            (V_h2 + k_VKQ_0*stride_V + i0_start/2, tile_V, i0_diff/2, stride_V);
         if (use_cp_async) {
             cp_async_wait_all();
         }
@@ -445,14 +452,14 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 
     // Calculate VKQ tile:
 #pragma unroll
-    for (int i_VKQ_0 = 0; i_VKQ_0 < 2*nbatch_V; i_VKQ_0 += tile_C_VKQ::I) {
+    for (int i_VKQ_0 = i0_start; i_VKQ_0 < i0_stop; i_VKQ_0 += tile_C_VKQ::I) {
         static_assert((KQ_per_iter/2) % (np*tile_A::J) == 0, "bad loop size");
 #pragma unroll
         for (int k00 = 0; k00 < KQ_per_iter/2; k00 += np*tile_A::J) {
             const int k0 = k00 + (threadIdx.y % np)*tile_A::J;
 
             tile_A A;
-            load_ldmatrix_trans(A, tile_V + 2*k0*stride_tile_V + i_VKQ_0/2, stride_tile_V);
+            load_ldmatrix_trans(A, tile_V + 2*k0*stride_tile_V + (i_VKQ_0 - i0_start)/2, stride_tile_V);
             if (ntiles == 1) {
                 mma(VKQ_C[i_VKQ_0/tile_C_VKQ::I], A, B[k00/(np*tile_A::J)]);
             } else {
@@ -468,7 +475,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     if (nstages <= 1) {
         __syncthreads(); // Only needed if tile_K == tile_V.
     }
-
+    }
 #else
     GGML_UNUSED(Q_f2); GGML_UNUSED(K_h2); GGML_UNUSED(V_h2);
     GGML_UNUSED(mask_h2); GGML_UNUSED(dstk); GGML_UNUSED(dstk_fixup);
