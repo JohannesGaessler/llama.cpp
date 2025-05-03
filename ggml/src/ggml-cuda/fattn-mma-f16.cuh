@@ -526,10 +526,10 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     static_assert(KQ_per_iter % nwarps == 0, "bad KQ_per_iter");
 
     constexpr bool Q_reg = DKQ <= 256;
-    static_assert(Q_reg || (DKQ/2) % 16 == 0, "bad DKQ");
-    static_assert(Q_reg || (DV/2)  % 16 == 0, "bad DV");
-    constexpr int nbatch_K = true || Q_reg ? DKQ/2 : DKQ/2 + (DKQ/2) % 32;
-    constexpr int nbatch_V = true || Q_reg ? DV /2 : DV /2 + (DV /2) % 32;
+    static_assert(Q_reg || (DKQ/4) % 16 == 0, "bad DKQ");
+    static_assert(Q_reg || (DV/4)  % 16 == 0, "bad DV");
+    constexpr int nbatch_K = Q_reg ? DKQ/2 : DKQ/4 + (DKQ/4) % 32;
+    constexpr int nbatch_V = Q_reg ? DV /2 : DV /4 + (DV /4) % 32;
 
     constexpr int stride_tile_Q = DKQ/2    + 4;
     constexpr int stride_tile_K = nbatch_K + 4;
@@ -1080,7 +1080,7 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     const int D_max = std::max(DKQ, DV);
 
     const bool Q_reg = DKQ <= 256;
-    const int nbatch_KV      = true || Q_reg ? D_max : GGML_PAD(D_max, 64)/2;
+    const int nbatch_KV      = Q_reg ? D_max : GGML_PAD(D_max/2, 64);
     const int nbatch_combine = Q_reg ? DV    : DV/2;
 
     GGML_ASSERT((nstages <= 1 || nbatch_KV == D_max) && "unsupported nstages nbatch_KV combination");
