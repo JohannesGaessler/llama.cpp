@@ -196,48 +196,48 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             __syncthreads();
         }
 
-    // Calculate tile of KQ:
-    if constexpr (Q_reg) {
-#pragma unroll
-        for (int i_KQ_00 = 0; i_KQ_00 < KQ_per_iter; i_KQ_00 += np*tile_A::I) {
-            const int i_KQ_0 = i_KQ_00 + (threadIdx.y % np)*tile_A::I;
-#pragma unroll
-            for (int k_KQ_0 = k0_start; k_KQ_0 < k0_stop; k_KQ_0 += tile_A::J) {
-                tile_A K_A;
-                load_ldmatrix(K_A, tile_K + i_KQ_0*stride_tile_K + (k_KQ_0 - k0_start), stride_tile_K);
-                if (ntiles == 1) {
-                    mma(KQ_C[i_KQ_00/(np*tile_A::I)], K_A, Q_B[k_KQ_0/tile_A::J]);
-                } else {
-#pragma unroll
-                    for (int t = 0; t < ntiles/2; ++t) {
-                        // Wide version of KQ_C is column-major => swap A and B.
-                        mma(KQ_C_16[i_KQ_00/(np*tile_A::I) * ntiles/2 + t], Q_B_16[k_KQ_0/tile_A::J * ntiles/2 + t], K_A);
-                    }
-                }
-            }
-        }
-    } else {
-        static_assert(ntiles == 2, "ntiles != 2 not implemented");
-#pragma unroll
-        for (int k_KQ_0 = k0_start; k_KQ_0 < k0_stop; k_KQ_0 += tile_A::J) {
-            load_ldmatrix(Q_B_16[0], tile_Q + (threadIdx.y / np)*(tile_B_16::I*stride_tile_Q) + k_KQ_0, stride_tile_Q);
-
+        // Calculate tile of KQ:
+        if constexpr (Q_reg) {
 #pragma unroll
             for (int i_KQ_00 = 0; i_KQ_00 < KQ_per_iter; i_KQ_00 += np*tile_A::I) {
                 const int i_KQ_0 = i_KQ_00 + (threadIdx.y % np)*tile_A::I;
+#pragma unroll
+                for (int k_KQ_0 = k0_start; k_KQ_0 < k0_stop; k_KQ_0 += tile_A::J) {
+                    tile_A K_A;
+                    load_ldmatrix(K_A, tile_K + i_KQ_0*stride_tile_K + (k_KQ_0 - k0_start), stride_tile_K);
+                    if (ntiles == 1) {
+                        mma(KQ_C[i_KQ_00/(np*tile_A::I)], K_A, Q_B[k_KQ_0/tile_A::J]);
+                    } else {
+#pragma unroll
+                        for (int t = 0; t < ntiles/2; ++t) {
+                            // Wide version of KQ_C is column-major => swap A and B.
+                            mma(KQ_C_16[i_KQ_00/(np*tile_A::I) * ntiles/2 + t], Q_B_16[k_KQ_0/tile_A::J * ntiles/2 + t], K_A);
+                        }
+                    }
+                }
+            }
+        } else {
+            static_assert(ntiles == 2, "ntiles != 2 not implemented");
+#pragma unroll
+            for (int k_KQ_0 = k0_start; k_KQ_0 < k0_stop; k_KQ_0 += tile_A::J) {
+                load_ldmatrix(Q_B_16[0], tile_Q + (threadIdx.y / np)*(tile_B_16::I*stride_tile_Q) + k_KQ_0, stride_tile_Q);
 
-                tile_A K_A;
-                load_ldmatrix(K_A, tile_K + i_KQ_0*stride_tile_K + (k_KQ_0 - k0_start), stride_tile_K);
+#pragma unroll
+                for (int i_KQ_00 = 0; i_KQ_00 < KQ_per_iter; i_KQ_00 += np*tile_A::I) {
+                    const int i_KQ_0 = i_KQ_00 + (threadIdx.y % np)*tile_A::I;
 
-                // Wide version of KQ_C is column-major => swap A and B.
-                mma(KQ_C_16[i_KQ_00/(np*tile_A::I)], Q_B_16[0], K_A);
+                    tile_A K_A;
+                    load_ldmatrix(K_A, tile_K + i_KQ_0*stride_tile_K + (k_KQ_0 - k0_start), stride_tile_K);
+
+                    // Wide version of KQ_C is column-major => swap A and B.
+                    mma(KQ_C_16[i_KQ_00/(np*tile_A::I)], Q_B_16[0], K_A);
+                }
             }
         }
-    }
 
-    if (nstages <= 1) {
-        __syncthreads(); // Only needed if tile_K == tile_V.
-    }
+        if (nstages <= 1) {
+            __syncthreads(); // Only needed if tile_K == tile_V.
+        }
     }
 
     if (use_logit_softcap) {
