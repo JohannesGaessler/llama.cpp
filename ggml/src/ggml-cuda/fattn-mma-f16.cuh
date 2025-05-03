@@ -153,7 +153,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     constexpr int cols_per_thread = ntiles == 1 ? 2 : ntiles;
     constexpr int np              = nwarps * (cols_per_warp/ncols2) / ncols1; // Number of parallel CUDA warps per Q column.
 
-    constexpr int nbatch_K = true || Q_reg ? DKQ/2 : DKQ/4 + (DKQ/4) % 32;
+    constexpr int nbatch_K = Q_reg ? DKQ/2 : DKQ/4 + (DKQ/4) % 32;
     constexpr int nbatch_V = true || Q_reg ? DV /2 : DV /4 + (DV /4) % 32;
 
     constexpr int stride_tile_Q = DKQ/2    + 4;
@@ -179,13 +179,22 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         if (ncols2 > 1 || mask_h2) {
             flash_attn_ext_f16_load_mask<ncols1, nwarps, KQ_per_iter, use_cp_async>(mask_h2 + k_VKQ_0/2, tile_mask, stride_mask);
         }
-        flash_attn_ext_f16_load_tile<stride_tile_K, nwarps, KQ_per_iter, use_cp_async>
-            (K_h2 + k_VKQ_0*stride_K, tile_K, nbatch_K, stride_K);
-        if (use_cp_async) {
-            cp_async_wait_all();
-        }
-        __syncthreads();
     }
+
+#pragma unroll
+    for (int k0_start = 0; k0_start < DKQ/2; k0_start += nbatch_K) {
+        const int k0_stop = k0_start + nbatch_K < DKQ/2 ? k0_start + nbatch_K : DKQ/2;
+        const int k0_diff = k0_stop - k0_start;
+
+        if (nstages <= 1) {
+            constexpr bool use_cp_async = nstages == 1;
+            flash_attn_ext_f16_load_tile<stride_tile_K, nwarps, KQ_per_iter, use_cp_async>
+                (K_h2 + k_VKQ_0*stride_K + k0_start, tile_K, k0_diff, stride_K);
+            if (use_cp_async) {
+                cp_async_wait_all();
+            }
+            __syncthreads();
+        }
 
     // Calculate tile of KQ:
     if constexpr (Q_reg) {
@@ -193,9 +202,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         for (int i_KQ_00 = 0; i_KQ_00 < KQ_per_iter; i_KQ_00 += np*tile_A::I) {
             const int i_KQ_0 = i_KQ_00 + (threadIdx.y % np)*tile_A::I;
 #pragma unroll
-            for (int k_KQ_0 = 0; k_KQ_0 < nbatch_K; k_KQ_0 += tile_A::J) {
+            for (int k_KQ_0 = k0_start; k_KQ_0 < k0_stop; k_KQ_0 += tile_A::J) {
                 tile_A K_A;
-                load_ldmatrix(K_A, tile_K + i_KQ_0*stride_tile_K + k_KQ_0, stride_tile_K);
+                load_ldmatrix(K_A, tile_K + i_KQ_0*stride_tile_K + (k_KQ_0 - k0_start), stride_tile_K);
                 if (ntiles == 1) {
                     mma(KQ_C[i_KQ_00/(np*tile_A::I)], K_A, Q_B[k_KQ_0/tile_A::J]);
                 } else {
@@ -208,8 +217,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             }
         }
     } else {
+        static_assert(ntiles == 2, "ntiles != 2 not implemented");
 #pragma unroll
-        for (int k_KQ_0 = 0; k_KQ_0 < nbatch_K; k_KQ_0 += tile_A::J) {
+        for (int k_KQ_0 = k0_start; k_KQ_0 < k0_stop; k_KQ_0 += tile_A::J) {
             load_ldmatrix(Q_B_16[0], tile_Q + (threadIdx.y / np)*(tile_B_16::I*stride_tile_Q) + k_KQ_0, stride_tile_Q);
 
 #pragma unroll
@@ -217,7 +227,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
                 const int i_KQ_0 = i_KQ_00 + (threadIdx.y % np)*tile_A::I;
 
                 tile_A K_A;
-                load_ldmatrix(K_A, tile_K + i_KQ_0*stride_tile_K + k_KQ_0, stride_tile_K);
+                load_ldmatrix(K_A, tile_K + i_KQ_0*stride_tile_K + (k_KQ_0 - k0_start), stride_tile_K);
 
                 // Wide version of KQ_C is column-major => swap A and B.
                 mma(KQ_C_16[i_KQ_00/(np*tile_A::I)], Q_B_16[0], K_A);
@@ -227,6 +237,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 
     if (nstages <= 1) {
         __syncthreads(); // Only needed if tile_K == tile_V.
+    }
     }
 
     if (use_logit_softcap) {
@@ -603,7 +614,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     __syncthreads();
 
     // Preload mask and K data for first iteration when using cp_async with multiple stages:
-    if (nstages > 1) {
+    if constexpr (nstages > 1) {
+        static_assert(nbatch_K == DKQ/2, "batching not implemented for multi-stage pipeline");
         constexpr bool use_cp_async = true;
         if (ncols2 > 1 || mask_h2) {
             flash_attn_ext_f16_load_mask<ncols1, nwarps, KQ_per_iter, use_cp_async>
