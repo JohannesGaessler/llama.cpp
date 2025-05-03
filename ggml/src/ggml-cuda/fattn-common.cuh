@@ -671,7 +671,7 @@ static void on_no_fattn_vec_case(const int D) {
     }
 }
 
-template <int DV, int ncols1, int ncols2, int KQ_stride> // TODO remove
+template <int DV, int ncols1, int ncols2>
 void launch_fattn(
     ggml_backend_cuda_context & ctx, ggml_tensor * dst, fattn_kernel_t fattn_kernel, const int nwarps, const size_t nbytes_shared,
     const int KQ_row_granularity, const bool need_f16_K, const bool need_f16_V, const bool stream_k, const int warp_size = WARP_SIZE
