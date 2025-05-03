@@ -69,7 +69,7 @@ static void ggml_cuda_flash_attn_ext_mma_f16(ggml_backend_cuda_context & ctx, gg
     const ggml_tensor * KQV  = dst;
     const ggml_tensor * Q    = dst->src[0];
     const ggml_tensor * K    = dst->src[1];
-    const ggml_tensor * V    = dst->src[1];
+    const ggml_tensor * V    = dst->src[2];
     const ggml_tensor * mask = dst->src[3];
 
     switch (Q->ne[0]) {

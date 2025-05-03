@@ -31,9 +31,9 @@ struct fattn_mma_f16_config< 64,  64> {
     static constexpr int  nbatch_fa      = 64;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages        = 2;
-    static constexpr int  nbatch_K       = -1;
-    static constexpr int  nbatch_V       = -1;
-    static constexpr int  nbatch_combine = -1;
+    static constexpr int  nbatch_K       = 32;
+    static constexpr int  nbatch_V       = 32;
+    static constexpr int  nbatch_combine = 32;
 };
 
 template <>
@@ -41,9 +41,9 @@ struct fattn_mma_f16_config< 80,  80> {
     static constexpr int  nbatch_fa      = 64;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages        = 2;
-    static constexpr int  nbatch_K       = -1;
-    static constexpr int  nbatch_V       = -1;
-    static constexpr int  nbatch_combine = -1;
+    static constexpr int  nbatch_K       = 40;
+    static constexpr int  nbatch_V       = 40;
+    static constexpr int  nbatch_combine = 40;
 };
 
 template <>
@@ -51,9 +51,9 @@ struct fattn_mma_f16_config< 96,  96> {
     static constexpr int  nbatch_fa      = 64;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages        = 2;
-    static constexpr int  nbatch_K       = -1;
-    static constexpr int  nbatch_V       = -1;
-    static constexpr int  nbatch_combine = -1;
+    static constexpr int  nbatch_K       = 48;
+    static constexpr int  nbatch_V       = 48;
+    static constexpr int  nbatch_combine = 48;
 };
 
 template <>
@@ -61,9 +61,9 @@ struct fattn_mma_f16_config<112, 112> {
     static constexpr int  nbatch_fa      = 64;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages        = 2;
-    static constexpr int  nbatch_K       = -1;
-    static constexpr int  nbatch_V       = -1;
-    static constexpr int  nbatch_combine = -1;
+    static constexpr int  nbatch_K       = 56;
+    static constexpr int  nbatch_V       = 56;
+    static constexpr int  nbatch_combine = 56;
 };
 
 template <>
@@ -71,9 +71,9 @@ struct fattn_mma_f16_config<128, 128> {
     static constexpr int  nbatch_fa      = 64;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages        = 2;
-    static constexpr int  nbatch_K       = -1;
-    static constexpr int  nbatch_V       = -1;
-    static constexpr int  nbatch_combine = -1;
+    static constexpr int  nbatch_K       = 64;
+    static constexpr int  nbatch_V       = 64;
+    static constexpr int  nbatch_combine = 64;
 };
 
 template <>
@@ -81,9 +81,9 @@ struct fattn_mma_f16_config<256, 256> {
     static constexpr int  nbatch_fa      = 32;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages        = 2;
-    static constexpr int  nbatch_K       = -1;
-    static constexpr int  nbatch_V       = -1;
-    static constexpr int  nbatch_combine = -1;
+    static constexpr int  nbatch_K       = 128;
+    static constexpr int  nbatch_V       = 128;
+    static constexpr int  nbatch_combine = 128;
 };
 
 template <>
@@ -91,9 +91,9 @@ struct fattn_mma_f16_config<576, 512> {
     static constexpr int  nbatch_fa      = 32;
     static constexpr bool Q_in_reg       = false;
     static constexpr int  nstages        = 1;
-    static constexpr int  nbatch_K       = 312;
-    static constexpr int  nbatch_V       = 256;
-    static constexpr int  nbatch_combine = 256;
+    static constexpr int  nbatch_K       = 160;
+    static constexpr int  nbatch_V       = 128;
+    static constexpr int  nbatch_combine = 128;
 };
 
 template<int stride_tile, int nwarps, int KQ_per_iter, bool use_cp_async>
@@ -1176,14 +1176,13 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     static_assert(DV    % tile_A::J     == 0, "bad DV");
     static_assert(ncols % cols_per_warp == 0, "bad ncols");
 
-    const int D_max = std::max(DKQ, DV);
+    const size_t nbytes_shared_KV_1stage = c::nbatch_fa         * std::max(c::nbatch_K + 4,  c::nbatch_V + 4) * sizeof(half2);
+    const size_t nbytes_shared_KV_2stage = c::nbatch_fa         *         (c::nbatch_K + 4 + c::nbatch_V + 4) * sizeof(half2);
+    const size_t nbytes_shared_Q         = ncols                * (DKQ/2 + 4)                                 * sizeof(half2);
+    const size_t nbytes_shared_mask      = ncols1               * (c::nbatch_fa/2 + 4)                        * sizeof(half2);
+    const size_t nbytes_shared_combine   = nwarps*cols_per_warp * (nbatch_combine + 4)                        * sizeof(half2);
 
-    const int KQ_shared_ne = c::nbatch_fa * (c::nstages > 1 ? DKQ/2 + 4 + DV/2 + 4 : D_max/2 + 4);
-
-    const size_t nbytes_shared_Q       = ncols                * (DKQ/2          + 4) * sizeof(half2);
-    const size_t nbytes_shared_KV      = KQ_shared_ne                                * sizeof(half2);
-    const size_t nbytes_shared_mask    = ncols1               * (c::nbatch_fa/2 + 4) * sizeof(half2);
-    const size_t nbytes_shared_combine = nwarps*cols_per_warp * (nbatch_combine + 4) * sizeof(half2);
+    const size_t nbytes_shared_KV = c::nstages <= 1 ? nbytes_shared_KV_1stage : nbytes_shared_KV_2stage;
 
     const size_t nbytes_shared_total = std::max(nbytes_shared_combine, c::Q_in_reg ?
         std::max(nbytes_shared_Q,  nbytes_shared_KV + nbytes_shared_mask) :
