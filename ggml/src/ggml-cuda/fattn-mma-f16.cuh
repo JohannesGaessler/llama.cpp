@@ -581,8 +581,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 #endif // NEW_MMA_AVAILABLE
 }
 
-template<int DKQ, int DV, int ncols1, int ncols2, int nwarps, int KQ_per_iter, int ntiles,
-    int nstages, bool use_logit_softcap, bool needs_fixup, bool is_fixup>
+template<int DKQ, int DV, int ncols1, int ncols2, int nwarps, int ntiles, bool use_logit_softcap, bool needs_fixup, bool is_fixup>
 static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const float2 * const __restrict__ Q_f2,
         const half2  * const __restrict__ K_h2,
@@ -606,6 +605,14 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 #ifdef NEW_MMA_AVAILABLE
     //In this kernel Q, K, V are matrices while i, j, k are matrix indices.
 
+    typedef fattn_mma_f16_config<DKQ, DV> c;
+
+#ifdef CP_ASYNC_AVAILABLE
+    constexpr int nstages = c::nstages;
+#else
+    constexpr int nstages = 0;
+#endif // CP_ASYNC_AVAILABLE
+
     constexpr int ncols           = ncols1 * ncols2;
     constexpr int cols_per_warp   = ntiles * tile_B::I;
     constexpr int cols_per_thread = ntiles == 1 ? 2 : ntiles;
@@ -613,28 +620,18 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
     static_assert(nwarps * (cols_per_warp/ncols2) % ncols1 == 0, "bad nwarps");
 
-    static_assert(DV          % nwarps == 0, "bad DV");
-    static_assert(KQ_per_iter % nwarps == 0, "bad KQ_per_iter");
-
-    constexpr bool Q_reg = DKQ <= 256;
-    static_assert(Q_reg || (DKQ/4) % 16 == 0, "bad DKQ");
-    static_assert(Q_reg || (DV/4)  % 16 == 0, "bad DV");
-    constexpr int nbatch_K = Q_reg ? DKQ/2 : DKQ/4 + (DKQ/4) % 32;
-    constexpr int nbatch_V = Q_reg ? DV /2 : DV /4 + (DV /4) % 32;
-
-    constexpr int stride_tile_Q = DKQ/2    + 4;
-    constexpr int stride_tile_K = nbatch_K + 4;
-    constexpr int stride_tile_V = nbatch_V + 4;
+    constexpr int stride_tile_Q = DKQ/2       + 4;
+    constexpr int stride_tile_K = c::nbatch_K + 4;
+    constexpr int stride_tile_V = c::nbatch_V + 4;
 
     constexpr int stride_tile_KV_max = stride_tile_K > stride_tile_V ? stride_tile_K : stride_tile_V;
 
-    // Temporary shared buffer for loading K/V data with KQ_per_iter*D logical elements:
     extern __shared__ half2 tile_Q[];
-    half2 * tile_K    = Q_reg       ? tile_Q                               : tile_Q + ncols       * stride_tile_Q;
-    half2 * tile_V    = nstages > 1 ? tile_K + KQ_per_iter * stride_tile_K : tile_K;
-    half2 * tile_mask = nstages > 1 ? tile_V + KQ_per_iter * stride_tile_V : tile_V + KQ_per_iter * stride_tile_KV_max;
+    half2 * tile_K    = c::Q_in_reg    ? tile_Q                                : tile_Q + ncols        * stride_tile_Q;
+    half2 * tile_V    = c::nstages > 1 ? tile_K + c::nbatch_fa * stride_tile_K : tile_K;
+    half2 * tile_mask = c::nstages > 1 ? tile_V + c::nbatch_fa * stride_tile_V : tile_V + c::nbatch_fa * stride_tile_KV_max;
 
-    tile_B       Q_B[(Q_reg ? DKQ/(2*tile_B::J) : 1) * ntiles];
+    tile_B       Q_B[(c::Q_in_reg ? DKQ/(2*tile_B::J) : 1) * ntiles];
     tile_C_VKQ VKQ_C[DV/tile_C_VKQ::I  * ntiles];
 
     tile_B_16     * Q_B_16   = (tile_B_16     *) Q_B;
@@ -647,7 +644,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         KQ_max[col] = -FLT_MAX/2.0f;
     }
 
-    // Temporarily load Q data into tile_K, will be loaded into registers afterwards. FIXME
+    // Load Q data into tile_Q, either temporarily or permanently.
+    // Q in registers is faster, but register pressure is the biggest bottleneck.
     // The loading is done with decreasing granularity for D for better memory bandwidth.
     const half2 scale_h2 = make_half2(scale, scale);
 #pragma unroll
@@ -692,7 +690,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
     __syncthreads();
 
-    if (Q_reg) {
+    if (c::Q_in_reg) {
         const int j0 = (threadIdx.y / np) * cols_per_warp;
 
 #pragma unroll
@@ -713,35 +711,35 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
     // Preload mask and K data for first iteration when using cp_async with multiple stages:
     if constexpr (nstages > 1) {
-        static_assert(nbatch_K == DKQ/2, "batching not implemented for multi-stage pipeline");
+        static_assert(c::nbatch_K == DKQ/2, "batching not implemented for multi-stage pipeline");
         constexpr bool use_cp_async = true;
         if (ncols2 > 1 || mask_h2) {
-            flash_attn_ext_f16_load_mask<ncols1, nwarps, KQ_per_iter, use_cp_async>
-                (mask_h2 + kb0_start*KQ_per_iter/2, tile_mask, stride_mask);
+            flash_attn_ext_f16_load_mask<ncols1, nwarps, c::nbatch_fa, use_cp_async>
+                (mask_h2 + kb0_start*c::nbatch_fa/2, tile_mask, stride_mask);
         }
-        flash_attn_ext_f16_load_tile<stride_tile_K, nwarps, KQ_per_iter, use_cp_async>
-            (K_h2 + kb0_start*KQ_per_iter*stride_K, tile_K, nbatch_K, stride_K);
+        flash_attn_ext_f16_load_tile<stride_tile_K, nwarps, c::nbatch_fa, use_cp_async>
+            (K_h2 + kb0_start*c::nbatch_fa*stride_K, tile_K, c::nbatch_K, stride_K);
     }
 
     // Iterate over ne11 == previous tokens:
     for (int kb0 = kb0_start; kb0 < kb0_stop-1; ++kb0) {
         constexpr bool last_iter = false;
-        flash_attn_ext_f16_iter<DKQ, DV, ncols1, ncols2, nwarps, KQ_per_iter, ntiles, nstages,
-                Q_reg, use_logit_softcap, needs_fixup, is_fixup, last_iter>
+        flash_attn_ext_f16_iter<DKQ, DV, ncols1, ncols2, nwarps, c::nbatch_fa, ntiles, nstages,
+                c::Q_in_reg, use_logit_softcap, needs_fixup, is_fixup, last_iter>
             (Q_f2, K_h2, V_h2, mask_h2, dstk, dstk_fixup, scale, slope, logit_softcap,
              ne01, ne02, stride_K, stride_V, stride_mask, jt, tile_Q, tile_K, tile_V, tile_mask, Q_B, VKQ_C, KQ_max, KQ_rowsum, kb0);
     }
     { // kb0_start is always < kb0_stop so the last iter can be executed unconditionally.
         constexpr bool last_iter = true;
-        flash_attn_ext_f16_iter<DKQ, DV, ncols1, ncols2, nwarps, KQ_per_iter, ntiles, nstages,
-                Q_reg, use_logit_softcap, needs_fixup, is_fixup, last_iter>
+        flash_attn_ext_f16_iter<DKQ, DV, ncols1, ncols2, nwarps, c::nbatch_fa, ntiles, nstages,
+                c::Q_in_reg, use_logit_softcap, needs_fixup, is_fixup, last_iter>
             (Q_f2, K_h2, V_h2, mask_h2, dstk, dstk_fixup, scale, slope, logit_softcap,
              ne01, ne02, stride_K, stride_V, stride_mask, jt, tile_Q, tile_K, tile_V, tile_mask, Q_B, VKQ_C, KQ_max, KQ_rowsum, kb0_stop-1);
     }
 
     // With multi-stage loading there is no __syncthreads at the end of the iter,
     //     there can be a race condition on shared memory access for combining/writing back results.
-    if (nstages > 1 && nwarps*cols_per_warp > KQ_per_iter) {
+    if (nstages > 1 && nwarps*cols_per_warp > c::nbatch_fa) {
         __syncthreads();
     }
 
@@ -759,13 +757,13 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         }
     }
 
-    // FIXME
-    // Write VKQ accumulators to shared memory in column-major format.
-    // It's faster to do small writes to shared memory, then large write to VRAM than to do small writes to VRAM.
-    // Also for np > 1 the combination is done via these values in shared memory.
+    // Combine VKQ accumulator values if np > 1.
+    // It's also faster to do small writes to shared memory, then large write to VRAM than to do small writes to VRAM.
+    // So also write VKQ accumulators to shared memory in column-major format if np == 1.
 
-    constexpr int nbatch_combine = Q_reg ? DV/2 : DV/4;
+    constexpr int nbatch_combine = c::Q_in_reg ? DV/2 : DV/4;
     constexpr int tile_stride    = nbatch_combine + 4;
+    static_assert((DV/2) % nbatch_combine == 0, "bad nbatch_combine");
 
     if constexpr (ntiles == 1) {
         const int jc_cwmo = (threadIdx.x % (2*tile_C_VKQ::J)) / tile_C_VKQ::J; // jc combine write meta offset
@@ -888,7 +886,6 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
 #pragma unroll
     for (int k00 = 0; k00 < DV/2; k00 += nbatch_combine) {
-
         if (ntiles == 1) {
             const int jc_cwd = threadIdx.y*tile_B::I + tile_B::get_i(-1); // jc combine write data
 #pragma unroll
@@ -998,7 +995,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 }
 
 template<int DKQ, int DV, int ncols1, int ncols2, int nwarps, int ntiles, bool use_logit_softcap>
-__launch_bounds__(nwarps*WARP_SIZE, 8/nwarps)
+__launch_bounds__(nwarps*WARP_SIZE, 1)
 static __global__ void flash_attn_ext_f16(
         const char * __restrict__ Q,
         const char * __restrict__ K,
@@ -1043,9 +1040,9 @@ static __global__ void flash_attn_ext_f16(
         return;
     }
 
-    constexpr int nbatch_fa = fattn_mma_f16_config<DKQ, DV>::nbatch_fa;
+    typedef fattn_mma_f16_config<DKQ, DV> c;
 
-    static_assert(FATTN_KQ_STRIDE % nbatch_fa == 0, "bad nbatch_fa");
+    static_assert(FATTN_KQ_STRIDE % fattn_mma_f16_config<DKQ, DV>::nbatch_fa == 0, "bad nbatch_fa");
 
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
 
@@ -1058,13 +1055,7 @@ static __global__ void flash_attn_ext_f16(
     const int iter_k = ne11 / FATTN_KQ_STRIDE;
     const int iter_j = (ne01 + (ncols1 - 1)) / ncols1;
 
-    constexpr int kb_niter = FATTN_KQ_STRIDE / nbatch_fa; // Number of kernel iterations per assigned KQ slice.
-
-#ifdef CP_ASYNC_AVAILABLE
-    constexpr int nstages = DKQ <= 256 ? 2 : 1;
-#else
-    constexpr int nstages = 0;
-#endif // CP_ASYNC_AVAILABLE
+    constexpr int kb_niter = FATTN_KQ_STRIDE / c::nbatch_fa; // Number of kernel iterations per assigned KQ slice.
 
     // kbc == k block continuous, current index in continuous ijk space.
     int       kbc      = (blockIdx.x + 0)*iter_k*iter_j*(ne02/ncols2) / gridDim.x;
@@ -1095,12 +1086,12 @@ static __global__ void flash_attn_ext_f16(
         constexpr bool is_fixup = false; // All but (potentially) the last iterations write their data to dst rather than the fixup buffer.
         if (kb0_start == 0) {
             constexpr bool needs_fixup = false; // CUDA block is working on an entire tile.
-            flash_attn_ext_f16_process_tile<DKQ, DV, ncols1, ncols2, nwarps, nbatch_fa, ntiles, nstages, use_logit_softcap, needs_fixup, is_fixup>
+            flash_attn_ext_f16_process_tile<DKQ, DV, ncols1, ncols2, nwarps, ntiles, use_logit_softcap, needs_fixup, is_fixup>
                 (Q_f2, K_h2, V_h2, mask_h2, dstk, dst_meta, scale, slope, logit_softcap,
                  ne01, ne02, stride_Q1, stride_Q2, stride_K, stride_V, stride_mask, jt, kb0_start_kernel, kb0_stop_kernel);
         } else {
             constexpr bool needs_fixup = true; // CUDA block is working on the beginning of a tile.
-            flash_attn_ext_f16_process_tile<DKQ, DV, ncols1, ncols2, nwarps, nbatch_fa, ntiles, nstages, use_logit_softcap, needs_fixup, is_fixup>
+            flash_attn_ext_f16_process_tile<DKQ, DV, ncols1, ncols2, nwarps, ntiles, use_logit_softcap, needs_fixup, is_fixup>
                 (Q_f2, K_h2, V_h2, mask_h2, dstk, dst_meta, scale, slope, logit_softcap,
                  ne01, ne02, stride_Q1, stride_Q2, stride_K, stride_V, stride_mask, jt, kb0_start_kernel, kb0_stop_kernel);
         }
@@ -1132,7 +1123,7 @@ static __global__ void flash_attn_ext_f16(
 
     constexpr bool is_fixup = true; // Last index writes its data to fixup buffer to avoid data races with other blocks.
     constexpr bool needs_fixup = false;
-    flash_attn_ext_f16_process_tile<DKQ, DV, ncols1, ncols2, nwarps, nbatch_fa, ntiles, nstages, use_logit_softcap, needs_fixup, is_fixup>
+    flash_attn_ext_f16_process_tile<DKQ, DV, ncols1, ncols2, nwarps, ntiles, use_logit_softcap, needs_fixup, is_fixup>
         (Q_f2, K_h2, V_h2, mask_h2, dstk, dst_meta, scale, slope, logit_softcap,
          ne01, ne02, stride_Q1, stride_Q2, stride_K, stride_V, stride_mask, jt, kb0_start_kernel, kb0_stop_kernel);
 #else
