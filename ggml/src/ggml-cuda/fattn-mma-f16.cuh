@@ -18,10 +18,10 @@ typedef tile<16,  8, half2> tile_C_VKQ_16;
 //
 // nbatch_fa: number of KV rows per softmax rescaling of KQ rowsums and VKQ accumulators.
 // Q_in_reg: whether the Q values should be kept permanently in registers.
-// nstages: number of pipeline stages for cp_async, 0 means synchronous data loading.
-// nbatch_K: number of K half2 values in direction of DKQ to load in parallel, -1 means no limit.
-// nbatch_V: number of V half2 values in direction of DV to load in parallel, -1 means no limit.
-// nbatch_combine: number of VKQ half2 values in direction of DV to combine in parallel, -1 means no limit.
+// nstages_target: targeted number of pipeline stages for cp_async (if available), 0 means synchronous data loading.
+// nbatch_K2: number of K half2 values in direction of DKQ to load in parallel.
+// nbatch_V2: number of V half2 values in direction of DV to load in parallel.
+// nbatch_combine: number of VKQ half2 values in direction of DV to combine in parallel.
 
 template <int DKQ, int DV>
 struct fattn_mma_f16_config;
@@ -30,9 +30,9 @@ template <>
 struct fattn_mma_f16_config< 64,  64> {
     static constexpr int  nbatch_fa      = 64;
     static constexpr bool Q_in_reg       = true;
-    static constexpr int  nstages        = 2;
-    static constexpr int  nbatch_K       = 32;
-    static constexpr int  nbatch_V       = 32;
+    static constexpr int  nstages_target = 2;
+    static constexpr int  nbatch_K2      = 32;
+    static constexpr int  nbatch_V2      = 32;
     static constexpr int  nbatch_combine = 32;
 };
 
@@ -40,9 +40,9 @@ template <>
 struct fattn_mma_f16_config< 80,  80> {
     static constexpr int  nbatch_fa      = 64;
     static constexpr bool Q_in_reg       = true;
-    static constexpr int  nstages        = 2;
-    static constexpr int  nbatch_K       = 40;
-    static constexpr int  nbatch_V       = 40;
+    static constexpr int  nstages_target = 2;
+    static constexpr int  nbatch_K2      = 40;
+    static constexpr int  nbatch_V2      = 40;
     static constexpr int  nbatch_combine = 40;
 };
 
@@ -50,9 +50,9 @@ template <>
 struct fattn_mma_f16_config< 96,  96> {
     static constexpr int  nbatch_fa      = 64;
     static constexpr bool Q_in_reg       = true;
-    static constexpr int  nstages        = 2;
-    static constexpr int  nbatch_K       = 48;
-    static constexpr int  nbatch_V       = 48;
+    static constexpr int  nstages_target = 2;
+    static constexpr int  nbatch_K2      = 48;
+    static constexpr int  nbatch_V2      = 48;
     static constexpr int  nbatch_combine = 48;
 };
 
@@ -60,9 +60,9 @@ template <>
 struct fattn_mma_f16_config<112, 112> {
     static constexpr int  nbatch_fa      = 64;
     static constexpr bool Q_in_reg       = true;
-    static constexpr int  nstages        = 2;
-    static constexpr int  nbatch_K       = 56;
-    static constexpr int  nbatch_V       = 56;
+    static constexpr int  nstages_target = 2;
+    static constexpr int  nbatch_K2      = 56;
+    static constexpr int  nbatch_V2      = 56;
     static constexpr int  nbatch_combine = 56;
 };
 
@@ -70,9 +70,9 @@ template <>
 struct fattn_mma_f16_config<128, 128> {
     static constexpr int  nbatch_fa      = 64;
     static constexpr bool Q_in_reg       = true;
-    static constexpr int  nstages        = 2;
-    static constexpr int  nbatch_K       = 64;
-    static constexpr int  nbatch_V       = 64;
+    static constexpr int  nstages_target = 2;
+    static constexpr int  nbatch_K2      = 64;
+    static constexpr int  nbatch_V2      = 64;
     static constexpr int  nbatch_combine = 64;
 };
 
@@ -80,9 +80,9 @@ template <>
 struct fattn_mma_f16_config<256, 256> {
     static constexpr int  nbatch_fa      = 32;
     static constexpr bool Q_in_reg       = true;
-    static constexpr int  nstages        = 2;
-    static constexpr int  nbatch_K       = 128;
-    static constexpr int  nbatch_V       = 128;
+    static constexpr int  nstages_target = 2;
+    static constexpr int  nbatch_K2      = 128;
+    static constexpr int  nbatch_V2      = 128;
     static constexpr int  nbatch_combine = 128;
 };
 
@@ -90,9 +90,9 @@ template <>
 struct fattn_mma_f16_config<576, 512> {
     static constexpr int  nbatch_fa      = 32;
     static constexpr bool Q_in_reg       = false;
-    static constexpr int  nstages        = 1;
-    static constexpr int  nbatch_K       = 160;
-    static constexpr int  nbatch_V       = 128;
+    static constexpr int  nstages_target = 1;
+    static constexpr int  nbatch_K2      = 160;
+    static constexpr int  nbatch_V2      = 128;
     static constexpr int  nbatch_combine = 128;
 };
 
@@ -242,7 +242,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     typedef fattn_mma_f16_config<DKQ, DV> c;
 
 #ifdef CP_ASYNC_AVAILABLE
-    constexpr int nstages = c::nstages;
+    constexpr int nstages = c::nstages_target;
 #else
     constexpr int nstages = 0;
 #endif // CP_ASYNC_AVAILABLE
@@ -251,9 +251,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     constexpr int cols_per_thread = ntiles == 1 ? 2 : ntiles;
     constexpr int np              = nwarps * (cols_per_warp/ncols2) / ncols1; // Number of parallel CUDA warps per Q column.
 
-    constexpr int stride_tile_Q = DKQ/2       + 4;
-    constexpr int stride_tile_K = c::nbatch_K + 4;
-    constexpr int stride_tile_V = c::nbatch_V + 4;
+    constexpr int stride_tile_Q = DKQ/2        + 4;
+    constexpr int stride_tile_K = c::nbatch_K2 + 4;
+    constexpr int stride_tile_V = c::nbatch_V2 + 4;
 
     const int k_VKQ_0 = kb0 * c::nbatch_fa;
     tile_C_KQ KQ_C[c::nbatch_fa/(np*tile_C_KQ::I) * ntiles];
@@ -268,7 +268,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         cp_async_wait_all();
         __syncthreads();
         flash_attn_ext_f16_load_tile<stride_tile_V, nwarps, c::nbatch_fa, use_cp_async>
-            (V_h2 + k_VKQ_0*stride_V, tile_V, c::nbatch_V, stride_V);
+            (V_h2 + k_VKQ_0*stride_V, tile_V, c::nbatch_V2, stride_V);
     } else {
         constexpr bool use_cp_async = nstages == 1;
         if (ncols2 > 1 || mask_h2) {
@@ -277,8 +277,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     }
 
 #pragma unroll
-    for (int k0_start = 0; k0_start < DKQ/2; k0_start += c::nbatch_K) {
-        const int k0_stop = k0_start + c::nbatch_K < DKQ/2 ? k0_start + c::nbatch_K : DKQ/2;
+    for (int k0_start = 0; k0_start < DKQ/2; k0_start += c::nbatch_K2) {
+        const int k0_stop = k0_start + c::nbatch_K2 < DKQ/2 ? k0_start + c::nbatch_K2 : DKQ/2;
         const int k0_diff = k0_stop - k0_start;
 
         if (nstages <= 1) {
@@ -526,13 +526,13 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
                     (mask_h2 + (k_VKQ_0 + c::nbatch_fa)/2, tile_mask, stride_mask);
             }
             flash_attn_ext_f16_load_tile<stride_tile_K, nwarps, c::nbatch_fa, use_cp_async>
-                (K_h2 + (k_VKQ_0 + c::nbatch_fa)*stride_K, tile_K, c::nbatch_K, stride_K);
+                (K_h2 + (k_VKQ_0 + c::nbatch_fa)*stride_K, tile_K, c::nbatch_K2, stride_K);
         }
     }
 
 #pragma unroll
-        for (int i0_start = 0; i0_start < DV; i0_start += 2*c::nbatch_V) {
-            const int i0_stop = i0_start + 2*c::nbatch_V < DV ? i0_start + 2*c::nbatch_V : DV;
+        for (int i0_start = 0; i0_start < DV; i0_start += 2*c::nbatch_V2) {
+            const int i0_stop = i0_start + 2*c::nbatch_V2 < DV ? i0_start + 2*c::nbatch_V2 : DV;
             const int i0_diff = i0_stop - i0_start;
 
         if (nstages == 1) {
@@ -612,7 +612,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     typedef fattn_mma_f16_config<DKQ, DV> c;
 
 #ifdef CP_ASYNC_AVAILABLE
-    constexpr int nstages = c::nstages;
+    constexpr int nstages = c::nstages_target;
 #else
     constexpr int nstages = 0;
 #endif // CP_ASYNC_AVAILABLE
@@ -624,16 +624,16 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
     static_assert(nwarps * (cols_per_warp/ncols2) % ncols1 == 0, "bad nwarps");
 
-    constexpr int stride_tile_Q = DKQ/2       + 4;
-    constexpr int stride_tile_K = c::nbatch_K + 4;
-    constexpr int stride_tile_V = c::nbatch_V + 4;
+    constexpr int stride_tile_Q = DKQ/2        + 4;
+    constexpr int stride_tile_K = c::nbatch_K2 + 4;
+    constexpr int stride_tile_V = c::nbatch_V2 + 4;
 
     constexpr int stride_tile_KV_max = stride_tile_K > stride_tile_V ? stride_tile_K : stride_tile_V;
 
     extern __shared__ half2 tile_Q[];
-    half2 * tile_K    = c::Q_in_reg    ? tile_Q                                : tile_Q + ncols        * stride_tile_Q;
-    half2 * tile_V    = c::nstages > 1 ? tile_K + c::nbatch_fa * stride_tile_K : tile_K;
-    half2 * tile_mask = c::nstages > 1 ? tile_V + c::nbatch_fa * stride_tile_V : tile_V + c::nbatch_fa * stride_tile_KV_max;
+    half2 * tile_K    = c::Q_in_reg ? tile_Q                                : tile_Q + ncols        * stride_tile_Q;
+    half2 * tile_V    = nstages > 1 ? tile_K + c::nbatch_fa * stride_tile_K : tile_K;
+    half2 * tile_mask = nstages > 1 ? tile_V + c::nbatch_fa * stride_tile_V : tile_V + c::nbatch_fa * stride_tile_KV_max;
 
     tile_B       Q_B[(c::Q_in_reg ? DKQ/(2*tile_B::J) : 1) * ntiles];
     tile_C_VKQ VKQ_C[DV/tile_C_VKQ::I  * ntiles];
@@ -715,14 +715,14 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
     // Preload mask and K data for first iteration when using cp_async with multiple stages:
     if constexpr (nstages > 1) {
-        static_assert(c::nbatch_K == DKQ/2, "batching not implemented for multi-stage pipeline");
+        static_assert(c::nbatch_K2 == DKQ/2, "batching not implemented for multi-stage pipeline");
         constexpr bool use_cp_async = true;
         if (ncols2 > 1 || mask_h2) {
             flash_attn_ext_f16_load_mask<ncols1, nwarps, c::nbatch_fa, use_cp_async>
                 (mask_h2 + kb0_start*c::nbatch_fa/2, tile_mask, stride_mask);
         }
         flash_attn_ext_f16_load_tile<stride_tile_K, nwarps, c::nbatch_fa, use_cp_async>
-            (K_h2 + kb0_start*c::nbatch_fa*stride_K, tile_K, c::nbatch_K, stride_K);
+            (K_h2 + kb0_start*c::nbatch_fa*stride_K, tile_K, c::nbatch_K2, stride_K);
     }
 
     // Iterate over ne11 == previous tokens:
@@ -1151,11 +1151,11 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
 
     typedef fattn_mma_f16_config<DKQ, DV> c;
 
-    constexpr int nbatch_K       = c::nbatch_K       < 1 ? DKQ/2 : c::nbatch_K;
-    constexpr int nbatch_V       = c::nbatch_V       < 1 ? DV /2 : c::nbatch_V;
+    constexpr int nbatch_K2      = c::nbatch_K2      < 1 ? DKQ/2 : c::nbatch_K2;
+    constexpr int nbatch_V2      = c::nbatch_V2      < 1 ? DV /2 : c::nbatch_V2;
     constexpr int nbatch_combine = c::nbatch_combine < 1 ? DV /2 : c::nbatch_combine;
 
-    const int nstages = cp_async_available(cc) ? c::nstages : 0;
+    const int nstages = cp_async_available(cc) ? c::nstages_target : 0;
 
     constexpr int ncols         = ncols1 * ncols2;
     constexpr int ntiles        = ncols <= 8 ? 1 : 2; // Number of tiles per warp.
@@ -1169,13 +1169,13 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     static_assert(DV    % tile_A::J     == 0, "bad DV");
     static_assert(ncols % cols_per_warp == 0, "bad ncols");
 
-    const size_t nbytes_shared_KV_1stage = c::nbatch_fa         * std::max(c::nbatch_K + 4,  c::nbatch_V + 4) * sizeof(half2);
-    const size_t nbytes_shared_KV_2stage = c::nbatch_fa         *         (c::nbatch_K + 4 + c::nbatch_V + 4) * sizeof(half2);
-    const size_t nbytes_shared_Q         = ncols                * (DKQ/2 + 4)                                 * sizeof(half2);
-    const size_t nbytes_shared_mask      = ncols1               * (c::nbatch_fa/2 + 4)                        * sizeof(half2);
-    const size_t nbytes_shared_combine   = nwarps*cols_per_warp * (nbatch_combine + 4)                        * sizeof(half2);
+    const size_t nbytes_shared_KV_1stage = c::nbatch_fa         * std::max(c::nbatch_K2 + 4,  c::nbatch_V2 + 4) * sizeof(half2);
+    const size_t nbytes_shared_KV_2stage = c::nbatch_fa         *         (c::nbatch_K2 + 4 + c::nbatch_V2 + 4) * sizeof(half2);
+    const size_t nbytes_shared_Q         = ncols                * (DKQ/2 + 4)                                   * sizeof(half2);
+    const size_t nbytes_shared_mask      = ncols1               * (c::nbatch_fa/2 + 4)                          * sizeof(half2);
+    const size_t nbytes_shared_combine   = nwarps*cols_per_warp * (nbatch_combine + 4)                          * sizeof(half2);
 
-    const size_t nbytes_shared_KV = c::nstages <= 1 ? nbytes_shared_KV_1stage : nbytes_shared_KV_2stage;
+    const size_t nbytes_shared_KV = nstages <= 1 ? nbytes_shared_KV_1stage : nbytes_shared_KV_2stage;
 
     const size_t nbytes_shared_total = std::max(nbytes_shared_combine, c::Q_in_reg ?
         std::max(nbytes_shared_Q,  nbytes_shared_KV + nbytes_shared_mask) :
