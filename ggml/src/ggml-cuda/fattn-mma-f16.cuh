@@ -17,6 +17,7 @@ typedef tile<16,  8, half2> tile_C_VKQ_16;
 // Should not affect results, only speed/register pressure/shared memory use.
 //
 // nbatch_fa:      number of KV rows per softmax rescaling of KQ rowsums and VKQ accumulators.
+// nwarps_max:     maximum number of warps per CUDA block, up to 8 warps in total can run per SM (given enough shared memory).
 // Q_in_reg:       whether the Q values should be kept permanently in registers.
 // nstages_target: targeted number of pipeline stages for cp_async (if available), 0 means synchronous data loading.
 // nbatch_K2:      number of K half2 values in direction of DKQ to load in parallel.
@@ -29,6 +30,7 @@ struct fattn_mma_f16_config;
 template <>
 struct fattn_mma_f16_config< 64,  64> {
     static constexpr int  nbatch_fa      = 64;
+    static constexpr int  nwarps_max     = 4;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages_target = 2;
     static constexpr int  nbatch_K2      = 32;
@@ -39,6 +41,7 @@ struct fattn_mma_f16_config< 64,  64> {
 template <>
 struct fattn_mma_f16_config< 80,  80> {
     static constexpr int  nbatch_fa      = 64;
+    static constexpr int  nwarps_max     = 4;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages_target = 2;
     static constexpr int  nbatch_K2      = 40;
@@ -49,6 +52,7 @@ struct fattn_mma_f16_config< 80,  80> {
 template <>
 struct fattn_mma_f16_config< 96,  96> {
     static constexpr int  nbatch_fa      = 64;
+    static constexpr int  nwarps_max     = 4;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages_target = 2;
     static constexpr int  nbatch_K2      = 48;
@@ -59,6 +63,7 @@ struct fattn_mma_f16_config< 96,  96> {
 template <>
 struct fattn_mma_f16_config<112, 112> {
     static constexpr int  nbatch_fa      = 64;
+    static constexpr int  nwarps_max     = 4;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages_target = 2;
     static constexpr int  nbatch_K2      = 56;
@@ -69,6 +74,7 @@ struct fattn_mma_f16_config<112, 112> {
 template <>
 struct fattn_mma_f16_config<128, 128> {
     static constexpr int  nbatch_fa      = 64;
+    static constexpr int  nwarps_max     = 4;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages_target = 2;
     static constexpr int  nbatch_K2      = 64;
@@ -79,6 +85,7 @@ struct fattn_mma_f16_config<128, 128> {
 template <>
 struct fattn_mma_f16_config<256, 256> {
     static constexpr int  nbatch_fa      = 32;
+    static constexpr int  nwarps_max     = 4;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages_target = 2;
     static constexpr int  nbatch_K2      = 128;
@@ -89,6 +96,7 @@ struct fattn_mma_f16_config<256, 256> {
 template <>
 struct fattn_mma_f16_config<576, 512> {
     static constexpr int  nbatch_fa      = 32;
+    static constexpr int  nwarps_max     = 8;
     static constexpr bool Q_in_reg       = false;
     static constexpr int  nstages_target = 1;
     static constexpr int  nbatch_K2      = 160;
@@ -1160,10 +1168,9 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     constexpr int ncols         = ncols1 * ncols2;
     constexpr int ntiles        = ncols <= 8 ? 1 : 2; // Number of tiles per warp.
     constexpr int cols_per_warp = ntiles * tile_B::I;
-    constexpr int nwarps_x      = ncols / cols_per_warp;
-    constexpr int nwarps_y      = c::nbatch_fa / tile_A::I;
-    constexpr int nwarps_max    = 8;
-    constexpr int nwarps        = nwarps_x*nwarps_y <= nwarps_max ? nwarps_x*nwarps_y : nwarps_max;
+    constexpr int nwarps_max_x  = ncols / cols_per_warp;
+    constexpr int nwarps_max_y  = c::nbatch_fa / tile_A::I;
+    constexpr int nwarps        = nwarps_max_x*nwarps_max_y <= c::nwarps_max ? nwarps_max_x*nwarps_max_y : c::nwarps_max;
 
     static_assert(DKQ   % tile_B::J     == 0, "bad DKQ");
     static_assert(DV    % tile_A::J     == 0, "bad DV");
