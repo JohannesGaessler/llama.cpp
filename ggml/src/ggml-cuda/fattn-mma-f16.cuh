@@ -16,11 +16,11 @@ typedef tile<16,  8, half2> tile_C_VKQ_16;
 // Config options for specific head sizes.
 // Should not affect results, only speed/register pressure/shared memory use.
 //
-// nbatch_fa: number of KV rows per softmax rescaling of KQ rowsums and VKQ accumulators.
-// Q_in_reg: whether the Q values should be kept permanently in registers.
+// nbatch_fa:      number of KV rows per softmax rescaling of KQ rowsums and VKQ accumulators.
+// Q_in_reg:       whether the Q values should be kept permanently in registers.
 // nstages_target: targeted number of pipeline stages for cp_async (if available), 0 means synchronous data loading.
-// nbatch_K2: number of K half2 values in direction of DKQ to load in parallel.
-// nbatch_V2: number of V half2 values in direction of DV to load in parallel.
+// nbatch_K2:      number of K half2 values in direction of DKQ to load in parallel.
+// nbatch_V2:      number of V half2 values in direction of DV to load in parallel.
 // nbatch_combine: number of VKQ half2 values in direction of DV to combine in parallel.
 
 template <int DKQ, int DV>
@@ -263,7 +263,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     tile_C_VKQ_16 * VKQ_C_16 = (tile_C_VKQ_16 *) VKQ_C;
     tile_C_KQ_16  * KQ_C_16  = (tile_C_KQ_16  *) KQ_C;
 
-    if (nstages > 1) {
+    if constexpr (nstages > 1) {
+        static_assert(c::nbatch_K2 == DKQ/2, "batching not implemented for multi stage loading");
         constexpr bool use_cp_async = true;
         cp_async_wait_all();
         __syncthreads();
@@ -390,7 +391,6 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         }
 
         static_assert(c::nbatch_fa % (np*tile_C_KQ::I) == 0, "bad loop size");
-
 #pragma unroll
         for (int k = 0; k < c::nbatch_fa/(np*tile_C_KQ::I); ++k) {
 #pragma unroll
@@ -531,9 +531,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     }
 
 #pragma unroll
-        for (int i0_start = 0; i0_start < DV; i0_start += 2*c::nbatch_V2) {
-            const int i0_stop = i0_start + 2*c::nbatch_V2 < DV ? i0_start + 2*c::nbatch_V2 : DV;
-            const int i0_diff = i0_stop - i0_start;
+    for (int i0_start = 0; i0_start < DV; i0_start += 2*c::nbatch_V2) {
+        const int i0_stop = i0_start + 2*c::nbatch_V2 < DV ? i0_start + 2*c::nbatch_V2 : DV;
+        const int i0_diff = i0_stop - i0_start;
 
         if (nstages == 1) {
             constexpr bool use_cp_async = nstages == 1;
