@@ -1906,10 +1906,6 @@ void llama_context::opt_epoch_iter(
 
     llama_kv_cache * kv_self = static_cast<llama_kv_cache *>(memory.get());
 
-    //is_encoding = false;
-    //llama_kv_cache_clear(lctx);
-    //llama_kv_slot_restorer kv_slot_restorer(lctx->kv_self);
-
     kv_self->clear();
     llama_kv_cache_guard kv_guard(kv_self);
 
@@ -1923,11 +1919,6 @@ void llama_context::opt_epoch_iter(
             batch.logits  [pos_batch]    = true;
         }
 
-        //{
-        //    const int err_code = llama_prepare_sbatch(*lctx, batch, n_outputs);
-        //    GGML_ASSERT(err_code == 0);
-        //}
-
         const auto n_tokens_all = batch.n_tokens;
 
         n_queued_tokens += n_tokens_all;
@@ -1939,7 +1930,7 @@ void llama_context::opt_epoch_iter(
 
         int64_t n_outputs_all = n_tokens_all;
 
-        llama_sbatch sbatch = kv_self->sbatch_init(batch, /* logits_all */ true);
+        llama_sbatch sbatch = kv_self->sbatch_init(batch, /*logits_all =*/ true);
 
         // reserve output buffer
         if (output_reserve(n_outputs_all) < n_outputs_all) {
@@ -1948,11 +1939,6 @@ void llama_context::opt_epoch_iter(
         };
 
         for (uint32_t pos_batch = 0; pos_batch < n_batch; pos_batch += n_ubatch) {
-            //struct llama_ubatch ubatch;
-            //{
-            //    const int err_code = llama_prepare_ubatch(*lctx, kv_slot_restorer, ubatch, n_outputs, batch.n_tokens);
-            //    GGML_ASSERT(err_code == 0);
-            //}
             llama_ubatch ubatch = kv_self->ubatch_next(sbatch, cparams.n_ubatch, embd_pooled);
 
             n_outputs = ubatch.n_tokens;
@@ -1967,7 +1953,6 @@ void llama_context::opt_epoch_iter(
             auto * gf = graph_init();
             auto res = graph_build(ctx_compute.get(), gf, ubatch, LLM_GRAPH_TYPE_DEFAULT);
 
-            //struct ggml_cgraph * gf = llama_build_graph(*lctx, ubatch, false);
             struct ggml_context * ctx_compute_opt;
             {
                 const size_t size_gf = ggml_graph_size(gf);
@@ -1981,7 +1966,6 @@ void llama_context::opt_epoch_iter(
             }
             ggml_opt_prepare_alloc(opt_ctx, ctx_compute_opt, gf, res->get_tokens(), res->get_logits());
             ggml_opt_alloc(opt_ctx, train);
-            //llama_set_inputs(*lctx, ubatch);
             res->set_inputs(&ubatch);
             {
                 struct ggml_tensor * labels = ggml_opt_labels(opt_ctx);

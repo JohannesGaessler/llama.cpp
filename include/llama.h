@@ -1437,7 +1437,7 @@ extern "C" {
     // training
     //
 
-    // function that returns whether or not a given tensor is a trainable parameter
+    // function that returns whether or not a given tensor contains trainable parameters
     typedef bool (*llama_opt_param_filter)(const struct ggml_tensor * tensor, void * userdata);
 
     // always returns true
@@ -1446,8 +1446,8 @@ extern "C" {
     struct llama_opt_params {
         uint32_t n_ctx_train; // assumed context size post training, use context size specified in llama_context if 0
 
-        llama_opt_param_filter param_filter; // callback for determining which tensors are trainable parameters
-        void * param_filter_ud;              // userdata for determining which tensors are trainable parameters
+        llama_opt_param_filter param_filter; // callback for determining which tensors contain trainable parameters
+        void * param_filter_ud;              // userdata for determining which tensors contain trainable parameters
 
         ggml_opt_get_optimizer_params get_opt_pars; // callback for calculating optimizer parameters
         void * get_opt_pars_ud;                     // userdata for calculating optimizer parameters
