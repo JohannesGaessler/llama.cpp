@@ -2040,22 +2040,29 @@ struct test_mul_mat : public test_case {
             ggml_set_name(a, "a_permuted");
             ggml_set_name(b, "b_permuted");
         } else {
-
             if (v) {
                 a = ggml_new_tensor_4d(ctx, type_a, k*2, m, bs[0],       bs[1]);
                 b = ggml_new_tensor_4d(ctx, type_b, k*2, n, bs[0]*nr[0], bs[1]*nr[1]);
+
+                if (!ggml_is_quantized(type_a)) {
+                    if (bs[1] == 1 && nr[1] == 1) {
+                        ggml_set_param(a);
+                    }
+                    ggml_set_param(b);
+                }
 
                 a = ggml_view_4d(ctx, a, k, m, bs[0],       bs[1],       a->nb[1], a->nb[2], a->nb[3], 0);
                 b = ggml_view_4d(ctx, b, k, n, bs[0]*nr[0], bs[1]*nr[1], b->nb[1], b->nb[2], b->nb[3], 0);
             } else {
                 a = ggml_new_tensor_4d(ctx, type_a, k, m, bs[0],       bs[1]);
                 b = ggml_new_tensor_4d(ctx, type_b, k, n, bs[0]*nr[0], bs[1]*nr[1]);
-            }
-            if (!ggml_is_quantized(type_a)) {
-                if (bs[1] == 1 && nr[1] == 1) {
-                    ggml_set_param(a);
+
+                if (!ggml_is_quantized(type_a)) {
+                    if (bs[1] == 1 && nr[1] == 1) {
+                        ggml_set_param(a);
+                    }
+                    ggml_set_param(b);
                 }
-                ggml_set_param(b);
             }
             ggml_set_name(a, "a");
             ggml_set_name(b, "b");
