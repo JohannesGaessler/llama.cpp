@@ -5495,7 +5495,7 @@ static void ggml_compute_backward(
             // tensor = src0 * 1 + src1 * 0
             if (src0_needs_grads) {
                 // dsrc0 = dtensor * 1
-                ggml_add_or_set(ctx, cgraph, isrc0, grad);
+                ggml_add_or_set(ctx, cgraph, isrc0, ggml_reshape(ctx, grad, src0));
             }
             if (src1_needs_grads) {
                 // dsrc1 = dtensor * 0 -> noop
