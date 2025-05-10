@@ -651,6 +651,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             }
             __syncthreads();
         }
+        const half2 * tile_V_i = reusable_cutoff < 0 ? tile_V - reusable_cutoff/2 : tile_V;
 
         // Calculate VKQ tile:
 #pragma unroll
@@ -661,7 +662,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
                 const int k0 = k00 + (threadIdx.y % np)*tile_A::J;
 
                 tile_A A;
-                load_ldmatrix_trans(A, tile_V + 2*k0*stride_tile_V + (i_VKQ_0 - i0_start)/2, stride_tile_V);
+                load_ldmatrix_trans(A, tile_V_i + 2*k0*stride_tile_V + (i_VKQ_0 - i0_start)/2, stride_tile_V);
                 if (ntiles == 1) {
                     mma(VKQ_C[i_VKQ_0/tile_C_VKQ::I], A, B[k00/(np*tile_A::J)]);
                 } else {
@@ -744,10 +745,6 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     half2 * tile_K    = c::Q_in_reg ? tile_Q                                : tile_Q + ncols        * stride_tile_Q;
     half2 * tile_V    = nstages > 1 ? tile_K + c::nbatch_fa * stride_tile_K : tile_K;
     half2 * tile_mask = nstages > 1 ? tile_V + c::nbatch_fa * stride_tile_V : tile_V + c::nbatch_fa * stride_tile_KV_max;
-
-    if (mla) {
-        tile_V = tile_K + (DKQ/2 - DV/2);
-    }
 
     tile_B       Q_B[(c::Q_in_reg ? DKQ/(2*tile_B::J) : 1) * ntiles];
     tile_C_VKQ VKQ_C[DV/tile_C_VKQ::I  * ntiles];
