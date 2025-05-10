@@ -35,8 +35,19 @@ struct fattn_mma_f16_config< 64,  64> {
     static constexpr int  nstages_target = 2;
     static constexpr int  nbatch_combine = 32;
 
-    static constexpr __host__ __device__ int get_nbatch_K2(int /*ncols*/) {return 32;}
-    static constexpr __host__ __device__ int get_nbatch_V2(int /*ncols*/) {return 32;}
+    static int get_nbatch_K2_host(const int /*cc*/, const int /*ncols*/) {
+        return 32;
+    }
+    static constexpr __device__ int get_nbatch_K2_device(int /*ncols*/) {
+        return 32;
+    }
+
+    static int get_nbatch_V2_host(const int /*cc*/, const int /*ncols*/) {
+        return 32;
+    }
+    static constexpr __device__ int get_nbatch_V2_device(int /*ncols*/) {
+        return 32;
+    }
 };
 
 template <>
@@ -47,8 +58,19 @@ struct fattn_mma_f16_config< 80,  80> {
     static constexpr int  nstages_target = 2;
     static constexpr int  nbatch_combine = 40;
 
-    static constexpr __host__ __device__ int get_nbatch_K2(int /*ncols*/) {return 40;}
-    static constexpr __host__ __device__ int get_nbatch_V2(int /*ncols*/) {return 40;}
+    static int get_nbatch_K2_host(const int /*cc*/, const int /*ncols*/) {
+        return 40;
+    }
+    static constexpr __device__ int get_nbatch_K2_device(int /*ncols*/) {
+        return 40;
+    }
+
+    static int get_nbatch_V2_host(const int /*cc*/, const int /*ncols*/) {
+        return 40;
+    }
+    static constexpr __device__ int get_nbatch_V2_device(int /*ncols*/) {
+        return 40;
+    }
 };
 
 template <>
@@ -59,8 +81,19 @@ struct fattn_mma_f16_config< 96,  96> {
     static constexpr int  nstages_target = 2;
     static constexpr int  nbatch_combine = 48;
 
-    static constexpr __host__ __device__ int get_nbatch_K2(int /*ncols*/) {return 48;}
-    static constexpr __host__ __device__ int get_nbatch_V2(int /*ncols*/) {return 48;}
+    static int get_nbatch_K2_host(const int /*cc*/, const int /*ncols*/) {
+        return 48;
+    }
+    static constexpr __device__ int get_nbatch_K2_device(int /*ncols*/) {
+        return 48;
+    }
+
+    static int get_nbatch_V2_host(const int /*cc*/, const int /*ncols*/) {
+        return 48;
+    }
+    static constexpr __device__ int get_nbatch_V2_device(int /*ncols*/) {
+        return 48;
+    }
 };
 
 template <>
@@ -71,8 +104,19 @@ struct fattn_mma_f16_config<112, 112> {
     static constexpr int  nstages_target = 2;
     static constexpr int  nbatch_combine = 56;
 
-    static constexpr __host__ __device__ int get_nbatch_K2(int /*ncols*/) {return 56;}
-    static constexpr __host__ __device__ int get_nbatch_V2(int /*ncols*/) {return 56;}
+    static int get_nbatch_K2_host(const int /*cc*/, const int /*ncols*/) {
+        return 56;
+    }
+    static constexpr __device__ int get_nbatch_K2_device(int /*ncols*/) {
+        return 56;
+    }
+
+    static int get_nbatch_V2_host(const int /*cc*/, const int /*ncols*/) {
+        return 56;
+    }
+    static constexpr __device__ int get_nbatch_V2_device(int /*ncols*/) {
+        return 56;
+    }
 };
 
 template <>
@@ -83,8 +127,19 @@ struct fattn_mma_f16_config<128, 128> {
     static constexpr int  nstages_target = 2;
     static constexpr int  nbatch_combine = 64;
 
-    static constexpr __host__ __device__ int get_nbatch_K2(int /*ncols*/) {return 64;}
-    static constexpr __host__ __device__ int get_nbatch_V2(int /*ncols*/) {return 64;}
+    static int get_nbatch_K2_host(const int /*cc*/, const int /*ncols*/) {
+        return 64;
+    }
+    static constexpr __device__ int get_nbatch_K2_device(int /*ncols*/) {
+        return 64;
+    }
+
+    static int get_nbatch_V2_host(const int /*cc*/, const int /*ncols*/) {
+        return 64;
+    }
+    static constexpr __device__ int get_nbatch_V2_device(int /*ncols*/) {
+        return 64;
+    }
 };
 
 template <>
@@ -95,8 +150,19 @@ struct fattn_mma_f16_config<256, 256> {
     static constexpr int  nstages_target = 2;
     static constexpr int  nbatch_combine = 128;
 
-    static constexpr __host__ __device__ int get_nbatch_K2(int /*ncols*/) {return 128;}
-    static constexpr __host__ __device__ int get_nbatch_V2(int /*ncols*/) {return 128;}
+    static int get_nbatch_K2_host(const int /*cc*/, const int /*ncols*/) {
+        return 128;
+    }
+    static constexpr __device__ int get_nbatch_K2_device(int /*ncols*/) {
+        return 128;
+    }
+
+    static int get_nbatch_V2_host(const int /*cc*/, const int /*ncols*/) {
+        return 128;
+    }
+    static constexpr __device__ int get_nbatch_V2_device(int /*ncols*/) {
+        return 128;
+    }
 };
 
 template <>
@@ -107,8 +173,19 @@ struct fattn_mma_f16_config<576, 512> {
     static constexpr int  nstages_target = 1;
     static constexpr int  nbatch_combine = 128;
 
-    static constexpr __host__ __device__ int get_nbatch_K2(int ncols) {return ncols <= 16 ? 288 : 160;}
-    static constexpr __host__ __device__ int get_nbatch_V2(int ncols) {return ncols <= 16 ? 256 : 128;}
+    static int get_nbatch_K2_host(const int /*cc*/, const int ncols) {
+        return ncols <= 16 ? 288 : 160;
+    }
+    static constexpr __device__ int get_nbatch_K2_device(int ncols) {
+        return ncols <= 16 ? 288 : 160;
+    }
+
+    static int get_nbatch_V2_host(const int /*cc*/, const int ncols) {
+        return ncols <= 16 ? 256 : 128;
+    }
+    static constexpr __device__ int get_nbatch_V2_device(int ncols) {
+        return ncols <= 16 ? 256 : 128;
+    }
 };
 
 // ------------------------------------------------------------------------------------------------------------------
@@ -269,8 +346,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     constexpr int cols_per_thread = ntiles == 1 ? 2 : ntiles;
     constexpr int np              = nwarps * (cols_per_warp/ncols2) / ncols1; // Number of parallel CUDA warps per Q column.
     constexpr int ncols           = ncols1 * ncols2;
-    constexpr int nbatch_K2       = c::get_nbatch_K2(ncols);
-    constexpr int nbatch_V2       = c::get_nbatch_V2(ncols);
+    constexpr int nbatch_K2       = c::get_nbatch_K2_device(ncols);
+    constexpr int nbatch_V2       = c::get_nbatch_V2_device(ncols);
 
     constexpr int stride_tile_Q = DKQ/2     + 4;
     constexpr int stride_tile_K = nbatch_K2 + 4;
@@ -642,8 +719,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     constexpr int cols_per_warp   = ntiles * tile_B::I;
     constexpr int cols_per_thread = ntiles == 1 ? 2 : ntiles;
     constexpr int np              = nwarps * (cols_per_warp/ncols2) / ncols1; // Number of parallel CUDA warps per Q column.
-    constexpr int nbatch_K2       = c::get_nbatch_K2(ncols);
-    constexpr int nbatch_V2       = c::get_nbatch_V2(ncols);
+    constexpr int nbatch_K2       = c::get_nbatch_K2_device(ncols);
+    constexpr int nbatch_V2       = c::get_nbatch_V2_device(ncols);
 
     static_assert(nwarps * (cols_per_warp/ncols2) % ncols1 == 0, "bad nwarps");
 
@@ -1180,8 +1257,9 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     constexpr int nwarps_max_x  = ncols / cols_per_warp;
     constexpr int nwarps_max_y  = c::nbatch_fa / tile_A::I;
     constexpr int nwarps        = nwarps_max_x*nwarps_max_y <= c::nwarps_max ? nwarps_max_x*nwarps_max_y : c::nwarps_max;
-    constexpr int nbatch_K2     = c::get_nbatch_K2(ncols);
-    constexpr int nbatch_V2     = c::get_nbatch_K2(ncols);
+
+    const int nbatch_K2 = c::get_nbatch_K2_host(cc, ncols);
+    const int nbatch_V2 = c::get_nbatch_K2_host(cc, ncols);
 
 
     static_assert(DKQ   % tile_B::J     == 0, "bad DKQ");
