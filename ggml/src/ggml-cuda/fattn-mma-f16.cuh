@@ -107,8 +107,8 @@ struct fattn_mma_f16_config<576, 512> {
     static constexpr int  nstages_target = 1;
     static constexpr int  nbatch_combine = 128;
 
-    static constexpr __host__ __device__ int get_nbatch_K2(int /*ncols*/) {return 160;}
-    static constexpr __host__ __device__ int get_nbatch_V2(int /*ncols*/) {return 128;}
+    static constexpr __host__ __device__ int get_nbatch_K2(int ncols) {return ncols <= 16 ? 288 : 160;}
+    static constexpr __host__ __device__ int get_nbatch_V2(int ncols) {return ncols <= 16 ? 256 : 128;}
 };
 
 // ------------------------------------------------------------------------------------------------------------------
