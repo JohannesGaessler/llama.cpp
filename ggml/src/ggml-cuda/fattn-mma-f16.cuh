@@ -38,6 +38,7 @@ struct fattn_mma_f16_config< 64,  64> {
     static int get_nbatch_K2_host(const int /*cc*/, const int /*ncols*/) {
         return 32;
     }
+
     static constexpr __device__ int get_nbatch_K2_device(int /*ncols*/) {
         return 32;
     }
@@ -45,6 +46,7 @@ struct fattn_mma_f16_config< 64,  64> {
     static int get_nbatch_V2_host(const int /*cc*/, const int /*ncols*/) {
         return 32;
     }
+
     static constexpr __device__ int get_nbatch_V2_device(int /*ncols*/) {
         return 32;
     }
@@ -61,6 +63,7 @@ struct fattn_mma_f16_config< 80,  80> {
     static int get_nbatch_K2_host(const int /*cc*/, const int /*ncols*/) {
         return 40;
     }
+
     static constexpr __device__ int get_nbatch_K2_device(int /*ncols*/) {
         return 40;
     }
@@ -68,6 +71,7 @@ struct fattn_mma_f16_config< 80,  80> {
     static int get_nbatch_V2_host(const int /*cc*/, const int /*ncols*/) {
         return 40;
     }
+
     static constexpr __device__ int get_nbatch_V2_device(int /*ncols*/) {
         return 40;
     }
@@ -84,6 +88,7 @@ struct fattn_mma_f16_config< 96,  96> {
     static int get_nbatch_K2_host(const int /*cc*/, const int /*ncols*/) {
         return 48;
     }
+
     static constexpr __device__ int get_nbatch_K2_device(int /*ncols*/) {
         return 48;
     }
@@ -91,6 +96,7 @@ struct fattn_mma_f16_config< 96,  96> {
     static int get_nbatch_V2_host(const int /*cc*/, const int /*ncols*/) {
         return 48;
     }
+
     static constexpr __device__ int get_nbatch_V2_device(int /*ncols*/) {
         return 48;
     }
@@ -107,6 +113,7 @@ struct fattn_mma_f16_config<112, 112> {
     static int get_nbatch_K2_host(const int /*cc*/, const int /*ncols*/) {
         return 56;
     }
+
     static constexpr __device__ int get_nbatch_K2_device(int /*ncols*/) {
         return 56;
     }
@@ -114,6 +121,7 @@ struct fattn_mma_f16_config<112, 112> {
     static int get_nbatch_V2_host(const int /*cc*/, const int /*ncols*/) {
         return 56;
     }
+
     static constexpr __device__ int get_nbatch_V2_device(int /*ncols*/) {
         return 56;
     }
@@ -130,6 +138,7 @@ struct fattn_mma_f16_config<128, 128> {
     static int get_nbatch_K2_host(const int /*cc*/, const int /*ncols*/) {
         return 64;
     }
+
     static constexpr __device__ int get_nbatch_K2_device(int /*ncols*/) {
         return 64;
     }
@@ -137,6 +146,7 @@ struct fattn_mma_f16_config<128, 128> {
     static int get_nbatch_V2_host(const int /*cc*/, const int /*ncols*/) {
         return 64;
     }
+
     static constexpr __device__ int get_nbatch_V2_device(int /*ncols*/) {
         return 64;
     }
@@ -153,6 +163,7 @@ struct fattn_mma_f16_config<256, 256> {
     static int get_nbatch_K2_host(const int /*cc*/, const int /*ncols*/) {
         return 128;
     }
+
     static constexpr __device__ int get_nbatch_K2_device(int /*ncols*/) {
         return 128;
     }
@@ -160,6 +171,7 @@ struct fattn_mma_f16_config<256, 256> {
     static int get_nbatch_V2_host(const int /*cc*/, const int /*ncols*/) {
         return 128;
     }
+
     static constexpr __device__ int get_nbatch_V2_device(int /*ncols*/) {
         return 128;
     }
@@ -179,6 +191,7 @@ struct fattn_mma_f16_config<576, 512> {
         }
         return ncols <= 16 ? 288 : 160;
     }
+
     static constexpr __device__ int get_nbatch_K2_device(int ncols) {
 #if __CUDA_ARCH__ == GGML_CUDA_CC_TURING
         return ncols <= 16 ? 96 : 160;
@@ -193,6 +206,7 @@ struct fattn_mma_f16_config<576, 512> {
         }
         return ncols <= 16 ? 256 : 128;
     }
+
     static constexpr __device__ int get_nbatch_V2_device(int ncols) {
 #if __CUDA_ARCH__ == GGML_CUDA_CC_TURING
         return ncols <= 16 ? 64 : 128;
