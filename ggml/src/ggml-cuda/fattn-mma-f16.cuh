@@ -173,18 +173,32 @@ struct fattn_mma_f16_config<576, 512> {
     static constexpr int  nstages_target = 1;
     static constexpr int  nbatch_combine = 128;
 
-    static int get_nbatch_K2_host(const int /*cc*/, const int ncols) {
+    static int get_nbatch_K2_host(const int cc, const int ncols) {
+        if (ggml_cuda_highest_compiled_arch(cc) == GGML_CUDA_CC_TURING) {
+            return ncols <= 16 ? 96 : 160;
+        }
         return ncols <= 16 ? 288 : 160;
     }
     static constexpr __device__ int get_nbatch_K2_device(int ncols) {
+#if __CUDA_ARCH__ == GGML_CUDA_CC_TURING
+        return ncols <= 16 ? 96 : 160;
+#else
         return ncols <= 16 ? 288 : 160;
+#endif // __CUDA_ARCH__ == GGML_CUDA_CC_TURING
     }
 
-    static int get_nbatch_V2_host(const int /*cc*/, const int ncols) {
+    static int get_nbatch_V2_host(const int cc, const int ncols) {
+        if (ggml_cuda_highest_compiled_arch(cc) == GGML_CUDA_CC_TURING) {
+            return ncols <= 16 ? 64 : 128;
+        }
         return ncols <= 16 ? 256 : 128;
     }
     static constexpr __device__ int get_nbatch_V2_device(int ncols) {
+#if __CUDA_ARCH__ == GGML_CUDA_CC_TURING
+        return ncols <= 16 ? 64 : 128;
+#else
         return ncols <= 16 ? 256 : 128;
+#endif // __CUDA_ARCH__ == GGML_CUDA_CC_TURING
     }
 };
 
@@ -1150,6 +1164,12 @@ static __global__ void flash_attn_ext_f16(
         NO_DEVICE_CODE;
         return;
     }
+#if __CUDA_ARCH__ == GGML_CUDA_CC_TURING
+    if (ncols1*ncols2 > 32) {
+        NO_DEVICE_CODE;
+        return;
+    }
+#endif __CUDA_ARCH__ == GGML_CUDA_CC_TURING
 
     static_assert(!mla || DKQ >= DV, "MLA needs DKQ >= DV");
 
