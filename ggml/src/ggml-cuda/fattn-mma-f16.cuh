@@ -33,7 +33,6 @@ struct fattn_mma_f16_config< 64,  64> {
     static constexpr int  nwarps_max     = 4;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages_target = 2;
-    static constexpr int  nbatch_combine = 32;
 
     static int get_nbatch_K2_host(const int /*cc*/, const int /*ncols*/) {
         return 32;
@@ -48,6 +47,14 @@ struct fattn_mma_f16_config< 64,  64> {
     }
 
     static constexpr __device__ int get_nbatch_V2_device(int /*ncols*/) {
+        return 32;
+    }
+
+    static int get_nbatch_combine_host(const int /*cc*/, const int /*ncols*/) {
+        return 32;
+    }
+
+    static constexpr __device__ int get_nbatch_combine_device(int /*ncols*/) {
         return 32;
     }
 };
@@ -58,7 +65,6 @@ struct fattn_mma_f16_config< 80,  80> {
     static constexpr int  nwarps_max     = 4;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages_target = 2;
-    static constexpr int  nbatch_combine = 40;
 
     static int get_nbatch_K2_host(const int /*cc*/, const int /*ncols*/) {
         return 40;
@@ -73,6 +79,14 @@ struct fattn_mma_f16_config< 80,  80> {
     }
 
     static constexpr __device__ int get_nbatch_V2_device(int /*ncols*/) {
+        return 40;
+    }
+
+    static int get_nbatch_combine_host(const int /*cc*/, const int /*ncols*/) {
+        return 40;
+    }
+
+    static constexpr __device__ int get_nbatch_combine_device(int /*ncols*/) {
         return 40;
     }
 };
@@ -83,7 +97,6 @@ struct fattn_mma_f16_config< 96,  96> {
     static constexpr int  nwarps_max     = 4;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages_target = 2;
-    static constexpr int  nbatch_combine = 48;
 
     static int get_nbatch_K2_host(const int /*cc*/, const int /*ncols*/) {
         return 48;
@@ -98,6 +111,14 @@ struct fattn_mma_f16_config< 96,  96> {
     }
 
     static constexpr __device__ int get_nbatch_V2_device(int /*ncols*/) {
+        return 48;
+    }
+
+    static int get_nbatch_combine_host(const int /*cc*/, const int /*ncols*/) {
+        return 48;
+    }
+
+    static constexpr __device__ int get_nbatch_combine_device(int /*ncols*/) {
         return 48;
     }
 };
@@ -108,7 +129,6 @@ struct fattn_mma_f16_config<112, 112> {
     static constexpr int  nwarps_max     = 4;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages_target = 2;
-    static constexpr int  nbatch_combine = 56;
 
     static int get_nbatch_K2_host(const int /*cc*/, const int /*ncols*/) {
         return 56;
@@ -123,6 +143,14 @@ struct fattn_mma_f16_config<112, 112> {
     }
 
     static constexpr __device__ int get_nbatch_V2_device(int /*ncols*/) {
+        return 56;
+    }
+
+    static int get_nbatch_combine_host(const int /*cc*/, const int /*ncols*/) {
+        return 56;
+    }
+
+    static constexpr __device__ int get_nbatch_combine_device(int /*ncols*/) {
         return 56;
     }
 };
@@ -133,7 +161,6 @@ struct fattn_mma_f16_config<128, 128> {
     static constexpr int  nwarps_max     = 4;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages_target = 2;
-    static constexpr int  nbatch_combine = 64;
 
     static int get_nbatch_K2_host(const int /*cc*/, const int /*ncols*/) {
         return 64;
@@ -148,6 +175,14 @@ struct fattn_mma_f16_config<128, 128> {
     }
 
     static constexpr __device__ int get_nbatch_V2_device(int /*ncols*/) {
+        return 64;
+    }
+
+    static int get_nbatch_combine_host(const int /*cc*/, const int /*ncols*/) {
+        return 64;
+    }
+
+    static constexpr __device__ int get_nbatch_combine_device(int /*ncols*/) {
         return 64;
     }
 };
@@ -158,7 +193,6 @@ struct fattn_mma_f16_config<256, 256> {
     static constexpr int  nwarps_max     = 4;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages_target = 2;
-    static constexpr int  nbatch_combine = 128;
 
     static int get_nbatch_K2_host(const int /*cc*/, const int /*ncols*/) {
         return 128;
@@ -175,6 +209,22 @@ struct fattn_mma_f16_config<256, 256> {
     static constexpr __device__ int get_nbatch_V2_device(int /*ncols*/) {
         return 128;
     }
+
+    static int get_nbatch_combine_host(const int cc, const int ncols) {
+        if (ggml_cuda_highest_compiled_arch(cc) == GGML_CUDA_CC_TURING) {
+            return ncols <= 16 ? 128 : 64;
+        }
+        return 64;
+    }
+
+    static constexpr __device__ int get_nbatch_combine_device(int ncols) {
+#if __CUDA_ARCH__ == GGML_CUDA_CC_TURING
+        return ncols <= 16 ? 128 : 64;
+#else
+        GGML_UNUSED(ncols);
+        return 128;
+#endif // __CUDA_ARCH__ == GGML_CUDA_CC_TURING
+    }
 };
 
 template <>
@@ -183,7 +233,6 @@ struct fattn_mma_f16_config<576, 512> {
     static constexpr int  nwarps_max     = 8;
     static constexpr bool Q_in_reg       = false;
     static constexpr int  nstages_target = 1;
-    static constexpr int  nbatch_combine = 128;
 
     static int get_nbatch_K2_host(const int cc, const int ncols) {
         if (ggml_cuda_highest_compiled_arch(cc) == GGML_CUDA_CC_TURING) {
@@ -213,6 +262,14 @@ struct fattn_mma_f16_config<576, 512> {
 #else
         return ncols <= 16 ? 256 : 128;
 #endif // __CUDA_ARCH__ == GGML_CUDA_CC_TURING
+    }
+
+    static int get_nbatch_combine_host(const int /*cc*/, const int /*ncols*/) {
+        return 128;
+    }
+
+    static constexpr __device__ int get_nbatch_combine_device(int /*ncols*/) {
+        return 128;
     }
 };
 
@@ -662,12 +719,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 
     // For MLA K and V have the same data.
     // Therefore, iterate over V in reverse and re-use the data
-    static_assert(DV % (2*nbatch_V2) == 0, "bad nbatch_V2");
     static_assert(!mla || nstages <= 1, "combination of MLA and multi-stage loading not implemented");
     constexpr int reusable_cutoff = mla ? (DKQ - 1) - (DKQ - 1) % (2*nbatch_K2) - (DKQ - DV) : DV;
 #pragma unroll
     for (int i0_stop = DV; i0_stop > 0; i0_stop -= 2*nbatch_V2) {
-        const int i0_start = i0_stop - 2*nbatch_V2;
+        const int i0_start = i0_stop - 2*nbatch_V2 > 0 ? i0_stop - 2*nbatch_V2 : 0;
         const int i0_diff  = i0_stop - i0_start;
 
         if (nstages <= 1 && i0_start < reusable_cutoff) {
@@ -902,7 +958,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     // It's also faster to do small writes to shared memory, then large write to VRAM than to do small writes to VRAM.
     // So also write VKQ accumulators to shared memory in column-major format if np == 1.
 
-    constexpr int nbatch_combine = c::Q_in_reg ? DV/2 : DV/4;
+    constexpr int nbatch_combine = c::get_nbatch_combine_device(ncols);
     constexpr int tile_stride    = nbatch_combine + 4;
     static_assert((DV/2) % nbatch_combine == 0, "bad nbatch_combine");
 
@@ -1310,8 +1366,9 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
 
     constexpr bool mla = DKQ == 576;
 
-    const int nbatch_K2 = c::get_nbatch_K2_host(cc, ncols);
-    const int nbatch_V2 = c::get_nbatch_K2_host(cc, ncols);
+    const int nbatch_K2      = c::get_nbatch_K2_host     (cc, ncols);
+    const int nbatch_V2      = c::get_nbatch_K2_host     (cc, ncols);
+    const int nbatch_combine = c::get_nbatch_combine_host(cc, ncols);
 
     static_assert(DKQ   % tile_B::J     == 0, "bad DKQ");
     static_assert(DV    % tile_A::J     == 0, "bad DV");
@@ -1321,7 +1378,7 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     const size_t nbytes_shared_KV_2stage = c::nbatch_fa         *         (nbatch_K2 + 4 + nbatch_V2 + 4) * sizeof(half2);
     const size_t nbytes_shared_Q         = ncols                * (DKQ/2 + 4)                             * sizeof(half2);
     const size_t nbytes_shared_mask      = ncols1               * (c::nbatch_fa/2 + 4)                    * sizeof(half2);
-    const size_t nbytes_shared_combine   = nwarps*cols_per_warp * (c::nbatch_combine + 4)                 * sizeof(half2);
+    const size_t nbytes_shared_combine   = nwarps*cols_per_warp * (nbatch_combine + 4)                    * sizeof(half2);
 
     const size_t nbytes_shared_KV = nstages <= 1 ? nbytes_shared_KV_1stage : nbytes_shared_KV_2stage;
 
