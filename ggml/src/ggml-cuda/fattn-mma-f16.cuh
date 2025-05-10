@@ -351,7 +351,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 
     constexpr int stride_tile_Q = DKQ/2     + 4;
     constexpr int stride_tile_K = nbatch_K2 + 4;
-    constexpr int stride_tile_V = nbatch_V2 + 4;
+
+    static_assert(!mla || nbatch_K2 >= nbatch_V2, "bad nbatch_K2, nbatch_V2 for MLA");
+    constexpr int stride_tile_V = mla ? stride_tile_K : nbatch_V2 + 4;
 
     const int k_VKQ_0 = kb0 * c::nbatch_fa;
     tile_C_KQ KQ_C[c::nbatch_fa/(np*tile_C_KQ::I) * ntiles];
@@ -362,6 +364,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     tile_C_KQ_16  * KQ_C_16  = (tile_C_KQ_16  *) KQ_C;
 
     if constexpr (nstages > 1) {
+        static_assert(!mla, "multi-stage loading not implemented for MLA");
         static_assert(nbatch_K2 == DKQ/2, "batching not implemented for multi stage loading");
         constexpr bool use_cp_async = true;
         cp_async_wait_all();
@@ -633,12 +636,13 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     // Therefore, iterate over V in reverse and re-use the data
     static_assert(DV % (2*nbatch_V2) == 0, "bad nbatch_V2");
     static_assert(!mla || nstages <= 1, "combination of MLA and multi-stage loading not implemented");
+    constexpr int reusable_cutoff = mla ? (DKQ - 1) - (DKQ - 1) % (2*nbatch_K2) - (DKQ - DV) : DV;
 #pragma unroll
     for (int i0_stop = DV; i0_stop > 0; i0_stop -= 2*nbatch_V2) {
         const int i0_start = i0_stop - 2*nbatch_V2;
         const int i0_diff  = i0_stop - i0_start;
 
-        if (nstages <= 1) {
+        if (nstages <= 1 && i0_start < reusable_cutoff) {
             constexpr bool use_cp_async = nstages == 1;
             flash_attn_ext_f16_load_tile<stride_tile_V, nwarps, c::nbatch_fa, use_cp_async>
                 (V_h2 + k_VKQ_0*stride_V + i0_start/2, tile_V, i0_diff/2, stride_V);
@@ -731,14 +735,19 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
     constexpr int stride_tile_Q = DKQ/2     + 4;
     constexpr int stride_tile_K = nbatch_K2 + 4;
-    constexpr int stride_tile_V = nbatch_V2 + 4;
 
+    static_assert(!mla || nbatch_K2 >= nbatch_V2, "bad nbatch_K2, nbatch_V2 for MLA");
+    constexpr int stride_tile_V = mla ? stride_tile_K : nbatch_V2 + 4;
     constexpr int stride_tile_KV_max = stride_tile_K > stride_tile_V ? stride_tile_K : stride_tile_V;
 
     extern __shared__ half2 tile_Q[];
     half2 * tile_K    = c::Q_in_reg ? tile_Q                                : tile_Q + ncols        * stride_tile_Q;
     half2 * tile_V    = nstages > 1 ? tile_K + c::nbatch_fa * stride_tile_K : tile_K;
     half2 * tile_mask = nstages > 1 ? tile_V + c::nbatch_fa * stride_tile_V : tile_V + c::nbatch_fa * stride_tile_KV_max;
+
+    if (mla) {
+        tile_V = tile_K + (DKQ/2 - DV/2);
+    }
 
     tile_B       Q_B[(c::Q_in_reg ? DKQ/(2*tile_B::J) : 1) * ntiles];
     tile_C_VKQ VKQ_C[DV/tile_C_VKQ::I  * ntiles];
