@@ -651,7 +651,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             }
             __syncthreads();
         }
-        const half2 * tile_V_i = reusable_cutoff < 0 ? tile_V - reusable_cutoff/2 : tile_V;
+        const half2 * tile_V_i = i0_start < reusable_cutoff ? tile_V : tile_V + (i0_start - reusable_cutoff)/2;
 
         // Calculate VKQ tile:
 #pragma unroll
