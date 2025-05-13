@@ -67,7 +67,7 @@ static __global__ void flash_attn_vec_ext_f32(
     constexpr bool Q_q8_1 = type_K != GGML_TYPE_F16;
     constexpr dequantize_1_f32_t dequantize_1_v = get_dequantize_1_f32(type_V);
 
-    const int ic0 = blockIdx.x * ncols1; // Index of the Q/QKV column to work on.
+    const int ic0 = blockIdx.x * ncols; // Index of the Q/QKV column to work on.
 
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
     Q += nb02* blockIdx.z              + nb01*ic0;
@@ -311,7 +311,7 @@ void ggml_cuda_flash_attn_ext_vec_f32_launch(ggml_backend_cuda_context & ctx, gg
     constexpr size_t nbytes_shared = 0;
 
     float logit_softcap;
-    memcpy(&logit_softcap, (const float *) KQV->op_params + 2, sizeof(float));
+    memcpy(&logit_softcap, (const float *) dst->op_params + 2, sizeof(float));
 
     fattn_kernel_t fattn_kernel;
     if (logit_softcap == 0.0f) {
@@ -327,7 +327,6 @@ void ggml_cuda_flash_attn_ext_vec_f32_launch(ggml_backend_cuda_context & ctx, gg
 
 template <int D, ggml_type type_K, ggml_type type_V>
 void ggml_cuda_flash_attn_ext_vec_f32_case(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-    const ggml_tensor * KQV = dst;
     const ggml_tensor * Q   = dst->src[0];
     const ggml_tensor * K   = dst->src[1];
     const ggml_tensor * V   = dst->src[2];
