@@ -303,7 +303,7 @@ static __global__ void flash_attn_vec_ext_f32(
 #endif // FLASH_ATTN_AVAILABLE
 }
 
-template <int D, int ncols1, ggml_type type_K, ggml_type type_V, bool use_logit_softcap>
+template <int D, int ncols1, ggml_type type_K, ggml_type type_V>
 void ggml_cuda_flash_attn_ext_vec_f32_launch(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     constexpr int nwarps = D/WARP_SIZE;
     constexpr bool need_f16_K = D != 128;
@@ -337,24 +337,24 @@ void ggml_cuda_flash_attn_ext_vec_f32_case(ggml_backend_cuda_context & ctx, ggml
 
     if (Q->ne[1] == 1) {
         constexpr int ncols1 = 1;
-        ggml_cuda_flash_attn_ext_vec_f32_case_launch<D, ncols1, type_K, type_V, use_logit_softcap>(ctx, dst);
+        ggml_cuda_flash_attn_ext_vec_f32_case_launch<D, ncols1, type_K, type_V>(ctx, dst);
         return;
     }
 
     if (Q->ne[1] == 2) {
         constexpr int ncols1 = 2;
-        ggml_cuda_flash_attn_ext_vec_f32_case_launch<D, ncols1, type_K, type_V, use_logit_softcap>(ctx, dst);
+        ggml_cuda_flash_attn_ext_vec_f32_case_launch<D, ncols1, type_K, type_V>(ctx, dst);
         return;
     }
 
     if (Q->ne[1] <= 4) {
         constexpr int ncols1 = 4;
-        ggml_cuda_flash_attn_ext_vec_f32_case_launch<D, ncols1, type_K, type_V, use_logit_softcap>(ctx, dst);
+        ggml_cuda_flash_attn_ext_vec_f32_case_launch<D, ncols1, type_K, type_V>(ctx, dst);
         return;
     }
 
     constexpr int ncols1 = 8;
-    ggml_cuda_flash_attn_ext_vec_f32_case_launch<D, ncols1, type_K, type_V, use_logit_softcap>(ctx, dst);
+    ggml_cuda_flash_attn_ext_vec_f32_case_launch<D, ncols1, type_K, type_V>(ctx, dst);
 }
 
 #define DECL_FATTN_VEC_F32_CASE(D, type_K, type_V)                          \
