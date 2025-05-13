@@ -2,9 +2,9 @@
 #include "fattn-common.cuh"
 
 template<int D, int ncols, ggml_type type_K, ggml_type type_V, bool use_logit_softcap> // D == head size
-#if !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__))
+#ifndef GGML_USE_HIP
 __launch_bounds__(D, 1)
-#endif // !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__))
+#endif // GGML_USE_HIP
 static __global__ void flash_attn_vec_ext_f32(
         const char * __restrict__ Q,
         const char * __restrict__ K,
@@ -67,7 +67,7 @@ static __global__ void flash_attn_vec_ext_f32(
     constexpr bool Q_q8_1 = type_K != GGML_TYPE_F16;
     constexpr dequantize_1_f32_t dequantize_1_v = get_dequantize_1_f32(type_V);
 
-    const int ic0 = blockIdx.x * ncols; // Index of the Q/QKV column to work on.
+    const int ic0 = blockIdx.x * ncols1; // Index of the Q/QKV column to work on.
 
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
     Q += nb02* blockIdx.z              + nb01*ic0;
@@ -303,14 +303,26 @@ static __global__ void flash_attn_vec_ext_f32(
 #endif // FLASH_ATTN_AVAILABLE
 }
 
-template <int D, int cols_per_block, ggml_type type_K, ggml_type type_V, bool use_logit_softcap>
-void ggml_cuda_flash_attn_ext_vec_f32_case_impl(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+template <int D, int ncols1, ggml_type type_K, ggml_type type_V, bool use_logit_softcap>
+void ggml_cuda_flash_attn_ext_vec_f32_launch(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     constexpr int nwarps = D/WARP_SIZE;
-    fattn_kernel_t fattn_kernel = flash_attn_vec_ext_f32<D, cols_per_block, type_K, type_V, use_logit_softcap>;
     constexpr bool need_f16_K = D != 128;
     constexpr bool need_f16_V = D != 128 && D != 64;
     constexpr size_t nbytes_shared = 0;
-    launch_fattn<D, cols_per_block, 1>(ctx, dst, fattn_kernel, nwarps, nbytes_shared, D, need_f16_K, need_f16_V, false);
+
+    float logit_softcap;
+    memcpy(&logit_softcap, (const float *) KQV->op_params + 2, sizeof(float));
+
+    fattn_kernel_t fattn_kernel;
+    if (logit_softcap == 0.0f) {
+        constexpr bool use_logit_softcap = false;
+        fattn_kernel = flash_attn_vec_ext_f32<D, ncols1, type_K, type_V, use_logit_softcap>;
+    } else {
+        constexpr bool use_logit_softcap = true;
+        fattn_kernel = flash_attn_vec_ext_f32<D, ncols1, type_K, type_V, use_logit_softcap>;
+    }
+
+    launch_fattn<D, ncols1, 1>(ctx, dst, fattn_kernel, nwarps, nbytes_shared, D, need_f16_K, need_f16_V, false);
 }
 
 template <int D, ggml_type type_K, ggml_type type_V>
@@ -323,53 +335,26 @@ void ggml_cuda_flash_attn_ext_vec_f32_case(ggml_backend_cuda_context & ctx, ggml
     GGML_ASSERT(K->type == type_K);
     GGML_ASSERT(V->type == type_V);
 
-    float logit_softcap;
-    memcpy(&logit_softcap, (const float *) KQV->op_params + 2, sizeof(float));
-
     if (Q->ne[1] == 1) {
-        constexpr int cols_per_block = 1;
-        if (logit_softcap == 0.0f) {
-            constexpr bool use_logit_softcap = false;
-            ggml_cuda_flash_attn_ext_vec_f32_case_impl<D, cols_per_block, type_K, type_V, use_logit_softcap>(ctx, dst);
-        } else {
-            constexpr bool use_logit_softcap = true;
-            ggml_cuda_flash_attn_ext_vec_f32_case_impl<D, cols_per_block, type_K, type_V, use_logit_softcap>(ctx, dst);
-        }
+        constexpr int ncols1 = 1;
+        ggml_cuda_flash_attn_ext_vec_f32_case_launch<D, ncols1, type_K, type_V, use_logit_softcap>(ctx, dst);
         return;
     }
 
     if (Q->ne[1] == 2) {
-        constexpr int cols_per_block = 2;
-        if (logit_softcap == 0.0f) {
-            constexpr bool use_logit_softcap = false;
-            ggml_cuda_flash_attn_ext_vec_f32_case_impl<D, cols_per_block, type_K, type_V, use_logit_softcap>(ctx, dst);
-        } else {
-            constexpr bool use_logit_softcap = true;
-            ggml_cuda_flash_attn_ext_vec_f32_case_impl<D, cols_per_block, type_K, type_V, use_logit_softcap>(ctx, dst);
-        }
+        constexpr int ncols1 = 2;
+        ggml_cuda_flash_attn_ext_vec_f32_case_launch<D, ncols1, type_K, type_V, use_logit_softcap>(ctx, dst);
         return;
     }
 
     if (Q->ne[1] <= 4) {
-        constexpr int cols_per_block = 4;
-        if (logit_softcap == 0.0f) {
-            constexpr bool use_logit_softcap = false;
-            ggml_cuda_flash_attn_ext_vec_f32_case_impl<D, cols_per_block, type_K, type_V, use_logit_softcap>(ctx, dst);
-        } else {
-            constexpr bool use_logit_softcap = true;
-            ggml_cuda_flash_attn_ext_vec_f32_case_impl<D, cols_per_block, type_K, type_V, use_logit_softcap>(ctx, dst);
-        }
+        constexpr int ncols1 = 4;
+        ggml_cuda_flash_attn_ext_vec_f32_case_launch<D, ncols1, type_K, type_V, use_logit_softcap>(ctx, dst);
         return;
     }
 
-    constexpr int cols_per_block = 8;
-    if (logit_softcap == 0.0f) {
-        constexpr bool use_logit_softcap = false;
-        ggml_cuda_flash_attn_ext_vec_f32_case_impl<D, cols_per_block, type_K, type_V, use_logit_softcap>(ctx, dst);
-    } else {
-        constexpr bool use_logit_softcap = true;
-        ggml_cuda_flash_attn_ext_vec_f32_case_impl<D, cols_per_block, type_K, type_V, use_logit_softcap>(ctx, dst);
-    }
+    constexpr int ncols1 = 8;
+    ggml_cuda_flash_attn_ext_vec_f32_case_launch<D, ncols1, type_K, type_V, use_logit_softcap>(ctx, dst);
 }
 
 #define DECL_FATTN_VEC_F32_CASE(D, type_K, type_V)                          \
