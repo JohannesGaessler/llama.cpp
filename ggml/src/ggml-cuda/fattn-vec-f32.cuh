@@ -336,24 +336,24 @@ void ggml_cuda_flash_attn_ext_vec_f32_case(ggml_backend_cuda_context & ctx, ggml
 
     if (Q->ne[1] == 1) {
         constexpr int ncols1 = 1;
-        ggml_cuda_flash_attn_ext_vec_f32_case_launch<D, ncols1, type_K, type_V>(ctx, dst);
+        ggml_cuda_flash_attn_ext_vec_f32_launch<D, ncols1, type_K, type_V>(ctx, dst);
         return;
     }
 
     if (Q->ne[1] == 2) {
         constexpr int ncols1 = 2;
-        ggml_cuda_flash_attn_ext_vec_f32_case_launch<D, ncols1, type_K, type_V>(ctx, dst);
+        ggml_cuda_flash_attn_ext_vec_f32_launch<D, ncols1, type_K, type_V>(ctx, dst);
         return;
     }
 
     if (Q->ne[1] <= 4) {
         constexpr int ncols1 = 4;
-        ggml_cuda_flash_attn_ext_vec_f32_case_launch<D, ncols1, type_K, type_V>(ctx, dst);
+        ggml_cuda_flash_attn_ext_vec_f32_launch<D, ncols1, type_K, type_V>(ctx, dst);
         return;
     }
 
     constexpr int ncols1 = 8;
-    ggml_cuda_flash_attn_ext_vec_f32_case_launch<D, ncols1, type_K, type_V>(ctx, dst);
+    ggml_cuda_flash_attn_ext_vec_f32_launch<D, ncols1, type_K, type_V>(ctx, dst);
 }
 
 #define DECL_FATTN_VEC_F32_CASE(D, type_K, type_V)                          \
