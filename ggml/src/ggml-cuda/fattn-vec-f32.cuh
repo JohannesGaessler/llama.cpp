@@ -105,6 +105,9 @@ static __global__ void flash_attn_vec_ext_f32(
             kqsum_shared[j][threadIdx.x] = 0.0f;
         }
     }
+
+    __shared__ float maskf_shared[ncols1*D];
+
     __syncthreads();
 
     // Convert Q to float2 (f16 K) or q8_1 (quantized K) and store in registers:
@@ -187,6 +190,12 @@ static __global__ void flash_attn_vec_ext_f32(
 
     for (int k_VKQ_0 = blockIdx.y*D; k_VKQ_0 < ne11; k_VKQ_0 += gridDim.y*D) {
         // Calculate KQ tile and keep track of new maximum KQ values:
+#pragma unroll
+        for (int j = 0; j < ncols1; ++j) {
+            const float mask_j = (ncols2 > 1 || mask) ? slope*__half2float(maskh[j*ne11 + k_VKQ_0 + tid]) : 0.0f;
+            maskf_shared[j*D + tid] = mask_j;
+        }
+        __syncthreads();
 
         float kqmax_new_arr[ncols];
 #pragma unroll
@@ -203,26 +212,22 @@ static __global__ void flash_attn_vec_ext_f32(
             }
 
 #pragma unroll
-            for (int j = 0; j < ncols1; ++j) {
-                const float mask_j = (ncols2 > 1 || mask) ? slope*__half2float(maskh[j*ne11 + k_VKQ_0 + i_KQ]) : 0.0f;
-#pragma unroll
-                for (int c = 0; c < ncols2; ++c) {
-                    const int jc = j*ncols2 + c;
+            for (int jc = 0; c < ncols; ++c) {
+                const int j = jc / ncols2;
 
-                    float sum = vec_dot_KQ(K + (k_VKQ_0 + i_KQ)*nb11, Q_f2[jc], Q_i32[jc], Q_ds[jc]);
-                    sum = warp_reduce_sum(sum);
+                float sum = vec_dot_KQ(K + (k_VKQ_0 + i_KQ)*nb11, Q_f2[jc], Q_i32[jc], Q_ds[jc]);
+                sum = warp_reduce_sum(sum);
 
-                    if (use_logit_softcap) {
-                        sum = logit_softcap*tanhf(sum);
-                    }
+                if (use_logit_softcap) {
+                    sum = logit_softcap*tanhf(sum);
+                }
 
-                    sum += mask_j;
+                sum += maskf_shared[j*D + i_KQ];
 
-                    kqmax_new_arr[jc] = fmaxf(kqmax_new_arr[jc], sum);
+                kqmax_new_arr[jc] = fmaxf(kqmax_new_arr[jc], sum);
 
-                    if (threadIdx.x == 0) {
-                        KQ[jc*D + i_KQ] = sum;
-                    }
+                if (threadIdx.x == 0) {
+                    KQ[jc*D + i_KQ] = sum;
                 }
             }
         }
