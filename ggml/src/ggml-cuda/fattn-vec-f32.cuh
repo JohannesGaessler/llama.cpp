@@ -215,7 +215,7 @@ static __global__ void flash_attn_vec_ext_f32(
 
                 sum += mask ? slope*__half2float(maskh[j*ne11 + k_VKQ_0 + i_KQ]) : 0.0f;
 
-                kqmax_new_arr[j] = fmaxf(kqmax_new_arr[jc], sum);
+                kqmax_new_arr[jc] = fmaxf(kqmax_new_arr[jc], sum);
 
                 if (threadIdx.x == 0) {
                     KQ[jc*D + i_KQ] = sum;
