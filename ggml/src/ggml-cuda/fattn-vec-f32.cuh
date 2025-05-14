@@ -195,7 +195,18 @@ static __global__ void flash_attn_vec_ext_f32(
             const float mask_j = (ncols2 > 1 || mask) ? slope*__half2float(maskh[j*ne11 + k_VKQ_0 + tid]) : 0.0f;
             maskf_shared[j*D + tid] = mask_j;
         }
+
         __syncthreads();
+
+        bool skip = true;
+#pragma unroll
+        for (int i0 = 0; i0 < D; i0 += WARP_SIZE) {
+            const int i = i0 + threadIdx.x;
+            skip = skip && isinf(maskf_shared)
+        }
+        if (__all_sync(skip)) {
+            continue;
+        }
 
         float kqmax_new_arr[ncols];
 #pragma unroll
