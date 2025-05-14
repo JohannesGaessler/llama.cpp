@@ -71,9 +71,9 @@ static __global__ void flash_attn_vec_ext_f32(
     const int ic0 = blockIdx.x * ncols1; // Index of the Q/QKV column to work on.
 
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
-    Q += nb02*(blockIdx.z * ncols2)    + nb01*ic0;
-    K += nb12*(blockIdx.z / gqa_ratio);
-    V += nb22*(blockIdx.z / gqa_ratio); // K and V have same shape
+    Q += nb02*(blockIdx.z * ncols2)            + nb01*ic0;
+    K += nb12*(blockIdx.z * ncols2 / gqa_ratio);
+    V += nb22*(blockIdx.z * ncols2 / gqa_ratio); // K and V have same shape
     const half * maskh = (const half   *)  mask + ne11*ic0;
 
     const float slope = get_alibi_slope(max_bias, blockIdx.z, n_head_log2, m0, m1);

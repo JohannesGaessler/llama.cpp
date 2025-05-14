@@ -870,7 +870,7 @@ void launch_fattn(
         }
     } else if (parallel_blocks > 1) {
         const dim3 block_dim_combine(DV, 1, 1);
-        const dim3 blocks_num_combine(Q->ne[1], 1, ncols2*blocks_num.z);
+        const dim3 blocks_num_combine(Q->ne[1], 1, Q->ne[2]*Q->ne[3]);
         const size_t nbytes_shared_combine = parallel_blocks*sizeof(float2);
 
         flash_attn_combine_results<DV>
