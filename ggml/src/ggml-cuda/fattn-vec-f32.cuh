@@ -202,7 +202,7 @@ static __global__ void flash_attn_vec_ext_f32(
 #pragma unroll
         for (int i0 = 0; i0 < D; i0 += WARP_SIZE) {
             const int i = i0 + threadIdx.x;
-            skip = skip && isinf(maskf_shared)
+            skip = skip && isinf(maskf_shared);
         }
         if (__all_sync(0xFFFFFFFF, skip)) {
             continue;
