@@ -212,7 +212,7 @@ static __global__ void flash_attn_vec_ext_f32(
             }
 
 #pragma unroll
-            for (int jc = 0; c < ncols; ++c) {
+            for (int jc = 0; jc < ncols; ++jc) {
                 const int j = jc / ncols2;
 
                 float sum = vec_dot_KQ(K + (k_VKQ_0 + i_KQ)*nb11, Q_f2[jc], Q_i32[jc], Q_ds[jc]);
