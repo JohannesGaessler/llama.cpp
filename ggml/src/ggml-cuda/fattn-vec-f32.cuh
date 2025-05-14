@@ -237,7 +237,7 @@ static __global__ void flash_attn_vec_ext_f32(
 #pragma unroll
         for (int jc = 0; jc < ncols; ++jc) {
             float kqmax_new_jc = kqmax_shared[jc][threadIdx.x];
-            kqmax_new_j = warp_reduce_max(kqmax_new_jc);
+            kqmax_new_jc = warp_reduce_max(kqmax_new_jc);
 
             const float KQ_max_scale = expf(kqmax[jc] - kqmax_new_jc);
             kqmax[jc] = kqmax_new_jc;
