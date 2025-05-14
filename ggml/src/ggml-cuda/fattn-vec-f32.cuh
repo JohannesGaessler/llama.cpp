@@ -71,7 +71,7 @@ static __global__ void flash_attn_vec_ext_f32(
     const int ic0 = blockIdx.x * ncols1; // Index of the Q/QKV column to work on.
 
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
-    Q += nb02* blockIdx.z              + nb01*ic0;
+    Q += nb02*(blockIdx.z * ncols2)    + nb01*ic0;
     K += nb12*(blockIdx.z / gqa_ratio);
     V += nb22*(blockIdx.z / gqa_ratio); // K and V have same shape
     const half * maskh = (const half   *)  mask + ne11*ic0;
@@ -343,24 +343,24 @@ void ggml_cuda_flash_attn_ext_vec_f32_switch_ncols1(ggml_backend_cuda_context & 
     const ggml_tensor * Q   = dst->src[0];
 
     if constexpr (ncols2 == 1) {
-        if (Q->ne[1] == 1) {
-            constexpr int ncols1 = 1;
+        constexpr int ncols1 = 1;
+        if (Q->ne[1] <= ncols1) {
             ggml_cuda_flash_attn_ext_vec_f32_launch<D, ncols1, ncols2, type_K, type_V>(ctx, dst);
             return;
         }
     }
 
     if constexpr (ncols2 <= 2) {
-        if (Q->ne[1] == 2/ncols2) {
-            constexpr int ncols1 = 2/ncols2;
+        constexpr int ncols1 = 2/ncols2;
+        if (Q->ne[1] <= ncols1) {
             ggml_cuda_flash_attn_ext_vec_f32_launch<D, ncols1, ncols2, type_K, type_V>(ctx, dst);
             return;
         }
     }
 
     if constexpr (ncols2 <= 4) {
-        if (Q->ne[1] <= 4/ncols2) {
-            constexpr int ncols1 = 4/ncols2;
+        constexpr int ncols1 = 4/ncols2;
+        if (Q->ne[1] <= ncols1) {
             ggml_cuda_flash_attn_ext_vec_f32_launch<D, ncols1, ncols2, type_K, type_V>(ctx, dst);
             return;
         }
