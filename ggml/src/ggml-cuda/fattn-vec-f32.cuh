@@ -71,10 +71,10 @@ static __global__ void flash_attn_vec_ext_f32(
     const int ic0 = blockIdx.x * ncols1; // Index of the Q/QKV column to work on.
 
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
-    Q += nb02*(blockIdx.z * ncols2)            + nb01*ic0;
-    K += nb12*(blockIdx.z * ncols2 / gqa_ratio);
-    V += nb22*(blockIdx.z * ncols2 / gqa_ratio); // K and V have same shape
-    const half * maskh = (const half   *)  mask + ne11*ic0;
+    Q += nb02*(blockIdx.z *  ncols2)            + nb01*ic0;
+    K += nb12*(blockIdx.z * (ncols2/gqa_ratio));
+    V += nb22*(blockIdx.z * (ncols2/gqa_ratio)); // K and V have same shape
+    const half * maskh = (const half *) mask + ne11*ic0;
 
     const float slope = get_alibi_slope(max_bias, blockIdx.z, n_head_log2, m0, m1);
 
@@ -128,7 +128,7 @@ static __global__ void flash_attn_vec_ext_f32(
             float2 * tmp_q_ds  = (float2 *) (tmp_q_i32 + D/sizeof(int));
 
             // Set memory to zero if out of bounds:
-            if (ncols > 2 && ic0 + j >= ne01) {
+            if (ncols1 > 2 && ic0 + j >= ne01) {
 #pragma unroll
                 for (int i0 = 0; i0 < int(D/sizeof(int)); i0 += WARP_SIZE) {
                     const int i = i0 + threadIdx.x;
@@ -176,7 +176,7 @@ static __global__ void flash_attn_vec_ext_f32(
             for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
                 const int i = i0 + threadIdx.x;
 
-                Q_f2[jc][i0/WARP_SIZE]    = ncols <= 2 || ic0 + j < ne01 ? Q_f2_j[i] : make_float2(0.0f, 0.0f);
+                Q_f2[jc][i0/WARP_SIZE]    = ncols1 <= 2 || ic0 + j < ne01 ? Q_f2_j[i] : make_float2(0.0f, 0.0f);
                 Q_f2[jc][i0/WARP_SIZE].x *= scale;
                 Q_f2[jc][i0/WARP_SIZE].y *= scale;
             }
@@ -282,7 +282,7 @@ static __global__ void flash_attn_vec_ext_f32(
         const int j_VKQ = jc_VKQ / ncols2;
         const int c_VKQ = jc_VKQ % ncols2;
 
-        if (ncols > 2 && ic0 + j_VKQ >= ne01) {
+        if (ncols1 > 2 && ic0 + j_VKQ >= ne01) {
             break;
         }
 
@@ -298,7 +298,7 @@ static __global__ void flash_attn_vec_ext_f32(
         dst[j_dst*gridDim.z*(D*ncols2) + c_dst*D + tid] = dst_val;
     }
 
-    if (gridDim.y != 1 && tid < ncols && (ncols <= 2 || ic0 + tid < ne01)) {
+    if (gridDim.y != 1 && tid < ncols && (ncols1 <= 2 || ic0 + tid/ncols2 < ne01)) {
         const int j_VKQ = tid / ncols2;
         const int c_VKQ = tid % ncols2;
 
@@ -343,7 +343,7 @@ void ggml_cuda_flash_attn_ext_vec_f32_launch(ggml_backend_cuda_context & ctx, gg
 
 template <int D, int ncols2, ggml_type type_K, ggml_type type_V>
 void ggml_cuda_flash_attn_ext_vec_f32_switch_ncols1(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-    const ggml_tensor * Q   = dst->src[0];
+    const ggml_tensor * Q = dst->src[0];
 
     if constexpr (ncols2 == 1) {
         constexpr int ncols1 = 1;
