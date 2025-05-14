@@ -815,7 +815,7 @@ void launch_fattn(
 
         blocks_num.x = ntiles_x;
         blocks_num.y = parallel_blocks;
-        blocks_num.z = Q->ne[2]*Q->ne[3];
+        blocks_num.z = (Q->ne[2] / ncols2)*Q->ne[3];
 
         if (parallel_blocks > 1) {
             dst_tmp.alloc(parallel_blocks*ggml_nelements(KQV));
