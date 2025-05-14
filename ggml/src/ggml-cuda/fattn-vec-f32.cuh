@@ -177,9 +177,9 @@ static __global__ void flash_attn_vec_ext_f32(
             for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
                 const int i = i0 + threadIdx.x;
 
-                Q_f2[j][i0/WARP_SIZE]    = ncols1 <= 2 || j0 + j < ne01 ? Q_f2_j[i] : make_float2(0.0f, 0.0f);
-                Q_f2[j][i0/WARP_SIZE].x *= scale;
-                Q_f2[j][i0/WARP_SIZE].y *= scale;
+                Q_f2[jc][i0/WARP_SIZE]    = ncols1 <= 2 || j0 + j < ne01 ? Q_f2_j[i] : make_float2(0.0f, 0.0f);
+                Q_f2[jc][i0/WARP_SIZE].x *= scale;
+                Q_f2[jc][i0/WARP_SIZE].y *= scale;
             }
         }
     }
@@ -191,8 +191,8 @@ static __global__ void flash_attn_vec_ext_f32(
 
         float kqmax_new_arr[ncols];
 #pragma unroll
-        for (int j = 0; j < ncols; ++j) {
-            kqmax_new_arr[j] = kqmax[j];
+        for (int jc = 0; jc < ncols; ++jc) {
+            kqmax_new_arr[jc] = kqmax[jc];
         }
 
 #pragma unroll
@@ -204,8 +204,10 @@ static __global__ void flash_attn_vec_ext_f32(
             }
 
 #pragma unroll
-            for (int j = 0; j < ncols; ++j) {
-                float sum = vec_dot_KQ(K + (k_VKQ_0 + i_KQ)*nb11, Q_f2[j], Q_i32[j], Q_ds[j]);
+            for (int jc = 0; jc < ncols; ++jc) {
+                const int j = jc / ncols2;
+
+                float sum = vec_dot_KQ(K + (k_VKQ_0 + i_KQ)*nb11, Q_f2[jc], Q_i32[jc], Q_ds[jc]);
                 sum = warp_reduce_sum(sum);
 
                 if (use_logit_softcap) {
@@ -214,38 +216,38 @@ static __global__ void flash_attn_vec_ext_f32(
 
                 sum += mask ? slope*__half2float(maskh[j*ne11 + k_VKQ_0 + i_KQ]) : 0.0f;
 
-                kqmax_new_arr[j] = fmaxf(kqmax_new_arr[j], sum);
+                kqmax_new_arr[jc] = fmaxf(kqmax_new_arr[jc], sum);
 
                 if (threadIdx.x == 0) {
-                    KQ[j*D + i_KQ] = sum;
+                    KQ[jc*D + i_KQ] = sum;
                 }
             }
         }
 
 #pragma unroll
-        for (int j = 0; j < ncols; ++j) {
-            float kqmax_new_j = kqmax_new_arr[j];
+        for (int jc = 0; jc < ncols; ++jc) {
+            float kqmax_new_j = kqmax_new_arr[jc];
 
             if (threadIdx.x == 0) {
-                kqmax_shared[j][threadIdx.y] = kqmax_new_j;
+                kqmax_shared[jc][threadIdx.y] = kqmax_new_j;
             }
         }
 
         __syncthreads();
 
 #pragma unroll
-        for (int j = 0; j < ncols; ++j) {
-            float kqmax_new_j = kqmax_shared[j][threadIdx.x];
+        for (int jc = 0; jc < ncols; ++jc) {
+            float kqmax_new_j = kqmax_shared[jc][threadIdx.x];
             kqmax_new_j = warp_reduce_max(kqmax_new_j);
 
-            const float KQ_max_scale = expf(kqmax[j] - kqmax_new_j);
-            kqmax[j] = kqmax_new_j;
+            const float KQ_max_scale = expf(kqmax[jc] - kqmax_new_j);
+            kqmax[jc] = kqmax_new_j;
 
-            const float val = expf(KQ[j*D + tid] - kqmax[j]);
-            kqsum[j] = kqsum[j]*KQ_max_scale + val;
-            KQ[j*D + tid] = val;
+            const float val = expf(KQ[jc*D + tid] - kqmax[jc]);
+            kqsum[jc] = kqsum[jc]*KQ_max_scale + val;
+            KQ[jc*D + tid] = val;
 
-            VKQ[j] *= KQ_max_scale;
+            VKQ[jc] *= KQ_max_scale;
         }
 
         __syncthreads();
@@ -258,8 +260,8 @@ static __global__ void flash_attn_vec_ext_f32(
 
             const float V_ki = dequantize_1_v(V + (k_VKQ_0 + k)*nb21, tid);
 #pragma unroll
-            for (int j = 0; j < ncols; ++j) {
-                VKQ[j] += V_ki*KQ[j*D + k];
+            for (int jc = 0; jc < ncols; ++jc) {
+                VKQ[jc] += V_ki*KQ[jc*D + k];
             }
         }
 
@@ -267,30 +269,34 @@ static __global__ void flash_attn_vec_ext_f32(
     }
 
 #pragma unroll
-    for (int j = 0; j < ncols; ++j) {
-        kqsum[j] = warp_reduce_sum(kqsum[j]);
+    for (int jc = 0; jc < ncols; ++jc) {
+        kqsum[jc] = warp_reduce_sum(kqsum[jc]);
         if (threadIdx.x == 0) {
-            kqsum_shared[j][threadIdx.y] = kqsum[j];
+            kqsum_shared[jc][threadIdx.y] = kqsum[jc];
         }
     }
 
     __syncthreads();
 
 #pragma unroll
-    for (int j_VKQ = 0; j_VKQ < ncols; ++j_VKQ) {
-        if (ncols > 2 && j0 + j_VKQ >= ne01) {
+    for (int jc_VKQ = 0; jc_VKQ < ncols; ++jc_VKQ) {
+        const int j_VKQ = jc_VKQ / ncols2;
+        const int c_VKQ = jc_VKQ % ncols2;
+
+        if (ncols1 > 2 && j0 + j_VKQ >= ne01) {
             break;
         }
 
-        kqsum[j_VKQ] = kqsum_shared[j_VKQ][threadIdx.x];
-        kqsum[j_VKQ] = warp_reduce_sum(kqsum[j_VKQ]);
+        kqsum[jc_VKQ] = kqsum_shared[jc_VKQ][threadIdx.x];
+        kqsum[jc_VKQ] = warp_reduce_sum(kqsum[jc_VKQ]);
 
-        float dst_val = VKQ[j_VKQ];
+        float dst_val = VKQ[jc_VKQ];
         if (gridDim.y == 1) {
-            dst_val /= kqsum[j_VKQ];
+            dst_val /= kqsum[jc_VKQ];
         }
         const int j_dst = (j0 + j_VKQ)*gridDim.y + blockIdx.y;
-        dst[j_dst*D*gridDim.z + D*blockIdx.z + tid] = dst_val;
+        const int c_dst =  c0 + c_VKQ;
+        dst[j_dst*gridDim.z*(D*ncols2) + D*c_dst + tid] = dst_val;
     }
 
     if (gridDim.y != 1 && tid < ncols && (ncols <= 2 || j0 + tid < ne01)) {
