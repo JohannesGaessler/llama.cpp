@@ -204,7 +204,7 @@ static __global__ void flash_attn_vec_ext_f32(
             const int i = i0 + threadIdx.x;
             skip = skip && isinf(maskf_shared)
         }
-        if (__all_sync(skip)) {
+        if (__all_sync(0xFFFFFFFF, skip)) {
             continue;
         }
 
