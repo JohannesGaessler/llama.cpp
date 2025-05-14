@@ -295,11 +295,14 @@ static __global__ void flash_attn_vec_ext_f32(
         }
         const int j_dst = (ic0 + j_VKQ)*gridDim.y + blockIdx.y;
         const int c_dst = blockIdx.z*ncols2 + c_VKQ;
-        dst[j_dst*D*gridDim.z + c_dst*D + tid] = dst_val;
+        dst[j_dst*gridDim.z*(D*ncols2) + c_dst*D + tid] = dst_val;
     }
 
     if (gridDim.y != 1 && tid < ncols && (ncols <= 2 || ic0 + tid < ne01)) {
-        dst_meta[((ic0 + tid)*gridDim.z + blockIdx.z) * gridDim.y + blockIdx.y] = make_float2(kqmax[tid], kqsum[tid]);
+        const int j_VKQ = tid / ncols2;
+        const int c_VKQ = tid % ncols2;
+
+        dst_meta[(((ic0 + j_VKQ)*gridDim.z + blockIdx.z)*ncols2 + c_VKQ) * gridDim.y + blockIdx.y] = make_float2(kqmax[tid], kqsum[tid]);
     }
 #else
     GGML_UNUSED(Q); GGML_UNUSED(K); GGML_UNUSED(V); GGML_UNUSED(mask);
