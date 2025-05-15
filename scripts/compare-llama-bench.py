@@ -92,12 +92,17 @@ help_s = (
     "If the columns are manually specified, then the results for each unique combination of the "
     "specified values are averaged WITHOUT weighing by the --repetitions parameter of llama-bench."
 )
+parser.add_argument("--check", action="store_true", help="check if all required Python libraries are installed")
 parser.add_argument("-s", "--show", help=help_s)
 parser.add_argument("--verbose", action="store_true", help="increase output verbosity")
 
 known_args, unknown_args = parser.parse_known_args()
 
 logging.basicConfig(level=logging.DEBUG if known_args.verbose else logging.INFO)
+
+if known_args.check:
+    # Check if all required Python libraries are installed. Would have failed earlier if not.
+    sys.exit(0)
 
 if unknown_args:
     logger.error(f"Received unknown args: {unknown_args}.\n")
@@ -123,13 +128,13 @@ builds = cursor.execute("SELECT DISTINCT build_commit FROM test;").fetchall()
 
 try:
     repo = git.Repo(".", search_parent_directories=True)
-except git.exc.InvalidGitRepositoryError:
+except git.InvalidGitRepositoryError:
     repo = None
 
 
-def find_parent_in_data(commit):
+def find_parent_in_data(commit: git.Commit):
     """Helper function to find the most recent parent measured in number of commits for which there is data."""
-    heap = [(0, commit)]
+    heap: list[tuple[int, git.Commit]] = [(0, commit)]
     seen_hexsha8 = set()
     while heap:
         depth, current_commit = heapq.heappop(heap)
@@ -144,7 +149,7 @@ def find_parent_in_data(commit):
     return None
 
 
-def get_all_parent_hexsha8s(commit):
+def get_all_parent_hexsha8s(commit: git.Commit):
     """Helper function to recursively get hexsha8 values for all parents of a commit."""
     unvisited = [commit]
     visited   = []

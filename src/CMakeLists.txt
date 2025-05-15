@@ -1,0 +1,49 @@
+# TODO: should not use this
+if (WIN32)
+    if (BUILD_SHARED_LIBS)
+        set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    endif()
+endif()
+
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> ahead
+if (GGML_BITNET_ARM_TL1)
+    add_compile_definitions(GGML_BITNET_ARM_TL1)
+endif()
+if (GGML_BITNET_X86_TL2)
+    add_compile_definitions(GGML_BITNET_X86_TL2)
+endif()
+
+<<<<<<< HEAD
+=======
+>>>>>>> master
+=======
+>>>>>>> ahead
+#
+# libraries
+#
+
+# llama
+
+add_library(llama
+            ../include/llama.h
+            llama.cpp
+            llama-vocab.cpp
+            llama-grammar.cpp
+            llama-sampling.cpp
+            unicode.h
+            unicode.cpp
+            unicode-data.cpp
+            )
+
+target_include_directories(llama PUBLIC . ../include)
+target_compile_features   (llama PUBLIC cxx_std_11) # don't bump
+
+target_link_libraries(llama PUBLIC ggml)
+
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_compile_definitions(llama PRIVATE LLAMA_SHARED LLAMA_BUILD)
+endif()

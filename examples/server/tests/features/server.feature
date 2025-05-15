@@ -82,7 +82,7 @@ Feature: llama.cpp server
 
     Examples: Prompts
       | response_format                                                     | n_predicted | re_content             |
-      | {"type": "json_object", "schema": {"const": "42"}}                  | 5           | "42"                   |
+      | {"type": "json_object", "schema": {"const": "42"}}                  | 6           | "42"                   |
       | {"type": "json_object", "schema": {"items": [{"type": "integer"}]}} | 10          | \[ -300 \]             |
       | {"type": "json_object"}                                             | 10          | \{ " Jacky.            |
 
@@ -104,6 +104,14 @@ Feature: llama.cpp server
     Then  tokens begin with BOS
     Given first token is removed
     Then  tokens can be detokenized
+
+  Scenario: Tokenize with pieces
+    When  tokenizing with pieces:
+    """
+    What is the capital of Germany?
+    媽
+    """
+    Then  tokens are given with pieces
 
   Scenario: Models available
     Given available models

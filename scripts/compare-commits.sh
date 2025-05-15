@@ -8,11 +8,14 @@ fi
 set -e
 set -x
 
+# verify at the start that the compare script has all the necessary dependencies installed
+./scripts/compare-llama-bench.py --check
+
 bench_args="${@:3}"
 
 rm -f llama-bench.sqlite > /dev/null
 
-# to test a backend, call the script with the corresponding environment variable (e.g. LLAMA_CUDA=1 ./scripts/compare-commits.sh ...)
+# to test a backend, call the script with the corresponding environment variable (e.g. GGML_CUDA=1 ./scripts/compare-commits.sh ...)
 
 git checkout $1 > /dev/null
 make clean > /dev/null
