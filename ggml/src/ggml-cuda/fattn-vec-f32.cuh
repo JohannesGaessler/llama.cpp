@@ -333,13 +333,13 @@ void ggml_cuda_flash_attn_ext_vec_f32_launch(ggml_backend_cuda_context & ctx, gg
     fattn_kernel_t fattn_kernel;
     if (logit_softcap == 0.0f) {
         constexpr bool use_logit_softcap = false;
-        fattn_kernel = flash_attn_vec_ext_f32<D, ncols1, 1, type_K, type_V, use_logit_softcap>;
+        fattn_kernel = flash_attn_vec_ext_f32<D, ncols1, ncols2, type_K, type_V, use_logit_softcap>;
     } else {
         constexpr bool use_logit_softcap = true;
-        fattn_kernel = flash_attn_vec_ext_f32<D, ncols1, 1, type_K, type_V, use_logit_softcap>;
+        fattn_kernel = flash_attn_vec_ext_f32<D, ncols1, ncols2, type_K, type_V, use_logit_softcap>;
     }
 
-    launch_fattn<D, ncols1, 1>(ctx, dst, fattn_kernel, nwarps, nbytes_shared, D, need_f16_K, need_f16_V, false);
+    launch_fattn<D, ncols1, ncols2>(ctx, dst, fattn_kernel, nwarps, nbytes_shared, D, need_f16_K, need_f16_V, false);
 }
 
 template <int D, int ncols2, ggml_type type_K, ggml_type type_V>
