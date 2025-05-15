@@ -106,6 +106,9 @@ static __global__ void flash_attn_vec_ext_f32(
             kqsum_shared[jc][threadIdx.x] = 0.0f;
         }
     }
+
+    __shared__ float maskf_shared[ncols1*D];
+
     __syncthreads();
 
     // Convert Q to float2 (f16 K) or q8_1 (quantized K) and store in registers:
@@ -189,6 +192,12 @@ static __global__ void flash_attn_vec_ext_f32(
     for (int k_VKQ_0 = blockIdx.y*D; k_VKQ_0 < ne11; k_VKQ_0 += gridDim.y*D) {
         // Calculate KQ tile and keep track of new maximum KQ values:
 
+#pragma unroll
+        for (int j = 0; j < ncols1; ++j) {
+            maskf_shared[j*D + tid] = ncols2 > 1 || mask ? slope*__half2float(maskh[j*ne11 + k_VKQ_0 + tid]) : 0.0f;
+        }
+        __syncthreads();
+
         float kqmax_new_arr[ncols];
 #pragma unroll
         for (int jc = 0; jc < ncols; ++jc) {
@@ -214,7 +223,7 @@ static __global__ void flash_attn_vec_ext_f32(
                     sum = logit_softcap*tanhf(sum);
                 }
 
-                sum += mask ? slope*__half2float(maskh[j*ne11 + k_VKQ_0 + i_KQ]) : 0.0f;
+                sum += maskf_shared[j*D + i_KQ];
 
                 kqmax_new_arr[jc] = fmaxf(kqmax_new_arr[jc], sum);
 
