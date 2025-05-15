@@ -320,7 +320,7 @@ static __global__ void flash_attn_vec_ext_f32(
 #endif // FLASH_ATTN_AVAILABLE
 }
 
-template <int D, int ncols1, ggml_type type_K, ggml_type type_V>
+template <int D, int ncols1, int ncols2, ggml_type type_K, ggml_type type_V>
 void ggml_cuda_flash_attn_ext_vec_f32_launch(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     constexpr int nwarps = D/WARP_SIZE;
     constexpr bool need_f16_K = D != 128;
@@ -342,35 +342,72 @@ void ggml_cuda_flash_attn_ext_vec_f32_launch(ggml_backend_cuda_context & ctx, gg
     launch_fattn<D, ncols1, 1>(ctx, dst, fattn_kernel, nwarps, nbytes_shared, D, need_f16_K, need_f16_V, false);
 }
 
+template <int D, int ncols2, ggml_type type_K, ggml_type type_V>
+void ggml_cuda_flash_attn_ext_vec_f32_switch_ncols1(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
+    const int ncols1_max = (GGML_CUDA_CC_IS_NVIDIA(cc) && cc >= GGML_CUDA_CC_ADA_LOVELACE) ? 1 : INT_MAX;
+    const ggml_tensor * Q = dst->src[0];
+
+    if constexpr (ncols2 == 1) {
+        constexpr int ncols1 = 1;
+        if (Q->ne[1] <= ncols1 && ncols1 <= ncols1_max) {
+            ggml_cuda_flash_attn_ext_vec_f32_launch<D, ncols1, ncols2, type_K, type_V>(ctx, dst);
+            return;
+        }
+    }
+
+    if constexpr (ncols2 <= 2) {
+        constexpr int ncols1 = 2/ncols2;
+        if (Q->ne[1] <= ncols1 && ncols1 <= ncols1_max) {
+            ggml_cuda_flash_attn_ext_vec_f32_launch<D, ncols1, ncols2, type_K, type_V>(ctx, dst);
+            return;
+        }
+    }
+
+    if constexpr (ncols2 <= 4) {
+        constexpr int ncols1 = 4/ncols2;
+        if (Q->ne[1] <= ncols1 && ncols1 <= ncols1_max) {
+            ggml_cuda_flash_attn_ext_vec_f32_launch<D, ncols1, ncols2, type_K, type_V>(ctx, dst);
+            return;
+        }
+    }
+
+    constexpr int ncols1 = 8/ncols2;
+    ggml_cuda_flash_attn_ext_vec_f32_launch<D, ncols1, ncols2, type_K, type_V>(ctx, dst);
+
+}
+
 template <int D, ggml_type type_K, ggml_type type_V>
 void ggml_cuda_flash_attn_ext_vec_f32_case(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-    const ggml_tensor * Q   = dst->src[0];
-    const ggml_tensor * K   = dst->src[1];
-    const ggml_tensor * V   = dst->src[2];
+    const ggml_tensor * KQV  = dst;
+    const ggml_tensor * Q    = dst->src[0];
+    const ggml_tensor * K    = dst->src[1];
+    const ggml_tensor * mask = dst->src[3];
 
-    GGML_ASSERT(K->type == type_K);
-    GGML_ASSERT(V->type == type_V);
+    float max_bias = 0.0f;
+    memcpy(&max_bias, (const float *) KQV->op_params + 1, sizeof(float));
 
-    if (Q->ne[1] == 1) {
-        constexpr int ncols1 = 1;
-        ggml_cuda_flash_attn_ext_vec_f32_launch<D, ncols1, type_K, type_V>(ctx, dst);
+    const bool use_gqa_opt = mask && max_bias == 0.0f;
+
+    GGML_ASSERT(Q->ne[2] % K->ne[2] == 0);
+    const int gqa_ratio = Q->ne[2] / K->ne[2];
+
+    if (use_gqa_opt && gqa_ratio % 8 == 0) {
+        ggml_cuda_flash_attn_ext_vec_f32_switch_ncols1<D, 8, type_K, type_V>(ctx, dst);
         return;
     }
 
-    if (Q->ne[1] == 2) {
-        constexpr int ncols1 = 2;
-        ggml_cuda_flash_attn_ext_vec_f32_launch<D, ncols1, type_K, type_V>(ctx, dst);
+    if (use_gqa_opt && gqa_ratio % 4 == 0) {
+        ggml_cuda_flash_attn_ext_vec_f32_switch_ncols1<D, 4, type_K, type_V>(ctx, dst);
         return;
     }
 
-    if (Q->ne[1] <= 4) {
-        constexpr int ncols1 = 4;
-        ggml_cuda_flash_attn_ext_vec_f32_launch<D, ncols1, type_K, type_V>(ctx, dst);
+    if (use_gqa_opt && gqa_ratio % 2 == 0) {
+        ggml_cuda_flash_attn_ext_vec_f32_switch_ncols1<D, 2, type_K, type_V>(ctx, dst);
         return;
     }
 
-    constexpr int ncols1 = 8;
-    ggml_cuda_flash_attn_ext_vec_f32_launch<D, ncols1, type_K, type_V>(ctx, dst);
+    ggml_cuda_flash_attn_ext_vec_f32_switch_ncols1<D, 1, type_K, type_V>(ctx, dst);
 }
 
 #define DECL_FATTN_VEC_F32_CASE(D, type_K, type_V)                          \
