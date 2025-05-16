@@ -68,6 +68,12 @@ static void ggml_cuda_mul_mat_q_switch_type(ggml_backend_cuda_context & ctx, con
 static __global__ void calc_col_ids(
         const int32_t * __restrict__ ids, int32_t * __restrict__ ids_src1, int32_t * __restrict__ ids_dst, int32_t * __restrict__ expert_bounds,
         const int ne02, const int ne11, const int ne12, const int ne1, const int n_expert_used, const int stride_ids, const int stride_src1) {
+    const int ne_get_rows = ne12*n_expert_used;
+
+    extern __shared__ int32_t data_calc_col_ids[];
+    int32_t * ids_src1_shared = data_calc_col_ids;
+    int32_t * ids_dst_shared  = ids_src1_shared + ne_get_rows;
+
     int32_t index_ids_out = 0;
     for (int i02 = 0; i02 < ne02; ++i02) { // expert matrices
         if (threadIdx.x == 0) {
@@ -78,12 +84,16 @@ static __global__ void calc_col_ids(
                 const int iex = iex0 + threadIdx.x;
                 const int match = iex < n_expert_used && ids[i12*stride_ids + iex] == i02;
                 if (match) {
-                    ids_src1[index_ids_out] = i12*stride_src1 + iex % ne11;
-                    ids_dst[index_ids_out]  = i12*ne1         + iex;
+                    ids_src1_shared[index_ids_out] = i12*stride_src1 + iex % ne11;
+                    ids_dst_shared[index_ids_out]  = i12*ne1         + iex;
                 }
                 index_ids_out += __any_sync(0xFFFFFFFF, match);
             }
         }
+    }
+    for (int i = threadIdx.x; i < ne_get_rows; i += WARP_SIZE) {
+        ids_src1[i] = ids_src1_shared[i];
+        ids_dst[i]  = ids_dst_shared[i];
     }
     if (threadIdx.x == 0) {
         expert_bounds[ne02] = index_ids_out;
@@ -219,7 +229,9 @@ void ggml_cuda_mul_mat_q(
     } else {
         const int stride_ids  = ids->nb[1] / sizeof(int32_t);
         const int stride_src1 = nb12 / nb11;
-        calc_col_ids<<<1, WARP_SIZE, 0, stream>>>((const int32_t *) ids->data, ids_src1_dev, ids_dst_dev, expert_bounds_dev,
+
+        const size_t nbytes_shared = 2*ne_get_rows*sizeof(int32_t);
+        calc_col_ids<<<1, WARP_SIZE, nbytes_shared, stream>>>((const int32_t *) ids->data, ids_src1_dev, ids_dst_dev, expert_bounds_dev,
             ne02, ne11, ne12, ne1, n_expert_used, stride_ids, stride_src1);
         CUDA_CHECK(cudaGetLastError());
     }
