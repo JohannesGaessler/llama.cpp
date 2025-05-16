@@ -70,20 +70,24 @@ static __global__ void calc_col_ids(
         const int ne02, const int ne11, const int ne12, const int ne1, const int n_expert_used, const int stride_ids, const int stride_src1) {
     int32_t index_ids_out = 0;
     for (int i02 = 0; i02 < ne02; ++i02) { // expert matrices
-        expert_bounds[i02] = index_ids_out;
+        if (threadIdx.x == 0) {
+            expert_bounds[i02] = index_ids_out;
+        }
         for (int i12 = 0; i12 < ne12; ++i12) { // tokens
-            for (int iex = 0; iex < n_expert_used; ++iex) {
-                const int32_t expert_to_use = ids[i12*stride_ids + iex];
-                if (expert_to_use == i02) {
+            for (int iex0 = 0; iex0 < n_expert_used; iex0 += WARP_SIZE) {
+                const int iex = iex0 + threadIdx.x;
+                const int match = iex < n_expert_used && ids[i12*stride_ids + iex] == i02;
+                if (match) {
                     ids_src1[index_ids_out] = i12*stride_src1 + iex % ne11;
                     ids_dst[index_ids_out]  = i12*ne1         + iex;
-                    index_ids_out++;
-                    break;
                 }
+                index_ids_out += __any_sync(0xFFFFFFFF, match);
             }
         }
     }
-    expert_bounds[ne02] = index_ids_out;
+    if (threadIdx.x == 0) {
+        expert_bounds[ne02] = index_ids_out;
+    }
 }
 
 void ggml_cuda_mul_mat_q(
@@ -215,7 +219,7 @@ void ggml_cuda_mul_mat_q(
     } else {
         const int stride_ids  = ids->nb[1] / sizeof(int32_t);
         const int stride_src1 = nb12 / nb11;
-        calc_col_ids<<<1, 1, 0, stream>>>((const int32_t *) ids->data, ids_src1_dev, ids_dst_dev, expert_bounds_dev,
+        calc_col_ids<<<1, WARP_SIZE, 0, stream>>>((const int32_t *) ids->data, ids_src1_dev, ids_dst_dev, expert_bounds_dev,
             ne02, ne11, ne12, ne1, n_expert_used, stride_ids, stride_src1);
         CUDA_CHECK(cudaGetLastError());
     }
