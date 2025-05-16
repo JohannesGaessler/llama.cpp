@@ -65,6 +65,27 @@ static void ggml_cuda_mul_mat_q_switch_type(ggml_backend_cuda_context & ctx, con
     }
 }
 
+static __global__ void calc_col_ids(
+        const int32_t * __restrict__ ids, int32_t * __restrict__ ids_src1, int32_t * __restrict__ ids_dst, int32_t * __restrict__ expert_bounds,
+        const int ne02, const int ne11, const int ne12, const int ne1, const int n_expert_used, const int stride_ids, const int stride_src1) {
+    int32_t index_ids_out = 0;
+    for (int i02 = 0; i02 < ne02; ++i02) { // expert matrices
+        expert_bounds[i02] = index_ids_out;
+        for (int i12 = 0; i12 < ne12; ++i12) { // tokens
+            for (int iex = 0; iex < n_expert_used; ++iex) {
+                const int32_t expert_to_use = ids[i12*stride_ids + iex];
+                if (expert_to_use == i02) {
+                    ids_src1[index_ids_out] = i12*stride_src1 + iex % ne11;
+                    ids_dst[index_ids_out]  = i12*ne1         + iex;
+                    index_ids_out++;
+                    break;
+                }
+            }
+        }
+    }
+    expert_bounds[ne02] = index_ids_out;
+}
+
 void ggml_cuda_mul_mat_q(
         ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * ids, ggml_tensor * dst) {
     GGML_ASSERT(        src1->type == GGML_TYPE_F32);
@@ -152,45 +173,52 @@ void ggml_cuda_mul_mat_q(
     ids_dst_host.reserve(ne_get_rows);
     std::vector<int32_t> tokens_per_expert_host(ne02);
     std::vector<int32_t> expert_bounds_host(ne02 + 1);
-    ggml_cuda_pool_alloc<int32_t> ids_buf_dev(ctx.pool());
+    ggml_cuda_pool_alloc<int32_t> ids_buf_dev(ctx.pool(), 2*ne_get_rows + ne02 + 1 + get_mmq_x_max_host(cc));
 
-    CUDA_CHECK(cudaMemcpyAsync(ids_host.data(), ids->data, ggml_nbytes(ids), cudaMemcpyDeviceToHost, stream));
-    CUDA_CHECK(cudaStreamSynchronize(stream));
+    int32_t * ids_src1_dev      = ids_buf_dev.ptr;
+    int32_t * ids_dst_dev       = ids_src1_dev + ne_get_rows;
+    int32_t * expert_bounds_dev = ids_dst_dev + ne_get_rows;
 
-    for (int64_t i02 = 0; i02 < ne02; ++i02) { // expert matrices
-        for (int64_t i12 = 0; i12 < ne12; ++i12) { // tokens
-            for (int64_t iex = 0; iex < n_expert_used; ++iex) {
-                const int32_t expert_to_use = *(const int32_t *)(ids_host.data() + i12*ids->nb[1] + iex*ids->nb[0]);
-                assert(expert_to_use >= 0 && expert_to_use < ne02);
-                if (expert_to_use == i02) {
-                    ids_src1_host.push_back(i12*(nb12/nb11) + iex % ne11);
-                    ids_dst_host.push_back(i12*ne1 + iex);
-                    tokens_per_expert_host[i02]++;
-                    break;
+    if (GGML_CUDA_CC_IS_AMD(cc)) {
+        CUDA_CHECK(cudaMemcpyAsync(ids_host.data(), ids->data, ggml_nbytes(ids), cudaMemcpyDeviceToHost, stream));
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+
+        for (int64_t i02 = 0; i02 < ne02; ++i02) { // expert matrices
+            for (int64_t i12 = 0; i12 < ne12; ++i12) { // tokens
+                for (int64_t iex = 0; iex < n_expert_used; ++iex) {
+                    const int32_t expert_to_use = *(const int32_t *)(ids_host.data() + i12*ids->nb[1] + iex*ids->nb[0]);
+                    assert(expert_to_use >= 0 && expert_to_use < ne02);
+                    if (expert_to_use == i02) {
+                        ids_src1_host.push_back(i12*(nb12/nb11) + iex % ne11);
+                        ids_dst_host.push_back(i12*ne1 + iex);
+                        tokens_per_expert_host[i02]++;
+                        break;
+                    }
                 }
             }
         }
+
+        int32_t cumsum = 0;
+        for (int64_t i = 0; i < ne02; ++i) {
+            expert_bounds_host[i] = cumsum;
+            cumsum += tokens_per_expert_host[i];
+        }
+        expert_bounds_host[ne02] = cumsum;
+
+        std::vector<int32_t> ids_buf_host;
+        ids_buf_host.reserve(ids_src1_host.size() + ids_dst_host.size() + expert_bounds_host.size());
+        ids_buf_host.insert(ids_buf_host.end(), ids_src1_host.begin(), ids_src1_host.end());
+        ids_buf_host.insert(ids_buf_host.end(), ids_dst_host.begin(), ids_dst_host.end());
+        ids_buf_host.insert(ids_buf_host.end(), expert_bounds_host.begin(), expert_bounds_host.end());
+        CUDA_CHECK(cudaMemcpyAsync(ids_buf_dev.ptr, ids_buf_host.data(), ids_buf_host.size()*sizeof(int32_t), cudaMemcpyHostToDevice, stream));
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+    } else {
+        const int stride_ids  = ids->nb[1] / sizeof(int32_t);
+        const int stride_src1 = nb12 / nb11;
+        calc_col_ids<<<1, 1, 0, stream>>>((const int32_t *) ids->data, ids_src1_dev, ids_dst_dev, expert_bounds_dev,
+            ne02, ne11, ne12, ne1, n_expert_used, stride_ids, stride_src1);
+        CUDA_CHECK(cudaGetLastError());
     }
-
-    int32_t cumsum = 0;
-    for (int64_t i = 0; i < ne02; ++i) {
-        expert_bounds_host[i] = cumsum;
-        cumsum += tokens_per_expert_host[i];
-    }
-    expert_bounds_host[ne02] = cumsum;
-
-    std::vector<int32_t> ids_buf_host;
-    ids_buf_host.reserve(ids_src1_host.size() + ids_dst_host.size() + expert_bounds_host.size());
-    ids_buf_host.insert(ids_buf_host.end(), ids_src1_host.begin(), ids_src1_host.end());
-    ids_buf_host.insert(ids_buf_host.end(), ids_dst_host.begin(), ids_dst_host.end());
-    ids_buf_host.insert(ids_buf_host.end(), expert_bounds_host.begin(), expert_bounds_host.end());
-    ids_buf_dev.alloc(ids_buf_host.size() + get_mmq_x_max_host(cc)); // Expert bounds are padded on device.
-    CUDA_CHECK(cudaMemcpyAsync(ids_buf_dev.ptr, ids_buf_host.data(), ids_buf_host.size()*sizeof(int32_t), cudaMemcpyHostToDevice, stream));
-    CUDA_CHECK(cudaStreamSynchronize(stream));
-
-    const int32_t * ids_src1_dev      = ids_buf_dev.ptr;
-    const int32_t * ids_dst_dev       = ids_src1_dev + ids_src1_host.size();
-    const int32_t * expert_bounds_dev = ids_dst_dev + ids_dst_host.size();
 
     const size_t nbytes_src1_q8_1 = ne12*n_expert_used*ne10_padded * sizeof(block_q8_1)/QK8_1 +
         get_mmq_x_max_host(cc)*sizeof(block_q8_1_mmq);
