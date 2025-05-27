@@ -16,7 +16,8 @@
 
 llama_context::llama_context(
         const llama_model & model,
-              llama_context_params params) :
+              llama_context_params params,
+              bool dry_run) :
     model(model) {
     LLAMA_LOG_INFO("%s: constructing llama_context\n", __func__);
 
@@ -186,7 +187,7 @@ llama_context::llama_context(
             /*.swa_full =*/ params.swa_full,
         };
 
-        memory.reset(model.create_memory(params_mem, cparams));
+        memory.reset(model.create_memory(params_mem, cparams, dry_run));
     }
 
     // init backends
@@ -2121,9 +2122,10 @@ llama_context_params llama_context_default_params() {
     return result;
 }
 
-llama_context * llama_init_from_model(
+llama_context * llama_init_from_model_impl(
                  llama_model * model,
-        llama_context_params   params) {
+        llama_context_params   params,
+                        bool   dry_run) {
     if (!model) {
         LLAMA_LOG_ERROR("%s: model cannot be NULL\n", __func__);
         return nullptr;
@@ -2150,7 +2152,7 @@ llama_context * llama_init_from_model(
     }
 
     try {
-        auto * ctx = new llama_context(*model, params);
+        auto * ctx = new llama_context(*model, params, dry_run);
         return ctx;
     } catch (const std::exception & err) {
         LLAMA_LOG_ERROR("%s: failed to initialize the context: %s\n", __func__, err.what());
@@ -2159,6 +2161,11 @@ llama_context * llama_init_from_model(
     return nullptr;
 }
 
+llama_context * llama_init_from_model(
+                 llama_model * model,
+        llama_context_params   params) {
+    return llama_init_from_model_impl(model, params, /*dry_run =*/ false);
+}
 // deprecated
 llama_context * llama_new_context_with_model(
                  llama_model * model,

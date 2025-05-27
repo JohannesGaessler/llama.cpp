@@ -84,7 +84,8 @@ int64_t llama_time_us(void) {
 }
 
 // Returns 0 on success, -1 on error, and -2 on cancellation via llama_progress_callback
-static int llama_model_load(const std::string & fname, std::vector<std::string> & splits, llama_model & model, llama_model_params & params) {
+static int llama_model_load(const std::string & fname, std::vector<std::string> & splits, llama_model & model,
+        llama_model_params & params, bool dry_run) {
     // loading time will be recalculated after the first eval, so
     // we take page faults deferred by mmap() into consideration
     model.t_load_us = 0;
@@ -123,7 +124,7 @@ static int llama_model_load(const std::string & fname, std::vector<std::string> 
             return 0;
         }
 
-        if (!model.load_tensors(ml)) {
+        if (!model.load_tensors(ml, dry_run)) {
             return -2;
         }
     } catch (const std::exception & err) {
@@ -137,7 +138,8 @@ static int llama_model_load(const std::string & fname, std::vector<std::string> 
 static struct llama_model * llama_model_load_from_file_impl(
         const std::string & path_model,
         std::vector<std::string> & splits,
-        struct llama_model_params params) {
+        struct llama_model_params params,
+        bool dry_run) {
     ggml_time_init();
 
     if (!params.vocab_only && ggml_backend_reg_count() == 0) {
@@ -214,7 +216,7 @@ static struct llama_model * llama_model_load_from_file_impl(
         LLAMA_LOG_INFO("%s: using device %s (%s) - %zu MiB free\n", __func__, ggml_backend_dev_name(dev), ggml_backend_dev_description(dev), free/1024/1024);
     }
 
-    const int status = llama_model_load(path_model, splits, *model, params);
+    const int status = llama_model_load(path_model, splits, *model, params, dry_run);
     GGML_ASSERT(status <= 0);
     if (status < 0) {
         if (status == -1) {
@@ -230,6 +232,30 @@ static struct llama_model * llama_model_load_from_file_impl(
     return model;
 }
 
+void llama_params_optimize(const char * path_model, struct llama_model_params * mparams, struct llama_context_params * cparams) {
+    if (mparams->n_gpu_layers >= 0) {
+        return;
+    }
+    std::vector<std::string> splits = {};
+    llama_model * model = llama_model_load_from_file_impl(path_model, splits, *mparams, /*dry_run =*/ true);
+    if (model == NULL) {
+        LLAMA_LOG_ERROR("%s: failed to load model '%s'\n", __func__, path_model);
+        return;
+    }
+
+    llama_context * lctx = llama_init_from_model_impl(model, *cparams, /*dry_run =*/ true);
+    if (lctx == NULL) {
+        LLAMA_LOG_ERROR("%s: failed to create context with model '%s'\n", __func__, path_model);
+        llama_model_free(model);
+        return;
+    }
+
+    for (size_t i = 0; i < model->n_devices(); ++i) {
+        size_t nbytes = model->nbytes_allocated(i);
+    }
+}
+
+
 // deprecated
 struct llama_model * llama_load_model_from_file(
         const char * path_model,
@@ -241,7 +267,7 @@ struct llama_model * llama_model_load_from_file(
         const char * path_model,
         struct llama_model_params params) {
     std::vector<std::string> splits = {};
-    return llama_model_load_from_file_impl(path_model, splits, params);
+    return llama_model_load_from_file_impl(path_model, splits, params, /*dry_run =*/ false);
 }
 
 struct llama_model * llama_model_load_from_splits(
@@ -256,7 +282,7 @@ struct llama_model * llama_model_load_from_splits(
     for (size_t i = 0; i < n_paths; ++i) {
         splits.push_back(paths[i]);
     }
-    return llama_model_load_from_file_impl(splits.front(), splits, params);
+    return llama_model_load_from_file_impl(splits.front(), splits, params, /*dry run =*/ false);
 }
 
 void llama_model_save_to_file(const struct llama_model * model, const char * path_model) {

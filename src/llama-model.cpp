@@ -1,5 +1,6 @@
 #include "llama-model.h"
 
+#include "ggml-backend.h"
 #include "llama-impl.h"
 #include "llama-mmap.h"
 #include "llama-batch.h"
@@ -1449,7 +1450,7 @@ void llama_model::load_vocab(llama_model_loader & ml) {
     vocab.load(ml, kv);
 }
 
-bool llama_model::load_tensors(llama_model_loader & ml) {
+bool llama_model::load_tensors(llama_model_loader & ml, bool dry_run) {
     const auto & split_mode   = params.split_mode;
     const auto & n_gpu_layers = params.n_gpu_layers;
     const auto & use_mlock    = params.use_mlock;
@@ -4237,6 +4238,10 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
         }
     }
 
+    if (dry_run) {
+        return true;
+    }
+
     // load tensor data
     for (auto & it : ctx_bufs) {
         ggml_context * ctx = it.first;
@@ -4277,6 +4282,16 @@ size_t llama_model::n_tensors() const {
 
 size_t llama_model::n_devices() const {
     return devices.size();
+}
+
+size_t llama_model::nbytes_allocated(ggml_backend_dev_t dev) const {
+    size_t nbytes = 0;
+    for (auto & buf : pimpl->bufs) {
+        if (ggml_backend_buft_get_device(ggml_backend_buffer_get_type(buf.get())) == dev) {
+            nbytes += ggml_backend_buffer_get_size(buf.get());
+        }
+    }
+    return nbytes;
 }
 
 uint64_t llama_model::n_elements() const {
@@ -13188,7 +13203,7 @@ struct llm_build_bailingmoe : public llm_graph_context {
     }
 };
 
-llama_memory_i * llama_model::create_memory(const llama_memory_params & params, llama_cparams & cparams) const {
+llama_memory_i * llama_model::create_memory(const llama_memory_params & params, llama_cparams & cparams, bool dry_run) const {
     llama_memory_i * res;
 
     switch (arch) {
@@ -13235,7 +13250,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                             cparams.n_ctx,
                             cparams.n_seq_max,
                             cparams.n_batch,
-                            padding);
+                            padding); // FIXME
                 } else {
                     GGML_ASSERT(!hparams.is_swa_any());
 
@@ -13250,7 +13265,8 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                             cparams.n_seq_max,
                             padding,
                             hparams.n_swa,
-                            hparams.swa_type);
+                            hparams.swa_type,
+                            dry_run);
                 }
             }
     }

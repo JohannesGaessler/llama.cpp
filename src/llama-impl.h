@@ -15,6 +15,11 @@
 #    define LLAMA_ATTRIBUTE_FORMAT(...)
 #endif
 
+struct llama_context;
+struct llama_model;
+struct llama_context_params;
+llama_context * llama_init_from_model_impl(llama_model * model, llama_context_params params, bool dry_run);
+
 //
 // logging
 //

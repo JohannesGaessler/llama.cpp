@@ -110,7 +110,8 @@ public:
                      uint32_t    n_seq_max,
                      uint32_t    n_pad,
                      uint32_t    n_swa,
-               llama_swa_type    swa_type);
+               llama_swa_type    swa_type,
+                         bool    dry_run);
 
     ~llama_kv_cache_unified() = default;
 

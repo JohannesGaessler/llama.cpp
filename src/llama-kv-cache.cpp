@@ -33,7 +33,8 @@ llama_kv_cache_unified::llama_kv_cache_unified(
                  uint32_t    n_seq_max,
                  uint32_t    n_pad,
                  uint32_t    n_swa,
-           llama_swa_type    swa_type) :
+           llama_swa_type    swa_type,
+                     bool    dry_run) :
     model(model), hparams(model.hparams), v_trans(v_trans),
     n_seq_max(n_seq_max), n_pad(n_pad), n_swa(n_swa), swa_type(swa_type) {
 
@@ -106,6 +107,10 @@ llama_kv_cache_unified::llama_kv_cache_unified(
 
         map_layer_ids[il] = layers.size();
         layers.push_back({ il, k, v });
+    }
+
+    if (dry_run) {
+        return;
     }
 
     // allocate tensors and initialize the buffers to avoid NaNs in the padding
