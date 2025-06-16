@@ -74,7 +74,7 @@ static __global__ void mul_mat_vec(
 #pragma unroll
                 for (int j = 0; j < ncols_dst; ++j) {
                     const float2 tmpy = y2[j*stride_col_y2 + col2];
-                    sumh2[j] += x2[col2] * make_half2(tmp.x, tmp.y);
+                    sumh2[j] += tmpx * make_half2(tmpy.x, tmpy.y);
                 }
             }
 
