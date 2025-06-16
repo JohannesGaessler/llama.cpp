@@ -256,13 +256,10 @@ void ggml_cuda_mul_mat_vec(ggml_backend_cuda_context & ctx, const ggml_tensor * 
     const int64_t s3  =  dst->nb[3] / ts_dst;
 
     // For MUL_MAT_ID the memory layout is different than for MUL_MAT:
-    const int64_t ncols_dst          = ids ? ne2  : ne1;
     const int64_t nchannels_y        = ids ? ne11 : ne12;
     const int64_t nchannels_dst      = ids ? ne1  : ne2;
     const int64_t stride_channel_dst = ids ? s1   : s2;
     const int64_t stride_channel_y   = ids ? s11  : s12;
-
-    GGML_ASSERT(ncols_dst == 1);
 
     switch (src0->type) {
         case GGML_TYPE_F32: {
