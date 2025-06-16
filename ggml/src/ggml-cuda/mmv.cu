@@ -8,7 +8,9 @@ static __global__ void mul_mat_vec(
         const int64_t ncols2, const int64_t nchannels_y, const int64_t stride_row, const int64_t stride_col_y, const int64_t stride_col_dst,
         const int64_t channel_ratio, const int64_t stride_channel_x, const int64_t stride_channel_y, const int64_t stride_channel_dst,
         const int64_t sample_ratio, const int64_t stride_sample_x, const int64_t stride_sample_y, const int64_t stride_sample_dst) {
-    const int64_t row         = blockIdx.x;
+    constexpr int rows_per_cb = 2;
+
+    const int64_t row         = blockIdx.x*rows_per_cb;
     const int64_t channel_dst = blockIdx.y;
     const int64_t channel_x   = ids ? ids[channel_dst]          : channel_dst / channel_ratio;
     const int64_t channel_y   = ids ? channel_dst % nchannels_y : channel_dst;
@@ -16,13 +18,15 @@ static __global__ void mul_mat_vec(
     const int64_t sample_x    = sample_dst / sample_ratio;
     const int64_t sample_y    = sample_dst;
     const int     tid         = threadIdx.x;
-    constexpr int warp_size   = ggml_cuda_get_physical_warp_size();
 
-    x   += sample_x  *stride_sample_x   + channel_x  *stride_channel_x   + row    *stride_row;
+    constexpr int warp_size = ggml_cuda_get_physical_warp_size();
+
+    x   += sample_x  *stride_sample_x   + channel_x  *stride_channel_x   + row*stride_row;
     y   += sample_y  *stride_sample_y   + channel_y  *stride_channel_y;
     dst += sample_dst*stride_sample_dst + channel_dst*stride_channel_dst;
 
     const float2 * y2 = (const float2 *) y;
+    const int64_t stride_row2   = stride_row   / 2;
     const int64_t stride_col_y2 = stride_col_y / 2;
 
     extern __shared__ char data_mmv[];
@@ -35,19 +39,31 @@ static __global__ void mul_mat_vec(
         __syncthreads();
     }
 
-    float sumf[ncols_dst] = {0.0f};
+    float sumf[ncols_dst][rows_per_cb] = {{0.0f}};
 
     if constexpr (std::is_same<T, float>::value) {
         const float2 * x2 = (const float2 *) x;
 
         for (int64_t col2 = tid; col2 < ncols2; col2 += block_size) {
-            const float2 tmpx = x2[col2];
+            float2 tmpx[rows_per_cb];
+#pragma unroll
+            for (int i = 0; i < rows_per_cb; ++i) {
+                tmpx[i] = x2[i*stride_row2 + col2];
+            }
+
+            float2 tmpy[ncols_dst];
+#pragma unroll
+            for (int j = 0; j < ncols_dst; ++j) {
+                tmpy[j] = y2[j*stride_col_y2 + col2];
+            }
 
 #pragma unroll
             for (int j = 0; j < ncols_dst; ++j) {
-                const float2 tmpy = y2[j*stride_col_y2 + col2];
-                sumf[j] += tmpx.x*tmpy.x;
-                sumf[j] += tmpx.y*tmpy.y;
+#pragma unroll
+                for (int i = 0; i < rows_per_cb; ++i) {
+                    sumf[j][i] += tmpx[i].x*tmpy[j].x;
+                    sumf[j][i] += tmpx[i].y*tmpy[j].y;
+                }
             }
         }
     } else if constexpr (std::is_same<T, half>::value) {
@@ -55,32 +71,60 @@ static __global__ void mul_mat_vec(
 
         if (std::is_same<type_acc, float>::value) {
             for (int64_t col2 = tid; col2 < ncols2; col2 += block_size) {
-                const float2 tmpx = __half22float2(x2[col2]);
+                float2 tmpx[rows_per_cb];
+#pragma unroll
+                for (int i = 0; i < rows_per_cb; ++i) {
+                    tmpx[i] = __half22float2(x2[i*stride_row2 + col2]);
+                }
+
+                float2 tmpy[ncols_dst];
+#pragma unroll
+                for (int j = 0; j < ncols_dst; ++j) {
+                    tmpy[j] = y2[j*stride_col_y2 + col2];
+                }
 
 #pragma unroll
                 for (int j = 0; j < ncols_dst; ++j) {
-                    const float2 tmpy = y2[j*stride_col_y2 + col2];
-                    sumf[j] += tmpx.x * tmpy.x;
-                    sumf[j] += tmpx.y * tmpy.y;
+#pragma unroll
+                    for (int i = 0; i < rows_per_cb; ++i) {
+                        sumf[j][i] += tmpx[i].x*tmpy[j].x;
+                        sumf[j][i] += tmpx[i].y*tmpy[j].y;
+                    }
                 }
             }
         } else {
 #ifdef FP16_AVAILABLE
-            half2 sumh2[ncols_dst] = {{0.0f, 0.0f}};
+            half2 sumh2[rows_per_cb][ncols_dst] = {{{0.0f, 0.0f}}};
 
             for (int64_t col2 = tid; col2 < ncols2; col2 += block_size) {
-                const half2 tmpx = x2[col2];
+                half2 tmpx[rows_per_cb];
+#pragma unroll
+                for (int i = 0; i < rows_per_cb; ++i) {
+                    tmpx[i] = x2[i*stride_row2 + col2];
+                }
 
+                half2 tmpy[ncols_dst];
 #pragma unroll
                 for (int j = 0; j < ncols_dst; ++j) {
-                    const float2 tmpy = y2[j*stride_col_y2 + col2];
-                    sumh2[j] += tmpx * make_half2(tmpy.x, tmpy.y);
+                    const float2 tmpy_f2 = y2[j*stride_col_y2 + col2];
+                    tmpy[j] = make_half2(tmpy_f2.x, tmpy_f2.y);
+                }
+
+#pragma unroll
+                for (int i = 0; i < rows_per_cb; ++i) {
+#pragma unroll
+                    for (int j = 0; j < ncols_dst; ++j) {
+                        sumh2[i][j] += tmpx[i]*tmpy[j];
+                    }
                 }
             }
 
 #pragma unroll
             for (int j = 0; j < ncols_dst; ++j) {
-                sumf[j] = __low2float(sumh2[j]) + __high2float(sumh2[j]);
+#pragma unroll
+                for (int i = 0; i < rows_per_cb; ++i) {
+                    sumf[j][i] = __low2float(sumh2[i][j]) + __high2float(sumh2[i][j]);
+                }
             }
 #else
             NO_DEVICE_CODE;
@@ -89,12 +133,26 @@ static __global__ void mul_mat_vec(
     } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
         const int * x2 = (const int *) x;
         for (int64_t col2 = tid; col2 < ncols2; col2 += block_size) {
-            const int tmpx = x2[col2];
+            int tmpx[rows_per_cb];
+#pragma unroll
+            for (int i = 0; i < rows_per_cb; ++i) {
+                tmpx[i] = x2[i*stride_row2 + col2];
+            }
+
+            float2 tmpy[ncols_dst];
 #pragma unroll
             for (int j = 0; j < ncols_dst; ++j) {
-                const float2 tmpy = y2[j*stride_col_y2 + col2];
-                sumf[j] += float(reinterpret_cast<const nv_bfloat16 *>(&tmpx)[0]) * tmpy.x;
-                sumf[j] += float(reinterpret_cast<const nv_bfloat16 *>(&tmpx)[1]) * tmpy.y;
+                tmpy[j] = y2[j*stride_col_y2 + col2];
+            }
+
+#pragma unroll
+            for (int j = 0; j < ncols_dst; ++j) {
+#pragma unroll
+                for (int i = 0; i < rows_per_cb; ++i) {
+                    const float2 tmpy = y2[j*stride_col_y2 + col2];
+                    sumf[j][i] += float(reinterpret_cast<const nv_bfloat16 *>(&tmpx[i])[0]) * tmpy.x;
+                    sumf[j][i] += float(reinterpret_cast<const nv_bfloat16 *>(&tmpx[i])[1]) * tmpy.y;
+                }
             }
         }
     } else {
@@ -103,26 +161,31 @@ static __global__ void mul_mat_vec(
 
 #pragma unroll
     for (int j = 0; j < ncols_dst; ++j) {
-        sumf[j] = warp_reduce_sum<warp_size>(sumf[j]);
+#pragma unroll
+        for (int i = 0; i < rows_per_cb; ++i) {
+            sumf[j][i] = warp_reduce_sum<warp_size>(sumf[j][i]);
 
-        if (block_size > warp_size) {
-            buf_iw[tid/warp_size] = sumf[j];
-            __syncthreads();
-            if (tid < warp_size) {
-                sumf[j] = buf_iw[tid];
-                sumf[j] = warp_reduce_sum<warp_size>(sumf[j]);
-            }
-            if (j < ncols_dst) {
+            if (block_size > warp_size) {
+                buf_iw[tid/warp_size] = sumf[j][i];
                 __syncthreads();
+                if (tid < warp_size) {
+                    sumf[j][i] = buf_iw[tid];
+                    sumf[j][i] = warp_reduce_sum<warp_size>(sumf[j][i]);
+                }
+                if (j < ncols_dst) {
+                    __syncthreads();
+                }
             }
         }
     }
 
-    if (tid >= ncols_dst) {
+    if (tid >= rows_per_cb*ncols_dst) {
         return;
     }
 
-    dst[tid*stride_col_dst + row] = sumf[tid];
+    const int j = tid / rows_per_cb;
+    const int i = tid - j*rows_per_cb;
+    dst[j*stride_col_dst + row + i] = sumf[j][i];
 }
 
 template <typename T, typename type_acc, int ncols_dst>
@@ -161,7 +224,7 @@ static void launch_mul_mat_vec_cuda(
     }
 
     const int smem = warp_size*sizeof(float);
-    const dim3 block_nums(nrows, nchannels_dst, nsamples_dst);
+    const dim3 block_nums(nrows/2, nchannels_dst, nsamples_dst);
     const dim3 block_dims(block_size_best, 1, 1);
     switch (block_size_best) {
         case   32: {
