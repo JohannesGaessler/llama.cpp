@@ -1,5 +1,8 @@
 #include "common.cuh"
 
+ // Max. batch size for which to use MMV kernels.
+#define MMV_MAX_BATCH_SIZE 4
+
 // maximum number of src0 rows with which to use mul_mat_vec over cuBLAS if FP16 tensor cores are available
 #define MMV_MAX_ROWS 512
 

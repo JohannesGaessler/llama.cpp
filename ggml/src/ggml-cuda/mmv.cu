@@ -229,49 +229,25 @@ static void mul_mat_vec_cuda_switch_ncols_dst(
         cudaStream_t stream) {
     switch (ncols_dst) {
         case 1:
-            launch_mul_mat_vec_cuda<T, float, 1>
+            launch_mul_mat_vec_cuda<T, type_acc, 1>
                 (x, y, ids, dst, ncols, nrows, stride_row, stride_col_y, stride_col_dst,
                  nchannels_x, nchannels_y, nchannels_dst, stride_channel_x, stride_channel_y,
                  stride_channel_dst, nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, stream);
             break;
         case 2:
-            launch_mul_mat_vec_cuda<T, float, 2>
+            launch_mul_mat_vec_cuda<T, type_acc, 2>
                 (x, y, ids, dst, ncols, nrows, stride_row, stride_col_y, stride_col_dst,
                  nchannels_x, nchannels_y, nchannels_dst, stride_channel_x, stride_channel_y,
                  stride_channel_dst, nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, stream);
             break;
         case 3:
-            launch_mul_mat_vec_cuda<T, float, 3>
+            launch_mul_mat_vec_cuda<T, type_acc, 3>
                 (x, y, ids, dst, ncols, nrows, stride_row, stride_col_y, stride_col_dst,
                  nchannels_x, nchannels_y, nchannels_dst, stride_channel_x, stride_channel_y,
                  stride_channel_dst, nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, stream);
             break;
         case 4:
-            launch_mul_mat_vec_cuda<T, float, 4>
-                (x, y, ids, dst, ncols, nrows, stride_row, stride_col_y, stride_col_dst,
-                 nchannels_x, nchannels_y, nchannels_dst, stride_channel_x, stride_channel_y,
-                 stride_channel_dst, nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, stream);
-            break;
-        case 5:
-            launch_mul_mat_vec_cuda<T, float, 5>
-                (x, y, ids, dst, ncols, nrows, stride_row, stride_col_y, stride_col_dst,
-                 nchannels_x, nchannels_y, nchannels_dst, stride_channel_x, stride_channel_y,
-                 stride_channel_dst, nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, stream);
-            break;
-        case 6:
-            launch_mul_mat_vec_cuda<T, float, 6>
-                (x, y, ids, dst, ncols, nrows, stride_row, stride_col_y, stride_col_dst,
-                 nchannels_x, nchannels_y, nchannels_dst, stride_channel_x, stride_channel_y,
-                 stride_channel_dst, nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, stream);
-            break;
-        case 7:
-            launch_mul_mat_vec_cuda<T, float, 7>
-                (x, y, ids, dst, ncols, nrows, stride_row, stride_col_y, stride_col_dst,
-                 nchannels_x, nchannels_y, nchannels_dst, stride_channel_x, stride_channel_y,
-                 stride_channel_dst, nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, stream);
-            break;
-        case 8:
-            launch_mul_mat_vec_cuda<T, float, 8>
+            launch_mul_mat_vec_cuda<T, type_acc, 4>
                 (x, y, ids, dst, ncols, nrows, stride_row, stride_col_y, stride_col_dst,
                  nchannels_x, nchannels_y, nchannels_dst, stride_channel_x, stride_channel_y,
                  stride_channel_dst, nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, stream);
