@@ -299,8 +299,6 @@ void ggml_cuda_op_mul_mat_vec(
     const int64_t ne0  =  dst->ne[0];
     const int64_t row_diff = row_high - row_low;
 
-    GGML_ASSERT(src1_ncols == 1);
-
     const int id = ggml_cuda_get_device();
     const int cc = ggml_cuda_info().devices[id].cc;
     const enum ggml_prec prec = fast_fp16_available(cc) ? ggml_prec(dst->op_params[0]) : GGML_PREC_F32;
