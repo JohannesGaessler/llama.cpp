@@ -5,17 +5,18 @@
 template <typename T, typename type_acc, int ncols_dst, int block_size>
 static __global__ void mul_mat_vec(
         const T * __restrict__ x, const float * __restrict__ y, const int32_t * __restrict__ ids, float * __restrict__ dst,
-        const int64_t ncols2, const int64_t nchannels_y, const int64_t stride_row, const int64_t stride_col_y2, const int64_t stride_col_dst,
-        const int64_t channel_ratio, const int64_t stride_channel_x, const int64_t stride_channel_y, const int64_t stride_channel_dst,
-        const int64_t sample_ratio, const int64_t stride_sample_x, const int64_t stride_sample_y, const int64_t stride_sample_dst) {
-    const int64_t row         = blockIdx.x;
-    const int64_t channel_dst = blockIdx.y;
-    const int64_t channel_x   = ids ? ids[channel_dst]          : channel_dst / channel_ratio;
-    const int64_t channel_y   = ids ? channel_dst % nchannels_y : channel_dst;
-    const int64_t sample_dst  = blockIdx.z;
-    const int64_t sample_x    = sample_dst / sample_ratio;
-    const int64_t sample_y    = sample_dst;
-    const int     tid         = threadIdx.x;
+        const int ncols2, const int nchannels_y, const int stride_row, const int stride_col_y2, const int stride_col_dst,
+        const int channel_ratio, const int stride_channel_x, const int stride_channel_y, const int stride_channel_dst,
+        const int sample_ratio, const int stride_sample_x, const int stride_sample_y, const int stride_sample_dst) {
+    const int row         = blockIdx.x;
+    const int channel_dst = blockIdx.y;
+    const int channel_x   = ids ? ids[channel_dst]          : channel_dst / channel_ratio;
+    const int channel_y   = ids ? channel_dst % nchannels_y : channel_dst;
+    const int sample_dst  = blockIdx.z;
+    const int sample_x    = sample_dst / sample_ratio;
+    const int sample_y    = sample_dst;
+    const int tid         = threadIdx.x;
+
     constexpr int warp_size   = ggml_cuda_get_physical_warp_size();
 
     x   += sample_x  *stride_sample_x   + channel_x  *stride_channel_x   + row*stride_row;
@@ -39,7 +40,7 @@ static __global__ void mul_mat_vec(
     if constexpr (std::is_same<T, float>::value) {
         const float2 * x2 = (const float2 *) x;
 
-        for (int64_t col2 = tid; col2 < ncols2; col2 += block_size) {
+        for (int col2 = tid; col2 < ncols2; col2 += block_size) {
             const float2 tmpx = x2[col2];
 
 #pragma unroll
@@ -53,7 +54,7 @@ static __global__ void mul_mat_vec(
         const half2 * x2 = (const half2 *) x;
 
         if (std::is_same<type_acc, float>::value) {
-            for (int64_t col2 = tid; col2 < ncols2; col2 += block_size) {
+            for (int col2 = tid; col2 < ncols2; col2 += block_size) {
                 const float2 tmpx = __half22float2(x2[col2]);
 
 #pragma unroll
@@ -67,7 +68,7 @@ static __global__ void mul_mat_vec(
 #ifdef FP16_AVAILABLE
             half2 sumh2[ncols_dst] = {{0.0f, 0.0f}};
 
-            for (int64_t col2 = tid; col2 < ncols2; col2 += block_size) {
+            for (int col2 = tid; col2 < ncols2; col2 += block_size) {
                 const half2 tmpx = x2[col2];
 
 #pragma unroll
@@ -87,7 +88,7 @@ static __global__ void mul_mat_vec(
         }
     } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
         const int * x2 = (const int *) x;
-        for (int64_t col2 = tid; col2 < ncols2; col2 += block_size) {
+        for (int col2 = tid; col2 < ncols2; col2 += block_size) {
             const int tmpx = x2[col2];
 #pragma unroll
             for (int j = 0; j < ncols_dst; ++j) {
