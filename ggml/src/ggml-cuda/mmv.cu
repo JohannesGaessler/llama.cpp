@@ -253,6 +253,30 @@ static void mul_mat_vec_cuda_switch_ncols_dst(
                  nchannels_x, nchannels_y, nchannels_dst, stride_channel_x, stride_channel_y,
                  stride_channel_dst, nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, stream);
             break;
+        case 5:
+            launch_mul_mat_vec_cuda<T, type_acc, 5>
+                (x, y, ids, dst, ncols, nrows, stride_row, stride_col_y, stride_col_dst,
+                 nchannels_x, nchannels_y, nchannels_dst, stride_channel_x, stride_channel_y,
+                 stride_channel_dst, nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, stream);
+            break;
+        case 6:
+            launch_mul_mat_vec_cuda<T, type_acc, 6>
+                (x, y, ids, dst, ncols, nrows, stride_row, stride_col_y, stride_col_dst,
+                 nchannels_x, nchannels_y, nchannels_dst, stride_channel_x, stride_channel_y,
+                 stride_channel_dst, nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, stream);
+            break;
+        case 7:
+            launch_mul_mat_vec_cuda<T, type_acc, 7>
+                (x, y, ids, dst, ncols, nrows, stride_row, stride_col_y, stride_col_dst,
+                 nchannels_x, nchannels_y, nchannels_dst, stride_channel_x, stride_channel_y,
+                 stride_channel_dst, nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, stream);
+            break;
+        case 8:
+            launch_mul_mat_vec_cuda<T, type_acc, 8>
+                (x, y, ids, dst, ncols, nrows, stride_row, stride_col_y, stride_col_dst,
+                 nchannels_x, nchannels_y, nchannels_dst, stride_channel_x, stride_channel_y,
+                 stride_channel_dst, nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, stream);
+            break;
         default:
             GGML_ABORT("fatal error");
             break;
@@ -415,4 +439,15 @@ void ggml_cuda_op_mul_mat_vec(
     GGML_UNUSED(src1_ddq_i);
     GGML_UNUSED(src1_ncols);
     GGML_UNUSED(src1_padded_row_size);
+}
+
+bool ggml_cuda_should_use_mmv(enum ggml_type type, int cc, const int64_t * src0_ne, int64_t ne11) {
+    if (src0_ne[0] % 2 != 0) {
+        return false;
+    }
+    if (fp16_mma_available(cc)) {
+        // On GPUs with tensor cores MMV is only faster for sufficiently small matrices:
+        return (src0_ne[1] <= 512 || src0_ne[2]*src0_ne[3] == 1) && ne11 <= 4;
+    }
+    return ne11 <= 8;
 }
