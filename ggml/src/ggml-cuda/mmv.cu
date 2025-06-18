@@ -458,15 +458,27 @@ bool ggml_cuda_should_use_mmv(enum ggml_type type, int cc, const int64_t * src0_
             }
             return ne11 <= 8;
         case GGML_TYPE_F16:
-            if (fp16_mma_hardware_available(cc)) {
-                // On GPUs with tensor cores MMV is only faster for sufficiently small matrices:
-                return (src0_ne[1] <= 512 || src0_ne[2]*src0_ne[3] == 1) && ne11 <= 4;
+            if (GGML_CUDA_CC_IS_NVIDIA(cc)) {
+                const bool src0_small = (src0_ne[1] <= 512 || src0_ne[2]*src0_ne[3] == 1);
+                if (cc >= GGML_CUDA_CC_ADA_LOVELACE) {
+                    return src0_small && ne11 <= 4;
+                }
+                if (fp16_mma_hardware_available(cc)) {
+                    return src0_small && ne11 <= 3;
+                }
+                return ne11 <= 4;
             }
             return ne11 <= 8;
         case GGML_TYPE_BF16:
-            if (bf16_mma_hardware_available(cc)) {
-                // On GPUs with tensor cores MMV is only faster for sufficiently small matrices:
-                return (src0_ne[1] <= 512 || src0_ne[2]*src0_ne[3] == 1) && ne11 <= 4;
+            if (GGML_CUDA_CC_IS_NVIDIA(cc)) {
+                const bool src0_small = (src0_ne[1] <= 512 || src0_ne[2]*src0_ne[3] == 1);
+                if (cc >= GGML_CUDA_CC_ADA_LOVELACE) {
+                    return src0_small && ne11 <= 4;
+                }
+                if (bf16_mma_hardware_available(cc)) {
+                    return src0_small && ne11 <= 3;
+                }
+                return ne11 <= 4;
             }
             return ne11 <= 8;
         default:
