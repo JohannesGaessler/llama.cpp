@@ -445,9 +445,17 @@ bool ggml_cuda_should_use_mmv(enum ggml_type type, int cc, const int64_t * src0_
     if (src0_ne[0] % 2 != 0) {
         return false;
     }
-    if (fp16_mma_available(cc)) {
-        // On GPUs with tensor cores MMV is only faster for sufficiently small matrices:
-        return (src0_ne[1] <= 512 || src0_ne[2]*src0_ne[3] == 1) && ne11 <= 4;
+    switch (type) {
+        case GGML_TYPE_F16:
+            if (fp16_mma_available(cc)) {
+                // On GPUs with tensor cores MMV is only faster for sufficiently small matrices:
+                return (src0_ne[1] <= 512 || src0_ne[2]*src0_ne[3] == 1) && ne11 <= 4;
+            }
+            return ne11 <= 8;
+        case GGML_TYPE_F32:
+        case GGML_TYPE_BF16:
+            return ne11 <= 8;
+        default:
+            return false;
     }
-    return ne11 <= 8;
 }
