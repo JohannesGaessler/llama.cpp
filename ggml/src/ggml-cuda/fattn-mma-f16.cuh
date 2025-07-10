@@ -1294,7 +1294,7 @@ static __global__ void flash_attn_ext_f16(
         const float2 * Q_f2    = (const float2 *) (Q + nb03*sequence + nb02*(head*ncols2));
         const half2  * K_h2    = (const half2  *) (K + nb13*sequence + nb12*(head*ncols2 / gqa_ratio));
         const half2  * mask_h2 = ncols2 == 1 && !mask ? nullptr :
-            (const half2  *) (mask + nb33*(sequence % ne33) + nb32*(head % ne32) + nb31*jt*ncols1);
+            (const half2  *) (mask + nb33*(sequence % ne33) + nb31*jt*ncols1);
         float2       * dstk    = ((float2 *) dst) + (sequence*ne01*ne02 + head*ncols2) * (DV/2);
 
         const half2 * V_h2 = mla ? K_h2 + (DKQ/2 - DV/2) : (const half2 *) (V + nb23*sequence + nb22*(head*ncols2 / gqa_ratio));
@@ -1335,7 +1335,7 @@ static __global__ void flash_attn_ext_f16(
     const float2 * Q_f2    = (const float2 *) (Q + nb03*sequence + nb02*(head*ncols2));
     const half2  * K_h2    = (const half2  *) (K + nb13*sequence + nb12*(head*ncols2 / gqa_ratio));
     const half2  * mask_h2 = ncols2 == 1 && !mask ? nullptr :
-        (const half2  *) (mask + nb33*(sequence % ne33) + nb32*(head % ne32) + nb31*jt*ncols1);
+        (const half2  *) (mask + nb33*(sequence % ne33) + nb31*jt*ncols1);
     float2       * dstk    = ((float2 *) dst) + (sequence*ne01*ne02 + head*ncols2) * (DV/2);
 
     const half2 * V_h2 = mla ? K_h2 + (DKQ/2 - DV/2) : (const half2 *) (V + nb23*sequence + nb22*(head*ncols2 / gqa_ratio));
@@ -1432,7 +1432,6 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
 #endif // !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__)) && !defined(GGML_USE_MUSA)
     }
 
-    fprintf(stderr, "\n\nmma-f16\n\n");
     launch_fattn<DV, ncols1, ncols2>
         (ctx, dst, fattn_kernel, nwarps, nbytes_shared_total, FATTN_KQ_STRIDE, true, true, true);
 }

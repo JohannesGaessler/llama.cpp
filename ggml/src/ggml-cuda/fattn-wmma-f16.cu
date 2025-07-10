@@ -103,7 +103,7 @@ static __global__ void flash_attn_ext_f16(
     const float * Q_f   = (const float *) (Q    + nb03* sequence         + nb02* head              + nb01*ic0);
     const half  * K_h   = (const half  *) (K    + nb13* sequence         + nb12*(head / gqa_ratio));
     const half  * V_h   = (const half  *) (V    + nb13* sequence         + nb12*(head / gqa_ratio)); // K and V have same shape
-    const half  * maskh = (const half  *) (mask + nb33*(sequence % ne33) + nb32*(head % ne32)      + nb31*ic0);
+    const half  * maskh = (const half  *) (mask + nb33*(sequence % ne33)                           + nb31*ic0);
     const half2 * mask2 = (const half2 *)  maskh;
 
     const int stride_Q  = nb01 / sizeof(float);
