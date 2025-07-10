@@ -821,7 +821,6 @@ void launch_fattn(
                 parallel_blocks = parallel_blocks_test;
             }
         }
-        parallel_blocks = 1; // FIXME
 
         blocks_num.x = ntiles_x;
         blocks_num.y = parallel_blocks;
@@ -880,7 +879,6 @@ void launch_fattn(
                 ((float *) KQV->data, dst_tmp_meta.ptr, Q->ne[1], Q->ne[2], Q->ne[3], K->ne[1]);
         }
     } else if (parallel_blocks > 1) {
-        GGML_ASSERT(false);
         const dim3 block_dim_combine(DV, 1, 1);
         const dim3 blocks_num_combine(Q->ne[1], Q->ne[2], Q->ne[3]);
         const size_t nbytes_shared_combine = parallel_blocks*sizeof(float2);
