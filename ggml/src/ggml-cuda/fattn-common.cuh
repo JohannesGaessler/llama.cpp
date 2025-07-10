@@ -625,10 +625,19 @@ static __global__ void flash_attn_combine_results(
     // Dimension 2: blockIdx.y
     // Dimension 3: blockIdx.z
     // Memory layout is permuted with [0, 2, 1, 3]
-    const int tmp_offset_13 = (blockIdx.z*gridDim.x + blockIdx.x)*gridDim.y;
-    VKQ_parts += tmp_offset_13 * (parallel_blocks*D) + blockIdx.y*D;
-    VKQ_meta  += tmp_offset_13 *  parallel_blocks    + blockIdx.y*parallel_blocks;
-    dst       += tmp_offset_13 *                  D  + blockIdx.y*D;
+
+    const int ne01 = gridDim.x;
+    const int ne02 = gridDim.y;
+
+    const int col      = blockIdx.x;
+    const int head     = blockIdx.y;
+    const int sequence = blockIdx.z;
+
+    const int j_dst_unrolled = (sequence*ne01 + col)*ne02 + head;
+
+    VKQ_parts += j_dst_unrolled * parallel_blocks*D;
+    VKQ_meta  += j_dst_unrolled * parallel_blocks;
+    dst       += j_dst_unrolled *                 D;
 
     const int tid = threadIdx.x;
     __builtin_assume(tid < D);
@@ -653,7 +662,7 @@ static __global__ void flash_attn_combine_results(
         const uint32_t ftz_mask = 0xFFFFFFFF * (diff > SOFTMAX_FTZ_THRESHOLD);
         *((uint32_t *) &KQ_max_scale) &= ftz_mask;
 
-        VKQ_numerator   += KQ_max_scale * VKQ_parts[l*gridDim.y*D + tid];
+        VKQ_numerator   += KQ_max_scale * VKQ_parts[l*D + tid];
         VKQ_denominator += KQ_max_scale * meta[l].y;
     }
 

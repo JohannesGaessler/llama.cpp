@@ -282,6 +282,8 @@ static __global__ void flash_attn_tile_ext_f32(
         float kqsum_j = kqsum[j_VKQ_0/nwarps];
         kqsum_j = warp_reduce_sum(kqsum_j);
 
+        const int j_dst_unrolled = ((sequence*ne01 + ic0 + j_VKQ)*ne02 + head)*gridDim.y + blockIdx.y;
+
 #pragma unroll
         for (int i00 = 0; i00 < D/2; i00 += WARP_SIZE) {
             const int i0 = i00 + threadIdx.x;
@@ -291,12 +293,11 @@ static __global__ void flash_attn_tile_ext_f32(
                 dst_val.x /= kqsum_j;
                 dst_val.y /= kqsum_j;
             }
-            const int j_dst = (ic0 + j_VKQ)*gridDim.y + blockIdx.y;
-            dst2[((sequence*gridDim.y*ne01 + j_dst)*ne02 + head)*(D/2) + i0] = dst_val;
+            dst2[j_dst_unrolled*(D/2) + i0] = dst_val;
         }
 
         if (gridDim.y != 1 && threadIdx.x == 0) {
-            dst_meta[((ic0 + j_VKQ)*gridDim.z + blockIdx.z) * gridDim.y + blockIdx.y] = make_float2(kqmax[j_VKQ_0/nwarps], kqsum_j);
+            dst_meta[j_dst_unrolled] = make_float2(kqmax[j_VKQ_0/nwarps], kqsum_j);
         }
     }
 #else
