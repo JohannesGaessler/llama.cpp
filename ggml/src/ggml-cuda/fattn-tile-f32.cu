@@ -292,7 +292,7 @@ static __global__ void flash_attn_tile_ext_f32(
                 dst_val.y /= kqsum_j;
             }
             const int j_dst = (ic0 + j_VKQ)*gridDim.y + blockIdx.y;
-            dst2[((sequence*gridDim.y*ne01 + j_dst)*ne02 + head)*D + i0] = dst_val;
+            dst2[((sequence*gridDim.y*ne01 + j_dst)*ne02 + head)*(D/2) + i0] = dst_val;
         }
 
         if (gridDim.y != 1 && threadIdx.x == 0) {

@@ -281,7 +281,7 @@ static __global__ void flash_attn_tile_ext_f16(
                 dst_val /= __half2half2(kqsum_j);
             }
             const int j_dst = (ic0 + j_VKQ)*gridDim.y + blockIdx.y;
-            dst2[((sequence*gridDim.y*ne01 + j_dst)*ne02 + head)*D + i0] = __half22float2(dst_val);
+            dst2[((sequence*gridDim.y*ne01 + j_dst)*ne02 + head)*(D/2) + i0] = __half22float2(dst_val);
         }
 
         if (gridDim.y != 1 && threadIdx.x == 0) {
