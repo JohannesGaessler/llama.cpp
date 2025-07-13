@@ -147,7 +147,7 @@ def benchmark(path_server: str, path_model: str, path_log: Optional[str], port: 
     x -= t0
     x_max = np.max(x)
 
-    print(f"Average generation depth:          {depth_sum / x.shape[0]} tokens")
+    print(f"Average generation depth:          {depth_sum / x.shape[0]:.2f} tokens")
     print(f"Average total generation speed:    {x.shape[0] / x_max:.2f} tokens/s = {x.shape[0]} tokens / {x_max:.2f} s")
     print(f"Average generation speed per slot: {x.shape[0] / (parallel * x_max):.2f} tokens/s / slot")
 
