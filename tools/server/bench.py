@@ -73,9 +73,9 @@ def send_prompt(data: dict) -> tuple[int, float, int, float]:
     response = session.post(f"{server_address}/completion", json=json_data)
     if response.status_code != 200:
         raise RuntimeError(f"Server returned status code {response.status_code}: {response.text}")
-    print(response.content)
+    timings: dict = json.loads(response.content)["timings"]
 
-    return (1, 1.0, 1, 1.0)
+    return (timings["prompt_n"], timings["prompt_ms"], timings["generation_n"], timings["generation_ms"])
 
 
 def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_size: int, n_prompts: int, n_predict: int):
@@ -98,53 +98,30 @@ def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_s
             server["fout"].close()
             server["process"].wait()
 
-    x_0 = []
-    y_0 = []
-    for (n_prompt, latencies) in results:
-        x_0.append(n_prompt)
-        y_0.append(latencies[0])
-    x_0 = np.array(x_0, dtype=np.int64)
-    y_0 = np.array(y_0, dtype=np.float64)
-
     x = []
     y = []
-    for i in range(x_0.shape[0]):
-        filter_array = x_0 == i
-        if np.sum(filter_array) == 0:
-            continue
-        x.append(i)
-        y.append(np.mean(y_0[filter_array]))
+    for (prompt_n, prompt_ms, _, _) in results:
+        x.append(prompt_n)
+        y.append(prompt_ms)
     x = np.array(x, dtype=np.int64)
     y = np.array(y, dtype=np.float64)
 
     plt.figure()
-    plt.scatter(x, 1000 * y, marker=".")
+    plt.scatter(x, y, marker=".")
     plt.xlabel("Prompt length")
     plt.ylabel("Time to first token [ms]")
     plt.savefig("prompt_time.png", dpi=240)
 
-    x_0 = []
-    y_0 = []
-    for (n_prompt, latencies) in results:
-        for i in range(1, len(latencies)):
-            x_0.append(n_prompt + i - 1)
-            y_0.append(latencies[i])
-    x_0 = np.array(x_0, dtype=np.int64)
-    y_0 = np.array(y_0, dtype=np.float64)
-
     x = []
     y = []
-    for i in range(x_0.shape[0]):
-        filter_array = x_0 == i
-        if np.sum(filter_array) == 0:
-            continue
-        x.append(i)
-        y.append(np.mean(y_0[filter_array]))
+    for (_, _, generation_n, generation_ms) in results:
+        x.append(generation_n)
+        y.append(generation_ms)
     x = np.array(x, dtype=np.int64)
     y = np.array(y, dtype=np.float64)
 
     plt.figure()
-    plt.scatter(x, 1000 * y, marker=".")
+    plt.scatter(x, y, marker=".")
     plt.xlabel("Depth")
     plt.ylabel("Token generation latency [ms]")
     plt.savefig("gen_time.png", dpi=240)
