@@ -75,7 +75,7 @@ def send_prompt(data: dict) -> tuple[int, float, int, float]:
         raise RuntimeError(f"Server returned status code {response.status_code}: {response.text}")
     timings: dict = json.loads(response.content)["timings"]
 
-    return (timings["prompt_n"], timings["prompt_ms"], timings["generation_n"], timings["generation_ms"])
+    return (timings["prompt_n"], timings["prompt_ms"], timings["predicted_n"], timings["predicted_ms"])
 
 
 def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_size: int, n_prompts: int, n_predict: int):
@@ -114,9 +114,9 @@ def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_s
 
     x = []
     y = []
-    for (_, _, generation_n, generation_ms) in results:
-        x.append(generation_n)
-        y.append(generation_ms)
+    for (_, _, predicted_n, predicted_ms) in results:
+        x.append(predicted_n)
+        y.append(predicted_ms)
     x = np.array(x, dtype=np.int64)
     y = np.array(y, dtype=np.float64)
 
