@@ -111,8 +111,6 @@ def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_s
             server["fout"].close()
             server["process"].wait()
 
-    results = results[parallel + 1:-(parallel + 1)]
-
     x_0 = []
     y_0 = []
     for (n_prompt, latencies) in results:
