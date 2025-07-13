@@ -100,6 +100,7 @@ def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_s
             for p in prompts:
                 data.append({"session": session, "server_address": server_address, "prompt": p, "n_predict": n_predict})
 
+            t0 = time()
             results: list[tuple[int, int, list[float]]] = thread_map(send_prompt, data, max_workers=parallel + 1, chunksize=1)
     finally:
         if server is not None:
@@ -125,7 +126,7 @@ def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_s
     for (_, _, token_arrival_times) in results:
         x += token_arrival_times
     x = np.array(x, dtype=np.float64)
-    x -= np.min(x)
+    x -= t0
 
     plt.figure()
     plt.hist(x, np.arange(0, np.ceil(np.max(x)) + 1))
