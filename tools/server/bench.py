@@ -35,6 +35,7 @@ def get_server(path_server: str, path_model: str, port: int, parallel: int, ctx_
         "--model", path_model,
         "--port", str(port),
         "--swa-full",  # FIXME
+        "--attn-streams",
     ]
     fout = open("bench.log", "w")
     process = subprocess.Popen(popen_args, stdout=fout, stderr=subprocess.STDOUT)
