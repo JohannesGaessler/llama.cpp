@@ -76,12 +76,13 @@ def send_prompt(data: dict) -> tuple[int, float, list[float]]:
     for line in response.iter_lines(decode_unicode=True):
         if not line.startswith("data: "):
             continue
+        last_valid_line = line
         token_arrival_times.append(time())
     token_arrival_times = token_arrival_times[:-1]
 
     if response.status_code != 200:
         raise RuntimeError(f"Server returned status code {response.status_code}: {response.text}")
-    timings: dict = json.loads(line[6:])["timings"]
+    timings: dict = json.loads(last_valid_line[6:])["timings"]
 
     return (timings["prompt_n"], timings["prompt_ms"], token_arrival_times)
 
