@@ -147,7 +147,7 @@ def benchmark(path_server: str, path_model: str, path_log: Optional[str], port: 
     x_max = np.max(x)
 
     print(f"Average total generation speed:    {x.shape[0]} tokens / {x_max:.2f} s = {x.shape[0] / x_max:.2f} tokens/s")
-    print(f"Average generation speed per slot: {x.shape[0] / (parallel * x_max):.2f} tokens/s")
+    print(f"Average generation speed per slot: {x.shape[0] / (parallel * x_max):.2f} (tokens/s) / slot")
 
     x_bin_max = np.ceil(x_max) + 1
     plt.figure()
