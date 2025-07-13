@@ -2,7 +2,6 @@
 
 import argparse
 import json
-import logging
 import subprocess
 from time import sleep, time
 from typing import Optional
@@ -14,11 +13,8 @@ import requests
 from tqdm.contrib.concurrent import thread_map
 
 
-logger = logging.getLogger("server-bench")
-
-
 def get_prompts(n_prompts: int) -> list[str]:
-    logger.info("Loading MMLU dataset...")
+    print("Loading MMLU dataset...")
     ret = datasets.load_dataset("cais/mmlu", "all")["test"]["question"]
     if n_prompts >= 0:
         ret = ret[:n_prompts]
@@ -29,7 +25,7 @@ TEMPLATE_SERVER_ADDRESS = "http://localhost:{port}"
 
 
 def get_server(path_server: str, path_model: str, path_log: Optional[str], port: int, n_gpu_layers: int, parallel: int, ctx_size: int) -> dict:
-    logger.info("Starting the llama.cpp server...")
+    print("Starting the llama.cpp server...")
     address = TEMPLATE_SERVER_ADDRESS.format(port=port)
 
     popen_args: list[str] = [
@@ -102,7 +98,7 @@ def benchmark(path_server: str, path_model: str, path_log: str, port: int, n_gpu
         server: dict = get_server(path_server, path_model, path_log, port, n_gpu_layers, parallel, ctx_size)
         server_address: str = server["address"]
 
-        logger.info("Starting the benchmark...")
+        print("Starting the benchmark...")
         with requests.Session() as session:
             data: list[dict] = []
             for p in prompts:
@@ -124,9 +120,9 @@ def benchmark(path_server: str, path_model: str, path_log: str, port: int, n_gpu
     x = np.array(x, dtype=np.int64)
     y = np.array(y, dtype=np.float64)
 
-    logger.info(f"Average prompt length:             {np.mean(x):.2f} tokens")
-    logger.info(f"Average prompt latency:            {np.mean(y):.2f} ms")
-    logger.info(f"Average prompt speed:              {np.sum(x) / (1e-3 * np.sum(y)):.2f} tokens/s")
+    print(f"Average prompt length:             {np.mean(x):.2f} tokens")
+    print(f"Average prompt latency:            {np.mean(y):.2f} ms")
+    print(f"Average prompt speed:              {np.sum(x) / (1e-3 * np.sum(y)):.2f} tokens/s")
 
     plt.figure()
     plt.scatter(x, y, s=10.0, marker=".", alpha=0.25)
@@ -147,8 +143,8 @@ def benchmark(path_server: str, path_model: str, path_log: str, port: int, n_gpu
     x -= t0
     x_max = np.max(x)
 
-    logger.info(f"Average total generation speed:    {x.shape[0]} tokens / {x_max:.2f} s = {x.shape[0] / x_max:.2f} t/s")
-    logger.info(f"Average generation speed per slot: {x.shape[0] / (x_max):.2f}")
+    print(f"Average total generation speed:    {x.shape[0]} tokens / {x_max:.2f} s = {x.shape[0] / x_max:.2f} t/s")
+    print(f"Average generation speed per slot: {x.shape[0] / (x_max):.2f}")
 
     x_bin_max = np.ceil(x_max) + 1
     plt.figure()
@@ -165,7 +161,7 @@ if __name__ == "__main__":
     parser.add_argument("--path_model", type=str, required=True, help="Path to the model to use for the benchmark")
     parser.add_argument("--path_log", type=str, default=None, help="Path to the model to use for the benchmark")
     parser.add_argument("--port", type=int, default=18725, help="Port to use for the server during the benchmark")
-    parser.add_argument("--n_gpu_layers", type=int, default=-1, help="Number of GPU layers for the server")
+    parser.add_argument("--n_gpu_layers", type=int, default=999, help="Number of GPU layers for the server")
     parser.add_argument("--parallel", type=int, default=16, help="Number of slots for the server")
     parser.add_argument("--ctx_size", type=int, default=4096, help="Server context size per slot")
     parser.add_argument("--n_prompts", type=int, default=250, help="Number of prompts to evaluate")
