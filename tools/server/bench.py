@@ -90,7 +90,7 @@ def send_prompt(data: dict) -> tuple[int, float, list[float]]:
     return (timings["prompt_n"], timings["prompt_ms"], token_arrival_times)
 
 
-def benchmark(path_server: str, path_model: str, path_log: str, port: int, n_gpu_layers: int, parallel: int, ctx_size: int, n_prompts: int, n_predict: int):
+def benchmark(path_server: str, path_model: str, path_log: Optional[str], port: int, n_gpu_layers: int, parallel: int, ctx_size: int, n_prompts: int, n_predict: int):
     prompts: list[str] = get_prompts(n_prompts)
 
     server = None
@@ -109,7 +109,8 @@ def benchmark(path_server: str, path_model: str, path_log: str, port: int, n_gpu
     finally:
         if server is not None:
             server["process"].terminate()
-            server["fout"].close()
+            if path_log is not None:
+                server["fout"].close()
             server["process"].wait()
 
     x = []
