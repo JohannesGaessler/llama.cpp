@@ -117,7 +117,7 @@ def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_s
     y = np.array(y, dtype=np.float64)
 
     plt.figure()
-    plt.scatter(x, y, s=1.0, marker=".")
+    plt.scatter(x, y, s=10.0, marker=".")
     plt.xlim(0, 1.05 * np.max(x))
     plt.ylim(0, 1.05 * np.max(y))
     plt.xlabel("Prompt length")
