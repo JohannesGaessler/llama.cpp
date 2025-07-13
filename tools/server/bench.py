@@ -121,7 +121,7 @@ def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_s
 
     x = []
     y = []
-    for i in range(x.shape[0]):
+    for i in range(x_0.shape[0]):
         filter_array = x_0 == i
         if np.sum(filter_array) == 0:
             continue
@@ -146,7 +146,7 @@ def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_s
 
     x = []
     y = []
-    for i in range(x.shape[0]):
+    for i in range(x_0.shape[0]):
         filter_array = x_0 == i
         if np.sum(filter_array) == 0:
             continue
