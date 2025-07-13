@@ -129,8 +129,9 @@ def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_s
 
     plt.figure()
     plt.hist(x, np.arange(0, np.ceil(np.max(x)) + 1))
-    plt.xlabel("Depth")
-    plt.ylabel("Token generation latency [ms]")
+    plt.xlim(0, np.ceil(np.max(x)) + 2)
+    plt.xlabel("Time [s]")
+    plt.ylabel("Num. tokens generated per second")
     plt.savefig("gen_time.png", dpi=240)
 
 
