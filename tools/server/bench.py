@@ -113,28 +113,51 @@ def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_s
 
     results = results[parallel + 1:-(parallel + 1)]
 
-    plt.figure()
+    x_0 = []
+    y_0 = []
+    for (n_prompt, latencies) in results:
+        x_0.append(n_prompt)
+        y_0.append(latencies[0])
+    x_0 = np.array(x_0, dtype=np.int64)
+    y_0 = np.array(y_0, dtype=np.float64)
+
     x = []
     y = []
-    for (n_prompt, latencies) in results:
-        x.append(n_prompt)
-        y.append(latencies[0])
-    x = np.array(x)
-    y = np.array(y)
-    plt.scatter(x, 1000 * y, marker=".")
+    for i in range(x.shape[0]):
+        filter_array = x_0 == i
+        if np.sum(filter_array) == 0:
+            continue
+        x.append(i)
+        y.append(np.mean(y_0[filter_array]))
+    x = np.array(x, dtype=np.int64)
+    y = np.array(y, dtype=np.float64)
+
+    plt.figure()
     plt.xlabel("Prompt length")
     plt.ylabel("Time to first token [ms]")
     plt.savefig("prompt_time.png", dpi=240)
 
-    plt.figure()
-    x = []
-    y = []
+    x_0 = []
+    y_0 = []
     for (n_prompt, latencies) in results:
         for i in range(1, len(latencies)):
-            x.append(n_prompt + i - 1)
-            y.append(latencies[i])
-    x = np.array(x)
-    y = np.array(y)
+            x_0.append(n_prompt + i - 1)
+            y_0.append(latencies[i])
+    x_0 = np.array(x_0, dtype=np.int64)
+    y_0 = np.array(y_0, dtype=np.float64)
+
+    x = []
+    y = []
+    for i in range(x.shape[0]):
+        filter_array = x_0 == i
+        if np.sum(filter_array) == 0:
+            continue
+        x.append(i)
+        y.append(np.mean(y_0[filter_array]))
+    x = np.array(x, dtype=np.int64)
+    y = np.array(y, dtype=np.float64)
+
+    plt.figure()
     plt.scatter(x, 1000 * y, marker=".")
     plt.xlabel("Depth")
     plt.ylabel("Token generation latency [ms]")
