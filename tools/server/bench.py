@@ -115,10 +115,10 @@ def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_s
 
     x = []
     y = []
-    for (_, _, predicted_n, predicted_ms) in results:
-        x.append(predicted_n)
-        y.append(predicted_ms)
-    x = np.array(x, dtype=np.int64)
+    for (prompt_n, _, predicted_n, predicted_ms) in results:
+        x.append((prompt_n + predicted_n) / 2)
+        y.append(predicted_n / (1e-3 * predicted_ms))
+    x = np.array(x, dtype=np.float64)
     y = np.array(y, dtype=np.float64)
 
     plt.figure()
