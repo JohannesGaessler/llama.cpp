@@ -69,7 +69,7 @@ def send_prompt(data: dict) -> tuple[int, float, list[float]]:
         raise RuntimeError(f"Server returned status code {response.status_code}: {response.text}")
     prompt: str = json.loads(response.text)["prompt"]
 
-    json_data: dict = {"prompt": prompt, "n_predict": data["n_predict"]}
+    json_data: dict = {"prompt": prompt, "n_predict": data["n_predict"], "stream": True}
     response = session.post(f"{server_address}/completion", json=json_data, stream=True)
 
     token_arrival_times: list[float] = []
