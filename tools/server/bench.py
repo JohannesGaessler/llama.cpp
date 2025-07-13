@@ -60,6 +60,27 @@ def get_server(path_server: str, path_model: str, path_log: Optional[str], port:
     return dict(process=process, address=address, fout=fout)
 
 
+def get_prompt_length(data: dict) -> int:
+    session = data["session"]
+    server_address: str = data["server_address"]
+
+    response = session.post(
+        f"{server_address}/apply-template",
+        json={"messages": [{"role": "user", "content": data["prompt"], "stream": True}]}
+    )
+    if response.status_code != 200:
+        raise RuntimeError(f"Server returned status code {response.status_code}: {response.text}")
+    prompt: str = json.loads(response.text)["prompt"]
+    response = session.post(
+        f"{server_address}/tokenize",
+        json={"content": prompt, "add_special": True}
+    )
+    if response.status_code != 200:
+        raise RuntimeError(f"Server returned status code {response.status_code}: {response.text}")
+    tokens: list[str] = json.loads(response.text)["tokens"]
+    return len(tokens)
+
+
 def send_prompt(data: dict) -> tuple[int, float, list[float]]:
     session = data["session"]
     server_address: str = data["server_address"]
@@ -87,7 +108,7 @@ def send_prompt(data: dict) -> tuple[int, float, list[float]]:
         raise RuntimeError(f"Server returned status code {response.status_code}: {response.text}")
     timings: dict = json.loads(last_valid_line[6:])["timings"]
 
-    return (timings["prompt_n"], timings["prompt_ms"], token_arrival_times)
+    return (timings["prompt_ms"], token_arrival_times)
 
 
 def benchmark(path_server: str, path_model: str, path_log: Optional[str], port: int, n_gpu_layers: int, parallel: int, ctx_size: int, n_prompts: int, n_predict: int):
@@ -98,15 +119,18 @@ def benchmark(path_server: str, path_model: str, path_log: Optional[str], port: 
         server: dict = get_server(path_server, path_model, path_log, port, n_gpu_layers, parallel, ctx_size)
         server_address: str = server["address"]
 
-        print("Starting the benchmark...")
-        print()
         with requests.Session() as session:
             data: list[dict] = []
             for i, p in enumerate(prompts):
                 data.append({"session": session, "server_address": server_address, "prompt": p, "n_predict": n_predict, "seed": i})
 
+            print("Getting the prompt lengths...")
+            prompt_n: list[int] = [get_prompt_length(d) for d in data]
+
+            print("Starting the benchmark...")
+            print()
             t0 = time()
-            results: list[tuple[int, int, list[float]]] = thread_map(send_prompt, data, max_workers=parallel + 1, chunksize=1)
+            results: list[tuple[int, list[float]]] = thread_map(send_prompt, data, max_workers=parallel + 1, chunksize=1)
     finally:
         if server is not None:
             server["process"].terminate()
@@ -114,12 +138,10 @@ def benchmark(path_server: str, path_model: str, path_log: Optional[str], port: 
                 server["fout"].close()
             server["process"].wait()
 
-    prompt_n = []
     prompt_ms = []
     token_t = []
     depth_sum: int = 0
-    for (pn, pms, tat) in results:
-        prompt_n.append(pn)
+    for pn, (pms, tat) in zip(prompt_n, results):
         prompt_ms.append(pms)
         token_t += tat
         n_tokens: int = len(tat)
@@ -134,7 +156,7 @@ def benchmark(path_server: str, path_model: str, path_log: Optional[str], port: 
 
     print()
     print(f"Benchmark duration:                {token_t_last:.2f} s")
-    print(f"Request throughput:                {n_prompts / token_t_last:.2f} requests / s = {n_prompts / (token_t_last/60):.2f} requests / min")
+    print(f"Request throughput:                {n_prompts / token_t_last:.2f} requests/s = {n_prompts / (token_t_last/60):.2f} requests/min")
     print(f"Total prompt length:               {np.sum(prompt_n)} tokens")
     print(f"Average prompt length:             {np.mean(prompt_n):.2f} tokens")
     print(f"Average prompt latency:            {np.mean(prompt_ms):.2f} ms")
