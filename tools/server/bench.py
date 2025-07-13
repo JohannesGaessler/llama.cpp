@@ -99,6 +99,7 @@ def benchmark(path_server: str, path_model: str, path_log: Optional[str], port: 
         server_address: str = server["address"]
 
         print("Starting the benchmark...")
+        print()
         with requests.Session() as session:
             data: list[dict] = []
             for p in prompts:
@@ -121,6 +122,7 @@ def benchmark(path_server: str, path_model: str, path_log: Optional[str], port: 
     x = np.array(x, dtype=np.int64)
     y = np.array(y, dtype=np.float64)
 
+    print()
     print(f"Average prompt length:             {np.mean(x):.2f} tokens")
     print(f"Average prompt latency:            {np.mean(y):.2f} ms")
     print(f"Average prompt speed:              {np.sum(x) / (1e-3 * np.sum(y)):.2f} tokens/s")
