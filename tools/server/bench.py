@@ -123,7 +123,7 @@ def benchmark(path_server: str, path_model: str, path_log: Optional[str], port: 
         prompt_ms.append(pms)
         token_t += tat
         n_tokens: int = len(tat)
-        depth_sum += n_tokens * prompt_n
+        depth_sum += n_tokens * pn
         depth_sum += n_tokens * (n_tokens + 1) // 2
     prompt_n = np.array(prompt_n, dtype=np.int64)
     prompt_ms = np.array(prompt_ms, dtype=np.float64)
