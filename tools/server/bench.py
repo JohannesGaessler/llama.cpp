@@ -73,7 +73,7 @@ def send_prompt(data: dict) -> tuple[int, float, list[float]]:
     response = session.post(f"{server_address}/completion", json=json_data, stream=True)
 
     token_arrival_times: list[float] = []
-    for line in response.iter_lines(decode_unicoe=True):
+    for line in response.iter_lines(decode_unicode=True):
         if not line.startswith("data: "):
             continue
         token_arrival_times.append(time())
