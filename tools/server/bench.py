@@ -81,7 +81,7 @@ def send_prompt(data: dict) -> tuple[int, float, list[float]]:
 
     if response.status_code != 200:
         raise RuntimeError(f"Server returned status code {response.status_code}: {response.text}")
-    timings: dict = json.loads(line)["timings"]
+    timings: dict = json.loads(line[6:])["timings"]
 
     return (timings["prompt_n"], timings["prompt_ms"], token_arrival_times)
 
