@@ -114,47 +114,48 @@ def benchmark(path_server: str, path_model: str, path_log: Optional[str], port: 
                 server["fout"].close()
             server["process"].wait()
 
-    x = []
-    y = []
-    for (prompt_n, prompt_ms, _) in results:
-        x.append(prompt_n)
-        y.append(prompt_ms)
-    x = np.array(x, dtype=np.int64)
-    y = np.array(y, dtype=np.float64)
+    prompt_n = []
+    prompt_ms = []
+    token_t = []
+    depth_sum: int = 0
+    for (pn, pms, tat) in results:
+        prompt_n.append(pn)
+        prompt_ms.append(pms)
+        token_t += tat
+        n_tokens: int = len(tat)
+        depth_sum += n_tokens * prompt_n
+        depth_sum += n_tokens * (n_tokens + 1) // 2
+    prompt_n = np.array(prompt_n, dtype=np.int64)
+    prompt_ms = np.array(prompt_ms, dtype=np.float64)
+    token_t = np.array(token_t, dtype=np.float64)
+
+    token_t -= t0
+    token_t_last = np.max(token_t)
 
     print()
-    print(f"Average prompt length:             {np.mean(x):.2f} tokens")
-    print(f"Average prompt latency:            {np.mean(y):.2f} ms")
-    print(f"Average prompt speed:              {np.sum(x) / (1e-3 * np.sum(y)):.2f} tokens/s")
+    print(f"Benchmark duration:                {token_t_last:.2f}")
+    print(f"Total prompt length:               {np.sum(prompt_n)} tokens")
+    print(f"Average prompt length:             {np.mean(prompt_n):.2f} tokens")
+    print(f"Average prompt latency:            {np.mean(prompt_ms):.2f} ms")
+    print(f"Average prompt speed:              {np.sum(prompt_n) / (1e-3 * np.sum(prompt_ms)):.2f} tokens/s")
+    print(f"Total generation:                  {token_t.shape[0]} tokens")
+    print(f"Average generation depth:          {depth_sum / token_t.shape[0]:.2f} tokens")
+    print(f"Average total generation speed:    {token_t.shape[0] / token_t_last:.2f} tokens/s")
+    print(f"Average generation speed per slot: {token_t.shape[0] / (parallel * token_t_last):.2f} tokens/s / slot")
 
     plt.figure()
-    plt.scatter(x, y, s=10.0, marker=".", alpha=0.25)
-    plt.xlim(0, 1.05 * np.max(x))
-    plt.ylim(0, 1.05 * np.max(y))
+    plt.scatter(prompt_n, prompt_ms, s=10.0, marker=".", alpha=0.25)
+    plt.xlim(0, 1.05 * np.max(prompt_n))
+    plt.ylim(0, 1.05 * np.max(prompt_ms))
     plt.title(path_model)
     plt.xlabel("Prompt length [tokens]")
     plt.ylabel("Time to first token [ms]")
     plt.savefig("prompt_time.png", dpi=240)
 
-    depth_sum: int = 0
-    x = []
-    for (prompt_n, _, token_arrival_times) in results:
-        n_tokens: int = len(token_arrival_times)
-        depth_sum += n_tokens * prompt_n
-        depth_sum += n_tokens * (n_tokens + 1) // 2
-        x += token_arrival_times
-    x = np.array(x, dtype=np.float64)
-    x -= t0
-    x_max = np.max(x)
-
-    print(f"Average generation depth:          {depth_sum / x.shape[0]:.2f} tokens")
-    print(f"Average total generation speed:    {x.shape[0] / x_max:.2f} tokens/s = {x.shape[0]} tokens / {x_max:.2f} s")
-    print(f"Average generation speed per slot: {x.shape[0] / (parallel * x_max):.2f} tokens/s / slot")
-
-    x_bin_max = np.ceil(x_max) + 1
+    bin_max = np.ceil(token_t_last) + 1
     plt.figure()
-    plt.hist(x, np.arange(0, x_bin_max))
-    plt.xlim(0, x_bin_max + 1)
+    plt.hist(token_t, np.arange(0, bin_max))
+    plt.xlim(0, bin_max + 1)
     plt.title(path_model)
     plt.xlabel("Time [s]")
     plt.ylabel("Num. tokens generated per second")
