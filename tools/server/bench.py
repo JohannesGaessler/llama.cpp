@@ -73,7 +73,7 @@ def send_prompt(data: dict) -> tuple[int, float, int, float]:
     response = session.post(f"{server_address}/completion", json=json_data)
     if response.status_code != 200:
         raise RuntimeError(f"Server returned status code {response.status_code}: {response.text}")
-    print(response)
+    print(response.content)
 
     return (1, 1.0, 1, 1.0)
 
