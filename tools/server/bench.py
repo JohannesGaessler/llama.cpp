@@ -118,6 +118,8 @@ def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_s
 
     plt.figure()
     plt.scatter(x, y, marker=".")
+    plt.xlim(0, 1.05 * np.max(x))
+    plt.ylim(0, 1.05 * np.max(y))
     plt.xlabel("Prompt length")
     plt.ylabel("Time to first token [ms]")
     plt.savefig("prompt_time.png", dpi=240)
