@@ -131,6 +131,7 @@ def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_s
     y = np.array(y, dtype=np.float64)
 
     plt.figure()
+    plt.plot(x, 1000 * y, marker=".")
     plt.xlabel("Prompt length")
     plt.ylabel("Time to first token [ms]")
     plt.savefig("prompt_time.png", dpi=240)
@@ -156,7 +157,7 @@ def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_s
     y = np.array(y, dtype=np.float64)
 
     plt.figure()
-    plt.scatter(x, 1000 * y, marker=".")
+    plt.plot(x, 1000 * y, marker=".")
     plt.xlabel("Depth")
     plt.ylabel("Token generation latency [ms]")
     plt.savefig("gen_time.png", dpi=240)
