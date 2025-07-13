@@ -171,4 +171,4 @@ if __name__ == "__main__":
     parser.add_argument("--n_prompts", type=int, default=250, help="Number of prompts to evaluate")
     parser.add_argument("--n_predict", type=int, default=2048, help="Max. number of tokens to predict per prompt")
     args = parser.parse_args()
-    benchmark(args.path_server, args.path_model, args.path_log, args.port, args.parallel, args.ctx_size, args.n_prompts, args.n_predict)
+    benchmark(**vars(args))
