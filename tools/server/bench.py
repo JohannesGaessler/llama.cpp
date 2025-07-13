@@ -72,7 +72,7 @@ def send_prompt(data: dict) -> tuple[int, float, list[float]]:
         raise RuntimeError(f"Server returned status code {response.status_code}: {response.text}")
     prompt: str = json.loads(response.text)["prompt"]
 
-    json_data: dict = {"prompt": prompt, "n_predict": data["n_predict"], "stream": True}
+    json_data: dict = {"prompt": prompt, "seed": data["seed"], "n_predict": data["n_predict"], "stream": True}
     response = session.post(f"{server_address}/completion", json=json_data, stream=True)
 
     token_arrival_times: list[float] = []
@@ -102,8 +102,8 @@ def benchmark(path_server: str, path_model: str, path_log: Optional[str], port: 
         print()
         with requests.Session() as session:
             data: list[dict] = []
-            for p in prompts:
-                data.append({"session": session, "server_address": server_address, "prompt": p, "n_predict": n_predict})
+            for i, p in enumerate(prompts):
+                data.append({"session": session, "server_address": server_address, "prompt": p, "n_predict": n_predict, "seed": i})
 
             t0 = time()
             results: list[tuple[int, int, list[float]]] = thread_map(send_prompt, data, max_workers=parallel + 1, chunksize=1)
