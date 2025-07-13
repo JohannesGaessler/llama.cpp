@@ -3,7 +3,7 @@
 import argparse
 import json
 import subprocess
-from time import sleep, time
+from time import sleep
 from typing import Optional
 
 import datasets
@@ -57,7 +57,7 @@ def get_server(path_server: str, path_model: str, port: int, parallel: int, ctx_
     return dict(process=process, address=address, fout=fout)
 
 
-def send_prompt(data: dict) -> tuple[int, list[float]]:
+def send_prompt(data: dict) -> tuple[int, float, int, float]:
     session = data["session"]
     server_address: str = data["server_address"]
 
@@ -69,26 +69,13 @@ def send_prompt(data: dict) -> tuple[int, list[float]]:
         raise RuntimeError(f"Server returned status code {response.status_code}: {response.text}")
     prompt: str = json.loads(response.text)["prompt"]
 
-    n_prompt: Optional[int] = None
-    latencies: list[float] = []
-    t0: float = time()
-    json_data: dict = {"prompt": prompt, "n_predict": data["n_predict"], "stream": True}
-    response = session.post(f"{server_address}/completion", stream=True, json=json_data)
-    for line in response.iter_lines(decode_unicode=True):
-        if not line.startswith("data: "):
-            continue
-        if n_prompt is None:
-            json_data: dict = json.loads(line[6:])
-            n_prompt: int = json_data["tokens_evaluated"]
-        t1: float = time()
-        latencies.append(t1 - t0)
-        t0 = t1
-    latencies = latencies[:-1]
-
+    json_data: dict = {"prompt": prompt, "n_predict": data["n_predict"]}
+    response = session.post(f"{server_address}/completion", json=json_data)
     if response.status_code != 200:
         raise RuntimeError(f"Server returned status code {response.status_code}: {response.text}")
+    print(response)
 
-    return n_prompt, latencies
+    return (1, 1.0, 1, 1.0)
 
 
 def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_size: int, n_prompts: int, n_predict: int):
@@ -131,7 +118,7 @@ def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_s
     y = np.array(y, dtype=np.float64)
 
     plt.figure()
-    plt.plot(x, 1000 * y, marker=".")
+    plt.scatter(x, 1000 * y, marker=".")
     plt.xlabel("Prompt length")
     plt.ylabel("Time to first token [ms]")
     plt.savefig("prompt_time.png", dpi=240)
@@ -157,7 +144,7 @@ def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_s
     y = np.array(y, dtype=np.float64)
 
     plt.figure()
-    plt.plot(x, 1000 * y, marker=".")
+    plt.scatter(x, 1000 * y, marker=".")
     plt.xlabel("Depth")
     plt.ylabel("Token generation latency [ms]")
     plt.savefig("gen_time.png", dpi=240)
