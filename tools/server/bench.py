@@ -3,8 +3,7 @@
 import argparse
 import json
 import subprocess
-from time import sleep
-from typing import Optional
+from time import sleep, time
 
 import datasets
 import matplotlib.pyplot as plt
@@ -58,25 +57,33 @@ def get_server(path_server: str, path_model: str, port: int, parallel: int, ctx_
     return dict(process=process, address=address, fout=fout)
 
 
-def send_prompt(data: dict) -> tuple[int, float, int, float]:
+def send_prompt(data: dict) -> tuple[int, float, list[float]]:
     session = data["session"]
     server_address: str = data["server_address"]
 
     response = session.post(
         f"{server_address}/apply-template",
-        json={"messages": [{"role": "user", "content": data["prompt"]}]}
+        json={"messages": [{"role": "user", "content": data["prompt"], "stream": True}]}
     )
     if response.status_code != 200:
         raise RuntimeError(f"Server returned status code {response.status_code}: {response.text}")
     prompt: str = json.loads(response.text)["prompt"]
 
     json_data: dict = {"prompt": prompt, "n_predict": data["n_predict"]}
-    response = session.post(f"{server_address}/completion", json=json_data)
+    response = session.post(f"{server_address}/completion", json=json_data, stream=True)
+
+    token_arrival_times: list[float] = []
+    for line in response.iter_lines(decode_unicoe=True):
+        if not line.startswith("data: "):
+            continue
+        token_arrival_times.append(time())
+    token_arrival_times = token_arrival_times[:-1]
+
     if response.status_code != 200:
         raise RuntimeError(f"Server returned status code {response.status_code}: {response.text}")
-    timings: dict = json.loads(response.content)["timings"]
+    timings: dict = json.loads(line)["timings"]
 
-    return (timings["prompt_n"], timings["prompt_ms"], timings["predicted_n"], timings["predicted_ms"])
+    return (timings["prompt_n"], timings["prompt_ms"], token_arrival_times)
 
 
 def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_size: int, n_prompts: int, n_predict: int):
@@ -92,7 +99,7 @@ def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_s
             for p in prompts:
                 data.append({"session": session, "server_address": server_address, "prompt": p, "n_predict": n_predict})
 
-            results: list[tuple[int, list[float]]] = thread_map(send_prompt, data, max_workers=parallel + 1, chunksize=1)
+            results: list[tuple[int, int, list[float]]] = thread_map(send_prompt, data, max_workers=parallel + 1, chunksize=1)
     finally:
         if server is not None:
             server["process"].terminate()
@@ -101,7 +108,7 @@ def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_s
 
     x = []
     y = []
-    for (prompt_n, prompt_ms, _, _) in results:
+    for (prompt_n, prompt_ms, _) in results:
         x.append(prompt_n)
         y.append(prompt_ms)
     x = np.array(x, dtype=np.int64)
@@ -114,15 +121,13 @@ def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_s
     plt.savefig("prompt_time.png", dpi=240)
 
     x = []
-    y = []
-    for (prompt_n, _, predicted_n, predicted_ms) in results:
-        x.append((prompt_n + predicted_n) / 2)
-        y.append(predicted_n / (1e-3 * predicted_ms))
+    for (_, _, token_arrival_times) in results:
+        x += token_arrival_times
     x = np.array(x, dtype=np.float64)
-    y = np.array(y, dtype=np.float64)
+    x -= np.min(x)
 
     plt.figure()
-    plt.scatter(x, y, marker=".")
+    plt.hist(x, np.arange(0, np.ceil(np.max(x)) + 1))
     plt.xlabel("Depth")
     plt.ylabel("Token generation latency [ms]")
     plt.savefig("gen_time.png", dpi=240)
