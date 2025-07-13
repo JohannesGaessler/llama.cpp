@@ -39,7 +39,7 @@ def get_server(path_server: str, path_model: str, path_log: Optional[str], port:
         "--model", path_model,
         "--port", str(port),
         "--swa-full",  # FIXME performance bad otherwise
-        # "--attn-streams",
+        "--attn-streams",
     ]
     fout = open("bench.log", "w") if path_log is not None else subprocess.DEVNULL
     process = subprocess.Popen(popen_args, stdout=fout, stderr=subprocess.STDOUT)
