@@ -134,6 +134,7 @@ def benchmark(path_server: str, path_model: str, path_log: Optional[str], port: 
 
     print()
     print(f"Benchmark duration:                {token_t_last:.2f} s")
+    print(f"Request throughput:                {n_prompts / token_t_last:.2f} requests / s = {n_prompts / (token_t_last/60):.2f} requests / min")
     print(f"Total prompt length:               {np.sum(prompt_n)} tokens")
     print(f"Average prompt length:             {np.mean(prompt_n):.2f} tokens")
     print(f"Average prompt latency:            {np.mean(prompt_ms):.2f} ms")
