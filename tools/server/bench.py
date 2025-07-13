@@ -2,8 +2,10 @@
 
 import argparse
 import json
+import logging
 import subprocess
 from time import sleep, time
+from typing import Optional
 
 import datasets
 import matplotlib.pyplot as plt
@@ -12,7 +14,11 @@ import requests
 from tqdm.contrib.concurrent import thread_map
 
 
+logger = logging.getLogger("server-bench")
+
+
 def get_prompts(n_prompts: int) -> list[str]:
+    logger.info("Loading MMLU dataset...")
     ret = datasets.load_dataset("cais/mmlu", "all")["test"]["question"]
     if n_prompts >= 0:
         ret = ret[:n_prompts]
@@ -22,21 +28,22 @@ def get_prompts(n_prompts: int) -> list[str]:
 TEMPLATE_SERVER_ADDRESS = "http://localhost:{port}"
 
 
-def get_server(path_server: str, path_model: str, port: int, parallel: int, ctx_size: int) -> dict:
+def get_server(path_server: str, path_model: str, path_log: Optional[str], port: int, n_gpu_layers: int, parallel: int, ctx_size: int) -> dict:
+    logger.info("Starting the llama.cpp server...")
     address = TEMPLATE_SERVER_ADDRESS.format(port=port)
 
     popen_args: list[str] = [
         path_server,
         "--flash-attn",
-        "--n-gpu-layers", "999",
+        "--n-gpu-layers", str(n_gpu_layers),
         "--parallel", str(parallel),
         "--ctx-size", str(parallel * ctx_size),
         "--model", path_model,
         "--port", str(port),
-        "--swa-full",  # FIXME
+        "--swa-full",  # FIXME performance bad otherwise
         "--attn-streams",
     ]
-    fout = open("bench.log", "w")
+    fout = open("bench.log", "w") if path_log is not None else subprocess.DEVNULL
     process = subprocess.Popen(popen_args, stdout=fout, stderr=subprocess.STDOUT)
 
     n_failures: int = 0
@@ -87,14 +94,15 @@ def send_prompt(data: dict) -> tuple[int, float, list[float]]:
     return (timings["prompt_n"], timings["prompt_ms"], token_arrival_times)
 
 
-def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_size: int, n_prompts: int, n_predict: int):
+def benchmark(path_server: str, path_model: str, path_log: str, port: int, n_gpu_layers: int, parallel: int, ctx_size: int, n_prompts: int, n_predict: int):
     prompts: list[str] = get_prompts(n_prompts)
 
     server = None
     try:
-        server: dict = get_server(path_server, path_model, port, parallel, ctx_size)
+        server: dict = get_server(path_server, path_model, path_log, port, n_gpu_layers, parallel, ctx_size)
         server_address: str = server["address"]
 
+        logger.info("Starting the benchmark...")
         with requests.Session() as session:
             data: list[dict] = []
             for p in prompts:
@@ -116,36 +124,51 @@ def benchmark(path_server: str, path_model: str, port: int, parallel: int, ctx_s
     x = np.array(x, dtype=np.int64)
     y = np.array(y, dtype=np.float64)
 
+    logger.info(f"Average prompt length:             {np.mean(x):.2f} tokens")
+    logger.info(f"Average prompt latency:            {np.mean(y):.2f} ms")
+    logger.info(f"Average prompt speed:              {np.sum(x) / (1e-3 * np.sum(y)):.2f} tokens/s")
+
     plt.figure()
     plt.scatter(x, y, s=10.0, marker=".", alpha=0.25)
     plt.xlim(0, 1.05 * np.max(x))
     plt.ylim(0, 1.05 * np.max(y))
-    plt.xlabel("Prompt length")
+    plt.xlabel("Prompt length [tokens]")
     plt.ylabel("Time to first token [ms]")
     plt.savefig("prompt_time.png", dpi=240)
 
+    depth_sum: int = 0
     x = []
-    for (_, _, token_arrival_times) in results:
+    for (prompt_n, _, token_arrival_times) in results:
+        n_tokens: int = len(token_arrival_times)
+        depth_sum += n_tokens * prompt_n
+        depth_sum += n_tokens * (n_tokens + 1) // 2
         x += token_arrival_times
     x = np.array(x, dtype=np.float64)
     x -= t0
+    x_max = np.max(x)
 
+    logger.info(f"Average total generation speed:    {x.shape[0]} tokens / {x_max:.2f} s = {x.shape[0] / x_max:.2f} t/s")
+    logger.info(f"Average generation speed per slot: {x.shape[0] / (x_max):.2f}")
+
+    x_bin_max = np.ceil(x_max) + 1
     plt.figure()
-    plt.hist(x, np.arange(0, np.ceil(np.max(x)) + 1))
-    plt.xlim(0, np.ceil(np.max(x)) + 2)
+    plt.hist(x, np.arange(0, x_bin_max))
+    plt.xlim(0, x_bin_max + 1)
     plt.xlabel("Time [s]")
     plt.ylabel("Num. tokens generated per second")
-    plt.savefig("gen_time.png", dpi=240)
+    plt.savefig("gen_rate.png", dpi=240)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--path_server", type=str, default="llama-server")
-    parser.add_argument("--path_model", type=str, required=True)
-    parser.add_argument("--port", type=int, default=18725)
-    parser.add_argument("--parallel", type=int, default=16)
-    parser.add_argument("--ctx_size", type=int, default=4096)
-    parser.add_argument("--n_prompts", type=int, default=250)
-    parser.add_argument("--n_predict", type=int, default=2048)
+    parser.add_argument("--path_server", type=str, default="llama-server", help="Path to the llama.cpp server binary")
+    parser.add_argument("--path_model", type=str, required=True, help="Path to the model to use for the benchmark")
+    parser.add_argument("--path_log", type=str, default=None, help="Path to the model to use for the benchmark")
+    parser.add_argument("--port", type=int, default=18725, help="Port to use for the server during the benchmark")
+    parser.add_argument("--n_gpu_layers", type=int, default=-1, help="Number of GPU layers for the server")
+    parser.add_argument("--parallel", type=int, default=16, help="Number of slots for the server")
+    parser.add_argument("--ctx_size", type=int, default=4096, help="Server context size per slot")
+    parser.add_argument("--n_prompts", type=int, default=250, help="Number of prompts to evaluate")
+    parser.add_argument("--n_predict", type=int, default=2048, help="Max. number of tokens to predict per prompt")
     args = parser.parse_args()
-    benchmark(args.path_server, args.path_model, args.port, args.parallel, args.ctx_size, args.n_prompts, args.n_predict)
+    benchmark(args.path_server, args.path_model, args.path_log, args.port, args.parallel, args.ctx_size, args.n_prompts, args.n_predict)
