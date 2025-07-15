@@ -476,22 +476,22 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
                 const float2 tmp = __half22float2(tile_mask[j*(c::nbatch_fa/2 + 4) + i]);
                 skip = skip && isinf(tmp.x) && isinf(tmp.y);
             }
-            if (__all_sync(0xFFFFFFFF, skip)) {
-                __syncthreads();
-                if (nstages > 1) {
-                    // Preload K tile for next iteration:
-                    constexpr bool use_cp_async = true;
-                    if (!last_iter) {
-                        if (ncols2 > 1 || mask_h2) {
-                            flash_attn_ext_f16_load_mask<ncols1, nwarps, c::nbatch_fa, use_cp_async>
-                                (mask_h2 + (k_VKQ_0 + c::nbatch_fa)/2, tile_mask, stride_mask);
-                        }
-                        flash_attn_ext_f16_load_tile<stride_tile_K, nwarps, c::nbatch_fa, use_cp_async>
-                            (K_h2 + (k_VKQ_0 + c::nbatch_fa)*stride_K, tile_K, nbatch_K2, stride_K);
+        }
+        if (__all_sync(0xFFFFFFFF, skip)) {
+            __syncthreads();
+            if (nstages > 1) {
+                // Preload K tile for next iteration:
+                constexpr bool use_cp_async = true;
+                if (!last_iter) {
+                    if (ncols2 > 1 || mask_h2) {
+                        flash_attn_ext_f16_load_mask<ncols1, nwarps, c::nbatch_fa, use_cp_async>
+                            (mask_h2 + (k_VKQ_0 + c::nbatch_fa)/2, tile_mask, stride_mask);
                     }
+                    flash_attn_ext_f16_load_tile<stride_tile_K, nwarps, c::nbatch_fa, use_cp_async>
+                        (K_h2 + (k_VKQ_0 + c::nbatch_fa)*stride_K, tile_K, nbatch_K2, stride_K);
                 }
-                return;
             }
+            return;
         }
     }
 
