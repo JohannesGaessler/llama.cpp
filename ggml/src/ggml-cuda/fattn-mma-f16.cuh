@@ -451,16 +451,54 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     if constexpr (nstages > 1) {
         static_assert(!mla, "multi-stage loading not implemented for MLA");
         static_assert(nbatch_K2 == DKQ/2, "batching not implemented for multi stage loading");
-        constexpr bool use_cp_async = true;
         cp_async_wait_all();
         __syncthreads();
-        flash_attn_ext_f16_load_tile<stride_tile_V, nwarps, c::nbatch_fa, use_cp_async>
-            (V_h2 + k_VKQ_0*stride_V, tile_V, nbatch_V2, stride_V);
     } else {
         constexpr bool use_cp_async = nstages == 1;
         if (ncols2 > 1 || mask_h2) {
             flash_attn_ext_f16_load_mask<ncols1, nwarps, c::nbatch_fa, use_cp_async>(mask_h2 + k_VKQ_0/2, tile_mask, stride_mask);
         }
+    }
+
+    {
+        static_assert(c::nbatch_fa == WARP_SIZE || c::nbatch_fa == 2*WARP_SIZE, "bad nbatch_fa");
+        bool skip;
+        if constexpr (ncols1 == 1) {
+            const float2 tmp = __half22float2(tile_mask[c::nbatch_fa == WARP_SIZE ? threadIdx.x % (WARP_SIZE/2) : threadIdx.x]);
+            skip = isinf(tmp.x) && isinf(tmp.y);
+        } else {
+            skip = true;
+#pragma unroll
+            for (int j0 = 0; j0 < ncols1; j0 += WARP_SIZE/(c::nbatch_fa/2)) {
+                const int j = c::nbatch_fa == WARP_SIZE ? j0 + threadIdx.x / (WARP_SIZE/2) : j0;
+                const int i = c::nbatch_fa == WARP_SIZE ?      threadIdx.x % (WARP_SIZE/2) : threadIdx.x;
+
+                const float2 tmp = __half22float2(tile_mask[j*(c::nbatch_fa/2 + 4) + i]);
+                skip = skip && isinf(tmp.x) && isinf(tmp.y);
+            }
+            if (__all_sync(0xFFFFFFFF, skip)) {
+                __syncthreads();
+                if (nstages > 1) {
+                    // Preload K tile for next iteration:
+                    constexpr bool use_cp_async = true;
+                    if (!last_iter) {
+                        if (ncols2 > 1 || mask_h2) {
+                            flash_attn_ext_f16_load_mask<ncols1, nwarps, c::nbatch_fa, use_cp_async>
+                                (mask_h2 + (k_VKQ_0 + c::nbatch_fa)/2, tile_mask, stride_mask);
+                        }
+                        flash_attn_ext_f16_load_tile<stride_tile_K, nwarps, c::nbatch_fa, use_cp_async>
+                            (K_h2 + (k_VKQ_0 + c::nbatch_fa)*stride_K, tile_K, nbatch_K2, stride_K);
+                    }
+                }
+                return;
+            }
+        }
+    }
+
+    if constexpr (nstages > 1) {
+        constexpr bool use_cp_async = true;
+        flash_attn_ext_f16_load_tile<stride_tile_V, nwarps, c::nbatch_fa, use_cp_async>
+            (V_h2 + k_VKQ_0*stride_V, tile_V, nbatch_V2, stride_V);
     }
 
 #pragma unroll
