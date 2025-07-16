@@ -8,6 +8,28 @@
 #include "fattn-wmma-f16.cuh"
 #include "fattn.cuh"
 
+template <int DKQ, int DV, int ncols1, int ncols2>
+static void ggml_cuda_flash_attn_ext_mma_f16_switch_nstages(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    typedef fattn_mma_f16_config<DKQ, DV> c;
+    const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
+    const ggml_tensor * Q = dst->src[0];
+
+    if (!cp_async_available(cc)) {
+        ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, ncols1, ncols2, 0>(ctx, dst);
+        return;
+    }
+
+    if constexpr (c::nstages_max > 1) {
+        static_assert(c::nstages_max == 2, "bad nstages_max");
+        if (Q->ne[0] != 576 && Q->ne[3] == 1) {
+            ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, ncols1, ncols2, 2>(ctx, dst);
+            return;
+        }
+    }
+
+    ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, ncols1, ncols2, 1>(ctx, dst);
+}
+
 template <int DKQ, int DV, int ncols2>
 static void ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
@@ -15,22 +37,22 @@ static void ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1(ggml_backend_cuda_con
 
     if constexpr (ncols2 <= 8) {
         if (Q->ne[1] <= 8/ncols2) {
-            ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, 8/ncols2, ncols2>(ctx, dst);
+            ggml_cuda_flash_attn_ext_mma_f16_switch_nstages<DKQ, DV, 8/ncols2, ncols2>(ctx, dst);
             return;
         }
     }
 
     if (Q->ne[1] <= 16/ncols2) {
-        ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, 16/ncols2, ncols2>(ctx, dst);
+        ggml_cuda_flash_attn_ext_mma_f16_switch_nstages<DKQ, DV, 16/ncols2, ncols2>(ctx, dst);
         return;
     }
 
     if (ggml_cuda_highest_compiled_arch(cc) == GGML_CUDA_CC_TURING || Q->ne[1] <= 32/ncols2) {
-        ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, 32/ncols2, ncols2>(ctx, dst);
+        ggml_cuda_flash_attn_ext_mma_f16_switch_nstages<DKQ, DV, 32/ncols2, ncols2>(ctx, dst);
         return;
     }
 
-    ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, 64/ncols2, ncols2>(ctx, dst);
+    ggml_cuda_flash_attn_ext_mma_f16_switch_nstages<DKQ, DV, 64/ncols2, ncols2>(ctx, dst);
 }
 
 template <int DKQ, int DV>
