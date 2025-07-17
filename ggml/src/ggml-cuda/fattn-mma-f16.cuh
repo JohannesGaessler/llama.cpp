@@ -211,19 +211,11 @@ struct fattn_mma_f16_config<256, 256> {
     }
 
     static int get_nbatch_combine_host(const int cc, const int ncols) {
-        if (ggml_cuda_highest_compiled_arch(cc) == GGML_CUDA_CC_TURING) {
-            return ncols <= 16 ? 128 : 64;
-        }
-        return 64;
+        return ncols <= 16 ? 128 : 64;
     }
 
     static constexpr __device__ int get_nbatch_combine_device(int ncols) {
-#if __CUDA_ARCH__ == GGML_CUDA_CC_TURING
         return ncols <= 16 ? 128 : 64;
-#else
-        GGML_UNUSED(ncols);
-        return 128;
-#endif // __CUDA_ARCH__ == GGML_CUDA_CC_TURING
     }
 };
 
