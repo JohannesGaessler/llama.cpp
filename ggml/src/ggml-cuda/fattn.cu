@@ -12,7 +12,9 @@ template <int DKQ, int DV, int ncols1, int ncols2>
 static void ggml_cuda_flash_attn_ext_mma_f16_switch_nstages(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     typedef fattn_mma_f16_config<DKQ, DV> c;
     const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
+
     const ggml_tensor * Q = dst->src[0];
+    const ggml_tensor * mask = dst->src[3];
 
     if (!cp_async_available(cc)) {
         ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, ncols1, ncols2, 0>(ctx, dst);
@@ -21,7 +23,7 @@ static void ggml_cuda_flash_attn_ext_mma_f16_switch_nstages(ggml_backend_cuda_co
 
     if constexpr (c::nstages_max > 1) {
         static_assert(c::nstages_max == 2, "bad nstages_max");
-        if (Q->ne[0] != 576 && Q->ne[3] == 1) {
+        if (Q->ne[3] == 1 && mask) {
             ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, ncols1, ncols2, 2>(ctx, dst);
             return;
         }
