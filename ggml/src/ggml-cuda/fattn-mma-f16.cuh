@@ -1206,6 +1206,8 @@ static __global__ void flash_attn_ext_f16(
         const char * __restrict__ K,
         const char * __restrict__ V,
         const char * __restrict__ mask,
+        const int  * __restrict__ kb0_max,
+        const int  * __restrict__ kbc_opt,
         float      * __restrict__ dst,
         float2     * __restrict__ dst_meta,
         const float scale,
@@ -1276,8 +1278,13 @@ static __global__ void flash_attn_ext_f16(
     constexpr int kb_niter = FATTN_KQ_STRIDE / c::nbatch_fa; // Number of kernel iterations per assigned KQ slice.
 
     // kbc == k block continuous, current index in continuous ijk space.
-    int       kbc      = (blockIdx.x + 0)*(iter_k*iter_j*(ne02/ncols2)*ne03) / gridDim.x;
-    const int kbc_stop = (blockIdx.x + 1)*(iter_k*iter_j*(ne02/ncols2)*ne03) / gridDim.x;
+    int       kbc      = kbc_opt ? kbc_opt[blockIdx.x + 0] : (blockIdx.x + 0)*(iter_k*iter_j*(ne02/ncols2)*ne03) / gridDim.x;
+    const int kbc_stop = kbc_opt ? kbc_opt[blockIdx.x + 1] : (blockIdx.x + 1)*(iter_k*iter_j*(ne02/ncols2)*ne03) / gridDim.x;
+
+    int sequence = kbc / (iter_k*iter_j*(ne02/ncols2));
+    int head = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence) / (iter_k*iter_j);
+    int jt = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence - iter_k*iter_j*head) / iter_k; // j index of current tile.
+    int kb0_max_shj = mask ? kb0_max[sequence*iter_j + jt] : iter_k;
 
     // If the seams of 2 CUDA blocks fall within an output tile their results need to be combined.
     // For this we need to track both the block that starts the tile (needs_fixup) and the block that finishes the tile (is_fixup).
@@ -1285,12 +1292,8 @@ static __global__ void flash_attn_ext_f16(
 
     // kb0 == k start index when in the output tile.
     int kb0_start = kbc % iter_k;
-    int kb0_stop  = min(iter_k, kb0_start + kbc_stop - kbc);
-    while (kbc < kbc_stop && kb0_stop == iter_k) {
-        const int sequence = kbc / (iter_k*iter_j*(ne02/ncols2));
-        const int head = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence) / (iter_k*iter_j);
-        const int jt = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence - iter_k*iter_j*head) / iter_k; // j index of current tile.
-
+    int kb0_stop  = min(kb0_max_shj, kb0_start + kbc_stop - kbc);
+    while (kbc < kbc_stop && kb0_stop == kb0_max_shj) {
         const float2 * Q_f2    = (const float2 *) (Q + nb03*sequence + nb02*(head*ncols2));
         const half2  * K_h2    = (const half2  *) (K + nb13*sequence + nb12*(head*ncols2 / gqa_ratio));
         const half2  * mask_h2 = ncols2 == 1 && !mask ? nullptr :
@@ -1320,17 +1323,18 @@ static __global__ void flash_attn_ext_f16(
         kbc += iter_k;
         kbc -= kbc % iter_k;
 
+        sequence = kbc / (iter_k*iter_j*(ne02/ncols2));
+        head = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence) / (iter_k*iter_j);
+        jt = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence - iter_k*iter_j*head) / iter_k; // j index of current tile.
+        int kb0_max_shj = mask ? kb0_max[sequence*iter_j + jt] : iter_k;
+
         kb0_start = 0;
-        kb0_stop  = min(iter_k, kbc_stop - kbc);
+        kb0_stop  = min(kb0_max_shj, kbc_stop - kbc);
     }
 
     if (kbc >= kbc_stop) {
         return;
     }
-
-    const int sequence = kbc / (iter_k*iter_j*(ne02/ncols2));
-    const int head = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence) / (iter_k*iter_j);
-    const int jt = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence - iter_k*iter_j*head) / iter_k; // j index of current tile.
 
     const float2 * Q_f2    = (const float2 *) (Q + nb03*sequence + nb02*(head*ncols2));
     const half2  * K_h2    = (const half2  *) (K + nb13*sequence + nb12*(head*ncols2 / gqa_ratio));

@@ -29,6 +29,8 @@ static __global__ void flash_attn_ext_f16(
         const char * __restrict__ K,
         const char * __restrict__ V,
         const char * __restrict__ mask,
+        const int  * __restrict__ kb0_max,
+        const int  * __restrict__ kbc_opt,
         float      * __restrict__ dst,
         float2     * __restrict__ dst_meta,
         const float scale,
