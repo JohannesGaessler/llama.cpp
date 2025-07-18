@@ -565,8 +565,7 @@ static __global__ void flash_attn_mask_to_kb0_max(
         return;
     }
 
-    // kb0_max[sequence*ne31 + jt] = kb0_max_active + 1;
-    kb0_max[sequence*ne31 + jt] = ne30;
+    kb0_max[sequence*ne31 + jt] = kb0_max_active + 2;
 }
 
 __launch_bounds__(256, 1)
