@@ -1326,7 +1326,7 @@ static __global__ void flash_attn_ext_f16(
         sequence = kbc / (iter_k*iter_j*(ne02/ncols2));
         head = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence) / (iter_k*iter_j);
         jt = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence - iter_k*iter_j*head) / iter_k; // j index of current tile.
-        int kb0_max_shj = mask ? kb0_max[sequence*iter_j + jt] : iter_k;
+        kb0_max_shj = mask ? kb0_max[sequence*iter_j + jt] : iter_k;
 
         kb0_start = 0;
         kb0_stop  = min(kb0_max_shj, kbc_stop - kbc);
