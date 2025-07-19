@@ -897,10 +897,12 @@ void launch_fattn(
                 ((const half2 *) mask->data, kb0_max.ptr, iter_k, s31, s33);
             CUDA_CHECK(cudaGetLastError());
 
-            kbc_opt.alloc(max_blocks + 1);
-            flash_attn_kb0_max_to_kbc_opt<<<1, 256, (ne_kb0_max+1)*sizeof(int), main_stream>>>
-                (kb0_max.ptr, kbc_opt.ptr, max_blocks, iter_k, ntiles_x, Q->ne[2]/ncols2, Q->ne[3]);
-            CUDA_CHECK(cudaGetLastError());
+            if (Q->ne[3] > 1) {
+                kbc_opt.alloc(max_blocks + 1);
+                flash_attn_kb0_max_to_kbc_opt<<<1, 256, (ne_kb0_max+1)*sizeof(int), main_stream>>>
+                    (kb0_max.ptr, kbc_opt.ptr, max_blocks, iter_k, ntiles_x, Q->ne[2]/ncols2, Q->ne[3]);
+                CUDA_CHECK(cudaGetLastError());
+            }
         }
 
         // For short contexts it can be faster to have the SMs work on whole tiles because this lets us skip the fixup.
@@ -998,7 +1000,7 @@ void launch_fattn(
     CUDA_CHECK(cudaGetLastError());
 
     if (stream_k) {
-        if (true || ntiles_total % blocks_num.x != 0) { // Fixup is only needed if the SMs work on fractional tiles.
+        if (Q->ne[3] == 1 && ntiles_total % blocks_num.x != 0) { // Fixup is only needed if the SMs work on fractional tiles.
             const dim3 block_dim_combine(DV, 1, 1);
             const dim3 blocks_num_combine = {blocks_num.x, ncols1, ncols2};
 
