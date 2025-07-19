@@ -586,31 +586,30 @@ static __global__ void flash_attn_kb0_max_to_kbc_opt(
     kb0_max_sum = __reduce_add_sync(0xFFFFFFFF, kb0_max_sum);
     kb0_max_sum *= iter_z;
 
-    for (int ism = threadIdx.x + 1; ism < nsm + 1; ism += 256) {
+    for (int ism = threadIdx.x; ism < nsm + 1; ism += 256) {
         const int kbc_active = ism * kb0_max_sum / nsm;
 
         int sum_kbc = 0;
         int sum_kbc_active = 0;
-        int sequence = sum_kbc / (iter_k*iter_j*iter_z);
-        int jt = sum_kbc % iter_k;
-        int sum_kbc_active_add = kb0_max_shared[sequence*iter_j + jt];
-        while (sum_kbc_active + sum_kbc_active_add < kbc_active) {
-            sum_kbc += iter_k;
-            sum_kbc_active += sum_kbc_active_add;
-            sequence = sum_kbc / (iter_k*iter_j*iter_z);
-            jt = sum_kbc % iter_k;
-            sum_kbc_active_add = kb0_max_shared[sequence*iter_j + jt];
+        bool done = false;
+        for (int s = 0; s < ne03 && !done; ++s) {
+            for (int z = 0; z < iter_z && !done; ++z) {
+                for (int j = 0; j < iter_j && !done; ++j) {
+                    const int add = kb0_max_shared[s*iter_j + j];
+                    if (sum_kbc_active + add <= kbc_active) {
+                        sum_kbc_active += add;
+                        sum_kbc += iter_k;
+                    } else {
+                        done = true;
+                    }
+                }
+            }
         }
 
+        // printf("ism=%d sum_kbc=%d kbc_active=%d sum_kbc_active=%d out=%d\n",
+        //     ism, sum_kbc, kbc_active, sum_kbc_active, sum_kbc + kbc_active - sum_kbc_active);
         kbc_opt[ism] = sum_kbc + kbc_active - sum_kbc_active;
     }
-
-    if (threadIdx.x != 0) {
-        return;
-    }
-
-    kbc_opt[0] = 0;
-
 }
 
 template<int D, int ncols1, int ncols2> // D == head size
@@ -910,7 +909,7 @@ void launch_fattn(
 
         const int nblocks_stream_k = max_blocks;
 
-        const bool use_stream_k = cc >= GGML_CUDA_CC_ADA_LOVELACE || tiles_efficiency_percent < 75;
+        const bool use_stream_k = true || cc >= GGML_CUDA_CC_ADA_LOVELACE || tiles_efficiency_percent < 75;
 
         blocks_num.x = use_stream_k ? nblocks_stream_k : ntiles_total;
         blocks_num.y = 1;

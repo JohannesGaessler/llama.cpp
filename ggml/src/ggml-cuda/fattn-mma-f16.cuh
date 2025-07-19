@@ -1284,6 +1284,7 @@ static __global__ void flash_attn_ext_f16(
     int sequence = kbc / (iter_k*iter_j*(ne02/ncols2));
     int head = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence) / (iter_k*iter_j);
     int jt = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence - iter_k*iter_j*head) / iter_k; // j index of current tile.
+    // printf("kbc=%d sequence=%d head=%d jt=%d\n", kbc, sequence, head, jt);
     int kb0_max_shj = mask ? kb0_max[sequence*iter_j + jt] : iter_k;
 
     // If the seams of 2 CUDA blocks fall within an output tile their results need to be combined.
