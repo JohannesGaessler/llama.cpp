@@ -82,11 +82,11 @@ static __global__ void flash_attn_vec_ext_f32(
     const int sequence = blockIdx.z / ne02;
     const int head = blockIdx.z - sequence*ne02;
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
-    Q += nb03*sequence + nb02* head              + nb01*ic0;
-    K += nb13*sequence + nb12*(head / gqa_ratio);
-    V += nb23*sequence + nb22*(head / gqa_ratio);
+    Q += int64_t(nb03)*sequence + nb02* head              + nb01*ic0;
+    K += int64_t(nb13)*sequence + nb12*(head / gqa_ratio);
+    V += int64_t(nb23)*sequence + nb22*(head / gqa_ratio);
 
-    const half * maskh = (const half *) (mask + nb33*(sequence % ne33) + nb31*ic0);
+    const half * maskh = (const half *) (mask + int64_t(nb33)*(sequence % ne33) + nb31*ic0);
 
     const float slope = get_alibi_slope(max_bias, head, n_head_log2, m0, m1);
 

@@ -1291,13 +1291,13 @@ static __global__ void flash_attn_ext_f16(
         const int head = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence) / (iter_k*iter_j);
         const int jt = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence - iter_k*iter_j*head) / iter_k; // j index of current tile.
 
-        const float2 * Q_f2    = (const float2 *) (Q + nb03*sequence + nb02*(head*ncols2));
-        const half2  * K_h2    = (const half2  *) (K + nb13*sequence + nb12*(head*ncols2 / gqa_ratio));
+        const float2 * Q_f2    = (const float2 *) (Q + int64_t(nb03)*sequence + nb02*(head*ncols2));
+        const half2  * K_h2    = (const half2  *) (K + int64_t(nb13)*sequence + nb12*(head*ncols2 / gqa_ratio));
         const half2  * mask_h2 = ncols2 == 1 && !mask ? nullptr :
-            (const half2  *) (mask + nb33*(sequence % ne33) + nb31*jt*ncols1);
+            (const half2  *) (mask + int64_t(nb33)*(sequence % ne33) + nb31*jt*ncols1);
         float2       * dstk    = ((float2 *) dst) + (sequence*ne01*ne02 + head*ncols2) * (DV/2);
 
-        const half2 * V_h2 = mla ? K_h2 + (DKQ/2 - DV/2) : (const half2 *) (V + nb23*sequence + nb22*(head*ncols2 / gqa_ratio));
+        const half2 * V_h2 = mla ? K_h2 + (DKQ/2 - DV/2) : (const half2 *) (V + int64_t(nb23)*sequence + nb22*(head*ncols2 / gqa_ratio));
 
         const float slope = ncols2 == 1 ? get_alibi_slope(max_bias, head, n_head_log2, m0, m1) : 1.0f;
 
@@ -1332,13 +1332,13 @@ static __global__ void flash_attn_ext_f16(
     const int head = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence) / (iter_k*iter_j);
     const int jt = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence - iter_k*iter_j*head) / iter_k; // j index of current tile.
 
-    const float2 * Q_f2    = (const float2 *) (Q + nb03*sequence + nb02*(head*ncols2));
-    const half2  * K_h2    = (const half2  *) (K + nb13*sequence + nb12*(head*ncols2 / gqa_ratio));
+    const float2 * Q_f2    = (const float2 *) (Q + int64_t(nb03)*sequence + nb02*(head*ncols2));
+    const half2  * K_h2    = (const half2  *) (K + int64_t(nb13)*sequence + nb12*(head*ncols2 / gqa_ratio));
     const half2  * mask_h2 = ncols2 == 1 && !mask ? nullptr :
-        (const half2  *) (mask + nb33*(sequence % ne33) + nb31*jt*ncols1);
+        (const half2  *) (mask + int64_t(nb33)*(sequence % ne33) + nb31*jt*ncols1);
     float2       * dstk    = ((float2 *) dst) + (sequence*ne01*ne02 + head*ncols2) * (DV/2);
 
-    const half2 * V_h2 = mla ? K_h2 + (DKQ/2 - DV/2) : (const half2 *) (V + nb23*sequence + nb22*(head*ncols2 / gqa_ratio));
+    const half2 * V_h2 = mla ? K_h2 + (DKQ/2 - DV/2) : (const half2 *) (V + int64_t(nb23)*sequence + nb22*(head*ncols2 / gqa_ratio));
 
     const float slope = ncols2 == 1 ? get_alibi_slope(max_bias, head, n_head_log2, m0, m1) : 1.0f;
 
