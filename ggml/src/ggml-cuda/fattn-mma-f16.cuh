@@ -392,7 +392,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_mask(
     }
 }
 
-template<int DKQ, int DV, int ncols1, int ncols2, int nwarps, int ntiles, bool use_logit_softcap, bool mla, bool needs_fixup, bool is_fixup, bool last_iter>
+template<int DKQ, int DV, int ncols1, int ncols2, int nwarps, int ntiles,
+    bool use_logit_softcap, bool mla, bool needs_fixup, bool is_fixup, bool use_mask, bool last_iter>
 static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         const float2 * const __restrict__ Q_f2,
         const half2  * const __restrict__ K_h2,
@@ -458,7 +459,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             (V_h2 + k_VKQ_0*stride_V, tile_V, nbatch_V2, stride_V);
     } else {
         constexpr bool use_cp_async = nstages == 1;
-        if (ncols2 > 1 || mask_h2) {
+        if (use_mask && (ncols2 > 1 || mask_h2)) {
             flash_attn_ext_f16_load_mask<ncols1, nwarps, c::nbatch_fa, use_cp_async>(mask_h2 + k_VKQ_0/2, tile_mask, stride_mask);
         }
     }
@@ -541,7 +542,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     float KQ_rowsum_add[cols_per_thread] = {0.0f};
 
     if (ntiles == 1) {
-        if (ncols2 > 1 || mask_h2) {
+        if (use_mask && (ncols2 > 1 || mask_h2)) {
 #pragma unroll
             for (int i00 = 0; i00 < c::nbatch_fa; i00 += np*tile_C_KQ::I) {
                 const int i0 = i00 + (threadIdx.y % np)*tile_C_KQ::I;
@@ -587,7 +588,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             }
         }
     } else { // ntiles > 1
-        if (ncols2 > 1 || mask_h2) {
+        if (use_mask && (ncols2 > 1 || mask_h2)) {
 #pragma unroll
             for (int i00 = 0; i00 < c::nbatch_fa; i00 += np*tile_C_KQ_16::J) {
                 const int i0 = i00 + (threadIdx.y % np)*tile_C_KQ_16::J;
@@ -710,7 +711,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         cp_async_wait_all();
         __syncthreads();
         if (!last_iter) {
-            if (ncols2 > 1 || mask_h2) {
+            if (use_mask && (ncols2 > 1 || mask_h2)) {
                 flash_attn_ext_f16_load_mask<ncols1, nwarps, c::nbatch_fa, use_cp_async>
                     (mask_h2 + (k_VKQ_0 + c::nbatch_fa)/2, tile_mask, stride_mask);
             }
@@ -800,6 +801,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const int stride_mask,
         const int jt,
         const int kb0_start,
+        const int kb0_start_mask,
         const int kb0_stop) {
 #ifdef NEW_MMA_AVAILABLE
     //In this kernel Q, K, V are matrices while i, j, k are matrix indices.
@@ -915,26 +917,40 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     if constexpr (nstages > 1) {
         static_assert(nbatch_K2 == DKQ/2, "batching not implemented for multi-stage pipeline");
         constexpr bool use_cp_async = true;
-        if (ncols2 > 1 || mask_h2) {
-            flash_attn_ext_f16_load_mask<ncols1, nwarps, c::nbatch_fa, use_cp_async>
-                (mask_h2 + kb0_start*c::nbatch_fa/2, tile_mask, stride_mask);
-        }
         flash_attn_ext_f16_load_tile<stride_tile_K, nwarps, c::nbatch_fa, use_cp_async>
             (K_h2 + kb0_start*c::nbatch_fa*stride_K, tile_K, nbatch_K2, stride_K);
     }
 
     // Iterate over ne11 == previous tokens:
-    for (int kb0 = kb0_start; kb0 < kb0_stop-1; ++kb0) {
+    int kb0 = kb0_start;
+    for (; kb0 < kb0_start_mask; ++kb0) {
+        constexpr bool use_mask  = false;
         constexpr bool last_iter = false;
-        flash_attn_ext_f16_iter<DKQ, DV, ncols1, ncols2, nwarps, ntiles, use_logit_softcap, mla, needs_fixup, is_fixup, last_iter>
+        flash_attn_ext_f16_iter<DKQ, DV, ncols1, ncols2, nwarps, ntiles, use_logit_softcap, mla, needs_fixup, is_fixup, use_mask, last_iter>
+            (Q_f2, K_h2, V_h2, mask_h2, dstk, dstk_fixup, scale, slope, logit_softcap,
+             ne01, ne02, stride_K, stride_V, stride_mask, jt, tile_Q, tile_K, tile_V, tile_mask, Q_B, VKQ_C, KQ_max, KQ_rowsum, kb0);
+    }
+    if constexpr (nstages > 1) {
+        static_assert(nbatch_K2 == DKQ/2, "batching not implemented for multi-stage pipeline");
+        constexpr bool use_cp_async = true;
+        if (ncols2 > 1 || mask_h2) {
+            flash_attn_ext_f16_load_mask<ncols1, nwarps, c::nbatch_fa, use_cp_async>
+                (mask_h2 + kb0*c::nbatch_fa/2, tile_mask, stride_mask);
+        }
+    }
+    for (; kb0 < kb0_stop-1; ++kb0) {
+        constexpr bool use_mask  = true;
+        constexpr bool last_iter = false;
+        flash_attn_ext_f16_iter<DKQ, DV, ncols1, ncols2, nwarps, ntiles, use_logit_softcap, mla, needs_fixup, is_fixup, use_mask, last_iter>
             (Q_f2, K_h2, V_h2, mask_h2, dstk, dstk_fixup, scale, slope, logit_softcap,
              ne01, ne02, stride_K, stride_V, stride_mask, jt, tile_Q, tile_K, tile_V, tile_mask, Q_B, VKQ_C, KQ_max, KQ_rowsum, kb0);
     }
     { // kb0_start is always < kb0_stop so the last iter can be executed unconditionally.
+        constexpr bool use_mask  = true;
         constexpr bool last_iter = true;
-        flash_attn_ext_f16_iter<DKQ, DV, ncols1, ncols2, nwarps, ntiles, use_logit_softcap, mla, needs_fixup, is_fixup, last_iter>
+        flash_attn_ext_f16_iter<DKQ, DV, ncols1, ncols2, nwarps, ntiles, use_logit_softcap, mla, needs_fixup, is_fixup, use_mask, last_iter>
             (Q_f2, K_h2, V_h2, mask_h2, dstk, dstk_fixup, scale, slope, logit_softcap,
-             ne01, ne02, stride_K, stride_V, stride_mask, jt, tile_Q, tile_K, tile_V, tile_mask, Q_B, VKQ_C, KQ_max, KQ_rowsum, kb0_stop-1);
+             ne01, ne02, stride_K, stride_V, stride_mask, jt, tile_Q, tile_K, tile_V, tile_mask, Q_B, VKQ_C, KQ_max, KQ_rowsum, kb0);
     }
 
     // With multi-stage loading there is no __syncthreads at the end of the iter,
@@ -1206,7 +1222,7 @@ static __global__ void flash_attn_ext_f16(
         const char * __restrict__ K,
         const char * __restrict__ V,
         const char * __restrict__ mask,
-        const int  * __restrict__ kb0_max,
+        const int2 * __restrict__ kb0_bounds,
         float      * __restrict__ dst,
         float2     * __restrict__ dst_meta,
         const float scale,
@@ -1292,7 +1308,12 @@ static __global__ void flash_attn_ext_f16(
         const int head = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence) / (iter_k*iter_j);
         const int jt = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence - iter_k*iter_j*head) / iter_k; // j index of current tile.
 
-        kb0_stop = min(kb0_stop, kb0_max[sequence*iter_j + jt]);
+        int kb0_start_mask = kb0_start;
+        if (ncols2 > 1 || mask) {
+            const int2 kb0_bounds_sj = kb0_bounds[sequence*iter_j + jt];
+            kb0_start_mask = max(kb0_start_mask, kb0_bounds_sj.x);
+            kb0_stop       = min(kb0_stop,       kb0_bounds_sj.y);
+        }
 
         const float2 * Q_f2    = (const float2 *) (Q + int64_t(nb03)*sequence + nb02*(head*ncols2));
         const half2  * K_h2    = (const half2  *) (K + int64_t(nb13)*sequence + nb12*(head*ncols2 / gqa_ratio));
@@ -1304,20 +1325,21 @@ static __global__ void flash_attn_ext_f16(
 
         const float slope = ncols2 == 1 ? get_alibi_slope(max_bias, head, n_head_log2, m0, m1) : 1.0f;
 
-        const int kb0_start_kernel = kb0_start * kb_niter;
-        const int kb0_stop_kernel  = kb0_stop  * kb_niter;
+        const int kb0_start_kernel      = kb0_start      * kb_niter;
+        const int kb0_start_mask_kernel = kb0_start_mask * kb_niter;
+        const int kb0_stop_kernel       = kb0_stop       * kb_niter;
 
         constexpr bool is_fixup = false; // All but (potentially) the last iterations write their data to dst rather than the fixup buffer.
         if (kb0_start == 0) {
             constexpr bool needs_fixup = false; // CUDA block is working on an entire tile.
             flash_attn_ext_f16_process_tile<DKQ, DV, ncols1, ncols2, nwarps, ntiles, use_logit_softcap, mla, needs_fixup, is_fixup>
                 (Q_f2, K_h2, V_h2, mask_h2, dstk, dst_meta, scale, slope, logit_softcap,
-                 ne01, ne02, stride_Q1, stride_Q2, stride_K, stride_V, stride_mask, jt, kb0_start_kernel, kb0_stop_kernel);
+                 ne01, ne02, stride_Q1, stride_Q2, stride_K, stride_V, stride_mask, jt, kb0_start_kernel, kb0_start_mask_kernel, kb0_stop_kernel);
         } else {
             constexpr bool needs_fixup = true; // CUDA block is working on the beginning of a tile.
             flash_attn_ext_f16_process_tile<DKQ, DV, ncols1, ncols2, nwarps, ntiles, use_logit_softcap, mla, needs_fixup, is_fixup>
                 (Q_f2, K_h2, V_h2, mask_h2, dstk, dst_meta, scale, slope, logit_softcap,
-                 ne01, ne02, stride_Q1, stride_Q2, stride_K, stride_V, stride_mask, jt, kb0_start_kernel, kb0_stop_kernel);
+                 ne01, ne02, stride_Q1, stride_Q2, stride_K, stride_V, stride_mask, jt, kb0_start_kernel, kb0_start_mask_kernel, kb0_stop_kernel);
         }
 
         kbc += iter_k;
@@ -1335,6 +1357,13 @@ static __global__ void flash_attn_ext_f16(
     const int head = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence) / (iter_k*iter_j);
     const int jt = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence - iter_k*iter_j*head) / iter_k; // j index of current tile.
 
+    int kb0_start_mask = kb0_start;
+    if (ncols2 > 1 || mask) {
+        const int2 kb0_bounds_sj = kb0_bounds[sequence*iter_j + jt];
+        kb0_start_mask = max(kb0_start_mask, kb0_bounds_sj.x);
+        kb0_stop       = min(kb0_stop,       kb0_bounds_sj.y);
+    }
+
     const float2 * Q_f2    = (const float2 *) (Q + int64_t(nb03)*sequence + nb02*(head*ncols2));
     const half2  * K_h2    = (const half2  *) (K + int64_t(nb13)*sequence + nb12*(head*ncols2 / gqa_ratio));
     const half2  * mask_h2 = ncols2 == 1 && !mask ? nullptr :
@@ -1345,14 +1374,15 @@ static __global__ void flash_attn_ext_f16(
 
     const float slope = ncols2 == 1 ? get_alibi_slope(max_bias, head, n_head_log2, m0, m1) : 1.0f;
 
-    const int kb0_start_kernel = kb0_start * kb_niter;
-    const int kb0_stop_kernel  = kb0_stop  * kb_niter;
+    const int kb0_start_kernel      = kb0_start      * kb_niter;
+    const int kb0_start_mask_kernel = kb0_start_mask * kb_niter;
+    const int kb0_stop_kernel       = kb0_stop       * kb_niter;
 
     constexpr bool is_fixup = true; // Last index writes its data to fixup buffer to avoid data races with other blocks.
     constexpr bool needs_fixup = false;
     flash_attn_ext_f16_process_tile<DKQ, DV, ncols1, ncols2, nwarps, ntiles, use_logit_softcap, mla, needs_fixup, is_fixup>
         (Q_f2, K_h2, V_h2, mask_h2, dstk, dst_meta, scale, slope, logit_softcap,
-         ne01, ne02, stride_Q1, stride_Q2, stride_K, stride_V, stride_mask, jt, kb0_start_kernel, kb0_stop_kernel);
+         ne01, ne02, stride_Q1, stride_Q2, stride_K, stride_V, stride_mask, jt, kb0_start_kernel, kb0_start_mask_kernel, kb0_stop_kernel);
 #else
     GGML_UNUSED(Q); GGML_UNUSED(K); GGML_UNUSED(V); GGML_UNUSED(mask);
     GGML_UNUSED(dst); GGML_UNUSED(dst_meta); GGML_UNUSED(scale);
