@@ -1207,7 +1207,6 @@ static __global__ void flash_attn_ext_f16(
         const char * __restrict__ V,
         const char * __restrict__ mask,
         const int  * __restrict__ kb0_max,
-        const int  * __restrict__ kbc_opt,
         float      * __restrict__ dst,
         float2     * __restrict__ dst_meta,
         const float scale,
@@ -1278,8 +1277,8 @@ static __global__ void flash_attn_ext_f16(
     constexpr int kb_niter = FATTN_KQ_STRIDE / c::nbatch_fa; // Number of kernel iterations per assigned KQ slice.
 
     // kbc == k block continuous, current index in continuous ijk space.
-    int       kbc      = kbc_opt ? kbc_opt[blockIdx.x + 0] : (blockIdx.x + 0)*(iter_k*iter_j*(ne02/ncols2)*ne03) / gridDim.x;
-    const int kbc_stop = kbc_opt ? kbc_opt[blockIdx.x + 1] : (blockIdx.x + 1)*(iter_k*iter_j*(ne02/ncols2)*ne03) / gridDim.x;
+    int       kbc      = (blockIdx.x + 0)*(iter_k*iter_j*(ne02/ncols2)*ne03) / gridDim.x;
+    const int kbc_stop = (blockIdx.x + 1)*(iter_k*iter_j*(ne02/ncols2)*ne03) / gridDim.x;
 
     int sequence = kbc / (iter_k*iter_j*(ne02/ncols2));
     int head = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence) / (iter_k*iter_j);

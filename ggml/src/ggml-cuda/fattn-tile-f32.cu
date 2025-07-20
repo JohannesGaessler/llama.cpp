@@ -14,7 +14,6 @@ static __global__ void flash_attn_tile_ext_f32(
         const char * __restrict__ V,
         const char * __restrict__ mask,
         const int  * __restrict__ kb0_max,
-        const int  * __restrict__ kbc_opt,
         float      * __restrict__ dst,
         float2     * __restrict__ dst_meta,
         const float scale,

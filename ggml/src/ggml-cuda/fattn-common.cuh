@@ -16,7 +16,6 @@ typedef void (* fattn_kernel_t)(
         const char * __restrict__ V,
         const char * __restrict__ mask,
         const int  * __restrict__ kb0_max,
-        const int  * __restrict__ kbc_opt,
         float      * __restrict__ dst,
         float2     * __restrict__ dst_meta,
         const float scale,
@@ -569,54 +568,10 @@ static __global__ void flash_attn_mask_to_kb0_max(
     kb0_max[sequence*ne31 + jt] = kb0_max_active + 2;
 }
 
-__launch_bounds__(256, 1)
-static __global__ void flash_attn_kb0_max_to_kbc_opt(
-        const int * __restrict__ kb0_max, int * __restrict__ kbc_opt, const int nsm,
-        const int iter_k, const int iter_j, const int iter_z, const int ne03) {
-    extern __shared__ int kb0_max_shared[];
-
-    for (int i = threadIdx.x; i < iter_j*ne03; i += 256) {
-        kb0_max_shared[i] = kb0_max[i];
-    }
-    __syncthreads();
-
-    int kb0_max_sum = 0;
-    for (int i = threadIdx.x % WARP_SIZE; i < iter_j*ne03; i += WARP_SIZE) {
-        kb0_max_sum += kb0_max_shared[i];
-    }
-    kb0_max_sum = __reduce_add_sync(0xFFFFFFFF, kb0_max_sum);
-    kb0_max_sum *= iter_z;
-
-    for (int ism = threadIdx.x; ism < nsm + 1; ism += 256) {
-        const int kbc_active = ism * kb0_max_sum / nsm;
-
-        int sum_kbc = 0;
-        int sum_kbc_active = 0;
-        bool done = false;
-        for (int s = 0; s < ne03 && !done; ++s) {
-            for (int z = 0; z < iter_z && !done; ++z) {
-                for (int j = 0; j < iter_j && !done; ++j) {
-                    const int add = kb0_max_shared[s*iter_j + j];
-                    if (sum_kbc_active + add <= kbc_active) {
-                        sum_kbc_active += add;
-                        sum_kbc += iter_k;
-                    } else {
-                        done = true;
-                    }
-                }
-            }
-        }
-
-        // printf("ism=%d sum_kbc=%d kbc_active=%d sum_kbc_active=%d out=%d\n",
-        //     ism, sum_kbc, kbc_active, sum_kbc_active, sum_kbc + kbc_active - sum_kbc_active);
-        kbc_opt[ism] = sum_kbc + kbc_active - sum_kbc_active;
-    }
-}
-
 template<int D, int ncols1, int ncols2> // D == head size
 __launch_bounds__(D, 1)
 static __global__ void flash_attn_stream_k_fixup(
-        const int * __restrict__ kbc_opt, float * __restrict__ dst, const float2 * __restrict__ dst_fixup,
+        float * __restrict__ dst, const float2 * __restrict__ dst_fixup,
         const int ne01, const int ne02, const int ne03, const int ne11) {
     constexpr int ncols = ncols1*ncols2;
 
@@ -631,8 +586,8 @@ static __global__ void flash_attn_stream_k_fixup(
     const int iter_k = ne11 / FATTN_KQ_STRIDE;
     const int iter_j = (ne01 + (ncols1 - 1)) / ncols1;
 
-    int       kbc0      = kbc_opt ? kbc_opt[bidx0 + 0] : (bidx0 + 0)*(iter_k*iter_j*(ne02/ncols2)*ne03) / gridDim.x;
-    const int kbc0_stop = kbc_opt ? kbc_opt[bidx0 + 1] : (bidx0 + 1)*(iter_k*iter_j*(ne02/ncols2)*ne03) / gridDim.x;
+    int       kbc0      = (bidx0 + 0)*(iter_k*iter_j*(ne02/ncols2)*ne03) / gridDim.x;
+    const int kbc0_stop = (bidx0 + 1)*(iter_k*iter_j*(ne02/ncols2)*ne03) / gridDim.x;
 
     const bool did_not_have_any_data   = kbc0 == kbc0_stop;
     const bool wrote_beginning_of_tile = kbc0 % iter_k == 0;
@@ -826,7 +781,6 @@ void launch_fattn(
     ggml_cuda_pool_alloc<half>   K_f16(pool);
     ggml_cuda_pool_alloc<half>   V_f16(pool);
     ggml_cuda_pool_alloc<int>    kb0_max(pool);
-    ggml_cuda_pool_alloc<int>    kbc_opt(pool);
     ggml_cuda_pool_alloc<float>  dst_tmp(pool);
     ggml_cuda_pool_alloc<float2> dst_tmp_meta(pool);
 
@@ -897,13 +851,6 @@ void launch_fattn(
             flash_attn_mask_to_kb0_max<ncols1><<<blocks_num_kb0_max, block_dim_kb0_max, 0, main_stream>>>
                 ((const half2 *) mask->data, kb0_max.ptr, iter_k, s31, s33);
             CUDA_CHECK(cudaGetLastError());
-
-            if (false && Q->ne[3] > 1) {
-                kbc_opt.alloc(max_blocks + 1);
-                flash_attn_kb0_max_to_kbc_opt<<<1, 256, (ne_kb0_max+1)*sizeof(int), main_stream>>>
-                    (kb0_max.ptr, kbc_opt.ptr, max_blocks, iter_k, ntiles_x, Q->ne[2]/ncols2, Q->ne[3]);
-                CUDA_CHECK(cudaGetLastError());
-            }
         }
 
         // For short contexts it can be faster to have the SMs work on whole tiles because this lets us skip the fixup.
@@ -986,7 +933,6 @@ void launch_fattn(
         V_data,
         mask ? ((const char *) mask->data) : nullptr,
         kb0_max.ptr,
-        kbc_opt.ptr,
         !stream_k && parallel_blocks > 1 ? dst_tmp.ptr : (float *) KQV->data, dst_tmp_meta.ptr,
         scale, max_bias, m0, m1, n_head_log2, logit_softcap,
         Q->ne[0], Q->ne[1], Q->ne[2], Q->ne[3],
@@ -1007,7 +953,7 @@ void launch_fattn(
 
             flash_attn_stream_k_fixup<DV, ncols1, ncols2>
                 <<<blocks_num_combine, block_dim_combine, 0, main_stream>>>
-                (kbc_opt.ptr, (float *) KQV->data, dst_tmp_meta.ptr, Q->ne[1], Q->ne[2], Q->ne[3], K->ne[1]);
+                ((float *) KQV->data, dst_tmp_meta.ptr, Q->ne[1], Q->ne[2], Q->ne[3], K->ne[1]);
         }
     } else if (parallel_blocks > 1) {
         const dim3 block_dim_combine(DV, 1, 1);
