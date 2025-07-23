@@ -62,10 +62,10 @@ static __global__ void flash_attn_vec_ext_f32(
     const int head = blockIdx.z - sequence*ne02;
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
     Q += nb03*sequence + nb02* head              + nb01*ic0;
-    K += nb13*sequence + nb12*(head / gqa_ratio);
-    V += nb23*sequence + nb22*(head / gqa_ratio);
+    K += nb13*sequence + nb12*(head / gqa_ratio) + blockIdx.y*D * nb11;
+    V += nb23*sequence + nb22*(head / gqa_ratio) + blockIdx.y*D * nb21;
 
-    const half * maskh = (const half *) (mask + nb33*(sequence % ne33) + nb31*ic0);
+    const half * maskh = (const half *) (mask + nb33*(sequence % ne33) + nb31*ic0) + blockIdx.y*D;
 
     const float slope = get_alibi_slope(max_bias, head, n_head_log2, m0, m1);
 
@@ -177,15 +177,13 @@ static __global__ void flash_attn_vec_ext_f32(
 
     float VKQ[ncols] = {0.0f};
 
-    K += blockIdx.y*D * nb11;
-    V += blockIdx.y*D * nb21;
     for (int k_VKQ_0 = blockIdx.y*D; k_VKQ_0 < ne11; k_VKQ_0 += gridDim.y*D) {
         // Calculate KQ tile and keep track of new maximum KQ values:
 
         if (mask) {
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
-                maskf_shared[j*D + tid] = slope*__half2float(maskh[j*ne11 + k_VKQ_0 + tid]);
+                maskf_shared[j*D + tid] = slope*__half2float(maskh[j*ne11 + tid]);
             }
 
             __syncthreads();
@@ -285,8 +283,9 @@ static __global__ void flash_attn_vec_ext_f32(
             }
         }
 
-        K += gridDim.y*D * nb11;
-        V += gridDim.y*D * nb21;
+        K     += gridDim.y*D * nb11;
+        V     += gridDim.y*D * nb21;
+        maskh += gridDim.y*D;
 
         __syncthreads();
     }

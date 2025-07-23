@@ -51,10 +51,10 @@ static __global__ void flash_attn_vec_ext_f16(
     const int head = blockIdx.z - sequence*ne02;
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
     Q += nb03*sequence + nb02* head              + nb01*ic0;
-    K += nb13*sequence + nb12*(head / gqa_ratio);
-    V += nb23*sequence + nb22*(head / gqa_ratio);
+    K += nb13*sequence + nb12*(head / gqa_ratio) + blockIdx.y*D * nb11;
+    V += nb23*sequence + nb22*(head / gqa_ratio) + blockIdx.y*D * nb21;
 
-    const half * maskh = (const half *) (mask + nb33*(sequence % ne33) + nb31*ic0);
+    const half * maskh = (const half *) (mask + nb33*(sequence % ne33) + nb31*ic0) + blockIdx.y*D;
 
     const float slopef = get_alibi_slope(max_bias, head, n_head_log2, m0, m1);
     const half  slopeh = __float2half(slopef);
@@ -177,7 +177,7 @@ static __global__ void flash_attn_vec_ext_f16(
         if (mask) {
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
-                maskh_shared[j*D + tid] = slopeh*maskh[j*ne11 + k_VKQ_0 + tid];
+                maskh_shared[j*D + tid] = slopeh*maskh[j*ne11 + tid];
             }
 
             __syncthreads();
@@ -224,7 +224,7 @@ static __global__ void flash_attn_vec_ext_f16(
 
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
-                half sum = vec_dot_KQ(K + int64_t(k_VKQ_0 + i_KQ)*nb11, Q_h2[j], Q_i32[j], Q_ds[j]);
+                half sum = vec_dot_KQ(K + i_KQ*nb11, Q_h2[j], Q_i32[j], Q_ds[j]);
                 sum = warp_reduce_sum((float)sum);
 
                 if (use_logit_softcap) {
@@ -280,13 +280,17 @@ static __global__ void flash_attn_vec_ext_f16(
             }
 
             half2 V_k;
-            reinterpret_cast<half&>(V_k.x) = dequantize_1_v(V + int64_t(k_VKQ_0 + k0 + 0)*nb21, tid);
-            reinterpret_cast<half&>(V_k.y) = dequantize_1_v(V + int64_t(k_VKQ_0 + k0 + 1)*nb21, tid);
+            reinterpret_cast<half&>(V_k.x) = dequantize_1_v(V + (k0 + 0)*nb21, tid);
+            reinterpret_cast<half&>(V_k.y) = dequantize_1_v(V + (k0 + 1)*nb21, tid);
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
                 VKQ[j] += V_k*KQ2[j*(D/2) + k0/2];
             }
         }
+
+        K     += gridDim.y*D * nb11;
+        V     += gridDim.y*D * nb21;
+        maskh += gridDim.y*D;
 
         __syncthreads();
     }
