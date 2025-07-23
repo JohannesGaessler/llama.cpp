@@ -1220,7 +1220,7 @@ static __global__ void flash_attn_ext_f16(
         const char * __restrict__ K,
         const char * __restrict__ V,
         const char * __restrict__ mask,
-        const int2 * __restrict__ kb0_bounds,
+        const int2 * __restrict__ mask_bounds,
         float      * __restrict__ dst,
         float2     * __restrict__ dst_meta,
         const float scale,
@@ -1287,10 +1287,10 @@ static __global__ void flash_attn_ext_f16(
         const int jt = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence - iter_k*iter_j*head) / iter_k; // j index of current tile.
 
         int kb0_start_mask = kb0_start;
-        if (kb0_bounds) {
-            const int2 kb0_bounds_sj = kb0_bounds[sequence*iter_j + jt];
-            kb0_start_mask = max(kb0_start_mask, kb0_bounds_sj.x);
-            kb0_stop       = min(kb0_stop,       kb0_bounds_sj.y);
+        if (mask_bounds) {
+            const int2 mask_bounds_sj = mask_bounds[sequence*iter_j + jt];
+            kb0_start_mask = max(kb0_start_mask, mask_bounds_sj.x);
+            kb0_stop       = min(kb0_stop,       mask_bounds_sj.y);
         }
 
         const float2 * Q_f2    = (const float2 *) (Q + nb03*sequence + nb02*(head*ncols2));
@@ -1336,10 +1336,10 @@ static __global__ void flash_attn_ext_f16(
     const int jt = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence - iter_k*iter_j*head) / iter_k; // j index of current tile.
 
     int kb0_start_mask = kb0_start;
-    if (kb0_bounds) {
-        const int2 kb0_bounds_sj = kb0_bounds[sequence*iter_j + jt];
-        kb0_start_mask = max(kb0_start_mask, kb0_bounds_sj.x);
-        kb0_stop       = min(kb0_stop,       kb0_bounds_sj.y);
+    if (mask_bounds) {
+        const int2 mask_bounds_sj = mask_bounds[sequence*iter_j + jt];
+        kb0_start_mask = max(kb0_start_mask, mask_bounds_sj.x);
+        kb0_stop       = min(kb0_stop,       mask_bounds_sj.y);
     }
 
     const float2 * Q_f2    = (const float2 *) (Q + nb03*sequence + nb02*(head*ncols2));

@@ -10,7 +10,7 @@ static __global__ void flash_attn_vec_ext_f32(
         const char * __restrict__ K,
         const char * __restrict__ V,
         const char * __restrict__ mask,
-        const int2 * __restrict__ kb0_bounds,
+        const int2 * __restrict__ mask_bounds,
         float      * __restrict__ dst,
         float2     * __restrict__ dst_meta,
         const float scale,
@@ -178,39 +178,25 @@ static __global__ void flash_attn_vec_ext_f32(
 
     float VKQ[ncols] = {0.0f};
 
+    int k_VKQ_mask_start = 0;
+    int k_VKQ_max        = ne11;
+    if (mask_bounds) {
+        const int2 tmp = mask_bounds[sequence*gridDim.x + blockIdx.x];
+        k_VKQ_mask_start = tmp.x * FATTN_KQ_STRIDE;
+        k_VKQ_max        = tmp.y * FATTN_KQ_STRIDE;
+    }
+
     K     += blockIdx.y*D * nb11;
     V     += blockIdx.y*D * nb21;
     maskh += blockIdx.y*D;
-    for (int k_VKQ_0 = blockIdx.y*D; k_VKQ_0 < ne11; k_VKQ_0 += gridDim.y*D) {
+    for (int k_VKQ_0 = blockIdx.y*D; k_VKQ_0 < k_VKQ_max; k_VKQ_0 += gridDim.y*D) {
         // Calculate KQ tile and keep track of new maximum KQ values:
 
-        if (mask) {
+        if (k_VKQ_0 >= k_VKQ_mask_start && mask) {
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
                 maskf_shared[j*D + tid] = slope*__half2float(maskh[j*ne11 + tid]);
             }
-
-            __syncthreads();
-
-            // When using multiple parallel sequences in llama.cpp, some KV slices can be fully masked out.
-            // In such cases, skip the KV slice.
-            // On AMD __all_sync would not work correctly because it assumes a warp size of 64.
-#ifndef GGML_USE_HIP
-            bool skip = true;
-#pragma unroll
-            for (int j = 0; j < ncols; ++j) {
-#pragma unroll
-                for (int i0 = 0; i0 < D; i0 += WARP_SIZE) {
-                    const int i = i0 + threadIdx.x;
-
-                    skip = skip && isinf(maskf_shared[j*D + i]);
-                }
-            }
-            if (__all_sync(0xFFFFFFFF, skip)) {
-                __syncthreads();
-                continue;
-            }
-#endif // GGML_USE_HIP
         }
 
         float kqmax_new_arr[ncols];

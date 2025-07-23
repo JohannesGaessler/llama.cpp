@@ -15,7 +15,7 @@ typedef void (* fattn_kernel_t)(
         const char * __restrict__ K,
         const char * __restrict__ V,
         const char * __restrict__ mask,
-        const int2 * __restrict__ kb0_bounds,
+        const int2 * __restrict__ mask_bounds,
         float      * __restrict__ dst,
         float2     * __restrict__ dst_meta,
         const float scale,
@@ -503,8 +503,8 @@ constexpr __device__ dequantize_1_f32_t get_dequantize_1_f32(ggml_type type_V) {
 
 template <int ncols1>
 __launch_bounds__(FATTN_KQ_STRIDE/2, 1)
-static __global__ void flash_attn_mask_to_kb0_bounds(
-        const half2 * __restrict__ mask, int2 * __restrict__ kb0_bounds, const int ne30, const int s31, const int s33) {
+static __global__ void flash_attn_mask_to_mask_bounds(
+        const half2 * __restrict__ mask, int2 * __restrict__ mask_bounds, const int ne30, const int s31, const int s33) {
     const int ne31 = gridDim.x;
 
     const int sequence = blockIdx.y;
@@ -547,7 +547,7 @@ static __global__ void flash_attn_mask_to_kb0_bounds(
         if (threadIdx.x != 0) {
             return;
         }
-        kb0_bounds[sequence*ne31 + jt].x = kb0_low;
+        mask_bounds[sequence*ne31 + jt].x = kb0_low;
         return;
     }
 
@@ -580,7 +580,7 @@ static __global__ void flash_attn_mask_to_kb0_bounds(
         return;
     }
 
-    kb0_bounds[sequence*ne31 + jt].y = kb0_high;
+    mask_bounds[sequence*ne31 + jt].y = kb0_high;
 }
 
 template<int D, int ncols1, int ncols2> // D == head size
@@ -794,7 +794,7 @@ void launch_fattn(
 
     ggml_cuda_pool_alloc<half>   K_f16(pool);
     ggml_cuda_pool_alloc<half>   V_f16(pool);
-    ggml_cuda_pool_alloc<int2>   kb0_bounds(pool);
+    ggml_cuda_pool_alloc<int2>   mask_bounds(pool);
     ggml_cuda_pool_alloc<float>  dst_tmp(pool);
     ggml_cuda_pool_alloc<float2> dst_tmp_meta(pool);
 
@@ -863,10 +863,29 @@ void launch_fattn(
         V_data = (char *) V_f16.ptr;
     }
 
-    int parallel_blocks = 1;
-
     const int ntiles_x = ((Q->ne[1] + ncols1 - 1) / ncols1);
     const int ntiles_total = ntiles_x * (Q->ne[2] / ncols2) * Q->ne[3];
+
+    // Optional optimization where the mask is scanned to determine whether part of the calculation can be skipped.
+    // Only worth the overhead if there is at lease one FATTN_KQ_STRIDE x FATTN_KQ_STRIDE square to be skipped or
+    //     multiple sequences of possibly different lengths.
+    if (mask) {
+        const int s31 = mask->nb[1] / sizeof(half2);
+        const int s33 = mask->nb[3] / sizeof(half2);
+
+        const dim3 blocks_num_mask_bounds(ntiles_x, Q->ne[3], 2);
+        const dim3 block_dim_mask_bounds(FATTN_KQ_STRIDE/2, 1, 1);
+
+        const int ne_mask_bounds = blocks_num_mask_bounds.x*blocks_num_mask_bounds.y;
+        const int iter_k = K->ne[1] / FATTN_KQ_STRIDE;
+
+        mask_bounds.alloc(ne_mask_bounds);
+        flash_attn_mask_to_mask_bounds<ncols1><<<blocks_num_mask_bounds, block_dim_mask_bounds, 0, main_stream>>>
+            ((const half2 *) mask->data, mask_bounds.ptr, iter_k, s31, s33);
+        CUDA_CHECK(cudaGetLastError());
+    }
+
+    int parallel_blocks = 1;
 
     const dim3 block_dim(warp_size, nwarps, 1);
     int max_blocks_per_sm = 1; // Max. number of active blocks limited by occupancy.
@@ -875,25 +894,6 @@ void launch_fattn(
     dim3 blocks_num;
     if (stream_k) {
         const int max_blocks = max_blocks_per_sm*nsm;
-
-        // Optional optimization where the mask is scanned to determine whether part of the calculation can be skipped.
-        // Only worth the overhead if there is at lease one FATTN_KQ_STRIDE x FATTN_KQ_STRIDE square to be skipped or
-        //     multiple sequences of possibly different lengths.
-        if (mask && (Q->ne[1] >= 2*FATTN_KQ_STRIDE || Q->ne[3] > 1)) {
-            const int s31 = mask->nb[1] / sizeof(half2);
-            const int s33 = mask->nb[3] / sizeof(half2);
-
-            const dim3 blocks_num_kb0_bounds(ntiles_x, Q->ne[3], 2);
-            const dim3 block_dim_kb0_bounds(FATTN_KQ_STRIDE/2, 1, 1);
-
-            const int ne_kb0_bounds = blocks_num_kb0_bounds.x*blocks_num_kb0_bounds.y;
-            const int iter_k = K->ne[1] / FATTN_KQ_STRIDE;
-
-            kb0_bounds.alloc(ne_kb0_bounds);
-            flash_attn_mask_to_kb0_bounds<ncols1><<<blocks_num_kb0_bounds, block_dim_kb0_bounds, 0, main_stream>>>
-                ((const half2 *) mask->data, kb0_bounds.ptr, iter_k, s31, s33);
-            CUDA_CHECK(cudaGetLastError());
-        }
 
         // For short contexts it can be faster to have the SMs work on whole tiles because this lets us skip the fixup.
         const int tiles_nwaves = (ntiles_total + max_blocks - 1) / max_blocks;
@@ -974,7 +974,7 @@ void launch_fattn(
         K_data,
         V_data,
         mask ? ((const char *) mask->data) : nullptr,
-        kb0_bounds.ptr,
+        mask_bounds.ptr,
         !stream_k && parallel_blocks > 1 ? dst_tmp.ptr : (float *) KQV->data, dst_tmp_meta.ptr,
         scale, max_bias, m0, m1, n_head_log2, logit_softcap,
         Q->ne[0], Q->ne[1], Q->ne[2], Q->ne[3], Q->nb[1], Q->nb[2], Q->nb[3],

@@ -13,7 +13,7 @@ static __global__ void flash_attn_tile_ext_f16(
         const char * __restrict__ K,
         const char * __restrict__ V,
         const char * __restrict__ mask,
-        const int2 * __restrict__ kb0_bounds,
+        const int2 * __restrict__ mask_bounds,
         float      * __restrict__ dst,
         float2     * __restrict__ dst_meta,
         const float scale,
