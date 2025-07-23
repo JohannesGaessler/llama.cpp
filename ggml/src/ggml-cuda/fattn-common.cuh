@@ -876,7 +876,10 @@ void launch_fattn(
     if (stream_k) {
         const int max_blocks = max_blocks_per_sm*nsm;
 
-        if (mask) {
+        // Optional optimization where the mask is scanned to determine whether part of the calculation can be skipped.
+        // Only worth the overhead if there is at lease one FATTN_KQ_STRIDE x FATTN_KQ_STRIDE square to be skipped or
+        //     multiple sequences of possibly different lengths.
+        if (mask && (Q->ne[1] >= 2*FATTN_KQ_STRIDE || Q->ne[3] > 1)) {
             const int s31 = mask->nb[1] / sizeof(half2);
             const int s33 = mask->nb[3] / sizeof(half2);
 
