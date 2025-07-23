@@ -224,7 +224,7 @@ static __global__ void flash_attn_vec_ext_f16(
 
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
-                half sum = vec_dot_KQ(K + (k_VKQ_0 + i_KQ)*nb11, Q_h2[j], Q_i32[j], Q_ds[j]);
+                half sum = vec_dot_KQ(K + int64_t(k_VKQ_0 + i_KQ)*nb11, Q_h2[j], Q_i32[j], Q_ds[j]);
                 sum = warp_reduce_sum((float)sum);
 
                 if (use_logit_softcap) {
@@ -280,8 +280,8 @@ static __global__ void flash_attn_vec_ext_f16(
             }
 
             half2 V_k;
-            reinterpret_cast<half&>(V_k.x) = dequantize_1_v(V + (k_VKQ_0 + k0 + 0)*nb21, tid);
-            reinterpret_cast<half&>(V_k.y) = dequantize_1_v(V + (k_VKQ_0 + k0 + 1)*nb21, tid);
+            reinterpret_cast<half&>(V_k.x) = dequantize_1_v(V + int64_t(k_VKQ_0 + k0 + 0)*nb21, tid);
+            reinterpret_cast<half&>(V_k.y) = dequantize_1_v(V + int64_t(k_VKQ_0 + k0 + 1)*nb21, tid);
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
                 VKQ[j] += V_k*KQ2[j*(D/2) + k0/2];

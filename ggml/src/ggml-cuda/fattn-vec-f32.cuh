@@ -225,7 +225,7 @@ static __global__ void flash_attn_vec_ext_f32(
 
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
-                float sum = vec_dot_KQ(K + (k_VKQ_0 + i_KQ)*nb11, Q_f2[j], Q_i32[j], Q_ds[j]);
+                float sum = vec_dot_KQ(K + int64_t(k_VKQ_0 + i_KQ)*nb11, Q_f2[j], Q_i32[j], Q_ds[j]);
                 sum = warp_reduce_sum(sum);
 
                 if (use_logit_softcap) {
@@ -276,7 +276,7 @@ static __global__ void flash_attn_vec_ext_f32(
                 break;
             }
 
-            const float V_ki = dequantize_1_v(V + (k_VKQ_0 + k)*nb21, tid);
+            const float V_ki = dequantize_1_v(V + int64_t(k_VKQ_0 + k)*nb21, tid);
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
                 VKQ[j] += V_ki*KQ[j*D + k];
