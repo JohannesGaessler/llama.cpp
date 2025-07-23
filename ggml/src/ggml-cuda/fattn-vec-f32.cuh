@@ -197,6 +197,7 @@ static __global__ void flash_attn_vec_ext_f32(
             for (int j = 0; j < ncols; ++j) {
                 maskf_shared[j*D + tid] = slope*__half2float(maskh[j*ne11 + tid]);
             }
+            __syncthreads();
         }
 
         float kqmax_new_arr[ncols];
