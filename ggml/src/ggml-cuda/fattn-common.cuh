@@ -520,27 +520,35 @@ static __global__ void flash_attn_mask_to_kb0_bounds(
     }
     __syncthreads();
 
-    int kb0_low = 0;
-    for (; kb0_low < ne30; ++kb0_low) {
-        int any_nonzero = 0x00000000;
+    if (blockIdx.z == 0) {
+        int kb0_low = 0;
+        for (; kb0_low < ne30; ++kb0_low) {
+            int any_nonzero = 0x00000000;
 
 #pragma unroll
-        for (int j = 0; j < ncols1; ++j) {
-            any_nonzero |= ((const int *) mask)[j*s31 + kb0_low*(FATTN_KQ_STRIDE/2) + tid];
+            for (int j = 0; j < ncols1; ++j) {
+                any_nonzero |= ((const int *) mask)[j*s31 + kb0_low*(FATTN_KQ_STRIDE/2) + tid];
+            }
+
+            any_nonzero = __any_sync(0xFFFFFFFF, any_nonzero);
+            if (tid % WARP_SIZE == 0) {
+                buf_iw[tid / WARP_SIZE] = any_nonzero;
+            }
+            __syncthreads();
+            any_nonzero = buf_iw[tid % WARP_SIZE];
+            __syncthreads();
+            any_nonzero = __any_sync(0xFFFFFFFF, any_nonzero);
+
+            if (any_nonzero) {
+                break;
+            }
         }
 
-        any_nonzero = __any_sync(0xFFFFFFFF, any_nonzero);
-        if (tid % WARP_SIZE == 0) {
-            buf_iw[tid / WARP_SIZE] = any_nonzero;
+        if (threadIdx.x != 0) {
+            return;
         }
-        __syncthreads();
-        any_nonzero = buf_iw[tid % WARP_SIZE];
-        __syncthreads();
-        any_nonzero = __any_sync(0xFFFFFFFF, any_nonzero);
-
-        if (any_nonzero) {
-            break;
-        }
+        kb0_bounds[sequence*ne31 + jt].x = kb0_low;
+        return;
     }
 
     int kb0_high = ne30 - 1;
@@ -572,7 +580,7 @@ static __global__ void flash_attn_mask_to_kb0_bounds(
         return;
     }
 
-    kb0_bounds[sequence*ne31 + jt] = make_int2(kb0_low, kb0_high);
+    kb0_bounds[sequence*ne31 + jt].y = kb0_high;
 }
 
 template<int D, int ncols1, int ncols2> // D == head size
@@ -872,7 +880,7 @@ void launch_fattn(
             const int s31 = mask->nb[1] / sizeof(half2);
             const int s33 = mask->nb[3] / sizeof(half2);
 
-            const dim3 blocks_num_kb0_bounds(ntiles_x, Q->ne[3], 1);
+            const dim3 blocks_num_kb0_bounds(ntiles_x, Q->ne[3], 2);
             const dim3 block_dim_kb0_bounds(FATTN_KQ_STRIDE/2, 1, 1);
 
             const int ne_kb0_bounds = blocks_num_kb0_bounds.x*blocks_num_kb0_bounds.y;
