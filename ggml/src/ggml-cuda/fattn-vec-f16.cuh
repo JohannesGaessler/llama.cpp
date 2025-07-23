@@ -21,8 +21,8 @@ static __global__ void flash_attn_vec_ext_f16(
         const int32_t ne00, const int32_t ne01, const int32_t ne02, const int32_t ne03,
                             const int32_t nb01, const int32_t nb02, const int32_t nb03,
         const int32_t ne10, const int32_t ne11, const int32_t ne12, const int32_t ne13,
-                            const int32_t nb11, const int32_t nb12, const int32_t nb13,
-                            const int32_t nb21, const int32_t nb22, const int32_t nb23,
+                            const int32_t nb11, const int32_t nb12, const int64_t nb13,
+                            const int32_t nb21, const int32_t nb22, const int64_t nb23,
                             const int32_t ne31, const int32_t ne32, const int32_t ne33,
                             const int32_t nb31, const int32_t nb32, const int32_t nb33) {
 #if defined(FLASH_ATTN_AVAILABLE) && defined(FP16_AVAILABLE)
