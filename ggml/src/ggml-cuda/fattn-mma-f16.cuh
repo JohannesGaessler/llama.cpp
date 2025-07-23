@@ -926,7 +926,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         constexpr bool last_iter = false;
         flash_attn_ext_f16_iter<DKQ, DV, ncols1, ncols2, nwarps, ntiles, use_logit_softcap, mla, needs_fixup, is_fixup, use_mask, last_iter>
             (Q_f2, K_h2, V_h2, mask_h2, dstk, dstk_fixup, scale, slope, logit_softcap,
-             ne01, ne02, stride_K, stride_V, stride_mask, jt, tile_Q, tile_K, tile_V, tile_mask, Q_B, VKQ_C, KQ_max, KQ_rowsum, kb0);
+             ne01, ne02, stride_K, stride_V, stride_mask, tile_Q, tile_K, tile_V, tile_mask, Q_B, VKQ_C, KQ_max, KQ_rowsum, kb0);
     }
     if constexpr (nstages > 1) {
         static_assert(nbatch_K2 == DKQ/2, "batching not implemented for multi-stage pipeline");
@@ -1286,7 +1286,7 @@ static __global__ void flash_attn_ext_f16(
         const int head = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence) / (iter_k*iter_j);
         const int jt = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence - iter_k*iter_j*head) / iter_k; // j index of current tile.
 
-        int kb0_start_mask = kb0_start;
+        int kb0_start_mask = kb0_stop - 1;
         if (ncols2 > 1 || mask) {
             const int2 kb0_bounds_sj = kb0_bounds[sequence*iter_j + jt];
             kb0_start_mask = max(kb0_start_mask, kb0_bounds_sj.x);
@@ -1335,7 +1335,7 @@ static __global__ void flash_attn_ext_f16(
     const int head = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence) / (iter_k*iter_j);
     const int jt = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence - iter_k*iter_j*head) / iter_k; // j index of current tile.
 
-    int kb0_start_mask = kb0_start;
+    int kb0_start_mask = kb0_stop - 1;
     if (ncols2 > 1 || mask) {
         const int2 kb0_bounds_sj = kb0_bounds[sequence*iter_j + jt];
         kb0_start_mask = max(kb0_start_mask, kb0_bounds_sj.x);
