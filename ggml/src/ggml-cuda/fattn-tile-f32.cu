@@ -100,7 +100,15 @@ static __global__ void flash_attn_tile_ext_f32(
 
     __syncthreads();
 
-    for (int k_VKQ_0 = blockIdx.y*FATTN_KQ_STRIDE_TILE_F32; k_VKQ_0 < ne11; k_VKQ_0 += gridDim.y*FATTN_KQ_STRIDE_TILE_F32) {
+    int k_VKQ_mask_start = 0;
+    int k_VKQ_max        = ne11;
+    if (mask_bounds) {
+        const int2 tmp = mask_bounds[sequence*gridDim.x + blockIdx.x];
+        k_VKQ_mask_start = tmp.x * FATTN_KQ_STRIDE;
+        k_VKQ_max        = tmp.y * FATTN_KQ_STRIDE;
+    }
+
+    for (int k_VKQ_0 = blockIdx.y*FATTN_KQ_STRIDE_TILE_F32; k_VKQ_0 < k_VKQ_max; k_VKQ_0 += gridDim.y*FATTN_KQ_STRIDE_TILE_F32) {
         // Calculate KQ tile and keep track of new maximum KQ values:
 
         float kqmax_new[ncols/nwarps];
@@ -164,7 +172,8 @@ static __global__ void flash_attn_tile_ext_f32(
                     sum[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps] = logit_softcap * tanhf(sum[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps]);
                 }
 
-                sum[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps] += mask ? slope*__half2float(maskh[j_KQ*ne11 + k_VKQ_0 + i_KQ]) : 0.0f;
+                sum[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps] += (mask && k_VKQ_0 >= k_VKQ_mask_start) ?
+                    slope*__half2float(maskh[j_KQ*ne11 + k_VKQ_0 + i_KQ]) : 0.0f;
 
                 kqmax_new[j_KQ_0/nwarps] = fmaxf(kqmax_new[j_KQ_0/nwarps], sum[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps]);
 
