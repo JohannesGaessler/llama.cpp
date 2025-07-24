@@ -268,57 +268,5 @@ void ggml_cuda_op_mul_mat_q(
 }
 
 bool ggml_cuda_should_use_mmq(enum ggml_type type, int cc, int64_t ne11) {
-#ifdef GGML_CUDA_FORCE_CUBLAS
     return false;
-#endif // GGML_CUDA_FORCE_CUBLAS
-
-    bool mmq_supported;
-
-    switch (type) {
-        case GGML_TYPE_Q4_0:
-        case GGML_TYPE_Q4_1:
-        case GGML_TYPE_Q5_0:
-        case GGML_TYPE_Q5_1:
-        case GGML_TYPE_Q8_0:
-        case GGML_TYPE_Q2_K:
-        case GGML_TYPE_Q3_K:
-        case GGML_TYPE_Q4_K:
-        case GGML_TYPE_Q5_K:
-        case GGML_TYPE_Q6_K:
-        case GGML_TYPE_IQ2_XXS:
-        case GGML_TYPE_IQ2_XS:
-        case GGML_TYPE_IQ2_S:
-        case GGML_TYPE_IQ3_XXS:
-        case GGML_TYPE_IQ3_S:
-        case GGML_TYPE_IQ1_S:
-        case GGML_TYPE_IQ4_XS:
-        case GGML_TYPE_IQ4_NL:
-            mmq_supported = true;
-            break;
-        default:
-            mmq_supported = false;
-            break;
-    }
-
-    if (!mmq_supported) {
-        return false;
-    }
-
-    if (new_mma_available(cc)) {
-        return true;
-    }
-
-    if (ggml_cuda_highest_compiled_arch(cc) < GGML_CUDA_CC_DP4A) {
-        return false;
-    }
-
-#ifdef GGML_CUDA_FORCE_MMQ
-    return true;
-#endif //GGML_CUDA_FORCE_MMQ
-
-    if (GGML_CUDA_CC_IS_NVIDIA(cc)) {
-        return !fp16_mma_hardware_available(cc) || ne11 < MMQ_DP4A_MAX_BATCH_SIZE;
-    }
-
-    return (!GGML_CUDA_CC_IS_RDNA4(cc) && !GGML_CUDA_CC_IS_RDNA3(cc) && !GGML_CUDA_CC_IS_CDNA(cc)) || ne11 < MMQ_DP4A_MAX_BATCH_SIZE;
 }
