@@ -505,22 +505,21 @@ template <int ncols1>
 __launch_bounds__(FATTN_KQ_STRIDE/2, 1)
 static __global__ void flash_attn_mask_to_mask_bounds(
         const half2 * __restrict__ mask, int2 * __restrict__ mask_bounds, const int ne30, const int s31, const int s33) {
-    const int ne31 = gridDim.x;
-
+    const int ne31     = gridDim.x;
+    const int tid      = threadIdx.x;
     const int sequence = blockIdx.y;
     const int jt       = blockIdx.x;
 
     mask += sequence*s33 + jt*ncols1*s31;
 
-    const int tid = threadIdx.x;
-
     __shared__ int buf_iw[WARP_SIZE];
-    if (tid < WARP_SIZE) {
-        buf_iw[tid] = 1;
-    }
-    __syncthreads();
 
     if (blockIdx.z == 0) {
+        if (tid < WARP_SIZE) {
+            buf_iw[tid] = 0;
+        }
+        __syncthreads();
+
         int kb0_low = 0;
         for (; kb0_low < ne30; ++kb0_low) {
             int any_nonzero = 0x00000000;
@@ -550,6 +549,11 @@ static __global__ void flash_attn_mask_to_mask_bounds(
         mask_bounds[sequence*ne31 + jt].x = kb0_low;
         return;
     }
+
+    if (tid < WARP_SIZE) {
+        buf_iw[tid] = 1;
+    }
+    __syncthreads();
 
     int kb0_high = ne30 - 1;
     for (; kb0_high >= 0; --kb0_high) {
