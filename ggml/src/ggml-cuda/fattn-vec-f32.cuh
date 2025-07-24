@@ -10,7 +10,7 @@ static __global__ void flash_attn_vec_ext_f32(
         const char * __restrict__ K,
         const char * __restrict__ V,
         const char * __restrict__ mask,
-        const int2 * __restrict__ mask_bounds,
+        const int  * __restrict__ KV_max,
         float      * __restrict__ dst,
         float2     * __restrict__ dst_meta,
         const float scale,
@@ -178,12 +178,9 @@ static __global__ void flash_attn_vec_ext_f32(
 
     float VKQ[ncols] = {0.0f};
 
-    int k_VKQ_mask_start = 0;
-    int k_VKQ_max        = ne11;
-    if (mask_bounds) {
-        const int2 tmp = mask_bounds[sequence*gridDim.x + blockIdx.x];
-        k_VKQ_mask_start = tmp.x * FATTN_KQ_STRIDE;
-        k_VKQ_max        = tmp.y * FATTN_KQ_STRIDE;
+    int k_VKQ_max = ne11;
+    if (KV_max) {
+        k_VKQ_max = KV_max[sequence*gridDim.x + blockIdx.x];
     }
 
     K     += blockIdx.y*D * nb11;
@@ -192,7 +189,7 @@ static __global__ void flash_attn_vec_ext_f32(
     for (int k_VKQ_0 = blockIdx.y*D; k_VKQ_0 < k_VKQ_max; k_VKQ_0 += gridDim.y*D) {
         // Calculate KQ tile and keep track of new maximum KQ values:
 
-        if (k_VKQ_0 >= k_VKQ_mask_start && mask) {
+        if (mask) {
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
                 maskf_shared[j*D + tid] = slope*__half2float(maskh[j*ne11 + tid]);

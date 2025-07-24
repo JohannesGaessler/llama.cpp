@@ -15,7 +15,7 @@ typedef void (* fattn_kernel_t)(
         const char * __restrict__ K,
         const char * __restrict__ V,
         const char * __restrict__ mask,
-        const int2 * __restrict__ mask_bounds,
+        const int  * __restrict__ KV_max,
         float      * __restrict__ dst,
         float2     * __restrict__ dst_meta,
         const float scale,
@@ -503,8 +503,8 @@ constexpr __device__ dequantize_1_f32_t get_dequantize_1_f32(ggml_type type_V) {
 
 template <int ncols1>
 __launch_bounds__(FATTN_KQ_STRIDE/2, 1)
-static __global__ void flash_attn_mask_to_mask_bounds(
-        const half2 * __restrict__ mask, int2 * __restrict__ mask_bounds, const int ne30, const int s31, const int s33) {
+static __global__ void flash_attn_mask_to_KV_max(
+        const half2 * __restrict__ mask, int * __restrict__ KV_max, const int ne30, const int s31, const int s33) {
     const int ne31     = gridDim.x;
     const int tid      = threadIdx.x;
     const int sequence = blockIdx.y;
@@ -513,55 +513,18 @@ static __global__ void flash_attn_mask_to_mask_bounds(
     mask += sequence*s33 + jt*ncols1*s31;
 
     __shared__ int buf_iw[WARP_SIZE];
-
-    if (blockIdx.z == 0) {
-        if (tid < WARP_SIZE) {
-            buf_iw[tid] = 0;
-        }
-        __syncthreads();
-
-        int kb0_low = 0;
-        for (; kb0_low < ne30; ++kb0_low) {
-            int any_nonzero = 0x00000000;
-
-#pragma unroll
-            for (int j = 0; j < ncols1; ++j) {
-                any_nonzero |= ((const int *) mask)[j*s31 + kb0_low*(FATTN_KQ_STRIDE/2) + tid];
-            }
-
-            any_nonzero = __any_sync(0xFFFFFFFF, any_nonzero);
-            if (tid % WARP_SIZE == 0) {
-                buf_iw[tid / WARP_SIZE] = any_nonzero;
-            }
-            __syncthreads();
-            any_nonzero = buf_iw[tid % WARP_SIZE];
-            __syncthreads();
-            any_nonzero = __any_sync(0xFFFFFFFF, any_nonzero);
-
-            if (any_nonzero) {
-                break;
-            }
-        }
-
-        if (threadIdx.x != 0) {
-            return;
-        }
-        mask_bounds[sequence*ne31 + jt].x = kb0_low;
-        return;
-    }
-
     if (tid < WARP_SIZE) {
         buf_iw[tid] = 1;
     }
     __syncthreads();
 
-    int kb0_high = ne30 - 1;
-    for (; kb0_high >= 0; --kb0_high) {
+    int KV_max_sj = (ne30 - 1) * FATTN_KQ_STRIDE;
+    for (; KV_max_sj >= 0; KV_max_sj -= FATTN_KQ_STRIDE) {
         int all_inf = 1;
 
 #pragma unroll
         for (int j = 0; j < ncols1; ++j) {
-            const float2 tmp = __half22float2(mask[j*s31 + kb0_high*(FATTN_KQ_STRIDE/2) + tid]);
+            const float2 tmp = __half22float2(mask[j*s31 + KV_max_sj/2 + tid]);
             all_inf = all_inf && int(isinf(tmp.x)) && int(isinf(tmp.y));
         }
 
@@ -575,7 +538,7 @@ static __global__ void flash_attn_mask_to_mask_bounds(
         all_inf = __all_sync(0xFFFFFFFF, all_inf);
 
         if (!all_inf) {
-            kb0_high++;
+            KV_max_sj += FATTN_KQ_STRIDE;
             break;
         }
     }
@@ -584,7 +547,7 @@ static __global__ void flash_attn_mask_to_mask_bounds(
         return;
     }
 
-    mask_bounds[sequence*ne31 + jt].y = kb0_high;
+    KV_max[sequence*ne31 + jt] = KV_max_sj;
 }
 
 template<int D, int ncols1, int ncols2> // D == head size
@@ -798,7 +761,7 @@ void launch_fattn(
 
     ggml_cuda_pool_alloc<half>   K_f16(pool);
     ggml_cuda_pool_alloc<half>   V_f16(pool);
-    ggml_cuda_pool_alloc<int2>   mask_bounds(pool);
+    ggml_cuda_pool_alloc<int>    KV_max(pool);
     ggml_cuda_pool_alloc<float>  dst_tmp(pool);
     ggml_cuda_pool_alloc<float2> dst_tmp_meta(pool);
 
@@ -877,15 +840,15 @@ void launch_fattn(
         const int s31 = mask->nb[1] / sizeof(half2);
         const int s33 = mask->nb[3] / sizeof(half2);
 
-        const dim3 blocks_num_mask_bounds(ntiles_x, Q->ne[3], 2);
-        const dim3 block_dim_mask_bounds(FATTN_KQ_STRIDE/2, 1, 1);
+        const dim3 blocks_num_KV_max(ntiles_x, Q->ne[3], 1);
+        const dim3 block_dim_KV_max(FATTN_KQ_STRIDE/2, 1, 1);
 
-        const int ne_mask_bounds = blocks_num_mask_bounds.x*blocks_num_mask_bounds.y;
+        const int ne_KV_max = blocks_num_KV_max.x*blocks_num_KV_max.y;
         const int iter_k = K->ne[1] / FATTN_KQ_STRIDE;
 
-        mask_bounds.alloc(ne_mask_bounds);
-        flash_attn_mask_to_mask_bounds<ncols1><<<blocks_num_mask_bounds, block_dim_mask_bounds, 0, main_stream>>>
-            ((const half2 *) mask->data, mask_bounds.ptr, iter_k, s31, s33);
+        KV_max.alloc(ne_KV_max);
+        flash_attn_mask_to_KV_max<ncols1><<<blocks_num_KV_max, block_dim_KV_max, 0, main_stream>>>
+            ((const half2 *) mask->data, KV_max.ptr, iter_k, s31, s33);
         CUDA_CHECK(cudaGetLastError());
     }
 
@@ -897,9 +860,8 @@ void launch_fattn(
 
     dim3 blocks_num;
     if (stream_k) {
-        const int max_blocks = max_blocks_per_sm*nsm;
-
         // For short contexts it can be faster to have the SMs work on whole tiles because this lets us skip the fixup.
+        const int max_blocks = max_blocks_per_sm*nsm;
         const int tiles_nwaves = (ntiles_total + max_blocks - 1) / max_blocks;
         const int tiles_efficiency_percent = 100 * ntiles_total / (max_blocks*tiles_nwaves);
 
@@ -978,7 +940,7 @@ void launch_fattn(
         K_data,
         V_data,
         mask ? ((const char *) mask->data) : nullptr,
-        mask_bounds.ptr,
+        KV_max.ptr,
         !stream_k && parallel_blocks > 1 ? dst_tmp.ptr : (float *) KQV->data, dst_tmp_meta.ptr,
         scale, max_bias, m0, m1, n_head_log2, logit_softcap,
         Q->ne[0], Q->ne[1], Q->ne[2], Q->ne[3], Q->nb[1], Q->nb[2], Q->nb[3],
