@@ -1257,8 +1257,8 @@ static __global__ void flash_attn_ext_f16(
     constexpr int kb_niter = FATTN_KQ_STRIDE / c::nbatch_fa; // Number of kernel iterations per assigned KQ slice.
 
     // kbc == k block continuous, current index in continuous ijk space.
-    int       kbc      = (blockIdx.x + 0)*(iter_k*iter_j*(ne02/ncols2)*ne03) / gridDim.x;
-    const int kbc_stop = (blockIdx.x + 1)*(iter_k*iter_j*(ne02/ncols2)*ne03) / gridDim.x;
+    int       kbc      = (blockIdx.x + 0)*(ne03*iter_k*iter_j*(ne02/ncols2)) / gridDim.x;
+    const int kbc_stop = (blockIdx.x + 1)*(ne03*iter_k*iter_j*(ne02/ncols2)) / gridDim.x;
 
     // If the seams of 2 CUDA blocks fall within an output tile their results need to be combined.
     // For this we need to track both the block that starts the tile (needs_fixup) and the block that finishes the tile (is_fixup).
@@ -1268,9 +1268,9 @@ static __global__ void flash_attn_ext_f16(
     int kb0_start = kbc % iter_k;
     int kb0_stop  = min(iter_k, kb0_start + kbc_stop - kbc);
     while (kbc < kbc_stop && kb0_stop == iter_k) {
-        const int sequence = kbc / (iter_k*iter_j*(ne02/ncols2));
-        const int head = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence) / (iter_k*iter_j);
-        const int jt = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence - iter_k*iter_j*head) / iter_k; // j index of current tile.
+        const int head = kbc / (ne03*iter_k*iter_j);
+        const int jt = (kbc - ne03*iter_k*iter_j*head) / (ne03*iter_k); // j index of current tile.
+        const int sequence = (kbc - ne03*iter_k*iter_j*head - ne03*iter_k*jt) / iter_k;
 
         const float2 * Q_f2    = (const float2 *) (Q + nb03*sequence + nb02*(head*ncols2));
         const half2  * K_h2    = (const half2  *) (K + nb13*sequence + nb12*(head*ncols2 / gqa_ratio));
@@ -1313,9 +1313,9 @@ static __global__ void flash_attn_ext_f16(
         return;
     }
 
-    const int sequence = kbc / (iter_k*iter_j*(ne02/ncols2));
-    const int head = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence) / (iter_k*iter_j);
-    const int jt = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence - iter_k*iter_j*head) / iter_k; // j index of current tile.
+    const int head = kbc / (ne03*iter_k*iter_j);
+    const int jt = (kbc - ne03*iter_k*iter_j*head) / (ne03*iter_k); // j index of current tile.
+    const int sequence = (kbc - ne03*iter_k*iter_j*head - ne03*iter_k*jt) / iter_k;
 
     const float2 * Q_f2    = (const float2 *) (Q + nb03*sequence + nb02*(head*ncols2));
     const half2  * K_h2    = (const half2  *) (K + nb13*sequence + nb12*(head*ncols2 / gqa_ratio));
