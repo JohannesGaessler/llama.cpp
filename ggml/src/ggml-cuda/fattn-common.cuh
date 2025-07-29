@@ -567,8 +567,8 @@ static __global__ void flash_attn_stream_k_fixup(
     const int iter_k = ne11 / FATTN_KQ_STRIDE;
     const int iter_j = (ne01 + (ncols1 - 1)) / ncols1;
 
-    const int kbc0      = (bidx0 + 0)*(iter_k*iter_j*(ne02/ncols2)*ne03) / gridDim.x;
-    const int kbc0_stop = (bidx0 + 1)*(iter_k*iter_j*(ne02/ncols2)*ne03) / gridDim.x;
+    const int kbc0      = (bidx0 + 0)*(iter_k*ne03*iter_j*(ne02/ncols2)) / gridDim.x;
+    const int kbc0_stop = (bidx0 + 1)*(iter_k*ne03*iter_j*(ne02/ncols2)) / gridDim.x;
 
     const bool did_not_have_any_data   = kbc0 == kbc0_stop;
     const bool wrote_beginning_of_tile = kbc0 % iter_k == 0;
@@ -577,9 +577,9 @@ static __global__ void flash_attn_stream_k_fixup(
         return;
     }
 
-    const int sequence = kbc0 / (iter_k*iter_j*(ne02/ncols2));
-    const int head = (kbc0 - iter_k*iter_j*(ne02/ncols2)*sequence) / (iter_k*iter_j);
-    const int jt = (kbc0 - iter_k*iter_j*(ne02/ncols2)*sequence - iter_k*iter_j*head) / iter_k; // j index of current tile.
+    const int head = kbc0 / (iter_k*ne03*iter_j);
+    const int jt = (kbc0 - iter_k*ne03*iter_j*head) / (iter_k*ne03); // j index of current tile.
+    const int sequence = (kbc0 - iter_k*ne03*iter_j*head - iter_k*ne03*jt) / iter_k;
 
     if (jt*ncols1 + j >= ne01) {
         return;
