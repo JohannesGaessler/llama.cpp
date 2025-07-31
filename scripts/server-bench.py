@@ -109,7 +109,7 @@ def send_prompt(data: dict) -> tuple[float, list[float]]:
     t_submit = time()
     if data["synthetic_prompt"]:
         json_data: dict = {
-            "prompt": data["prompt"], "ignore_eos": True, "cache_prompt": False,
+            "prompt": data["prompt"], "ignore_eos": True,
             "seed": data["seed"], "n_predict": data["n_predict"], "stream": True}
         response = session.post(f"{server_address}/v1/completions", json=json_data, stream=True)
     else:
