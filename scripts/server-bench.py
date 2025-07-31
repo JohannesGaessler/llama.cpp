@@ -61,7 +61,7 @@ def get_server(path_server: str, path_log: Optional[str]) -> dict:
     logger.info(f"Starting the llama.cpp server under {address}...")
 
     fout = open(path_log.format(port=port), "w") if path_log is not None else subprocess.DEVNULL
-    process = subprocess.Popen([path_server], stdout=fout, stderr=subprocess.STDOUT)
+    process = subprocess.Popen([path_server, "--verbose"], stdout=fout, stderr=subprocess.STDOUT)
 
     n_failures: int = 0
     while True:
@@ -118,7 +118,13 @@ def send_prompt(data: dict) -> tuple[float, list[float]]:
             json={"messages": [{"role": "user", "content": data["prompt"], "stream": True}]}
         )
         if response.status_code != 200:
-            raise RuntimeError(f"Server returned status code {response.status_code}: {response.text}")
+            response_text = ""
+            try:
+                response_text = response.text
+                response_text = ": {response_text}"
+            except RuntimeError:
+                pass
+            raise RuntimeError(f"Server returned status code {response.status_code}{response_text}")
         prompt: str = json.loads(response.text)["prompt"]
 
         json_data: dict = {"prompt": prompt, "seed": data["seed"], "n_predict": data["n_predict"], "stream": True}
@@ -132,7 +138,13 @@ def send_prompt(data: dict) -> tuple[float, list[float]]:
     token_arrival_times = token_arrival_times[:-1]
 
     if response.status_code != 200:
-        raise RuntimeError(f"Server returned status code {response.status_code}: {response.text}")
+        response_text = ""
+        try:
+            response_text = response.text
+            response_text = ": {response_text}"
+        except RuntimeError:
+            pass
+        raise RuntimeError(f"Server returned status code {response.status_code}{response_text}")
 
     return (t_submit, token_arrival_times)
 
