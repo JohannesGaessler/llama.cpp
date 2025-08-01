@@ -47,6 +47,8 @@ def get_prompts_rng(prompt_lengths: list[int]) -> list[list[int]]:
 
 
 def get_server(path_server: str, path_log: Optional[str]) -> dict:
+    if path_server.startswith("http://") or path_server.startswith("https://"):
+        return {"process": None, "address": path_server, "fout": None}
     if os.environ.get("LLAMA_ARG_HOST") is None:
         logger.info("LLAMA_ARG_HOST not explicitly set, using 127.0.0.1")
         os.environ["LLAMA_ARG_HOST"] = "127.0.0.1"
