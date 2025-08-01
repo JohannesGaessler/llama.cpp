@@ -213,7 +213,7 @@ def benchmark(path_server: str, path_log: Optional[str], prompt_source: str, n_p
         t0 = time()
         results: list[tuple[float, list[float]]] = thread_map(send_prompt, data, max_workers=parallel, chunksize=1)
     finally:
-        if server is not None:
+        if server is not None and server["process"] is not None:
             server["process"].terminate()
             server["process"].wait()
         if session is not None:
