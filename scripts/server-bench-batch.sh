@@ -12,6 +12,7 @@ for n_prompt in 2048 4096 6144 8196 10240 12288 14336 16384 18432 20480 22528 24
             --path_db server-bench.sqlite \
             --n_prompt $((32*$LLAMA_ARG_N_PARALLEL)) \
             --prompt_source rng-${n_prompt}-${n_prompt} \
-            --n_predict_min $n_predict --n_predict $n_predict
+            --n_predict_min $n_predict --n_predict $n_predict \
+            --seed_offset -1
     done
 done
