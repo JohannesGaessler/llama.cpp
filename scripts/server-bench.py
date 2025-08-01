@@ -63,7 +63,7 @@ def get_server(path_server: str, path_log: Optional[str]) -> dict:
     logger.info(f"Starting the llama.cpp server under {address}...")
 
     fout = open(path_log.format(port=port), "w") if path_log is not None else subprocess.DEVNULL
-    process = subprocess.Popen([path_server, "--verbose"], stdout=fout, stderr=subprocess.STDOUT)
+    process = subprocess.Popen([path_server], stdout=fout, stderr=subprocess.STDOUT)
 
     n_failures: int = 0
     while True:
@@ -109,11 +109,16 @@ def send_prompt(data: dict) -> tuple[float, list[float]]:
     server_address: str = data["server_address"]
 
     t_submit = time()
-    if data["synthetic_prompt"]:
+    if data["external_server"]:
+        json_data: dict = {
+            "prompt": data["prompt"], "ignore_eos": True,
+            "seed": data["seed"], "max_tokens": data["n_predict"], "stream": True}
+        response = session.post(f"{server_address}/v1/completions", json=json_data, stream=True)
+    elif data["synthetic_prompt"]:
         json_data: dict = {
             "prompt": data["prompt"], "ignore_eos": True, "cache_prompt": False,
             "seed": data["seed"], "n_predict": data["n_predict"], "stream": True}
-        response = session.post(f"{server_address}/v1/completions", json=json_data, stream=True)
+        response = session.post(f"{server_address}/completion", json=json_data, stream=True)
     else:
         response = session.post(
             f"{server_address}/apply-template",
@@ -190,6 +195,7 @@ def benchmark(path_server: str, path_log: Optional[str], prompt_source: str, n_p
     try:
         server = get_server(path_server, path_log)
         server_address: str = server["address"]
+        external_server: bool = server["process"] is None
 
         adapter = requests.adapters.HTTPAdapter(pool_connections=parallel, pool_maxsize=parallel)  # type: ignore
         session = requests.Session()
@@ -202,8 +208,9 @@ def benchmark(path_server: str, path_log: Optional[str], prompt_source: str, n_p
             if seed_offset >= 0:
                 random.seed(3 * (seed_offset + 1000 * i) + 1)
             data.append({
-                "session": session, "server_address": server_address, "prompt": p, "synthetic_prompt": synthetic_prompts,
-                "n_predict": random.randint(n_predict_min, n_predict), "seed": (3 * (seed_offset + 1000 * i) + 2) if seed_offset >= 0 else -1})
+                "session": session, "server_address": server_address, "external_server": external_server, "prompt": p,
+                "synthetic_prompt": synthetic_prompts, "n_predict": random.randint(n_predict_min, n_predict),
+                "seed": (3 * (seed_offset + 1000 * i) + 2) if seed_offset >= 0 else -1})
 
         if not synthetic_prompts:
             logger.info("Getting the prompt lengths...")
