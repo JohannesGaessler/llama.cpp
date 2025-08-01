@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import random
+import sqlite3
 import subprocess
 from time import sleep, time
 from typing import Optional, Union
@@ -160,7 +161,9 @@ def send_prompt(data: dict) -> tuple[float, list[float]]:
     return (t_submit, token_arrival_times)
 
 
-def benchmark(path_server: str, path_log: Optional[str], prompt_source: str, n_prompts: int, n_predict: int, n_predict_min: int, seed_offset: int):
+def benchmark(
+        path_server: str, path_log: Optional[str], path_db: Optional[str], name: Optional[str], prompt_source: str, n_prompts: int,
+        n_predict: int, n_predict_min: int, seed_offset: int):
     if os.environ.get("LLAMA_ARG_N_PARALLEL") is None:
         logger.info("LLAMA_ARG_N_PARALLEL not explicitly set, using 32")
         os.environ["LLAMA_ARG_N_PARALLEL"] = "32"
@@ -263,10 +266,23 @@ def benchmark(path_server: str, path_log: Optional[str], prompt_source: str, n_p
         "The above numbers are the speeds as observed by the Python script and may differ from the performance reported by the server, "
         "particularly when the server is fast vs. the network or Python script (e.g. when serving a very small model).")
 
+    if path_db is not None:
+        con = sqlite3.connect(path_db)
+        cursor = con.cursor()
+        cursor.execute(
+            "CREATE TABLE IF NOT EXISTS server_bench"
+            "(name TEXT, n_parallel INTEGER, prompt_source TEXT, n_prompts INTEGER, "
+            "n_predict INTEGER, n_predict_min INTEGER, seed_offset INTEGER, runtime REAL);")
+        cursor.execute(
+            "INSERT INTO server_bench VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+            [name, parallel, prompt_source, n_prompts, n_predict, n_predict_min, seed_offset, token_t_last])
+        con.commit()
+
     plt.figure()
     plt.scatter(prompt_n, 1e3 * prompt_t, s=10.0, marker=".", alpha=0.25)
     plt.xlim(0, 1.05e0 * np.max(prompt_n))
     plt.ylim(0, 1.05e3 * np.max(prompt_t))
+    plt.title(name)
     plt.xlabel("Prompt length [tokens]")
     plt.ylabel("Time to first token [ms]")
     plt.savefig("prompt_time.png", dpi=240)
@@ -275,6 +291,7 @@ def benchmark(path_server: str, path_log: Optional[str], prompt_source: str, n_p
     plt.figure()
     plt.hist(token_t, np.arange(0, bin_max))
     plt.xlim(0, bin_max + 1)
+    plt.title(name)
     plt.xlabel("Time [s]")
     plt.ylabel("Num. tokens generated per second")
     plt.savefig("gen_rate.png", dpi=240)
@@ -287,6 +304,8 @@ if __name__ == "__main__":
         "To pass arguments such as the model path to the server, set the corresponding environment variables (see llama-server --help).")
     parser.add_argument("--path_server", type=str, default="llama-server", help="Path to the llama.cpp server binary")
     parser.add_argument("--path_log", type=str, default="server-bench-{port}.log", help="Path to the model to use for the benchmark")
+    parser.add_argument("--path_db", type=str, default=None, help="Path to an sqlite database to store the benchmark results in")
+    parser.add_argument("--name", type=str, default=None, help="Name to label plots and database entries with")
     parser.add_argument(
         "--prompt_source", type=str, default="rng-1024-2048",
         help="How to get the prompts for the benchmark, either 'mmlu' for MMLU questions or "
