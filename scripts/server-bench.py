@@ -137,12 +137,16 @@ def send_prompt(data: dict) -> tuple[float, list[float]]:
         json_data: dict = {"prompt": prompt, "seed": data["seed"], "n_predict": data["n_predict"], "stream": True}
         response = session.post(f"{server_address}/completion", json=json_data, stream=True)
 
+    lines = []
     token_arrival_times: list[float] = []
     for line in response.iter_lines(decode_unicode=False):
         if not line.startswith(b"data: "):
             continue
+        lines.append(line)
         token_arrival_times.append(time())
     token_arrival_times = token_arrival_times[:-1]
+    if "timings" in json.loads(lines[-2]):
+        token_arrival_times = token_arrival_times[:-1]
 
     if response.status_code != 200:
         response_text = ""
