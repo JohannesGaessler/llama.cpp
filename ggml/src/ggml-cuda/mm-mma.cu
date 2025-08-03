@@ -47,66 +47,62 @@ static __global__ void mul_mat_mma(
             for (int i = 0; i < tile_A::I; ++i) {
                 tile_xy[i*tile_k_padded + threadIdx.x] = x2[i*(stride_row/2) + col2];
             }
-            __syncthreads();
             tile_A A[warp_size / tile_A::J];
 #pragma unroll
             for (int k0 = 0; k0 < warp_size; k0 += tile_A::J) {
                 load_ldmatrix(A[k0/tile_A::J], tile_xy + k0, tile_k_padded);
             }
-            __syncthreads();
 
 #pragma unroll
             for (int j = 0; j < tile_B_16::I; ++j) {
                 const float2 tmp = y2[j*stride_col_y2 + col2];
                 tile_xy[j*tile_k_padded + threadIdx.x] = make_half2(tmp.x, tmp.y);
             }
-            __syncthreads();
 #pragma unroll
             for (int k0 = 0; k0 < warp_size; k0 += tile_B_16::J) {
                 tile_B_16 B;
                 load_ldmatrix(B, tile_xy + k0, tile_k_padded);
                 mma(C, B, A[k0/tile_B_16::J]);
             }
-            __syncthreads();
         }
     } else {
         static_assert(std::is_same<T, void>::value, "unsupported type");
     }
 
-    float * buf_iw = (float *) data_mmv;
-
-    if (nwarps > 1) {
-        __syncthreads();
-        if (threadIdx.y == 0) {
-            buf_iw[threadIdx.x] = 0.0f;
+    if (nwarps == 1) {
+#pragma unroll
+        for (int l = 0; l < tile_C_16::ne; ++l) {
+            dst[tile_C_16::get_i(l)*stride_col_dst + row0 + tile_C_16::get_j(l)] = C.x[l];
         }
-        __syncthreads();
+        return;
     }
 
-// #pragma unroll
-//     for (int j = 0; j < ncols_dst; ++j) {
-//         sumf[j] = warp_reduce_sum<warp_size>(sumf[j]);
+    float * buf_iw = (float *) data_mmv;
+    constexpr int kiw = nwarps*tile_C_16::J + 1;
 
-//         if (block_size > warp_size) {
-//             buf_iw[tid/warp_size] = sumf[j];
-//             __syncthreads();
-//             if (tid < warp_size) {
-//                 sumf[j] = buf_iw[tid];
-//                 sumf[j] = warp_reduce_sum<warp_size>(sumf[j]);
-//             }
-//             if (j < ncols_dst) {
-//                 __syncthreads();
-//             }
-//         }
-//     }
-
-//     if (tid >= ncols_dst) {
-//         return;
-//     }
-
+    __syncthreads();
 #pragma unroll
     for (int l = 0; l < tile_C_16::ne; ++l) {
-        dst[tile_C_16::get_i(l)*stride_col_dst + row0 + tile_C_16::get_j(l)] = C.x[l];
+        buf_iw[tile_C_16::get_i(l)*kiw + threadIdx.y*tile_C_16::J + tile_C_16::get_j(l)] = C.x[l];
+    }
+    __syncthreads();
+
+    if (threadIdx.y > 0) {
+        return;
+    }
+
+#pragma unroll
+    for (int j0 = 0; j0 < tile_C_16::I; j0 += warp_size / tile_C_16::J) {
+        const int j = j0 + threadIdx.x / tile_C_16::J;
+
+        float sum = 0.0f;
+#pragma unroll
+        for (int i0 = 0; i0 < nwarps*tile_C_16::J; i0 += tile_C_16::J) {
+            const int i = i0 + threadIdx.x % tile_C_16::J;
+
+            sum += buf_iw[j*kiw + i];
+        }
+        dst[j*stride_col_dst + row0 + threadIdx.x % tile_C_16::J] = sum;
     }
 }
 
@@ -133,20 +129,64 @@ static void mul_mat_mma_cuda(
     int64_t nwarps_best     = 1;
     int64_t niter_best      = (ncols + warp_size*2 - 1) / (warp_size*2);
     int64_t max_block_size  = 256;
-    // for (int64_t nwarps = 2; nwarps <= max_block_size/warp_size; nwarps++) {
-    //     const int64_t niter = (ncols + nwarps*warp_size*2 - 1) / (nwarps*warp_size*2);
-    //     if (niter < niter_best) {
-    //         niter_best  = niter;
-    //         nwarps_best = nwarps;
-    //     }
-    // }
+    for (int64_t nwarps = 2; nwarps <= max_block_size/warp_size; nwarps++) {
+        const int64_t niter = (ncols + nwarps*warp_size*2 - 1) / (nwarps*warp_size*2);
+        if (niter < niter_best) {
+            niter_best  = niter;
+            nwarps_best = nwarps;
+        }
+    }
 
-    const int nbytes_shared = nwarps_best * tile_A::I * (warp_size + 4) * 4;
+    const int nbytes_shared_iter = nwarps_best * tile_A::I * (warp_size + 4) * 4;
+    const int nbytes_shared_combine = tile_C_16::I * (nwarps_best*tile_C_16::J + 1) * 4;
+    const int nbytes_shared = std::max(nbytes_shared_iter, nbytes_shared_combine);
     const dim3 block_nums(nrows/tile_A::I, nchannels_dst, nsamples_dst);
     const dim3 block_dims(warp_size, nwarps_best, 1);
     switch (nwarps_best) {
         case 1: {
             mul_mat_mma<T, type_acc, ncols_dst,  1><<<block_nums, block_dims, nbytes_shared, stream>>>
+                (x, y, ids, dst, ncols/2, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
+                 channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
+                 sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
+        } break;
+        case 2: {
+            mul_mat_mma<T, type_acc, ncols_dst,  2><<<block_nums, block_dims, nbytes_shared, stream>>>
+                (x, y, ids, dst, ncols/2, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
+                 channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
+                 sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
+        } break;
+        case 3: {
+            mul_mat_mma<T, type_acc, ncols_dst,  3><<<block_nums, block_dims, nbytes_shared, stream>>>
+                (x, y, ids, dst, ncols/2, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
+                 channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
+                 sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
+        } break;
+        case 4: {
+            mul_mat_mma<T, type_acc, ncols_dst,  4><<<block_nums, block_dims, nbytes_shared, stream>>>
+                (x, y, ids, dst, ncols/2, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
+                 channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
+                 sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
+        } break;
+        case 5: {
+            mul_mat_mma<T, type_acc, ncols_dst,  5><<<block_nums, block_dims, nbytes_shared, stream>>>
+                (x, y, ids, dst, ncols/2, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
+                 channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
+                 sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
+        } break;
+        case 6: {
+            mul_mat_mma<T, type_acc, ncols_dst,  6><<<block_nums, block_dims, nbytes_shared, stream>>>
+                (x, y, ids, dst, ncols/2, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
+                 channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
+                 sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
+        } break;
+        case 7: {
+            mul_mat_mma<T, type_acc, ncols_dst,  7><<<block_nums, block_dims, nbytes_shared, stream>>>
+                (x, y, ids, dst, ncols/2, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
+                 channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
+                 sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
+        } break;
+        case 8: {
+            mul_mat_mma<T, type_acc, ncols_dst,  8><<<block_nums, block_dims, nbytes_shared, stream>>>
                 (x, y, ids, dst, ncols/2, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
                  channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
                  sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
