@@ -25,6 +25,7 @@
 #include "ggml-cuda/mmq.cuh"
 #include "ggml-cuda/mmv.cuh"
 #include "ggml-cuda/mmvq.cuh"
+#include "ggml-cuda/mm-mma.cuh"
 #include "ggml-cuda/norm.cuh"
 #include "ggml-cuda/opt-step-adamw.cuh"
 #include "ggml-cuda/out-prod.cuh"
@@ -2053,7 +2054,9 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
     bool use_batched_cublas_bf16 = src0->type == GGML_TYPE_BF16 && bf16_mma_hardware_available(cc);
     bool use_batched_cublas_f32  = src0->type == GGML_TYPE_F32;
 
-    if (!split && use_mul_mat_vec) {
+    if (!split && src0->type == GGML_TYPE_F16 && src0->ne[0] % 64 == 0 && src0->ne[1] % 16 == 0 && src1->ne[1] == 16) {
+        ggml_cuda_mul_mat_mma(ctx, src0, src1, nullptr, dst);
+    } else if (!split && use_mul_mat_vec) {
         // the custom F16 vector kernel can be used over batched cuBLAS GEMM
         // but this is only faster for GPUs without tensor cores or with a thin src0 matrix (particularly KQV in attention)
         ggml_cuda_mul_mat_vec(ctx, src0, src1, nullptr, dst);
