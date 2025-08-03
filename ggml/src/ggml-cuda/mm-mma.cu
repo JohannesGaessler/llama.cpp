@@ -12,6 +12,7 @@ typedef tile<16,  8, float> tile_C;
 typedef tile<16, 16, float> tile_C_16;
 
 template <typename T, typename type_acc, int ncols_dst, int nwarps>
+__launch_bounds__(ggml_cuda_get_physical_warp_size()*nwarps, 1)
 static __global__ void mul_mat_mma(
         const T * __restrict__ x, const float * __restrict__ y, const int32_t * __restrict__ ids, float * __restrict__ dst,
         const int ncols2, const int nchannels_y, const int stride_row, const int stride_col_y2, const int stride_col_dst,
