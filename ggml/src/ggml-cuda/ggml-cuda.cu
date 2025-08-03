@@ -2054,7 +2054,7 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
     bool use_batched_cublas_bf16 = src0->type == GGML_TYPE_BF16 && bf16_mma_hardware_available(cc);
     bool use_batched_cublas_f32  = src0->type == GGML_TYPE_F32;
 
-    if (!split && src0->type == GGML_TYPE_F16 && src0->ne[0] % 64 == 0 && src0->ne[1] % 32 == 0 && src1->ne[1] == 16) {
+    if (!split && src0->type == GGML_TYPE_F16 && src0->ne[0] % 64 == 0 && src0->ne[1] % 32 == 0 && (src1->ne[1] == 8 || src1->ne[1] == 16)) {
         ggml_cuda_mul_mat_mma(ctx, src0, src1, nullptr, dst);
     } else if (!split && use_mul_mat_vec) {
         // the custom F16 vector kernel can be used over batched cuBLAS GEMM
