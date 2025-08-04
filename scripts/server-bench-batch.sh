@@ -2,7 +2,7 @@
 
 export name=vllm
 
-for n_parallel in 16; do
+for n_parallel in 1; do
     export LLAMA_ARG_N_PARALLEL=$n_parallel
     for n_prompt in 4096 6144 10240 12288 14336 18432 20480 22528; do
     # for n_prompt in 2048 24576 8192 16384; do
