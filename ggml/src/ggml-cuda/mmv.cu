@@ -37,7 +37,7 @@ static __global__ void mul_mat_vec(
 
     float sumf[ncols_dst] = {0.0f};
 
-    if constexpr (std::is_same<T, float>::value) {
+    if constexpr (std::is_same_v<T, float>) {
         const float2 * x2 = (const float2 *) x;
 
         for (int col2 = tid; col2 < ncols2; col2 += block_size) {
@@ -50,10 +50,10 @@ static __global__ void mul_mat_vec(
                 sumf[j] += tmpx.y*tmpy.y;
             }
         }
-    } else if constexpr (std::is_same<T, half>::value) {
+    } else if constexpr (std::is_same_v<T, half>) {
         const half2 * x2 = (const half2 *) x;
 
-        if (std::is_same<type_acc, float>::value) {
+        if (std::is_same_v<type_acc, float>) {
             for (int col2 = tid; col2 < ncols2; col2 += block_size) {
                 const float2 tmpx = __half22float2(x2[col2]);
 
@@ -86,7 +86,7 @@ static __global__ void mul_mat_vec(
             NO_DEVICE_CODE;
 #endif // FP16_AVAILABLE
         }
-    } else if constexpr (std::is_same<T, nv_bfloat16>::value) {
+    } else if constexpr (std::is_same_v<T, nv_bfloat16>) {
         const int * x2 = (const int *) x;
         for (int col2 = tid; col2 < ncols2; col2 += block_size) {
             const int tmpx = x2[col2];
@@ -98,7 +98,7 @@ static __global__ void mul_mat_vec(
             }
         }
     } else {
-        static_assert(std::is_same<T, void>::value, "unsupported type");
+        static_assert(std::is_same_v<T, void>, "unsupported type");
     }
 
 #pragma unroll
@@ -290,7 +290,7 @@ static void mul_mat_vec_cuda(
         const int64_t stride_channel_x, const int64_t stride_channel_y, const int64_t stride_channel_dst, const int64_t nsamples_x,
         const int64_t nsamples_dst, const int64_t stride_sample_x, const int64_t stride_sample_y, const int64_t stride_sample_dst,
         enum ggml_prec prec, cudaStream_t stream) {
-    if constexpr(std::is_same<T, half>::value) {
+    if constexpr(std::is_same_v<T, half>) {
         if (prec == GGML_PREC_DEFAULT) {
             mul_mat_vec_cuda_switch_ncols_dst<T, half>
                 (x, y, ids, dst, ncols, nrows, ncols_dst, stride_row, stride_col_y, stride_col_dst,

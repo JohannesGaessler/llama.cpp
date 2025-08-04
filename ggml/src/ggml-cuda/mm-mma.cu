@@ -5,17 +5,17 @@
 
 using namespace ggml_cuda_mma;
 
-typedef tile<16, 8, half2> tile_A;
-typedef tile< 8, 8, half2> tile_B;
-typedef tile<16, 8, float> tile_C;
-
-template <typename T, typename type_acc, int rows_per_block, int cols_per_block, int nwarps>
+template <typename T, int rows_per_block, int cols_per_block, int nwarps>
 __launch_bounds__(ggml_cuda_get_physical_warp_size()*nwarps, 1)
 static __global__ void mul_mat_f(
         const T * __restrict__ x, const float * __restrict__ y, const int32_t * __restrict__ ids, float * __restrict__ dst,
         const int ncols2, const int nchannels_y, const int stride_row, const int stride_col_y2, const int stride_col_dst,
         const int channel_ratio, const int stride_channel_x, const int stride_channel_y, const int stride_channel_dst,
         const int sample_ratio, const int stride_sample_x, const int stride_sample_y, const int stride_sample_dst) {
+    typedef tile<16, 8, T>     tile_A;
+    typedef tile< 8, 8, T>     tile_B;
+    typedef tile<16, 8, float> tile_C;
+
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
     constexpr int tile_k_padded = warp_size + 4;
     constexpr int ntA = rows_per_block / tile_A::I;
@@ -29,7 +29,7 @@ static __global__ void mul_mat_f(
     const int sample_x    = sample_dst / sample_ratio;
     const int sample_y    = sample_dst;
 
-    x   += int64_t(sample_x)  *stride_sample_x   + channel_x  *stride_channel_x   + row0*stride_row;
+    x   += int64_t(sample_x)  *stride_sample_x   + channel_x  *stride_channel_x   + row0*stride_row ;
     y   += int64_t(sample_y)  *stride_sample_y   + channel_y  *stride_channel_y;
     dst += int64_t(sample_dst)*stride_sample_dst + channel_dst*stride_channel_dst;
 
@@ -39,9 +39,8 @@ static __global__ void mul_mat_f(
 
     tile_C C[ntA][ntB];
 
-    if constexpr (std::is_same<T, half>::value) {
-        half2 * tile_xy = (half2 *) data_mmv + threadIdx.y*(tile_A::I * tile_k_padded);
-        const half2 * x2 = (const half2 *) x;
+    if constexpr (std::is_same_v<T, half2> || std::is_same_v<T, nv_bfloat162>) {
+        T * tile_xy = (T *) data_mmv + threadIdx.y*(tile_A::I * tile_k_padded);
 
         for (int col2 = threadIdx.y*warp_size + threadIdx.x; col2 < ncols2; col2 += nwarps*warp_size) {
             tile_A A[ntA][warp_size / tile_A::J];
@@ -49,7 +48,7 @@ static __global__ void mul_mat_f(
             for (int itA = 0; itA < ntA; ++itA) {
 #pragma unroll
                 for (int i = 0; i < tile_A::I; ++i) {
-                    tile_xy[i*tile_k_padded + threadIdx.x] = x2[(itA*tile_A::I + i)*(stride_row/2) + col2];
+                    tile_xy[i*tile_k_padded + threadIdx.x] = x[(itA*tile_A::I + i)*stride_row  + col2];
                 }
 #pragma unroll
                 for (int k0 = 0; k0 < warp_size; k0 += tile_A::J) {
@@ -62,7 +61,7 @@ static __global__ void mul_mat_f(
 #pragma unroll
                 for (int j = 0; j < tile_B::I; ++j) {
                     const float2 tmp = y2[(itB*tile_B::I + j)*stride_col_y2 + col2];
-                    tile_xy[j*tile_k_padded + threadIdx.x] = make_half2(tmp.x, tmp.y);
+                    tile_xy[j*tile_k_padded + threadIdx.x] = {tmp.x, tmp.y};
                 }
 #pragma unroll
                 for (int k0 = 0; k0 < warp_size; k0 += tile_B::J) {
@@ -76,7 +75,7 @@ static __global__ void mul_mat_f(
             }
         }
     } else {
-        static_assert(std::is_same<T, void>::value, "unsupported type");
+        static_assert(std::is_same_v<T, void>, "unsupported type");
     }
 
     float * buf_iw = (float *) data_mmv;
@@ -122,7 +121,7 @@ static __global__ void mul_mat_f(
     }
 }
 
-template <typename T, typename type_acc, int cols_per_block>
+template <typename T, int cols_per_block>
 static void mul_mat_mma_cuda(
         const T * x, const float * y, const int32_t * ids, float * dst,
         const int64_t ncols_x, const int64_t nrows_x,
@@ -131,6 +130,10 @@ static void mul_mat_mma_cuda(
         const int64_t stride_channel_x, const int64_t stride_channel_y, const int64_t stride_channel_dst, const int64_t nsamples_x,
         const int64_t nsamples_dst, const int64_t stride_sample_x, const int64_t stride_sample_y, const int64_t stride_sample_dst,
         cudaStream_t stream) {
+    typedef tile<16, 8, T>     tile_A;
+    typedef tile< 8, 8, T>     tile_B;
+    typedef tile<16, 8, float> tile_C;
+
     GGML_ASSERT(ncols_x      % 2 == 0);
     GGML_ASSERT(stride_row   % 2 == 0);
     GGML_ASSERT(stride_col_y % 2 == 0);
@@ -161,50 +164,50 @@ static void mul_mat_mma_cuda(
     const dim3 block_dims(warp_size, nwarps_best, 1);
     switch (nwarps_best) {
         case 1: {
-            mul_mat_f<T, type_acc, rows_per_block, cols_per_block, 1><<<block_nums, block_dims, nbytes_shared, stream>>>
-                (x, y, ids, dst, ncols_x/2, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
+            mul_mat_f<T, rows_per_block, cols_per_block, 1><<<block_nums, block_dims, nbytes_shared, stream>>>
+                (x, y, ids, dst, ncols_x, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
                  channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
                  sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
         } break;
         case 2: {
-            mul_mat_f<T, type_acc, rows_per_block, cols_per_block, 2><<<block_nums, block_dims, nbytes_shared, stream>>>
-                (x, y, ids, dst, ncols_x/2, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
+            mul_mat_f<T, rows_per_block, cols_per_block, 2><<<block_nums, block_dims, nbytes_shared, stream>>>
+                (x, y, ids, dst, ncols_x, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
                  channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
                  sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
         } break;
         case 3: {
-            mul_mat_f<T, type_acc, rows_per_block, cols_per_block, 3><<<block_nums, block_dims, nbytes_shared, stream>>>
-                (x, y, ids, dst, ncols_x/2, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
+            mul_mat_f<T, rows_per_block, cols_per_block, 3><<<block_nums, block_dims, nbytes_shared, stream>>>
+                (x, y, ids, dst, ncols_x, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
                  channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
                  sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
         } break;
         case 4: {
-            mul_mat_f<T, type_acc, rows_per_block, cols_per_block, 4><<<block_nums, block_dims, nbytes_shared, stream>>>
-                (x, y, ids, dst, ncols_x/2, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
+            mul_mat_f<T, rows_per_block, cols_per_block, 4><<<block_nums, block_dims, nbytes_shared, stream>>>
+                (x, y, ids, dst, ncols_x, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
                  channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
                  sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
         } break;
         case 5: {
-            mul_mat_f<T, type_acc, rows_per_block, cols_per_block, 5><<<block_nums, block_dims, nbytes_shared, stream>>>
-                (x, y, ids, dst, ncols_x/2, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
+            mul_mat_f<T, rows_per_block, cols_per_block, 5><<<block_nums, block_dims, nbytes_shared, stream>>>
+                (x, y, ids, dst, ncols_x, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
                  channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
                  sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
         } break;
         case 6: {
-            mul_mat_f<T, type_acc, rows_per_block, cols_per_block, 6><<<block_nums, block_dims, nbytes_shared, stream>>>
-                (x, y, ids, dst, ncols_x/2, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
+            mul_mat_f<T, rows_per_block, cols_per_block, 6><<<block_nums, block_dims, nbytes_shared, stream>>>
+                (x, y, ids, dst, ncols_x, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
                  channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
                  sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
         } break;
         case 7: {
-            mul_mat_f<T, type_acc, rows_per_block, cols_per_block, 7><<<block_nums, block_dims, nbytes_shared, stream>>>
-                (x, y, ids, dst, ncols_x/2, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
+            mul_mat_f<T, rows_per_block, cols_per_block, 7><<<block_nums, block_dims, nbytes_shared, stream>>>
+                (x, y, ids, dst, ncols_x, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
                  channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
                  sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
         } break;
         case 8: {
-            mul_mat_f<T, type_acc, rows_per_block, cols_per_block, 8><<<block_nums, block_dims, nbytes_shared, stream>>>
-                (x, y, ids, dst, ncols_x/2, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
+            mul_mat_f<T, rows_per_block, cols_per_block, 8><<<block_nums, block_dims, nbytes_shared, stream>>>
+                (x, y, ids, dst, ncols_x, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
                  channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
                  sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
         } break;
@@ -214,7 +217,7 @@ static void mul_mat_mma_cuda(
     }
 }
 
-template <typename T, typename type_acc>
+template <typename T>
 static void mul_mat_f_switch_cols_per_block(
         const T * x, const float * y, const int32_t * ids, float * dst,
         const int64_t ncols_x, const int64_t nrows_x, const int64_t ncols_dst,
@@ -224,13 +227,13 @@ static void mul_mat_f_switch_cols_per_block(
         const int64_t nsamples_dst, const int64_t stride_sample_x, const int64_t stride_sample_y, const int64_t stride_sample_dst,
         cudaStream_t stream) {
     if (ncols_dst <= 8) {
-        mul_mat_mma_cuda<half, float,  8>(x, y, ids, dst, ncols_x, nrows_x, stride_row, stride_col_y, stride_col_dst,
+        mul_mat_mma_cuda<T, 8>(x, y, ids, dst, ncols_x, nrows_x, stride_row, stride_col_y, stride_col_dst,
             nchannels_x, nchannels_y,  nchannels_dst, stride_channel_x, stride_channel_y, stride_channel_dst,
             nsamples_x,                nsamples_dst,  stride_sample_x,  stride_sample_y,  stride_sample_dst,  stream);
         return;
     }
     GGML_ASSERT(ncols_dst <= 16);
-    mul_mat_mma_cuda<half, float, 16>(x, y, ids, dst, ncols_x, nrows_x, stride_row, stride_col_y, stride_col_dst,
+    mul_mat_mma_cuda<T, 16>(x, y, ids, dst, ncols_x, nrows_x, stride_row, stride_col_y, stride_col_dst,
         nchannels_x, nchannels_y,  nchannels_dst, stride_channel_x, stride_channel_y, stride_channel_dst,
         nsamples_x,                nsamples_dst,  stride_sample_x,  stride_sample_y,  stride_sample_dst,  stream);
     return;
@@ -282,10 +285,18 @@ void ggml_cuda_mul_mat_mma(ggml_backend_cuda_context & ctx, const ggml_tensor * 
 
     switch (src0->type) {
         case GGML_TYPE_F16: {
-            const half * src0_d = (const half *) src0->data;
-            mul_mat_f_switch_cols_per_block<half, float>(src0_d, src1_d, ids_d, dst_d, ne00, ne01, ncols_dst, s01, s11, s1,
-                ne02, nchannels_y, nchannels_dst, s02, stride_channel_y, stride_channel_dst,
-                ne03,              ne3,           s03, s13,              s3,                 ctx.stream());
+            const half2 * src0_d = (const half2 *) src0->data;
+            constexpr int vals_per_T = 2;
+            mul_mat_f_switch_cols_per_block(src0_d, src1_d, ids_d, dst_d, ne00/vals_per_T, ne01, ncols_dst, s01/vals_per_T, s11, s1,
+                ne02, nchannels_y, nchannels_dst, s02/vals_per_T, stride_channel_y, stride_channel_dst,
+                ne03,              ne3,           s03/vals_per_T, s13,              s3,                 ctx.stream());
+        } break;
+        case GGML_TYPE_BF16: {
+            const nv_bfloat162 * src0_d = (const nv_bfloat162 *) src0->data;
+            constexpr int vals_per_T = 2;
+            mul_mat_f_switch_cols_per_block(src0_d, src1_d, ids_d, dst_d, ne00/vals_per_T, ne01, ncols_dst, s01/vals_per_T, s11, s1,
+                ne02, nchannels_y, nchannels_dst, s02/vals_per_T, stride_channel_y, stride_channel_dst,
+                ne03,              ne3,           s03/vals_per_T, s13,              s3,                 ctx.stream());
         } break;
         default:
             GGML_ABORT("unsupported type: %s", ggml_type_name(src0->type));
