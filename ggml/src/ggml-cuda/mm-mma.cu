@@ -155,7 +155,7 @@ static void mul_mat_mma_cuda(
 
     constexpr int rows_per_block = 32;
     const int nbytes_shared_iter = nwarps_best * tile_A::I * (warp_size + 4) * 4;
-    const int nbytes_shared_combine = tile_C::I * (nwarps_best*rows_per_block + 4) * 4;
+    const int nbytes_shared_combine = cols_per_block * (nwarps_best*rows_per_block + 4) * 4;
     const int nbytes_shared = std::max(nbytes_shared_iter, nbytes_shared_combine);
     const dim3 block_nums(nrows_x/rows_per_block, nchannels_dst, nsamples_dst);
     const dim3 block_dims(warp_size, nwarps_best, 1);
