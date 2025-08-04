@@ -9,7 +9,7 @@ template <typename T, int rows_per_block, int cols_per_block, int nwarps>
 __launch_bounds__(ggml_cuda_get_physical_warp_size()*nwarps, 1)
 static __global__ void mul_mat_f(
         const T * __restrict__ x, const float * __restrict__ y, const int32_t * __restrict__ ids, float * __restrict__ dst,
-        const int ncols2, const int nchannels_y, const int stride_row, const int stride_col_y2, const int stride_col_dst,
+        const int ncols, const int nchannels_y, const int stride_row, const int stride_col_y, const int stride_col_dst,
         const int channel_ratio, const int stride_channel_x, const int stride_channel_y, const int stride_channel_dst,
         const int sample_ratio, const int stride_sample_x, const int stride_sample_y, const int stride_sample_dst) {
     typedef tile<16, 8, T>     tile_A;
@@ -39,43 +39,48 @@ static __global__ void mul_mat_f(
 
     tile_C C[ntA][ntB];
 
-    if constexpr (std::is_same_v<T, half2> || std::is_same_v<T, nv_bfloat162>) {
-        T * tile_xy = (T *) data_mmv + threadIdx.y*(tile_A::I * tile_k_padded);
+    T * tile_xy = (T *) data_mmv + threadIdx.y*(tile_A::I * tile_k_padded);
 
-        for (int col2 = threadIdx.y*warp_size + threadIdx.x; col2 < ncols2; col2 += nwarps*warp_size) {
-            tile_A A[ntA][warp_size / tile_A::J];
+    for (int col = threadIdx.y*warp_size + threadIdx.x; col < ncols; col += nwarps*warp_size) {
+        tile_A A[ntA][warp_size / tile_A::J];
 #pragma unroll
-            for (int itA = 0; itA < ntA; ++itA) {
+        for (int itA = 0; itA < ntA; ++itA) {
 #pragma unroll
-                for (int i = 0; i < tile_A::I; ++i) {
-                    tile_xy[i*tile_k_padded + threadIdx.x] = x[(itA*tile_A::I + i)*stride_row  + col2];
-                }
-#pragma unroll
-                for (int k0 = 0; k0 < warp_size; k0 += tile_A::J) {
-                    load_ldmatrix(A[itA][k0/tile_A::J], tile_xy + k0, tile_k_padded);
-                }
+            for (int i = 0; i < tile_A::I; ++i) {
+                tile_xy[i*tile_k_padded + threadIdx.x] = x[(itA*tile_A::I + i)*stride_row  + col];
             }
+#pragma unroll
+            for (int k0 = 0; k0 < warp_size; k0 += tile_A::J) {
+                load_ldmatrix(A[itA][k0/tile_A::J], tile_xy + k0, tile_k_padded);
+            }
+        }
 
 #pragma unroll
-            for (int itB = 0; itB < ntB; ++itB) {
+        for (int itB = 0; itB < ntB; ++itB) {
+            if constexpr (std::is_same_v<T, float>) {
 #pragma unroll
                 for (int j = 0; j < tile_B::I; ++j) {
-                    const float2 tmp = y2[(itB*tile_B::I + j)*stride_col_y2 + col2];
+                    tile_xy[j*tile_k_padded + threadIdx.x] = y[(itB*tile_B::I + j)*stride_col_y + col];
+                }
+            } else if constexpr (std::is_same_v<T, half2> || std::is_same_v<T, nv_bfloat162>) {
+#pragma unroll
+                for (int j = 0; j < tile_B::I; ++j) {
+                    const float2 tmp = y2[(itB*tile_B::I + j)*stride_col_y + col];
                     tile_xy[j*tile_k_padded + threadIdx.x] = {tmp.x, tmp.y};
                 }
+            } else {
+                static_assert(std::is_same_v<T, void>, "unsupported type");
+            }
 #pragma unroll
-                for (int k0 = 0; k0 < warp_size; k0 += tile_B::J) {
-                    tile_B B;
-                    load_ldmatrix(B, tile_xy + k0, tile_k_padded);
+            for (int k0 = 0; k0 < warp_size; k0 += tile_B::J) {
+                tile_B B;
+                load_ldmatrix(B, tile_xy + k0, tile_k_padded);
 #pragma unroll
-                    for (int itA = 0; itA < ntA; ++itA) {
-                        mma(C[itA][itB], A[itA][k0/tile_B::J], B);
-                    }
+                for (int itA = 0; itA < ntA; ++itA) {
+                    mma(C[itA][itB], A[itA][k0/tile_B::J], B);
                 }
             }
         }
-    } else {
-        static_assert(std::is_same_v<T, void>, "unsupported type");
     }
 
     float * buf_iw = (float *) data_mmv;
@@ -165,49 +170,49 @@ static void mul_mat_mma_cuda(
     switch (nwarps_best) {
         case 1: {
             mul_mat_f<T, rows_per_block, cols_per_block, 1><<<block_nums, block_dims, nbytes_shared, stream>>>
-                (x, y, ids, dst, ncols_x, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
+                (x, y, ids, dst, ncols_x, nchannels_y, stride_row, stride_col_y, stride_col_dst,
                  channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
                  sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
         } break;
         case 2: {
             mul_mat_f<T, rows_per_block, cols_per_block, 2><<<block_nums, block_dims, nbytes_shared, stream>>>
-                (x, y, ids, dst, ncols_x, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
+                (x, y, ids, dst, ncols_x, nchannels_y, stride_row, stride_col_y, stride_col_dst,
                  channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
                  sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
         } break;
         case 3: {
             mul_mat_f<T, rows_per_block, cols_per_block, 3><<<block_nums, block_dims, nbytes_shared, stream>>>
-                (x, y, ids, dst, ncols_x, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
+                (x, y, ids, dst, ncols_x, nchannels_y, stride_row, stride_col_y, stride_col_dst,
                  channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
                  sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
         } break;
         case 4: {
             mul_mat_f<T, rows_per_block, cols_per_block, 4><<<block_nums, block_dims, nbytes_shared, stream>>>
-                (x, y, ids, dst, ncols_x, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
+                (x, y, ids, dst, ncols_x, nchannels_y, stride_row, stride_col_y, stride_col_dst,
                  channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
                  sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
         } break;
         case 5: {
             mul_mat_f<T, rows_per_block, cols_per_block, 5><<<block_nums, block_dims, nbytes_shared, stream>>>
-                (x, y, ids, dst, ncols_x, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
+                (x, y, ids, dst, ncols_x, nchannels_y, stride_row, stride_col_y, stride_col_dst,
                  channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
                  sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
         } break;
         case 6: {
             mul_mat_f<T, rows_per_block, cols_per_block, 6><<<block_nums, block_dims, nbytes_shared, stream>>>
-                (x, y, ids, dst, ncols_x, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
+                (x, y, ids, dst, ncols_x, nchannels_y, stride_row, stride_col_y, stride_col_dst,
                  channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
                  sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
         } break;
         case 7: {
             mul_mat_f<T, rows_per_block, cols_per_block, 7><<<block_nums, block_dims, nbytes_shared, stream>>>
-                (x, y, ids, dst, ncols_x, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
+                (x, y, ids, dst, ncols_x, nchannels_y, stride_row, stride_col_y, stride_col_dst,
                  channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
                  sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
         } break;
         case 8: {
             mul_mat_f<T, rows_per_block, cols_per_block, 8><<<block_nums, block_dims, nbytes_shared, stream>>>
-                (x, y, ids, dst, ncols_x, nchannels_y, stride_row, stride_col_y/2, stride_col_dst,
+                (x, y, ids, dst, ncols_x, nchannels_y, stride_row, stride_col_y, stride_col_dst,
                  channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
                  sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
         } break;
@@ -284,17 +289,27 @@ void ggml_cuda_mul_mat_mma(ggml_backend_cuda_context & ctx, const ggml_tensor * 
     GGML_ASSERT(!ids || ncols_dst == 1);
 
     switch (src0->type) {
+        case GGML_TYPE_F32: {
+            const float * src0_d = (const float *) src0->data;
+            constexpr int vals_per_T = 1;
+            mul_mat_f_switch_cols_per_block(
+                src0_d, src1_d, ids_d, dst_d, ne00/vals_per_T, ne01, ncols_dst, s01/vals_per_T, s11/vals_per_T, s1,
+                ne02, nchannels_y, nchannels_dst, s02/vals_per_T, stride_channel_y, stride_channel_dst,
+                ne03,              ne3,           s03/vals_per_T, s13,              s3,                 ctx.stream());
+        } break;
         case GGML_TYPE_F16: {
             const half2 * src0_d = (const half2 *) src0->data;
             constexpr int vals_per_T = 2;
-            mul_mat_f_switch_cols_per_block(src0_d, src1_d, ids_d, dst_d, ne00/vals_per_T, ne01, ncols_dst, s01/vals_per_T, s11, s1,
+            mul_mat_f_switch_cols_per_block(
+                src0_d, src1_d, ids_d, dst_d, ne00/vals_per_T, ne01, ncols_dst, s01/vals_per_T, s11/vals_per_T, s1,
                 ne02, nchannels_y, nchannels_dst, s02/vals_per_T, stride_channel_y, stride_channel_dst,
                 ne03,              ne3,           s03/vals_per_T, s13,              s3,                 ctx.stream());
         } break;
         case GGML_TYPE_BF16: {
             const nv_bfloat162 * src0_d = (const nv_bfloat162 *) src0->data;
             constexpr int vals_per_T = 2;
-            mul_mat_f_switch_cols_per_block(src0_d, src1_d, ids_d, dst_d, ne00/vals_per_T, ne01, ncols_dst, s01/vals_per_T, s11, s1,
+            mul_mat_f_switch_cols_per_block(
+                src0_d, src1_d, ids_d, dst_d, ne00/vals_per_T, ne01, ncols_dst, s01/vals_per_T, s11/vals_per_T, s1,
                 ne02, nchannels_y, nchannels_dst, s02/vals_per_T, stride_channel_y, stride_channel_dst,
                 ne03,              ne3,           s03/vals_per_T, s13,              s3,                 ctx.stream());
         } break;
