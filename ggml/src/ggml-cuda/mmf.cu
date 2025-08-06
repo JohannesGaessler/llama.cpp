@@ -5,6 +5,8 @@
 
 using namespace ggml_cuda_mma;
 
+#define MMF_ROWS_PER_BLOCK 32
+
 template <typename T, int rows_per_block, int cols_per_block, int nwarps>
 __launch_bounds__(ggml_cuda_get_physical_warp_size()*nwarps, 1)
 static __global__ void mul_mat_f(
@@ -165,7 +167,7 @@ static void mul_mat_f_cuda(
         }
     }
 
-    constexpr int rows_per_block = 32;
+    constexpr int rows_per_block = MMF_ROWS_PER_BLOCK;
     const int nbytes_shared_iter = nwarps_best * tile_A::I * (warp_size + 4) * 4;
     const int nbytes_shared_combine = GGML_PAD(cols_per_block, tile_B::I) * (nwarps_best*rows_per_block + 4) * 4;
     const int nbytes_shared = std::max(nbytes_shared_iter, nbytes_shared_combine);
@@ -393,5 +395,27 @@ void ggml_cuda_mul_mat_f(ggml_backend_cuda_context & ctx, const ggml_tensor * sr
         } break;
         default:
             GGML_ABORT("unsupported type: %s", ggml_type_name(src0->type));
+    }
+}
+
+bool ggml_cuda_should_use_mmf(enum ggml_type type, int cc, int warp_size, const int64_t * src0_ne, int64_t ne11) {
+    if (src0_ne[0] % (warp_size * (4/ggml_type_size(type))) != 0) {
+        return false;
+    }
+    if (src0_ne[1] % MMF_ROWS_PER_BLOCK != 0) {
+        return false;
+    }
+    if (ne11 > 16) {
+        return false;
+    }
+    switch (type) {
+        case GGML_TYPE_F32:
+            return ampere_mma_available(cc);
+        case GGML_TYPE_F16:
+            return new_mma_available(cc);
+        case GGML_TYPE_BF16:
+            return ampere_mma_available(cc);
+        default:
+            return false;
     }
 }

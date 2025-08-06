@@ -417,7 +417,7 @@ namespace ggml_cuda_mma {
 
     static __device__ __forceinline__ void mma(
             tile<16, 8, float> & D, const tile<16, 8, float> & A, const tile<8, 8, float> & B) {
-#ifdef TF32_MMA_AVAILABLE
+#ifdef AMPERE_MMA_AVAILABLE
         const int * Axi = (const int *) A.x;
         const int * Bxi = (const int *) B.x;
         int       * Dxi = (int       *) D.x;
@@ -429,7 +429,7 @@ namespace ggml_cuda_mma {
         GGML_UNUSED(A);
         GGML_UNUSED(B);
         NO_DEVICE_CODE;
-#endif // TF32_MMA_AVAILABLE
+#endif // AMPERE_MMA_AVAILABLE
     }
 
     static __device__ __forceinline__ void mma(
@@ -461,7 +461,7 @@ namespace ggml_cuda_mma {
 
     static __device__ __forceinline__ void mma(
             tile<16, 8, float> & D, const tile<16, 8, nv_bfloat162> & A, const tile<8, 8, nv_bfloat162> & B) {
-#ifdef BF16_MMA_AVAILABLE
+#ifdef AMPERE_MMA_AVAILABLE
         const int * Axi = (const int *) A.x;
         const int * Bxi = (const int *) B.x;
         int       * Dxi = (int       *) D.x;
@@ -473,7 +473,7 @@ namespace ggml_cuda_mma {
         GGML_UNUSED(A);
         GGML_UNUSED(B);
         NO_DEVICE_CODE;
-#endif // BF16_MMA_AVAILABLE
+#endif // AMPERE_MMA_AVAILABLE
     }
 
     static __device__ __forceinline__ void mma(
