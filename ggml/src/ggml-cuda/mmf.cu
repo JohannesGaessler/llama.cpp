@@ -145,6 +145,8 @@ static void mul_mat_f_cuda(
     typedef tile< 8, 8, T>     tile_B;
     typedef tile<16, 8, float> tile_C;
 
+    GGML_ASSERT(!ids && "mul_mat_id not implemented");
+
     GGML_ASSERT(ncols_x      % 2 == 0);
     GGML_ASSERT(stride_row   % 2 == 0);
     GGML_ASSERT(stride_col_y % 2 == 0);
