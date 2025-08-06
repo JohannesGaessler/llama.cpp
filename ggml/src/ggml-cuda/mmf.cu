@@ -412,7 +412,7 @@ bool ggml_cuda_should_use_mmf(enum ggml_type type, int cc, int warp_size, const 
         case GGML_TYPE_F32:
             return ampere_mma_available(cc);
         case GGML_TYPE_F16:
-            return new_mma_available(cc);
+            return turing_mma_available(cc);
         case GGML_TYPE_BF16:
             return ampere_mma_available(cc);
         default:
