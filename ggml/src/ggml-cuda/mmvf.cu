@@ -441,7 +441,7 @@ void ggml_cuda_op_mul_mat_vec_f(
 }
 
 bool ggml_cuda_should_use_mmvf(enum ggml_type type, int cc, const int64_t * src0_ne, int64_t ne11) {
-    if (src0_ne[0] % 2 != 0) {
+    if (true || src0_ne[0] % 2 != 0) {
         return false;
     }
     switch (type) {
