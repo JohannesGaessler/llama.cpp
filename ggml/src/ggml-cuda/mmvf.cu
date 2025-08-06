@@ -441,14 +441,14 @@ void ggml_cuda_op_mul_mat_vec_f(
 }
 
 bool ggml_cuda_should_use_mmvf(enum ggml_type type, int cc, const int64_t * src0_ne, int64_t ne11) {
-    if (true || src0_ne[0] % 2 != 0) {
+    if (src0_ne[0] % 2 != 0) {
         return false;
     }
     switch (type) {
         case GGML_TYPE_F32:
             if (GGML_CUDA_CC_IS_NVIDIA(cc)) {
-                if (cc >= GGML_CUDA_CC_ADA_LOVELACE) {
-                    return ne11 <= 8;
+                if (ampere_mma_available(cc)) {
+                    return ne11 <= 3;
                 }
                 if (cc >= GGML_CUDA_CC_TURING) {
                     return ne11 <= 4;
@@ -464,6 +464,9 @@ bool ggml_cuda_should_use_mmvf(enum ggml_type type, int cc, const int64_t * src0
         case GGML_TYPE_F16:
             if (GGML_CUDA_CC_IS_NVIDIA(cc)) {
                 const bool src0_small = (src0_ne[1] <= 512 || src0_ne[2]*src0_ne[3] == 1);
+                if (ampere_mma_available(cc)) {
+                    return src0_small && ne11 == 1;
+                }
                 if (cc >= GGML_CUDA_CC_ADA_LOVELACE) {
                     return src0_small && ne11 <= 4;
                 }
@@ -484,6 +487,9 @@ bool ggml_cuda_should_use_mmvf(enum ggml_type type, int cc, const int64_t * src0
         case GGML_TYPE_BF16:
             if (GGML_CUDA_CC_IS_NVIDIA(cc)) {
                 const bool src0_small = (src0_ne[1] <= 512 || src0_ne[2]*src0_ne[3] == 1);
+                if (ampere_mma_available(cc)) {
+                    return src0_small && ne11 == 1;
+                }
                 if (cc >= GGML_CUDA_CC_ADA_LOVELACE) {
                     return src0_small && ne11 <= 4;
                 }
