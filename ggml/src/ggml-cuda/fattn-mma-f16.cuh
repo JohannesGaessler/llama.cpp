@@ -1371,6 +1371,8 @@ static __global__ void flash_attn_ext_f16(
     const int zt = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence) / (iter_k*iter_j); // head in units of ncols2
     const int jt = (kbc - iter_k*iter_j*(ne02/ncols2)*sequence - iter_k*iter_j*zt) / iter_k; // j index of current tile.
 
+    const int head0 = zt * ncols2;
+
     const float2 * Q_f2    = (const float2 *) (Q + nb03*sequence + nb02* head0);
     const half2  * K_h2    = (const half2  *) (K + nb13*sequence + nb12*(head0 / gqa_ratio));
     const half2  * mask_h2 = ncols2 == 1 && !mask ? nullptr :
