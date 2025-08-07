@@ -958,18 +958,14 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         }
     }
 
-    if ((np == 1 || threadIdx.y % np == 0) && sinks_f) {
-        float sinks_reg[cols_per_thread];
+    if (!is_fixup && (np == 1 || threadIdx.y % np == 0) && sinks_f) {
+        float KQ_max_scale[cols_per_thread];
 #pragma unroll
         for (int col = 0; col < cols_per_thread; ++col) {
             static_assert(ntiles == 1 || ntiles == 2, "ntiles > 2 not implemented");
             const int jc = ntiles == 1 ? 2*tile_C_VKQ::get_j(col/2) + col % 2 : tile_C_VKQ_16::get_i(col);
-            sinks_reg[col] = sinks_f[jc % ncols2];
-        }
+            const float sink = sinks_f[jc % ncols2];
 
-        float KQ_max_scale[cols_per_thread];
-#pragma unroll
-        for (int col = 0; col < cols_per_thread; ++col) {
             const float KQ_max_new = fmaxf(KQ_max[col], sinks_reg[col]);
             const float KQ_max_diff = KQ_max[col] - KQ_max_new;
             KQ_max_scale[col] = expf(KQ_max_diff);
