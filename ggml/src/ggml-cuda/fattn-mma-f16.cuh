@@ -971,7 +971,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 #pragma unroll
         for (int col = 0; col < cols_per_thread; ++col) {
             const float KQ_max_new = fmaxf(KQ_max[col], sinks_reg[col]);
-            const float KQ_max_diff = KQ_max[col] - KQ_max_new[col];
+            const float KQ_max_diff = KQ_max[col] - KQ_max_new;
             KQ_max_scale[col] = expf(KQ_max_diff);
             KQ_max[col] = KQ_max_new;
 
