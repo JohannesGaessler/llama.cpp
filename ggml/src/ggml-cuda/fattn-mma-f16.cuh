@@ -963,7 +963,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 #pragma unroll
         for (int col = 0; col < cols_per_thread; ++col) {
             static_assert(ntiles == 1 || ntiles == 2, "ntiles > 2 not implemented");
-            const int jc = ntiles == 1 ? tile_C_VKQ::get_j(col/2) + col % 2 : tile_C_VKQ_16::get_i(col);
+            const int jc = ntiles == 1 ? 2*tile_C_VKQ::get_j(col/2) + col % 2 : tile_C_VKQ_16::get_i(col);
             sinks_reg[col] = sinks_f[jc % ncols2];
         }
 
@@ -971,13 +971,13 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 #pragma unroll
         for (int col = 0; col < cols_per_thread; ++col) {
             const float KQ_max_new = fmaxf(KQ_max[col], sinks_reg[col]);
-            const float KQ_max_diff = KQ_max[col] - sinks_reg[col];
+            const float KQ_max_diff = KQ_max[col] - KQ_max_new[col];
             KQ_max_scale[col] = expf(KQ_max_diff);
-            const float KQ_max_add = expf(-KQ_max_diff);
             KQ_max[col] = KQ_max_new;
 
             *((uint32_t *) &KQ_max_scale[col]) *= KQ_max_diff >= SOFTMAX_FTZ_THRESHOLD;
 
+            const float KQ_max_add = expf(sinks_reg[col] - KQ_max_new);
             // Scale previous KQ_rowsum to account for a potential increase in KQ_max:
             KQ_rowsum[col] = KQ_max_scale[col]*KQ_rowsum[col] + KQ_max_add;
         }
