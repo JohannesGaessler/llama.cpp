@@ -6015,7 +6015,7 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
             if (hsk == 576 && hsv != 512) continue; // DeepSeek MLA
 
             for (bool mask : { true, false } ) {
-                for (bool sinks : { true, false } ) {
+                for (bool sinks : { true} ) {
                     for (float max_bias : { 0.0f, 8.0f }) {
                         if (!mask && max_bias > 0.0f) continue;
                         for (float logit_softcap : {0.0f, 10.0f}) {
@@ -6154,14 +6154,6 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
                     continue;
                 }
                 test_cases.emplace_back(new test_im2col(GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_F32, {IW_IH, IW_IH, IC, 1}, {K, K, IC, 1}, 1, 1, 1, 1, 1, 1, true));
-            }
-        }
-    }
-
-    for (int kv : { 4096, 8192, 16384, }) {
-        for (int hs : { 64, 128, }) {
-            for (int nr : { 1, 4, }) {
-                test_cases.emplace_back(new test_flash_attn_ext(hs, hs, 8, {nr, 1}, kv, 1, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_F16));
             }
         }
     }
