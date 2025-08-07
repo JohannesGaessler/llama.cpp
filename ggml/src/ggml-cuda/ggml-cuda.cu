@@ -3531,10 +3531,6 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                 const int gqa_ratio = op->src[0]->ne[2] / op->src[1]->ne[2];
                 return op->src[1]->ne[0] == 576 && op->src[2]->ne[0] == 512 && op->src[3] && gqa_ratio % 16 == 0;
             }
-            // TODO: more general-purpose attention sink support [TAG_ATTN_SINKS]
-            if (op->src[4] && op->src[0]->ne[0] != 64 && op->src[0]->ne[0] != 128) { // currently only sinks for head_size 64 and 128 are supported
-                return false;
-            }
             if (op->src[0]->ne[0] == 192) {
                 return false;
             }
