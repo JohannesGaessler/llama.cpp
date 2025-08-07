@@ -970,14 +970,16 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         float KQ_max_scale[cols_per_thread];
 #pragma unroll
         for (int col = 0; col < cols_per_thread; ++col) {
+            const float KQ_max_new = fmaxf(KQ_max[col], sinks_reg[col]);
             const float KQ_max_diff = KQ_max[col] - sinks_reg[col];
             KQ_max_scale[col] = expf(KQ_max_diff);
-            KQ_max[col] = KQ_max_new[col];
+            const float KQ_max_add = expf(-KQ_max_diff);
+            KQ_max[col] = KQ_max_new;
 
             *((uint32_t *) &KQ_max_scale[col]) *= KQ_max_diff >= SOFTMAX_FTZ_THRESHOLD;
 
             // Scale previous KQ_rowsum to account for a potential increase in KQ_max:
-            KQ_rowsum[col] = KQ_max_scale[col]*KQ_rowsum[col] + KQ_rowsum_add[col];
+            KQ_rowsum[col] = KQ_max_scale[col]*KQ_rowsum[col] + KQ_max_add;
         }
 
         if (ntiles == 1) {
