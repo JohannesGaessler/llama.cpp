@@ -1332,7 +1332,7 @@ static __global__ void flash_attn_ext_f16(
         float2       * dstk    = ((float2 *) dst) + (sequence*ne01*ne02 + head0) * (DV/2);
 
         const half2 * V_h2 = mla ? K_h2 + (DKQ/2 - DV/2) : (const half2 *) (V + nb23*sequence + nb22*(head0 / gqa_ratio));
-        const float * sinks_f = (const float *) sinks + head0;
+        const float * sinks_f = sinks ? (const float *) sinks + head0 : nullptr;
 
         const float slope = ncols2 == 1 ? get_alibi_slope(max_bias, head0, n_head_log2, m0, m1) : 1.0f;
 
@@ -1380,7 +1380,7 @@ static __global__ void flash_attn_ext_f16(
     float2       * dstk    = ((float2 *) dst) + (sequence*ne01*ne02 + head0) * (DV/2);
 
     const half2 * V_h2 = mla ? K_h2 + (DKQ/2 - DV/2) : (const half2 *) (V + nb23*sequence + nb22*(head0 / gqa_ratio));
-    const float * sinks_f = (const float *) sinks + head0;
+    const float * sinks_f = sinks ? (const float *) sinks + head0 : nullptr;
 
     const float slope = ncols2 == 1 ? get_alibi_slope(max_bias, head0, n_head_log2, m0, m1) : 1.0f;
 
