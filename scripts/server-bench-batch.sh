@@ -7,7 +7,8 @@ for n_parallel in 1; do
     # for n_prompt in 2048 24576 8192 16384 4096 6144 10240 12288 14336 18432 20480 22528; do
     # for n_prompt in 4096 6144 10240 12288 14336 18432 20480 22528; do
     # for n_prompt in 2048 24576 8192 16384; do
-    for n_prompt in 30720 24576 16384 8192 2048; do
+    # for n_prompt in 30720 24576 16384 8192 2048; do
+    for n_prompt in 28672 26624 22528 20480 18432 14336 12288 10240 6144 4096; do
         # for n_predict in 256 512 768 1024; do
         for n_predict in 2048; do
             echo n_parallel=$n_parallel n_prompt=$n_prompt n_predict=$n_predict
