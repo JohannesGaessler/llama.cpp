@@ -4,9 +4,10 @@ export name=llama.cpp
 
 for n_parallel in 1; do
     export LLAMA_ARG_N_PARALLEL=$n_parallel
-    for n_prompt in 2048 24576 8192 16384 4096 6144 10240 12288 14336 18432 20480 22528; do
+    # for n_prompt in 2048 24576 8192 16384 4096 6144 10240 12288 14336 18432 20480 22528; do
     # for n_prompt in 4096 6144 10240 12288 14336 18432 20480 22528; do
     # for n_prompt in 2048 24576 8192 16384; do
+    for n_prompt in 32768 40960 49152; do
         for n_predict in 256 512 768 1024; do
             echo n_parallel=$n_parallel n_prompt=$n_prompt n_predict=$n_predict
             python3 server-bench.py \
