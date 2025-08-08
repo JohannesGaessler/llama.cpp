@@ -164,13 +164,14 @@ def send_prompt(data: dict) -> tuple[float, list[float]]:
 def benchmark(
         path_server: str, path_log: Optional[str], path_db: Optional[str], name: Optional[str], prompt_source: str, n_prompts: int,
         n_predict: int, n_predict_min: int, seed_offset: int):
+    external_server: bool = path_server.startswith("http://") or path_server.startswith("https://")
     if os.environ.get("LLAMA_ARG_N_PARALLEL") is None:
         logger.info("LLAMA_ARG_N_PARALLEL not explicitly set, using 32")
         os.environ["LLAMA_ARG_N_PARALLEL"] = "32"
-    if os.environ.get("LLAMA_ARG_N_GPU_LAYERS") is None:
+    if not external_server and os.environ.get("LLAMA_ARG_N_GPU_LAYERS") is None:
         logger.info("LLAMA_ARG_N_GPU_LAYERS not explicitly set, using 999")
         os.environ["LLAMA_ARG_N_GPU_LAYERS"] = "999"
-    if os.environ.get("LLAMA_ARG_FLASH_ATTN") is None:
+    if not external_server and os.environ.get("LLAMA_ARG_FLASH_ATTN") is None:
         logger.info("LLAMA_ARG_FLASH_ATTN not explicitly set, using 'true'")
         os.environ["LLAMA_ARG_FLASH_ATTN"] = "true"
 
@@ -191,7 +192,7 @@ def benchmark(
     else:
         n_predict_min = n_predict
 
-    if os.environ.get("LLAMA_ARG_CTX_SIZE") is None:
+    if not external_server and os.environ.get("LLAMA_ARG_CTX_SIZE") is None:
         context_per_slot: int = int(1.05 * (n_predict + (np.max(prompt_n) if synthetic_prompts else 2048)))
         context_total: int = context_per_slot * parallel
         os.environ["LLAMA_ARG_CTX_SIZE"] = str(context_total)
@@ -202,7 +203,7 @@ def benchmark(
     try:
         server = get_server(path_server, path_log)
         server_address: str = server["address"]
-        external_server: bool = server["process"] is None
+        assert external_server == (server["process"] is None)
 
         adapter = requests.adapters.HTTPAdapter(pool_connections=parallel, pool_maxsize=parallel)  # type: ignore
         session = requests.Session()
@@ -261,10 +262,6 @@ def benchmark(
     logger.info(f"Average generation depth:          {depth_sum / token_t.shape[0]:.2f} tokens")
     logger.info(f"Average total generation speed:    {token_t.shape[0] / token_t_last:.2f} tokens/s")
     logger.info(f"Average generation speed per slot: {token_t.shape[0] / (parallel * token_t_last):.2f} tokens/s / slot")
-    logger.info("")
-    logger.info(
-        "The above numbers are the speeds as observed by the Python script and may differ from the performance reported by the server, "
-        "particularly when the server is fast vs. the network or Python script (e.g. when serving a very small model).")
 
     if path_db is not None:
         con = sqlite3.connect(path_db)
@@ -301,7 +298,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Tool for benchmarking the throughput of the llama.cpp HTTP server. "
         "Results are printed to console and visualized as plots (saved to current working directory). "
-        "To pass arguments such as the model path to the server, set the corresponding environment variables (see llama-server --help).")
+        "To pass arguments such as the model path to the server, set the corresponding environment variables (see llama-server --help). "
+        "The reported numbers are the speeds as observed by the Python script and may differ from the performance reported by the server, "
+        "particularly when the server is fast vs. the network or Python script (e.g. when serving a very small model).")
     parser.add_argument("--path_server", type=str, default="llama-server", help="Path to the llama.cpp server binary")
     parser.add_argument("--path_log", type=str, default="server-bench-{port}.log", help="Path to the model to use for the benchmark")
     parser.add_argument("--path_db", type=str, default=None, help="Path to an sqlite database to store the benchmark results in")

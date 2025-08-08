@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 
-export name=llama.cpp
+export name=vllm
 
 for n_parallel in 1; do
     export LLAMA_ARG_N_PARALLEL=$n_parallel
