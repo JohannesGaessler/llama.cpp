@@ -1545,10 +1545,16 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples({LLAMA_EXAMPLE_IMATRIX, LLAMA_EXAMPLE_PERPLEXITY, LLAMA_EXAMPLE_RETRIEVAL}));
     add_opt(common_arg(
-        {"-fa", "--flash-attn"},
-        string_format("enable Flash Attention (default: %s)", params.flash_attn ? "enabled" : "disabled"),
-        [](common_params & params) {
-            params.flash_attn = true;
+        {"-fa", "--flash-attn"}, "FA",
+        string_format("set Flash Attention use (0=disabled, 1=enabled, -1=auto, default: %d)", int(params.flash_attn_type)),
+        [](common_params & params, int value) {
+            if (value < 0) {
+                params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO;
+            } else if (value == 0) {
+                params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+            } else {
+                params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+            }
         }
     ).set_env("LLAMA_ARG_FLASH_ATTN"));
     add_opt(common_arg(
@@ -3459,8 +3465,8 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             params.model.hf_repo = "ggml-org/Qwen2.5-Coder-1.5B-Q8_0-GGUF";
             params.model.hf_file = "qwen2.5-coder-1.5b-q8_0.gguf";
             params.port = 8012;
-            params.n_gpu_layers = 99;
-            params.flash_attn = true;
+            params.n_gpu_layers = 999;
+            params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
             params.n_ubatch = 1024;
             params.n_batch = 1024;
             params.n_ctx = 0;
@@ -3475,8 +3481,8 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             params.model.hf_repo = "ggml-org/Qwen2.5-Coder-3B-Q8_0-GGUF";
             params.model.hf_file = "qwen2.5-coder-3b-q8_0.gguf";
             params.port = 8012;
-            params.n_gpu_layers = 99;
-            params.flash_attn = true;
+            params.n_gpu_layers = 999;
+            params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
             params.n_ubatch = 1024;
             params.n_batch = 1024;
             params.n_ctx = 0;
@@ -3491,8 +3497,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             params.model.hf_repo = "ggml-org/Qwen2.5-Coder-7B-Q8_0-GGUF";
             params.model.hf_file = "qwen2.5-coder-7b-q8_0.gguf";
             params.port = 8012;
-            params.n_gpu_layers = 99;
-            params.flash_attn = true;
+            params.n_gpu_layers = 999;
             params.n_ubatch = 1024;
             params.n_batch = 1024;
             params.n_ctx = 0;
@@ -3508,10 +3513,10 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             params.model.hf_file = "qwen2.5-coder-7b-q8_0.gguf";
             params.speculative.model.hf_repo = "ggml-org/Qwen2.5-Coder-0.5B-Q8_0-GGUF";
             params.speculative.model.hf_file = "qwen2.5-coder-0.5b-q8_0.gguf";
-            params.speculative.n_gpu_layers = 99;
+            params.speculative.n_gpu_layers = 999;
             params.port = 8012;
-            params.n_gpu_layers = 99;
-            params.flash_attn = true;
+            params.n_gpu_layers = 999;
+            params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
             params.n_ubatch = 1024;
             params.n_batch = 1024;
             params.n_ctx = 0;
@@ -3527,10 +3532,10 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             params.model.hf_file = "qwen2.5-coder-14b-q8_0.gguf";
             params.speculative.model.hf_repo = "ggml-org/Qwen2.5-Coder-0.5B-Q8_0-GGUF";
             params.speculative.model.hf_file = "qwen2.5-coder-0.5b-q8_0.gguf";
-            params.speculative.n_gpu_layers = 99;
+            params.speculative.n_gpu_layers = 999;
             params.port = 8012;
-            params.n_gpu_layers = 99;
-            params.flash_attn = true;
+            params.n_gpu_layers = 999;
+            params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
             params.n_ubatch = 1024;
             params.n_batch = 1024;
             params.n_ctx = 0;
