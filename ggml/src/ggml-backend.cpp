@@ -346,6 +346,7 @@ bool ggml_backend_offload_op(ggml_backend_t backend, const struct ggml_tensor * 
 }
 
 ggml_backend_dev_t ggml_backend_get_device(ggml_backend_t backend) {
+    GGML_ASSERT(backend);
     return backend->device;
 }
 
@@ -1634,13 +1635,7 @@ bool ggml_backend_sched_reserve(ggml_backend_sched_t sched, struct ggml_cgraph *
 
     ggml_backend_sched_split_graph(sched, measure_graph);
 
-    if (!ggml_gallocr_reserve_n(sched->galloc, &sched->graph, sched->node_backend_ids, sched->leaf_backend_ids)) {
-        return false;
-    }
-
-    ggml_backend_sched_reset(sched);
-
-    return true;
+    return ggml_gallocr_reserve_n(sched->galloc, &sched->graph, sched->node_backend_ids, sched->leaf_backend_ids);
 }
 
 bool ggml_backend_sched_alloc_graph(ggml_backend_sched_t sched, struct ggml_cgraph * graph) {
