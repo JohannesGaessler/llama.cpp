@@ -1202,11 +1202,11 @@ static void ggml_cuda_op_mul_mat_cublas(
 
     const int64_t row_diff = row_high - row_low;
 
-    int id = ggml_cuda_get_device();
+    const int id = ggml_cuda_get_device();
 
     // the main device has a larger memory buffer to hold the results from all GPUs
     // ldc == nrows of the matrix that cuBLAS writes into
-    int64_t ldc = id == ctx.device ? ne0 : row_diff;
+    const int64_t ldc = id == ctx.device ? ne0 : row_diff;
 
     const int cc = ggml_cuda_info().devices[id].cc;
 
@@ -1220,6 +1220,16 @@ static void ggml_cuda_op_mul_mat_cublas(
         ggml_is_contiguous(src0) && row_diff == src0->ne[1] && dst->op_params[0] == GGML_PREC_DEFAULT;
 
     if (supports_bf16 && use_bf16) {
+        ggml_cuda_pool_alloc<nv_bfloat16> src0_as_bf16(ctx.pool(id));
+        if (src0->type != GGML_TYPE_BF16) {
+            const to_bf16_cuda_t to_bf16_cuda = ggml_get_to_bf16_cuda(src0->type);
+            GGML_ASSERT(to_bf16_cuda != nullptr);
+            size_t ne = row_diff*ne00;
+            src0_as_bf16.alloc(ne);
+            to_bf16_cuda(src0_dd_i, src0_as_bf16.get(), ne, stream);
+        }
+        const nv_bfloat16 * src0_ptr = src0->type == GGML_TYPE_BF16 ? (const nv_bfloat16 *) src0_dd_i : src0_as_bf16.get();
+
         ggml_cuda_pool_alloc<nv_bfloat16> src1_as_bf16(ctx.pool(id));
         if (src1->type != GGML_TYPE_BF16) {
             const to_bf16_cuda_t to_bf16_cuda = ggml_get_to_bf16_cuda(src1->type);
@@ -1229,8 +1239,6 @@ static void ggml_cuda_op_mul_mat_cublas(
             to_bf16_cuda(src1_ddf_i, src1_as_bf16.get(), ne, stream);
         }
         const nv_bfloat16 * src1_ptr = src1->type == GGML_TYPE_BF16 ? (const nv_bfloat16 *) src1_ddf_i : src1_as_bf16.get();
-        const nv_bfloat16 * src0_ptr = (const nv_bfloat16 *)src0_dd_i;
-        ggml_cuda_pool_alloc<nv_bfloat16> dst_bf16(ctx.pool(id), row_diff*src1_ncols);
 
         const float alpha_f32 = 1.0f;
         const float beta_f32  = 0.0f;
