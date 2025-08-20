@@ -29,22 +29,22 @@ static __device__ __forceinline__ int get_int_b4(const void * x, const int & i32
 }
 
 static __device__ __forceinline__ int2 get_int_from_table_16(const int & q4, const int8_t * table) {
-    const uint32_t * table32 = (const uint32_t *) table;
+    const int * table32 = (const int *) table;
 
-    int2 ret;
+    const int indices_low_high = (0x32103210 | ((q4 & 0x88888888) >> 1));
+    int v0, v1;
     {
-        const int byte_indices = (q4 >> 0) & 0x07070707;
-        const int mask = __vcmpeq4(q4 & 0x08080808, 0);
-        ret.x  = __byte_perm(table32[0], table32[1], byte_indices) & mask;
-        ret.x |= __byte_perm(table32[2], table32[3], byte_indices) ^ mask;
+        const int low  = __byte_perm(table32[0], table32[1], q4 >>  0);
+        const int high = __byte_perm(table32[2], table32[3], q4 >>  0);
+        v0 = __byte_perm(low, high, indices_low_high >>  0);
     }
     {
-        const int byte_indices = (q4 >> 4) & 0x07070707;
-        const int mask = __vcmpeq4(q4 & 0x80808080, 0);
-        ret.y  = __byte_perm(table32[0], table32[1], byte_indices) & mask;
-        ret.y |= __byte_perm(table32[2], table32[3], byte_indices) ^ mask;
+        const int low  = __byte_perm(table32[0], table32[1], q4 >> 16);
+        const int high = __byte_perm(table32[2], table32[3], q4 >> 16);
+        v1 = __byte_perm(low, high, indices_low_high >> 16);
     }
-    return ret;
+
+    return make_int2(__byte_perm(v0, v1, 0x6420), __byte_perm(v0, v1, 0x7531));
 }
 
 // VDR = vec dot ratio, how many contiguous integers each thread processes when the vec dot kernel is called
