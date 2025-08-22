@@ -3,6 +3,56 @@
 
 #include <vector>
 
+static __global__ void mmq_ids_helper(
+        const int32_t * __restrict__ ids, int32_t * __restrict__ ids_src1, int32_t * __restrict__ ids_dst, int32_t * __restrict__ expert_bounds,
+        const int n_tokens, const int n_expert_used, const int nchannels_y, const int si1, const int sis1) {
+    const int expert = blockIdx.x;
+
+    extern __shared__ int data_mmq_ids_helper[];
+    int * ids_src1_shared = data_mmq_ids_helper;
+    int * ids_dst_shared  = ids_src1_shared + n_tokens;
+
+    int nex_prev   = 0;
+    int it_compact = 0;
+    for (int it = 0; it < n_tokens; ++it) {
+        int iex_used = -1;
+        for (int iex = threadIdx.x; iex < n_expert_used; iex += WARP_SIZE) {
+            const int expert_used = ids[it*si1 + iex];
+            nex_prev += expert_used < expert;
+            if (expert_used == expert) {
+                iex_used = iex;
+            }
+        }
+
+        if (iex_used != -1) {
+            ids_src1_shared[it_compact] = it*sis1          + iex_used % nchannels_y;
+            ids_dst_shared[it_compact]  = it*n_expert_used + iex_used;
+        }
+
+        if (warp_reduce_any(iex_used != -1)) {
+            it_compact++;
+        }
+    }
+    nex_prev = warp_reduce_sum(nex_prev);
+
+    for (int it = threadIdx.x; it < it_compact; it += WARP_SIZE) {
+        ids_src1[nex_prev + it] = ids_src1_shared[it];
+        ids_dst [nex_prev + it] = ids_dst_shared [it];
+    }
+
+    if (threadIdx.x != 0) {
+        return;
+    }
+
+    expert_bounds[expert] = nex_prev;
+
+    if (expert < gridDim.x - 1) {
+        return;
+    }
+
+    expert_bounds[gridDim.x] = nex_prev + it_compact;
+}
+
 static void ggml_cuda_mul_mat_q_switch_type(ggml_backend_cuda_context & ctx, const mmq_args & args, cudaStream_t stream) {
     switch (args.type_x) {
         case GGML_TYPE_Q4_0:
@@ -148,53 +198,24 @@ void ggml_cuda_mul_mat_q(
 
     const int64_t n_expert_used = ids->ne[0];
     const int64_t ne_get_rows = ne12 * n_expert_used;
+    GGML_ASSERT(ne1 == n_expert_used);
 
-    std::vector<char> ids_host(ggml_nbytes(ids));
-    std::vector<int32_t> ids_src1_host;
-    ids_src1_host.reserve(ne_get_rows);
-    std::vector<int32_t> ids_dst_host;
-    ids_dst_host.reserve(ne_get_rows);
-    std::vector<int32_t> tokens_per_expert_host(ne02);
-    std::vector<int32_t> expert_bounds_host(ne02 + 1);
-    ggml_cuda_pool_alloc<int32_t> ids_buf_dev(ctx.pool());
+    ggml_cuda_pool_alloc<int32_t> ids_src1(ctx.pool(), ne_get_rows);
+    ggml_cuda_pool_alloc<int32_t> ids_dst(ctx.pool(), ne_get_rows);
+    ggml_cuda_pool_alloc<int32_t> expert_bounds(ctx.pool(), ne02 + 1);
 
-    CUDA_CHECK(cudaMemcpyAsync(ids_host.data(), ids->data, ggml_nbytes(ids), cudaMemcpyDeviceToHost, stream));
-    CUDA_CHECK(cudaStreamSynchronize(stream));
+    {
+        GGML_ASSERT(ids->nb[0] == ggml_element_size(ids));
+        const int si1  = ids->nb[1] / ggml_element_size(ids);
+        const int sis1 = nb12 / nb11;
 
-    for (int64_t i02 = 0; i02 < ne02; ++i02) { // expert matrices
-        for (int64_t i12 = 0; i12 < ne12; ++i12) { // tokens
-            for (int64_t iex = 0; iex < n_expert_used; ++iex) {
-                const int32_t expert_to_use = *(const int32_t *)(ids_host.data() + i12*ids->nb[1] + iex*ids->nb[0]);
-                assert(expert_to_use >= 0 && expert_to_use < ne02);
-                if (expert_to_use == i02) {
-                    ids_src1_host.push_back(i12*(nb12/nb11) + iex % ne11);
-                    ids_dst_host.push_back(i12*ne1 + iex);
-                    tokens_per_expert_host[i02]++;
-                    break;
-                }
-            }
-        }
+        const dim3 num_blocks(ne02, 1, 1);
+        const dim3 block_size(WARP_SIZE, 1, 1);
+        const size_t nbytes_shared = 2*ne12*sizeof(int);
+        mmq_ids_helper<<<num_blocks, block_size, nbytes_shared, stream>>>
+            ((const int32_t *) ids->data, ids_src1.get(), ids_dst.get(), expert_bounds.get(), ne12, n_expert_used, ne11, si1, sis1);
+        CUDA_CHECK(cudaGetLastError());
     }
-
-    int32_t cumsum = 0;
-    for (int64_t i = 0; i < ne02; ++i) {
-        expert_bounds_host[i] = cumsum;
-        cumsum += tokens_per_expert_host[i];
-    }
-    expert_bounds_host[ne02] = cumsum;
-
-    std::vector<int32_t> ids_buf_host;
-    ids_buf_host.reserve(ids_src1_host.size() + ids_dst_host.size() + expert_bounds_host.size());
-    ids_buf_host.insert(ids_buf_host.end(), ids_src1_host.begin(), ids_src1_host.end());
-    ids_buf_host.insert(ids_buf_host.end(), ids_dst_host.begin(), ids_dst_host.end());
-    ids_buf_host.insert(ids_buf_host.end(), expert_bounds_host.begin(), expert_bounds_host.end());
-    ids_buf_dev.alloc(ids_buf_host.size() + get_mmq_x_max_host(cc)); // Expert bounds are padded on device.
-    CUDA_CHECK(cudaMemcpyAsync(ids_buf_dev.ptr, ids_buf_host.data(), ids_buf_host.size()*sizeof(int32_t), cudaMemcpyHostToDevice, stream));
-    CUDA_CHECK(cudaStreamSynchronize(stream));
-
-    const int32_t * ids_src1_dev      = ids_buf_dev.ptr;
-    const int32_t * ids_dst_dev       = ids_src1_dev + ids_src1_host.size();
-    const int32_t * expert_bounds_dev = ids_dst_dev + ids_dst_host.size();
 
     const size_t nbytes_src1_q8_1 = ne12*n_expert_used*ne10_padded * sizeof(block_q8_1)/QK8_1 +
         get_mmq_x_max_host(cc)*sizeof(block_q8_1_mmq);
@@ -208,7 +229,7 @@ void ggml_cuda_mul_mat_q(
         const int64_t s11 = src1->nb[1] / ts_src1;
         const int64_t s12 = src1->nb[2] / ts_src1;
         const int64_t s13 = src1->nb[2] / ts_src1;
-        quantize_mmq_q8_1_cuda(src1_d, ids_src1_dev, src1_q8_1.get(), src0->type,
+        quantize_mmq_q8_1_cuda(src1_d, ids_src1.get(), src1_q8_1.get(), src0->type,
             ne10, s11, s12, s13, ne10_padded, ne11_flat, ne12_flat, ne13_flat, stream);
         CUDA_CHECK(cudaGetLastError());
     }
@@ -218,7 +239,7 @@ void ggml_cuda_mul_mat_q(
 
     // Note that ne02 is used instead of ne12 because the number of y channels determines the z dimension of the CUDA grid.
     const mmq_args args = {
-        src0_d, src0->type, (const int *) src1_q8_1.ptr, ids_dst_dev, expert_bounds_dev, dst_d,
+        src0_d, src0->type, (const int *) src1_q8_1.get(), ids_dst.get(), expert_bounds.get(), dst_d,
         ne00, ne01, ne_get_rows, s01, ne_get_rows, s1,
         ne02, ne02, s02, s12, s2,
         ne03, ne13, s03, s13, s3,
