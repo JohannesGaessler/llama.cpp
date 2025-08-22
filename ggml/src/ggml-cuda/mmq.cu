@@ -3,9 +3,11 @@
 
 #include <vector>
 
+template <int n_expert_used_template>
 static __global__ void mmq_ids_helper(
         const int32_t * __restrict__ ids, int32_t * __restrict__ ids_src1, int32_t * __restrict__ ids_dst, int32_t * __restrict__ expert_bounds,
-        const int n_tokens, const int n_expert_used, const int nchannels_y, const int si1, const int sis1) {
+        const int n_tokens, const int n_expert_used_var, const int nchannels_y, const int si1, const int sis1) {
+    const int n_expert_used = n_expert_used_template == 0 ? n_expert_used_var : n_expert_used_template;
     const int expert = blockIdx.x;
 
     extern __shared__ int data_mmq_ids_helper[];
@@ -14,23 +16,57 @@ static __global__ void mmq_ids_helper(
 
     int nex_prev   = 0;
     int it_compact = 0;
-    for (int it = 0; it < n_tokens; ++it) {
-        int iex_used = -1;
-        for (int iex = threadIdx.x; iex < n_expert_used; iex += WARP_SIZE) {
-            const int expert_used = ids[it*si1 + iex];
-            nex_prev += expert_used < expert;
-            if (expert_used == expert) {
-                iex_used = iex;
+    if constexpr (n_expert_used_template == 0) {
+        for (int it = 0; it < n_tokens; ++it) {
+            int iex_used = -1;
+            for (int iex = threadIdx.x; iex < n_expert_used; iex += WARP_SIZE) {
+                const int expert_used = ids[it*si1 + iex];
+                nex_prev += expert_used < expert;
+                if (expert_used == expert) {
+                    iex_used = iex;
+                }
+            }
+
+            if (iex_used != -1) {
+                ids_src1_shared[it_compact] = it*sis1          + iex_used % nchannels_y;
+                ids_dst_shared[it_compact]  = it*n_expert_used + iex_used;
+            }
+
+            if (warp_reduce_any(iex_used != -1)) {
+                it_compact++;
             }
         }
+    } else {
+        static_assert(WARP_SIZE % n_expert_used == 0, "bad n_expert_used");
+        for (int it0 = 0; it0 < n_tokens; it0 += WARP_SIZE/n_expert_used) {
+            const int it = it0 + threadIdx.x / n_expert_used;
 
-        if (iex_used != -1) {
-            ids_src1_shared[it_compact] = it*sis1          + iex_used % nchannels_y;
-            ids_dst_shared[it_compact]  = it*n_expert_used + iex_used;
-        }
+            const int iex = threadIdx.x % n_expert_used;
+            const int expert_used = it < n_tokens ? ids[it*si1 + iex] : INT_MAX;
+            const int iex_used = expert_used == expert ? iex : -1;
+            nex_prev += expert_used < expert;
 
-        if (warp_reduce_any(iex_used != -1)) {
-            it_compact++;
+            const int it_compact_add_self = warp_reduce_any<n_expert_used>(iex_used != -1) ? 1 : 0;
+            int it_compact_add_lower = 0;
+#pragma unroll
+            for (int offset = n_expert_used; offset < WARP_SIZE; offset += n_expert_used) {
+                const int tmp = __shfl_up_sync(0xFFFFFFFF, it_compact_add_self, offset, WARP_SIZE);
+                if (threadIdx.x >= offset) {
+                    it_compact_add_lower += tmp;
+                }
+            }
+
+            if (iex_used != -1) {
+                ids_src1_shared[it_compact + it_compact_add_lower] = it*sis1          + iex_used % nchannels_y;
+                ids_dst_shared[it_compact  + it_compact_add_lower] = it*n_expert_used + iex_used;
+            }
+
+            int it_compact_add = it_compact_add_self;
+#pragma unroll
+            for (int offset = n_expert_used; offset < WARP_SIZE; offset *= 2) {
+                it_compact_add += __shfl_xor_sync(0xFFFFFFFF, it_compact_add, offset, WARP_SIZE);
+            }
+            it_compact += it_compact_add;
         }
     }
     nex_prev = warp_reduce_sum(nex_prev);
@@ -212,9 +248,18 @@ void ggml_cuda_mul_mat_q(
         const dim3 num_blocks(ne02, 1, 1);
         const dim3 block_size(WARP_SIZE, 1, 1);
         const size_t nbytes_shared = 2*ne12*sizeof(int);
-        mmq_ids_helper<<<num_blocks, block_size, nbytes_shared, stream>>>
-            ((const int32_t *) ids->data, ids_src1.get(), ids_dst.get(), expert_bounds.get(), ne12, n_expert_used, ne11, si1, sis1);
-        CUDA_CHECK(cudaGetLastError());
+        switch (n_expert_used) {
+            case 4:
+                mmq_ids_helper<4><<<num_blocks, block_size, nbytes_shared, stream>>>
+                    ((const int32_t *) ids->data, ids_src1.get(), ids_dst.get(), expert_bounds.get(),
+                    ne12, n_expert_used, ne11, si1, sis1);
+                break;
+            default:
+                mmq_ids_helper<0><<<num_blocks, block_size, nbytes_shared, stream>>>
+                    ((const int32_t *) ids->data, ids_src1.get(), ids_dst.get(), expert_bounds.get(),
+                    ne12, n_expert_used, ne11, si1, sis1);
+                break;
+        }
     }
 
     const size_t nbytes_src1_q8_1 = ne12*n_expert_used*ne10_padded * sizeof(block_q8_1)/QK8_1 +
