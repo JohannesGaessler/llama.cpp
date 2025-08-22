@@ -61,12 +61,7 @@ static __global__ void mmq_ids_helper(
                 ids_dst_shared[it_compact  + it_compact_add_lower] = it*n_expert_used + iex_used;
             }
 
-            int it_compact_add = it_compact_add_self;
-#pragma unroll
-            for (int offset = n_expert_used; offset < WARP_SIZE; offset *= 2) {
-                it_compact_add += __shfl_xor_sync(0xFFFFFFFF, it_compact_add, offset, WARP_SIZE);
-            }
-            it_compact += it_compact_add;
+            it_compact += __shfl_sync(0xFFFFFFFF, it_compact_add_lower + it_compact_add_self, WARP_SIZE - 1, WARP_SIZE);
         }
     }
     nex_prev = warp_reduce_sum(nex_prev);
