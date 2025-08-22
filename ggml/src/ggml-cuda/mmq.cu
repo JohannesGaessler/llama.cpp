@@ -246,18 +246,33 @@ void ggml_cuda_mul_mat_q(
         const dim3 block_size(WARP_SIZE, 1, 1);
         const size_t nbytes_shared = 2*ne12*sizeof(int);
         switch (n_expert_used) {
-            case 4:
-                mmq_ids_helper<4><<<num_blocks, block_size, nbytes_shared, stream>>>
+            case  2:
+                mmq_ids_helper< 2><<<num_blocks, block_size, nbytes_shared, stream>>>
                     ((const int32_t *) ids->data, ids_src1.get(), ids_dst.get(), expert_bounds.get(),
                     ne12, n_expert_used, ne11, si1, sis1);
                 break;
-            case 6:
-                mmq_ids_helper<6><<<num_blocks, block_size, nbytes_shared, stream>>>
+            case  4:
+                mmq_ids_helper< 4><<<num_blocks, block_size, nbytes_shared, stream>>>
                     ((const int32_t *) ids->data, ids_src1.get(), ids_dst.get(), expert_bounds.get(),
                     ne12, n_expert_used, ne11, si1, sis1);
                 break;
-            case 8:
-                mmq_ids_helper<8><<<num_blocks, block_size, nbytes_shared, stream>>>
+            case  6:
+                mmq_ids_helper< 6><<<num_blocks, block_size, nbytes_shared, stream>>>
+                    ((const int32_t *) ids->data, ids_src1.get(), ids_dst.get(), expert_bounds.get(),
+                    ne12, n_expert_used, ne11, si1, sis1);
+                break;
+            case  8:
+                mmq_ids_helper< 8><<<num_blocks, block_size, nbytes_shared, stream>>>
+                    ((const int32_t *) ids->data, ids_src1.get(), ids_dst.get(), expert_bounds.get(),
+                    ne12, n_expert_used, ne11, si1, sis1);
+                break;
+            case 16:
+                mmq_ids_helper<16><<<num_blocks, block_size, nbytes_shared, stream>>>
+                    ((const int32_t *) ids->data, ids_src1.get(), ids_dst.get(), expert_bounds.get(),
+                    ne12, n_expert_used, ne11, si1, sis1);
+                break;
+            case 32:
+                mmq_ids_helper<32><<<num_blocks, block_size, nbytes_shared, stream>>>
                     ((const int32_t *) ids->data, ids_src1.get(), ids_dst.get(), expert_bounds.get(),
                     ne12, n_expert_used, ne11, si1, sis1);
                 break;
