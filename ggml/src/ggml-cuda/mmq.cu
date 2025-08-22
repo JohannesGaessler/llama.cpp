@@ -37,19 +37,21 @@ static __global__ void mmq_ids_helper(
             }
         }
     } else {
-        static_assert(WARP_SIZE % n_expert_used == 0, "bad n_expert_used");
-        for (int it0 = 0; it0 < n_tokens; it0 += WARP_SIZE/n_expert_used) {
-            const int it = it0 + threadIdx.x / n_expert_used;
+        static_assert(n_expert_used == 6 || WARP_SIZE % n_expert_used == 0, "bad n_expert_used");
+        const int neu_padded = n_expert_used == 6 ? 8 : n_expert_used;
+        for (int it0 = 0; it0 < n_tokens; it0 += WARP_SIZE/neu_padded) {
+            const int it = it0 + threadIdx.x / neu_padded;
 
-            const int iex = threadIdx.x % n_expert_used;
-            const int expert_used = it < n_tokens ? ids[it*si1 + iex] : INT_MAX;
+            const int iex = threadIdx.x % neu_padded;
+            const int expert_used = (neu_padded == n_expert_used || iex < n_expert_used) && it < n_tokens ?
+                ids[it*si1 + iex] : INT_MAX;
             const int iex_used = expert_used == expert ? iex : -1;
             nex_prev += expert_used < expert;
 
-            const int it_compact_add_self = warp_reduce_any<n_expert_used>(iex_used != -1) ? 1 : 0;
+            const int it_compact_add_self = warp_reduce_any<neu_padded>(iex_used != -1) ? 1 : 0;
             int it_compact_add_lower = 0;
 #pragma unroll
-            for (int offset = n_expert_used; offset < WARP_SIZE; offset += n_expert_used) {
+            for (int offset = neu_padded; offset < WARP_SIZE; offset += neu_padded) {
                 const int tmp = __shfl_up_sync(0xFFFFFFFF, it_compact_add_self, offset, WARP_SIZE);
                 if (threadIdx.x >= offset) {
                     it_compact_add_lower += tmp;
@@ -246,6 +248,16 @@ void ggml_cuda_mul_mat_q(
         switch (n_expert_used) {
             case 4:
                 mmq_ids_helper<4><<<num_blocks, block_size, nbytes_shared, stream>>>
+                    ((const int32_t *) ids->data, ids_src1.get(), ids_dst.get(), expert_bounds.get(),
+                    ne12, n_expert_used, ne11, si1, sis1);
+                break;
+            case 6:
+                mmq_ids_helper<6><<<num_blocks, block_size, nbytes_shared, stream>>>
+                    ((const int32_t *) ids->data, ids_src1.get(), ids_dst.get(), expert_bounds.get(),
+                    ne12, n_expert_used, ne11, si1, sis1);
+                break;
+            case 8:
+                mmq_ids_helper<8><<<num_blocks, block_size, nbytes_shared, stream>>>
                     ((const int32_t *) ids->data, ids_src1.get(), ids_dst.get(), expert_bounds.get(),
                     ne12, n_expert_used, ne11, si1, sis1);
                 break;
