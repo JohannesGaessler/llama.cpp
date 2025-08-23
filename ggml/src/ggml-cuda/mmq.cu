@@ -4,6 +4,7 @@
 #include <vector>
 
 template <int n_expert_used_template>
+__launch_bounds__(WARP_SIZE, 1)
 static __global__ void mmq_ids_helper(
         const int32_t * __restrict__ ids, int32_t * __restrict__ ids_src1, int32_t * __restrict__ ids_dst, int32_t * __restrict__ expert_bounds,
         const int n_tokens, const int n_expert_used_var, const int nchannels_y, const int si1, const int sis1) {
