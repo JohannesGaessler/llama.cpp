@@ -49,21 +49,22 @@ static __global__ void mmq_ids_helper(
             nex_prev += expert_used < expert;
 
             const int it_compact_add_self = warp_reduce_any<neu_padded>(iex_used != -1) ? 1 : 0;
-            int it_compact_add_lower = 0;
+            int it_compact_add = it_compact_add_self;
 #pragma unroll
-            for (int offset = neu_padded; offset < WARP_SIZE; offset += neu_padded) {
-                const int tmp = __shfl_up_sync(0xFFFFFFFF, it_compact_add_self, offset, WARP_SIZE);
-                if (threadIdx.x >= offset) {
-                    it_compact_add_lower += tmp;
+            for (int offset = neu_padded; offset < WARP_SIZE; offset *= 2) {
+                const int src_lane = (threadIdx.x & ~(2*offset-1)) | (offset - 1);
+                const int tmp = __shfl_sync(0xFFFFFFFF, it_compact_add, src_lane, WARP_SIZE);
+                if (threadIdx.x & offset) {
+                    it_compact_add += tmp;
                 }
             }
 
             if (iex_used != -1) {
-                ids_src1_shared[it_compact + it_compact_add_lower] = it*sis1          + iex_used % nchannels_y;
-                ids_dst_shared[it_compact  + it_compact_add_lower] = it*n_expert_used + iex_used;
+                ids_src1_shared[it_compact + it_compact_add - it_compact_add_self] = it*sis1          + iex_used % nchannels_y;
+                ids_dst_shared[it_compact  + it_compact_add - it_compact_add_self] = it*n_expert_used + iex_used;
             }
 
-            it_compact += __shfl_sync(0xFFFFFFFF, it_compact_add_lower + it_compact_add_self, WARP_SIZE - 1, WARP_SIZE);
+            it_compact += __shfl_sync(0xFFFFFFFF, it_compact_add, WARP_SIZE - 1, WARP_SIZE);
         }
     }
     nex_prev = warp_reduce_sum(nex_prev);
