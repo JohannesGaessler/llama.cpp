@@ -1546,14 +1546,16 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
     ).set_examples({LLAMA_EXAMPLE_IMATRIX, LLAMA_EXAMPLE_PERPLEXITY, LLAMA_EXAMPLE_RETRIEVAL}));
     add_opt(common_arg(
         {"-fa", "--flash-attn"}, "FA",
-        string_format("set Flash Attention use (0=disabled, 1=enabled, -1=auto, default: %d)", int(params.flash_attn_type)),
-        [](common_params & params, int value) {
-            if (value < 0) {
-                params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO;
-            } else if (value == 0) {
-                params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
-            } else {
+        string_format("set Flash Attention use ('on', 'off', or 'auto', default: 'auto')"), // TODO default
+        [](common_params & params, const std::string & value) {
+            if (value == "on" || value == "enabled") {
                 params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+            } else if (value == "off" || value == "disabled") {
+                params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+            } else if (value == "auto") {
+                params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO;
+            } else {
+                throw std::runtime_error(string_format("error: unkown value for --flash-attn: '%s'\n", value.c_str()));
             }
         }
     ).set_env("LLAMA_ARG_FLASH_ATTN"));
