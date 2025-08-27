@@ -317,6 +317,7 @@ llama_context::llama_context(
                 for (int i = 1; i < ggml_graph_n_nodes(gf); i++) {
                     ggml_tensor * cur  = ggml_graph_node(gf, i);
                     ggml_tensor * prev = ggml_graph_node(gf, i - 1);
+                    fprintf(stderr, "%s: i=%d cur=%s\n", __func__, i, cur->name);
                     if (cur->op != GGML_OP_FLASH_ATTN_EXT) {
                         continue;
                     }
