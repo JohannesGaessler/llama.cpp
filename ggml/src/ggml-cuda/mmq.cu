@@ -21,12 +21,14 @@ struct mmq_ids_helper_store {
 };
 static_assert(sizeof(mmq_ids_helper_store) == 4, "unexpected size for mmq_ids_helper_store");
 
+#define MMQ_IDS_HELPER_MAX_THREADS 256
+
 // Helper function for mul_mat_id, converts ids to a more convenient format.
 // ids_src1 describes how to permute the flattened column indices of src1 in order to get a compact src1 tensor sorted by expert.
 // ids_dst describes the same mapping but for the dst tensor.
 // The upper and lower bounds for the ith expert in the compact src1 tensor are stored in expert_bounds[i:i+1].
 template <int n_expert_used_template>
-__launch_bounds__(ggml_cuda_get_physical_warp_size(), 1)
+__launch_bounds__(MMQ_IDS_HELPER_MAX_THREADS, 1)
 static __global__ void mmq_ids_helper(
         const int32_t * __restrict__ ids, int32_t * __restrict__ ids_src1, int32_t * __restrict__ ids_dst, int32_t * __restrict__ expert_bounds,
         const int n_tokens, const int n_expert_used_var, const int nchannels_y, const int si1, const int sis1) {
@@ -34,15 +36,21 @@ static __global__ void mmq_ids_helper(
     const int n_expert_used = n_expert_used_template == 0 ? n_expert_used_var : n_expert_used_template;
     const int expert = blockIdx.x;
 
+    int it_start = n_tokens *  threadIdx.y      / blockDim.y;
+    int it_stop  = n_tokens * (threadIdx.y + 1) / blockDim.y;
+
     extern __shared__ char data_mmq_ids_helper[];
-    mmq_ids_helper_store * store = (mmq_ids_helper_store *) data_mmq_ids_helper;
+    int                  * buf_iw = (int                  *) data_mmq_ids_helper;
+    mmq_ids_helper_store * store  = (mmq_ids_helper_store *) data_mmq_ids_helper;
 
     int nex_prev   = 0; // Number of columns for experts with a lower index.
     int it_compact = 0; // Running index for the compact slice of this expert.
 
     if constexpr (n_expert_used_template == 0) {
+        store += it_start;
+
         // Generic implementation:
-        for (int it = 0; it < n_tokens; ++it) {
+        for (int it = it_start; it < it_stop; ++it) {
             int iex_used = -1; // The index at which the expert is used, if any.
             for (int iex = threadIdx.x; iex < n_expert_used; iex += warp_size) {
                 const int expert_used = ids[it*si1 + iex];
@@ -64,7 +72,18 @@ static __global__ void mmq_ids_helper(
         // Implementation optimized for specific numbers of experts used:
         static_assert(n_expert_used == 6 || warp_size % n_expert_used == 0, "bad n_expert_used");
         const int neu_padded = n_expert_used == 6 ? 8 : n_expert_used; // Padded to next higher power of 2.
-        for (int it0 = 0; it0 < n_tokens; it0 += warp_size/neu_padded) {
+        const int tokens_per_iter = warp_size/neu_padded;
+
+        // Round down it_start and it_stop to multiples of tokens_per_iter.
+        // Do not round down last warp to handle edge cases for n_tokens.
+        it_start &= ~(tokens_per_iter - 1);
+        if (it_stop != n_tokens) {
+            it_stop &= ~(tokens_per_iter - 1);
+        }
+
+        store += it_start;
+
+        for (int it0 = it_start; it0 < it_stop; it0 += tokens_per_iter) {
             const int it = it0 + threadIdx.x / neu_padded;
 
             const int iex = threadIdx.x % neu_padded; // The index at which the expert is used, if any.
@@ -96,7 +115,35 @@ static __global__ void mmq_ids_helper(
     }
     nex_prev = warp_reduce_sum<warp_size>(nex_prev);
 
-    for (int itc = threadIdx.x; itc < it_compact; itc += warp_size) {
+    int itc = threadIdx.x;
+    if (threadIdx.y == 0) {
+        for (; itc < min(it_compact, warp_size); itc += warp_size) {
+            const mmq_ids_helper_store store_it = store[itc];
+            const int it       = store_it.it();
+            const int iex_used = store_it.iex_used();
+            ids_src1[nex_prev + itc] = it*sis1          + iex_used % nchannels_y;
+            ids_dst [nex_prev + itc] = it*n_expert_used + iex_used;
+        }
+
+        buf_iw[threadIdx.x] = 0;
+    }
+
+    __syncthreads();
+    if (threadIdx.x == 0) {
+        buf_iw[threadIdx.y]               = it_compact;
+        buf_iw[threadIdx.y + warp_size/2] = nex_prev;
+    }
+    __syncthreads();
+
+    nex_prev = 0;
+    for (int iw = 0; iw < blockDim.y; ++iw) {
+        nex_prev += buf_iw[iw + warp_size/2];
+    }
+    for (int iw = 0; iw < threadIdx.y; ++iw) {
+        nex_prev += buf_iw[iw];
+    }
+
+    for (; itc < it_compact; itc += warp_size) {
         const mmq_ids_helper_store store_it = store[itc];
         const int it       = store_it.it();
         const int iex_used = store_it.iex_used();
@@ -129,9 +176,19 @@ static void launch_mmq_ids_helper(
     const size_t smpbo = ggml_cuda_info().devices[id].smpbo;
     CUDA_SET_SHARED_MEMORY_LIMIT(mmq_ids_helper<n_expert_used_template>, smpbo);
 
+    int nthreads_best = warp_size;
+    int niter_best = (n_tokens + warp_size - 1) / warp_size;
+    for (int nthreads = 2*warp_size; nthreads <= MMQ_IDS_HELPER_MAX_THREADS; nthreads += warp_size) {
+        const int niter = (n_tokens + nthreads - 1) / nthreads;
+        if (niter < niter_best) {
+            nthreads_best = nthreads_best;
+            niter_best = niter;
+        }
+    }
+
     const dim3 num_blocks(n_experts, 1, 1);
-    const dim3 block_size(warp_size, 1, 1);
-    const size_t nbytes_shared = n_tokens*sizeof(mmq_ids_helper_store);
+    const dim3 block_size(nthreads_best, 1, 1);
+    const size_t nbytes_shared = std::max(n_tokens*sizeof(mmq_ids_helper_store), warp_size*sizeof(int));
     GGML_ASSERT(nbytes_shared <= smpbo);
     mmq_ids_helper<n_expert_used_template><<<num_blocks, block_size, nbytes_shared, stream>>>
         (ids, ids_src1, ids_dst, expert_bounds, n_tokens, n_expert_used_var, nchannels_y, si1, sis1);
