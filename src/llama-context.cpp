@@ -312,25 +312,24 @@ llama_context::llama_context(
             }
 
             if (params.flash_attn_type == LLAMA_FLASH_ATTN_TYPE_AUTO) {
-                bool fa_backend_mismatch = false;
-                GGML_ASSERT(ggml_graph_node(gf, 0)->op != GGML_OP_FLASH_ATTN_EXT);
-                for (int i = 1; i < ggml_graph_n_nodes(gf); i++) {
-                    ggml_tensor * cur  = ggml_graph_node(gf, i);
-                    ggml_tensor * prev = ggml_graph_node(gf, i - 1);
-                    fprintf(stderr, "%s: i=%d cur=%s\n", __func__, i, cur->name);
-                    if (cur->op != GGML_OP_FLASH_ATTN_EXT) {
+                bool fa_device_mismatch = false;
+                for (int i = 0; i < ggml_graph_n_nodes(gf); i++) {
+                    ggml_tensor * n = ggml_graph_node(gf, i);
+                    if (n->op != GGML_OP_FLASH_ATTN_EXT) {
                         continue;
                     }
-                    ggml_backend_t backend_fa = ggml_backend_sched_get_tensor_backend(sched.get(), cur);
-                    GGML_ASSERT(backend_fa);
-                    ggml_backend_t backend_kv = ggml_backend_sched_get_tensor_backend(sched.get(), prev);
-                    GGML_ASSERT(backend_kv);
-                    if (backend_fa != backend_kv) {
-                        fa_backend_mismatch = true;
+                    ggml_backend_dev_t device_fa = ggml_backend_get_device(
+                        ggml_backend_sched_get_tensor_backend(sched.get(), n));
+
+                    GGML_ASSERT(strncmp(n->name, "fattn-", 6) == 0);
+                    const int il = std::stoi(n->name + 6);
+                    ggml_backend_dev_t device_kv = model.dev_layer(il);
+                    if (device_fa != device_kv) {
+                        fa_device_mismatch = true;
                         break;
                     }
                 }
-                if (fa_backend_mismatch) {
+                if (fa_device_mismatch) {
                     cparams.flash_attn = false;
                     LLAMA_LOG_INFO("%s: Flash Attention was auto, set to disabled\n", __func__);
                     if (ggml_is_quantized(params.type_v)) {
