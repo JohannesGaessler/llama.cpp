@@ -21,7 +21,7 @@ struct mmq_ids_helper_store {
 };
 static_assert(sizeof(mmq_ids_helper_store) == 4, "unexpected size for mmq_ids_helper_store");
 
-#define MMQ_IDS_HELPER_MAX_THREADS 256
+#define MMQ_IDS_HELPER_MAX_THREADS 64
 
 // Helper function for mul_mat_id, converts ids to a more convenient format.
 // ids_src1 describes how to permute the flattened column indices of src1 in order to get a compact src1 tensor sorted by expert.
