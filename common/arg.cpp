@@ -3553,7 +3553,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             params.model.hf_file = "qwen3-coder-30b-a3b-instruct-q8_0.gguf";
             params.port = 8012;
             params.n_gpu_layers = 99;
-            params.flash_attn = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+            params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
             params.n_ubatch = 1024;
             params.n_batch = 1024;
             params.n_ctx = 0;

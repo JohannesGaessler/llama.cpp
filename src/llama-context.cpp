@@ -312,6 +312,8 @@ llama_context::llama_context(
             }
 
             if (params.flash_attn_type == LLAMA_FLASH_ATTN_TYPE_AUTO) {
+                ggml_backend_sched_alloc_graph(sched.get(), gf);
+
                 bool fa_device_mismatch = false;
                 for (int i = 0; i < ggml_graph_n_nodes(gf); i++) {
                     ggml_tensor * n = ggml_graph_node(gf, i);
