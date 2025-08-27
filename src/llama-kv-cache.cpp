@@ -2055,5 +2055,5 @@ void llama_kv_cache_context::set_input_pos_bucket(ggml_tensor * dst, const llama
 
 uint32_t llama_kv_cache::get_padding(const llama_cparams & cparams) {
     // the FA kernels require padding to avoid extra runtime boundary checks
-    return cparams.flash_attn_type != LLAMA_FLASH_ATTN_TYPE_DISABLED ? 256u : 32u;
+    return cparams.flash_attn ? 256u : 32u;
 }

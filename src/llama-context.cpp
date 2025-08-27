@@ -85,7 +85,7 @@ llama_context::llama_context(
         cparams.causal_attn = params.attention_type == LLAMA_ATTENTION_TYPE_CAUSAL;
     }
 
-    cparams.flash_attn_type = params.flash_attn_type;
+    cparams.flash_attn = params.flash_attn_type != LLAMA_FLASH_ATTN_TYPE_DISABLED;
 
     // with causal attention, the batch size is limited by the context size
     cparams.n_batch = cparams.causal_attn ? std::min(cparams.n_ctx, params.n_batch) : params.n_batch;
@@ -130,7 +130,7 @@ llama_context::llama_context(
     LLAMA_LOG_INFO("%s: n_batch       = %u\n",   __func__, cparams.n_batch);
     LLAMA_LOG_INFO("%s: n_ubatch      = %u\n",   __func__, cparams.n_ubatch);
     LLAMA_LOG_INFO("%s: causal_attn   = %d\n",   __func__, cparams.causal_attn);
-    LLAMA_LOG_INFO("%s: flash_attn    = %d\n",   __func__, int(cparams.flash_attn_type));
+    LLAMA_LOG_INFO("%s: flash_attn    = %s\n",   __func__, llama_flash_attn_type_name(params.flash_attn_type));
     LLAMA_LOG_INFO("%s: kv_unified    = %s\n",   __func__, cparams.kv_unified ? "true" : "false");
     LLAMA_LOG_INFO("%s: freq_base     = %.1f\n", __func__, cparams.rope_freq_base);
     LLAMA_LOG_INFO("%s: freq_scale    = %g\n",   __func__, cparams.rope_freq_scale);
@@ -311,7 +311,7 @@ llama_context::llama_context(
                 throw std::runtime_error("failed to allocate compute pp buffers");
             }
 
-            if (cparams.flash_attn_type == LLAMA_FLASH_ATTN_TYPE_AUTO) {
+            if (params.flash_attn_type == LLAMA_FLASH_ATTN_TYPE_AUTO) {
                 bool fa_backend_mismatch = false;
                 GGML_ASSERT(ggml_graph_node(gf, 0)->op != GGML_OP_FLASH_ATTN_EXT);
                 for (int i = 1; i < ggml_graph_n_nodes(gf); i++) {
@@ -330,7 +330,7 @@ llama_context::llama_context(
                     }
                 }
                 if (fa_backend_mismatch) {
-                    cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+                    cparams.flash_attn = false;
                     LLAMA_LOG_INFO("%s: Flash Attention was auto, set to disabled\n", __func__);
                     if (ggml_is_quantized(params.type_v)) {
                         throw std::runtime_error("quantized V cache was requested, but this requires Flash Attention");
@@ -340,7 +340,7 @@ llama_context::llama_context(
                         throw std::runtime_error("failed to allocate compute pp buffers");
                     }
                 } else {
-                    cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+                    cparams.flash_attn = true;
                     LLAMA_LOG_INFO("%s: Flash Attention was auto, set to enabled\n", __func__);
                 }
             }
