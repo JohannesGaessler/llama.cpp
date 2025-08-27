@@ -1546,7 +1546,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
     ).set_examples({LLAMA_EXAMPLE_IMATRIX, LLAMA_EXAMPLE_PERPLEXITY, LLAMA_EXAMPLE_RETRIEVAL}));
     add_opt(common_arg(
         {"-fa", "--flash-attn"}, "FA",
-        string_format("set Flash Attention use ('on', 'off', or 'auto', default: 'auto')"), // TODO default
+        string_format("set Flash Attention use ('on', 'off', or 'auto', default: '%s')", llama_flash_attn_type_name(params.flash_attn_type)),
         [](common_params & params, const std::string & value) {
             if (value == "on" || value == "enabled") {
                 params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
