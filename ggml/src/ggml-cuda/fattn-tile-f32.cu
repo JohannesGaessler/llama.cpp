@@ -351,7 +351,7 @@ static void launch_fattn_tile_f32_64_128(ggml_backend_cuda_context & ctx, ggml_t
         // } break;
         case 128: {
             constexpr int    D             = 128;
-            constexpr int    nwarps        = 4;
+            constexpr int    nwarps        = 8;
             constexpr size_t nbytes_shared = 0;
             fattn_kernel_t fattn_kernel = flash_attn_tile_ext_f32<D, cols_per_block, nwarps, use_logit_softcap>;
             const int kq_stride = fattn_tile_get_kq_stride_host(D, cc, cols_per_block);
@@ -360,7 +360,7 @@ static void launch_fattn_tile_f32_64_128(ggml_backend_cuda_context & ctx, ggml_t
         } break;
         case 256: {
             constexpr int    D             = 256;
-            constexpr int    nwarps        = 4;
+            constexpr int    nwarps        = 8;
             constexpr size_t nbytes_shared = 0;
             fattn_kernel_t fattn_kernel = flash_attn_tile_ext_f32<D, cols_per_block, nwarps, use_logit_softcap>;
             const int kq_stride = fattn_tile_get_kq_stride_host(D, cc, cols_per_block);
