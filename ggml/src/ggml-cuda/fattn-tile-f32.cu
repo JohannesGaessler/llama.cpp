@@ -2,12 +2,12 @@
 #include "fattn-common.cuh"
 #include "fattn-tile-f32.cuh"
 
-static int fattn_tile_get_kq_stride_host(const int D, const int /*ncols*/, const int /*cc*/) {
-    return D <= 128 ? 64 : 32;
+static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int /*cc*/) {
+    return D <= 128 || ncols == 16 ? 64 : 32;
 }
 
-static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int /*ncols*/) {
-    return D <= 128 ? 64 : 32;
+static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols) {
+    return D <= 128 || ncols == 16 ? 64 : 32;
 }
 
 template<int D, int ncols, int nwarps, bool use_logit_softcap> // D == head size
