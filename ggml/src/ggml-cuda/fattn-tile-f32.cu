@@ -2,12 +2,12 @@
 #include "fattn-common.cuh"
 #include "fattn-tile-f32.cuh"
 
-static int fattn_tile_get_kq_stride_host(const int /*cc*/, const int /*ncols*/) {
-    return 64;
+static int fattn_tile_get_kq_stride_host(const int D, const int /*ncols*/, const int /*cc*/) {
+    return D <= 128 ? 64 : 32;
 }
 
-static constexpr __device__ int fattn_tile_get_kq_stride_device(int /*ncols*/) {
-    return 64;
+static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int /*ncols*/) {
+    return D <= 128 ? 64 : 32;
 }
 
 template<int D, int ncols, int nwarps, bool use_logit_softcap> // D == head size
@@ -36,7 +36,7 @@ static __global__ void flash_attn_tile_ext_f32(
                             const int32_t nb31, const int32_t nb32, const int64_t nb33) {
 #ifdef FLASH_ATTN_AVAILABLE
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
-    constexpr int kq_stride = fattn_tile_get_kq_stride_device(ncols);
+    constexpr int kq_stride = fattn_tile_get_kq_stride_device(D, ncols);
     static_assert(D         % (2*warp_size) == 0, "D not divisible by 2*warp_size.");
     static_assert(kq_stride %    warp_size  == 0, "kq_stride not divisable by warp_size.");
 
@@ -336,7 +336,6 @@ static __global__ void flash_attn_tile_ext_f32(
 template <int cols_per_block, bool use_logit_softcap>
 static void launch_fattn_tile_f32_64_128(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
-    const int kq_stride = fattn_tile_get_kq_stride_host(cc, cols_per_block);
 
     const ggml_tensor * Q = dst->src[0];
     switch (Q->ne[0]) {
@@ -345,6 +344,7 @@ static void launch_fattn_tile_f32_64_128(ggml_backend_cuda_context & ctx, ggml_t
             constexpr int    nwarps        = 4;
             constexpr size_t nbytes_shared = 0;
             fattn_kernel_t fattn_kernel = flash_attn_tile_ext_f32<D, cols_per_block, nwarps, use_logit_softcap>;
+            const int kq_stride = fattn_tile_get_kq_stride_host(D, cc, cols_per_block);
             launch_fattn<D, cols_per_block, 1>
                 (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false);
         } break;
@@ -353,6 +353,16 @@ static void launch_fattn_tile_f32_64_128(ggml_backend_cuda_context & ctx, ggml_t
             constexpr int    nwarps        = 4;
             constexpr size_t nbytes_shared = 0;
             fattn_kernel_t fattn_kernel = flash_attn_tile_ext_f32<D, cols_per_block, nwarps, use_logit_softcap>;
+            const int kq_stride = fattn_tile_get_kq_stride_host(D, cc, cols_per_block);
+            launch_fattn<D, cols_per_block, 1>
+                (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false);
+        } break;
+        case 256: {
+            constexpr int    D             = 256;
+            constexpr int    nwarps        = 4;
+            constexpr size_t nbytes_shared = 0;
+            fattn_kernel_t fattn_kernel = flash_attn_tile_ext_f32<D, cols_per_block, nwarps, use_logit_softcap>;
+            const int kq_stride = fattn_tile_get_kq_stride_host(D, cc, cols_per_block);
             launch_fattn<D, cols_per_block, 1>
                 (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false);
         } break;
