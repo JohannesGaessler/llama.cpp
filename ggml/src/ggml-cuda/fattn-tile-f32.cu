@@ -349,14 +349,12 @@ static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml
     constexpr int    nwarps        = 8;
     constexpr size_t nbytes_shared = 0;
 
-    if constexpr (D <= 128) {
-        if (Q->ne[1] > 16) {
-            constexpr int cols_per_block = 32;
-            fattn_kernel_t fattn_kernel = flash_attn_tile_ext_f32<D, cols_per_block, nwarps, use_logit_softcap>;
-            const int kq_stride = fattn_tile_get_kq_stride_host(D, cc, cols_per_block);
-            launch_fattn<D, cols_per_block, 1>
-                (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false);
-        }
+    if (Q->ne[1] > 16) {
+        constexpr int cols_per_block = 32;
+        fattn_kernel_t fattn_kernel = flash_attn_tile_ext_f32<D, cols_per_block, nwarps, use_logit_softcap>;
+        const int kq_stride = fattn_tile_get_kq_stride_host(D, cc, cols_per_block);
+        launch_fattn<D, cols_per_block, 1>
+            (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false);
         return;
     }
 
