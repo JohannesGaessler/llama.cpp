@@ -196,7 +196,7 @@ static __global__ void flash_attn_tile_ext_f32(
         for (int j0 = 0; j0 < ncols; j0 += nwarps) {
             const int j = j0 + threadIdx.y;
 
-            kqmax_new[j0/nwarps] = warp_reduce_max(kqmax_new[j0/nwarps]);
+            kqmax_new[j0/nwarps] = warp_reduce_max<warp_size>(kqmax_new[j0/nwarps]);
             const float KQ_max_scale = expf(kqmax[j0/nwarps] - kqmax_new[j0/nwarps]);
             kqmax[j0/nwarps] = kqmax_new[j0/nwarps];
 
@@ -277,7 +277,7 @@ static __global__ void flash_attn_tile_ext_f32(
 #pragma unroll
         for (int j0 = 0; j0 < ncols; j0 += nwarps) {
             float kqmax_new_j = fmaxf(kqmax[j0/nwarps], sink);
-            kqmax_new_j = warp_reduce_max(kqmax_new_j);
+            kqmax_new_j = warp_reduce_max<warp_size>(kqmax_new_j);
 
             const float KQ_max_scale = expf(kqmax[j0/nwarps] - kqmax_new_j);
             kqmax[j0/nwarps] = kqmax_new_j;
@@ -307,7 +307,7 @@ static __global__ void flash_attn_tile_ext_f32(
         }
 
         float kqsum_j = kqsum[j_VKQ_0/nwarps];
-        kqsum_j = warp_reduce_sum(kqsum_j);
+        kqsum_j = warp_reduce_sum<warp_size>(kqsum_j);
 
         const int j_dst_unrolled = ((sequence*ne01 + ic0 + j_VKQ)*ne02 + head)*gridDim.y + blockIdx.y;
 
