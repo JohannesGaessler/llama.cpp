@@ -3,11 +3,11 @@
 #include "fattn-tile-f32.cuh"
 
 static int fattn_tile_get_kq_stride_host(const int /*cc*/, const int /*ncols*/) {
-    return 32;
+    return 64;
 }
 
 static constexpr __device__ int fattn_tile_get_kq_stride_device(int /*ncols*/) {
-    return 32;
+    return 64;
 }
 
 template<int D, int ncols, int nwarps, bool use_logit_softcap> // D == head size
