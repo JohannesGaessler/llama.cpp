@@ -2,12 +2,16 @@
 #include "fattn-common.cuh"
 #include "fattn-tile-f32.cuh"
 
-#define FATTN_KQ_STRIDE_TILE_F32 32
+static int fattn_tile_get_kq_stride_host(const int /*cc*/, const int /*ncols*/) {
+    return 32;
+}
+
+static constexpr __device__ int fattn_tile_get_kq_stride_device(int /*ncols*/) {
+    return 32;
+}
 
 template<int D, int ncols, int nwarps, bool use_logit_softcap> // D == head size
-#if !defined(GGML_USE_HIP)
 __launch_bounds__(nwarps*WARP_SIZE, 2)
-#endif // !defined(GGML_USE_HIP)
 static __global__ void flash_attn_tile_ext_f32(
         const char * __restrict__ Q,
         const char * __restrict__ K,
@@ -31,6 +35,7 @@ static __global__ void flash_attn_tile_ext_f32(
                             const int32_t ne31, const int32_t ne32, const int32_t ne33,
                             const int32_t nb31, const int32_t nb32, const int64_t nb33) {
 #ifdef FLASH_ATTN_AVAILABLE
+    constexpr int kq_stride = fattn_tile_get_kq_stride_device(ncols);
 
     // Skip unused kernel variants for faster compilation:
 #ifdef FP16_MMA_AVAILABLE
@@ -70,9 +75,9 @@ static __global__ void flash_attn_tile_ext_f32(
 
     static_assert(D % (2*WARP_SIZE) == 0, "D not divisible by 2*WARP_SIZE == 64.");
 
-    __shared__ float KQ[ncols*FATTN_KQ_STRIDE_TILE_F32];
+    __shared__ float KQ[ncols*kq_stride];
 
-    __shared__ float KV_tmp[FATTN_KQ_STRIDE_TILE_F32][D + 1]; // Pad D to avoid memory bank conflicts.
+    __shared__ float KV_tmp[kq_stride][D + 1]; // Pad D to avoid memory bank conflicts.
     float2 * KV_tmp2 = (float2 *) KV_tmp;
 
     float kqmax[ncols/nwarps];
@@ -101,7 +106,7 @@ static __global__ void flash_attn_tile_ext_f32(
     __syncthreads();
 
     const int k_VKQ_max = KV_max ? KV_max[sequence*gridDim.x + blockIdx.x] : ne11;
-    for (int k_VKQ_0 = blockIdx.y*FATTN_KQ_STRIDE_TILE_F32; k_VKQ_0 < k_VKQ_max; k_VKQ_0 += gridDim.y*FATTN_KQ_STRIDE_TILE_F32) {
+    for (int k_VKQ_0 = blockIdx.y*kq_stride; k_VKQ_0 < k_VKQ_max; k_VKQ_0 += gridDim.y*kq_stride) {
         // Calculate KQ tile and keep track of new maximum KQ values:
 
         float kqmax_new[ncols/nwarps];
@@ -111,7 +116,7 @@ static __global__ void flash_attn_tile_ext_f32(
         }
 
 #pragma unroll
-        for (int i_KQ_0 = 0; i_KQ_0 < FATTN_KQ_STRIDE_TILE_F32; i_KQ_0 += nwarps) {
+        for (int i_KQ_0 = 0; i_KQ_0 < kq_stride; i_KQ_0 += nwarps) {
             const int i_KQ = i_KQ_0 + threadIdx.y;
 
 #pragma unroll
@@ -124,15 +129,15 @@ static __global__ void flash_attn_tile_ext_f32(
 
         __syncthreads();
 
-        float sum[FATTN_KQ_STRIDE_TILE_F32/WARP_SIZE][ncols/nwarps] = {{0.0f}};
+        float sum[kq_stride/WARP_SIZE][ncols/nwarps] = {{0.0f}};
 
 #pragma unroll
         for (int k_KQ = 0; k_KQ < D; ++k_KQ) {
-            float K_k[FATTN_KQ_STRIDE_TILE_F32/WARP_SIZE];
+            float K_k[kq_stride/WARP_SIZE];
             float Q_k[ncols/nwarps];
 
 #pragma unroll
-            for (int i_KQ_0 = 0; i_KQ_0 < FATTN_KQ_STRIDE_TILE_F32; i_KQ_0 += WARP_SIZE) {
+            for (int i_KQ_0 = 0; i_KQ_0 < kq_stride; i_KQ_0 += WARP_SIZE) {
                 const int i_KQ = i_KQ_0 + threadIdx.x;
 
                 K_k[i_KQ_0/WARP_SIZE] = KV_tmp[i_KQ][k_KQ];
@@ -145,7 +150,7 @@ static __global__ void flash_attn_tile_ext_f32(
             }
 
 #pragma unroll
-            for (int i_KQ_0 = 0; i_KQ_0 < FATTN_KQ_STRIDE_TILE_F32; i_KQ_0 += WARP_SIZE) {
+            for (int i_KQ_0 = 0; i_KQ_0 < kq_stride; i_KQ_0 += WARP_SIZE) {
 #pragma unroll
                 for (int j_KQ_0 = 0; j_KQ_0 < ncols; j_KQ_0 += nwarps) {
                     sum[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps] += K_k[i_KQ_0/WARP_SIZE] * Q_k[j_KQ_0/nwarps];
@@ -154,7 +159,7 @@ static __global__ void flash_attn_tile_ext_f32(
         }
 
 #pragma unroll
-        for (int i_KQ_0 = 0; i_KQ_0 < FATTN_KQ_STRIDE_TILE_F32; i_KQ_0 += WARP_SIZE) {
+        for (int i_KQ_0 = 0; i_KQ_0 < kq_stride; i_KQ_0 += WARP_SIZE) {
             const int i_KQ = i_KQ_0 + threadIdx.x;
 
 #pragma unroll
@@ -169,7 +174,7 @@ static __global__ void flash_attn_tile_ext_f32(
 
                 kqmax_new[j_KQ_0/nwarps] = fmaxf(kqmax_new[j_KQ_0/nwarps], sum[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps]);
 
-                KQ[j_KQ*FATTN_KQ_STRIDE_TILE_F32 + i_KQ] = sum[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps];
+                KQ[j_KQ*kq_stride + i_KQ] = sum[i_KQ_0/WARP_SIZE][j_KQ_0/nwarps];
             }
         }
 
@@ -185,13 +190,13 @@ static __global__ void flash_attn_tile_ext_f32(
 
             float kqsum_add = 0.0f;
 #pragma unroll
-            for (int i0 = 0; i0 < FATTN_KQ_STRIDE_TILE_F32; i0 += WARP_SIZE) {
+            for (int i0 = 0; i0 < kq_stride; i0 += WARP_SIZE) {
                 const int i = i0 + threadIdx.x;
 
-                const float diff = KQ[j*FATTN_KQ_STRIDE_TILE_F32 + i] - kqmax[j0/nwarps];
+                const float diff = KQ[j*kq_stride + i] - kqmax[j0/nwarps];
                 const float val = expf(diff);
                 kqsum_add += val;
-                KQ[j*FATTN_KQ_STRIDE_TILE_F32 + i] = val;
+                KQ[j*kq_stride + i] = val;
             }
             kqsum[j0/nwarps] = kqsum[j0/nwarps]*KQ_max_scale + kqsum_add;
 
@@ -205,7 +210,7 @@ static __global__ void flash_attn_tile_ext_f32(
         __syncthreads();
 
 #pragma unroll
-        for (int k0 = 0; k0 < FATTN_KQ_STRIDE_TILE_F32; k0 += nwarps) {
+        for (int k0 = 0; k0 < kq_stride; k0 += nwarps) {
             const int k = k0 + threadIdx.y;
 
 #pragma unroll
@@ -221,7 +226,7 @@ static __global__ void flash_attn_tile_ext_f32(
         __syncthreads();
 
 #pragma unroll
-        for (int k = 0; k < FATTN_KQ_STRIDE_TILE_F32; ++k) {
+        for (int k = 0; k < kq_stride; ++k) {
             float2 V_k[(D/2)/WARP_SIZE];
             float  KQ_k[ncols/nwarps];
 
@@ -235,7 +240,7 @@ static __global__ void flash_attn_tile_ext_f32(
             for (int j0 = 0; j0 < ncols; j0 += nwarps) {
                 const int j = j0 + threadIdx.y;
 
-                KQ_k[j0/nwarps] = KQ[j*FATTN_KQ_STRIDE_TILE_F32 + k];
+                KQ_k[j0/nwarps] = KQ[j*kq_stride + k];
             }
 
 #pragma unroll
@@ -324,24 +329,27 @@ static __global__ void flash_attn_tile_ext_f32(
 }
 
 template <int cols_per_block, bool use_logit_softcap>
-void launch_fattn_tile_f32_64_128(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+static void launch_fattn_tile_f32_64_128(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
+    const int kq_stride = fattn_tile_get_kq_stride_host(cc, cols_per_block);
+
     const ggml_tensor * Q = dst->src[0];
     switch (Q->ne[0]) {
         case  64: {
             constexpr int    D             = 64;
-            constexpr int    nwarps        = 8;
+            constexpr int    nwarps        = 4;
             constexpr size_t nbytes_shared = 0;
             fattn_kernel_t fattn_kernel = flash_attn_tile_ext_f32<D, cols_per_block, nwarps, use_logit_softcap>;
             launch_fattn<D, cols_per_block, 1>
-                (ctx, dst, fattn_kernel, nwarps, nbytes_shared, FATTN_KQ_STRIDE_TILE_F32, true, true, false);
+                (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false);
         } break;
         case 128: {
             constexpr int    D             = 128;
-            constexpr int    nwarps        = 8;
+            constexpr int    nwarps        = 4;
             constexpr size_t nbytes_shared = 0;
             fattn_kernel_t fattn_kernel = flash_attn_tile_ext_f32<D, cols_per_block, nwarps, use_logit_softcap>;
             launch_fattn<D, cols_per_block, 1>
-                (ctx, dst, fattn_kernel, nwarps, nbytes_shared, FATTN_KQ_STRIDE_TILE_F32, true, true, false);
+                (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false);
         } break;
         default: {
             GGML_ABORT("FlashAttention without tensor cores only supports head sizes 64 and 128.");
