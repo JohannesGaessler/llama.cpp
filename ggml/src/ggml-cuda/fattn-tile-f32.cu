@@ -6,7 +6,7 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
     switch (D) {
         case 64:
         case 128:
-            return ncols <= 32 ? 64 : 32;
+            return 32;
         case 256:
             return ncols <= 16 ? 64 : 32;
         default:
@@ -19,7 +19,7 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols
     switch (D) {
         case 64:
         case 128:
-            return ncols <= 32 ? 64 : 32;
+            return 32;
         case 256:
             return ncols <= 16 ? 64 : 32;
         default:
@@ -52,10 +52,6 @@ static __global__ void flash_attn_tile_ext_f32(
                             const int32_t ne31, const int32_t ne32, const int32_t ne33,
                             const int32_t nb31, const int32_t nb32, const int64_t nb33) {
 #ifdef FLASH_ATTN_AVAILABLE
-    constexpr int warp_size = ggml_cuda_get_physical_warp_size();
-    constexpr int kq_stride = fattn_tile_get_kq_stride_device(D, ncols);
-    static_assert(D         % (2*warp_size) == 0, "D not divisible by 2*warp_size.");
-    static_assert(kq_stride %    warp_size  == 0, "kq_stride not divisable by warp_size.");
 
     // Skip unused kernel variants for faster compilation:
 #ifdef FP16_MMA_AVAILABLE
@@ -76,6 +72,12 @@ static __global__ void flash_attn_tile_ext_f32(
         return;
     }
 
+    constexpr int warp_size = ggml_cuda_get_physical_warp_size();
+    constexpr int kq_stride = fattn_tile_get_kq_stride_device(D, ncols);
+    static_assert(D         % (2*warp_size) == 0, "D not divisible by 2*warp_size.");
+    static_assert(kq_stride %    warp_size  == 0, "kq_stride not divisable by warp_size.");
+    constexpr int kq_nbatch = D <= 128 ? D : 128;
+
     // In this kernel Q, K, V are matrices while i, j, k are matrix indices.
 
     const int ic0 = blockIdx.x * ncols; // Index of the Q/QKV column to work on.
@@ -95,7 +97,7 @@ static __global__ void flash_attn_tile_ext_f32(
 
     __shared__ float KQ[ncols*kq_stride];
 
-    __shared__ float KV_tmp[kq_stride][2*warp_size + 1]; // Padded to avoid memory bank conflicts.
+    __shared__ float KV_tmp[kq_stride][kq_nbatch + 1]; // Padded to avoid memory bank conflicts.
     float2 * KV_tmp2 = (float2 *) KV_tmp;
 
     float kqmax[ncols/nwarps];
@@ -136,20 +138,23 @@ static __global__ void flash_attn_tile_ext_f32(
         float sum[kq_stride/warp_size][ncols/nwarps] = {{0.0f}};
 
 #pragma unroll
-        for (int k_KQ_0 = 0; k_KQ_0 < D; k_KQ_0 += 2*warp_size) {
+        for (int k_KQ_0 = 0; k_KQ_0 < D; k_KQ_0 += kq_nbatch) {
 #pragma unroll
             for (int i_KQ_0 = 0; i_KQ_0 < kq_stride; i_KQ_0 += nwarps) {
                 const int i_KQ = i_KQ_0 + threadIdx.y;
 
-                const float2 tmp = __half22float2(K_h2[int64_t(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ_0/2 + threadIdx.x]);
-                KV_tmp[i_KQ][0*warp_size + threadIdx.x] = tmp.x;
-                KV_tmp[i_KQ][1*warp_size + threadIdx.x] = tmp.y;
+#pragma unroll
+                for (int k_KQ_1 = 0; k_KQ_1 < kq_nbatch; k_KQ_1 += 2*warp_size) {
+                    const float2 tmp = __half22float2(K_h2[int64_t(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ_0/2 + k_KQ_1/2 + threadIdx.x]);
+                    KV_tmp[i_KQ][0*warp_size + k_KQ_1 + threadIdx.x] = tmp.x;
+                    KV_tmp[i_KQ][1*warp_size + k_KQ_1 + threadIdx.x] = tmp.y;
+                }
             }
 
             __syncthreads();
 
 #pragma unroll
-            for (int k_KQ_1 = 0; k_KQ_1 < 2*warp_size; ++k_KQ_1) {
+            for (int k_KQ_1 = 0; k_KQ_1 < kq_nbatch; ++k_KQ_1) {
                 float K_k[kq_stride/warp_size];
                 float Q_k[ncols/nwarps];
 
@@ -175,7 +180,7 @@ static __global__ void flash_attn_tile_ext_f32(
                 }
             }
 
-            if (k_KQ_0 + 2*warp_size < D) {
+            if (k_KQ_0 + kq_nbatch < D) {
                 __syncthreads(); // Sync not needed on last iteration.
             }
         }
@@ -229,7 +234,7 @@ static __global__ void flash_attn_tile_ext_f32(
             }
         }
 
-        constexpr int V_cols_per_iter = kq_stride*2*warp_size / D;
+        constexpr int V_cols_per_iter = kq_stride*kq_nbatch / D;
         static_assert(kq_stride % V_cols_per_iter == 0, "bad V_cols_per_iter");
 #pragma unroll
         for (int k0 = 0; k0 < kq_stride; k0 += V_cols_per_iter) {
@@ -409,19 +414,7 @@ void ggml_cuda_flash_attn_ext_tile_f32(ggml_backend_cuda_context & ctx, ggml_ten
         return;
     }
 
-    if (Q->ne[1] <= 32) {
-        constexpr int cols_per_block = 32;
-        if (logit_softcap == 0.0f) {
-            constexpr bool use_logit_softcap = false;
-            launch_fattn_tile_f32_64_128<cols_per_block, use_logit_softcap>(ctx, dst);
-        } else {
-            constexpr bool use_logit_softcap = true;
-            launch_fattn_tile_f32_64_128<cols_per_block, use_logit_softcap>(ctx, dst);
-        }
-        return;
-    }
-
-    constexpr int cols_per_block = 48;
+    constexpr int cols_per_block = 32;
     if (logit_softcap == 0.0f) {
         constexpr bool use_logit_softcap = false;
         launch_fattn_tile_f32_64_128<cols_per_block, use_logit_softcap>(ctx, dst);
