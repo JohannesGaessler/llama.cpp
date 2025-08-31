@@ -124,9 +124,9 @@ static __global__ void flash_attn_tile_ext_f32(
             for (int i_KQ_0 = 0; i_KQ_0 < kq_stride; i_KQ_0 += nwarps) {
                 const int i_KQ = i_KQ_0 + threadIdx.y;
 
-                const half2 tmp = K_h2[int64_t(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ_0/2 + threadIdx.x];
-                KV_tmp[i_KQ][0*warp_size + threadIdx.x] =  __low2float(tmp);
-                KV_tmp[i_KQ][1*warp_size + threadIdx.x] = __high2float(tmp);
+                const float2 tmp = __half22float2(K_h2[int64_t(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ_0/2 + threadIdx.x]);
+                KV_tmp[i_KQ][0*warp_size + threadIdx.x] = tmp.x;
+                KV_tmp[i_KQ][1*warp_size + threadIdx.x] = tmp.y;
             }
 
             __syncthreads();
@@ -213,13 +213,13 @@ static __global__ void flash_attn_tile_ext_f32(
         for (int k0 = 0; k0 < kq_stride; k0 += lamo) {
 #pragma unroll
             for (int k1 = 0; k1 < lamo; k1 += nwarps) {
-                const int k = k0 + threadIdx.y;
+                const int k_tile = k1 + threadIdx.y;
 
 #pragma unroll
                 for (int i0 = 0; i0 < D/2; i0 += warp_size) {
                     const int i = i0 + threadIdx.x;
 
-                    KV_tmp2[k*(D/2) + i] = __half22float2(V_h2[int64_t(k_VKQ_0 + k)*stride_KV2 + i]);
+                    KV_tmp2[k_tile*(D/2) + i] = __half22float2(V_h2[int64_t(k_VKQ_0 + k0 + k_tile)*stride_KV2 + i]);
                 }
             }
 
