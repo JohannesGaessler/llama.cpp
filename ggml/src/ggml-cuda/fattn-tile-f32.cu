@@ -3,11 +3,28 @@
 #include "fattn-tile-f32.cuh"
 
 static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int /*cc*/) {
-    return D <= 128 || ncols == 16 ? 64 : 32;
+    switch (D) {
+        case 64:
+        case 128:
+            return ncols <= 32 ? 64 : 32;
+        case 256:
+            return ncols <= 16 ? 64 : 32;
+        default:
+            GGML_ABORT("fatal error");
+            return -1;
+    }
 }
 
 static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols) {
-    return D <= 128 || ncols == 16 ? 64 : 32;
+    switch (D) {
+        case 64:
+        case 128:
+            return ncols <= 32 ? 64 : 32;
+        case 256:
+            return ncols <= 16 ? 64 : 32;
+        default:
+            return -1;
+    }
 }
 
 template<int D, int ncols, int nwarps, bool use_logit_softcap> // D == head size
@@ -358,15 +375,15 @@ static void launch_fattn_tile_f32_64_128(ggml_backend_cuda_context & ctx, ggml_t
             launch_fattn<D, cols_per_block, 1>
                 (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false);
         } break;
-        case 256: {
-            constexpr int    D             = 256;
-            constexpr int    nwarps        = 8;
-            constexpr size_t nbytes_shared = 0;
-            fattn_kernel_t fattn_kernel = flash_attn_tile_ext_f32<D, cols_per_block, nwarps, use_logit_softcap>;
-            const int kq_stride = fattn_tile_get_kq_stride_host(D, cc, cols_per_block);
-            launch_fattn<D, cols_per_block, 1>
-                (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false);
-        } break;
+        // case 256: {
+        //     constexpr int    D             = 256;
+        //     constexpr int    nwarps        = 8;
+        //     constexpr size_t nbytes_shared = 0;
+        //     fattn_kernel_t fattn_kernel = flash_attn_tile_ext_f32<D, cols_per_block, nwarps, use_logit_softcap>;
+        //     const int kq_stride = fattn_tile_get_kq_stride_host(D, cc, cols_per_block);
+        //     launch_fattn<D, cols_per_block, 1>
+        //         (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false);
+        // } break;
         default: {
             GGML_ABORT("FlashAttention without tensor cores only supports head sizes 64 and 128.");
         } break;
@@ -392,7 +409,19 @@ void ggml_cuda_flash_attn_ext_tile_f32(ggml_backend_cuda_context & ctx, ggml_ten
         return;
     }
 
-    constexpr int cols_per_block = 32;
+    if (Q->ne[1] <= 32) {
+        constexpr int cols_per_block = 32;
+        if (logit_softcap == 0.0f) {
+            constexpr bool use_logit_softcap = false;
+            launch_fattn_tile_f32_64_128<cols_per_block, use_logit_softcap>(ctx, dst);
+        } else {
+            constexpr bool use_logit_softcap = true;
+            launch_fattn_tile_f32_64_128<cols_per_block, use_logit_softcap>(ctx, dst);
+        }
+        return;
+    }
+
+    constexpr int cols_per_block = 48;
     if (logit_softcap == 0.0f) {
         constexpr bool use_logit_softcap = false;
         launch_fattn_tile_f32_64_128<cols_per_block, use_logit_softcap>(ctx, dst);
