@@ -357,6 +357,7 @@ static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml
             launch_fattn<D, cols_per_block, 1>
                 (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false);
         }
+        return;
     }
 
     constexpr int cols_per_block = 16;
