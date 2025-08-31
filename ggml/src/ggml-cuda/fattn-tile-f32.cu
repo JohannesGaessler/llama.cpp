@@ -158,7 +158,9 @@ static __global__ void flash_attn_tile_ext_f32(
                 }
             }
 
-            __syncthreads();
+            if (k_KQ_0 + 2*warp_size < D) {
+                __syncthreads(); // Sync not needed on last iteration.
+            }
         }
 
 #pragma unroll
@@ -210,13 +212,11 @@ static __global__ void flash_attn_tile_ext_f32(
             }
         }
 
-        __syncthreads();
-
-        constexpr int lamo = 2*warp_size / (D / (2*warp_size));
+        constexpr int V_cols_per_iter = 2*warp_size / (D / (2*warp_size));
 #pragma unroll
-        for (int k0 = 0; k0 < kq_stride; k0 += lamo) {
+        for (int k0 = 0; k0 < kq_stride; k0 += V_cols_per_iter) {
 #pragma unroll
-            for (int k1 = 0; k1 < lamo; k1 += nwarps) {
+            for (int k1 = 0; k1 < V_cols_per_iter; k1 += nwarps) {
                 const int k_tile = k1 + threadIdx.y;
 
 #pragma unroll
@@ -230,7 +230,7 @@ static __global__ void flash_attn_tile_ext_f32(
             __syncthreads();
 
 #pragma unroll
-            for (int k1 = 0; k1 < lamo; ++k1) {
+            for (int k1 = 0; k1 < V_cols_per_iter; ++k1) {
                 float2 V_k[(D/2)/warp_size];
                 float  KQ_k[ncols/nwarps];
 
