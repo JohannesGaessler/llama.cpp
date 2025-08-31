@@ -3,11 +3,11 @@
 #include "fattn-tile-f32.cuh"
 
 static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int /*cc*/) {
-    return D <= 128 || ncols == 16 ? 64 : 32;
+    return 32;
 }
 
 static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols) {
-    return D <= 128 || ncols == 16 ? 64 : 32;
+    return 32;
 }
 
 template<int D, int ncols, int nwarps, bool use_logit_softcap> // D == head size
@@ -213,6 +213,7 @@ static __global__ void flash_attn_tile_ext_f32(
         }
 
         constexpr int V_cols_per_iter = 2*warp_size / (D / (2*warp_size));
+        static_assert(kq_stride % V_cols_per_iter == 0, "bad V_cols_per_iter");
 #pragma unroll
         for (int k0 = 0; k0 < kq_stride; k0 += V_cols_per_iter) {
 #pragma unroll
@@ -339,15 +340,15 @@ static void launch_fattn_tile_f32_64_128(ggml_backend_cuda_context & ctx, ggml_t
 
     const ggml_tensor * Q = dst->src[0];
     switch (Q->ne[0]) {
-        case  64: {
-            constexpr int    D             = 64;
-            constexpr int    nwarps        = 4;
-            constexpr size_t nbytes_shared = 0;
-            fattn_kernel_t fattn_kernel = flash_attn_tile_ext_f32<D, cols_per_block, nwarps, use_logit_softcap>;
-            const int kq_stride = fattn_tile_get_kq_stride_host(D, cc, cols_per_block);
-            launch_fattn<D, cols_per_block, 1>
-                (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false);
-        } break;
+        // case  64: {
+        //     constexpr int    D             = 64;
+        //     constexpr int    nwarps        = 4;
+        //     constexpr size_t nbytes_shared = 0;
+        //     fattn_kernel_t fattn_kernel = flash_attn_tile_ext_f32<D, cols_per_block, nwarps, use_logit_softcap>;
+        //     const int kq_stride = fattn_tile_get_kq_stride_host(D, cc, cols_per_block);
+        //     launch_fattn<D, cols_per_block, 1>
+        //         (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false);
+        // } break;
         case 128: {
             constexpr int    D             = 128;
             constexpr int    nwarps        = 4;
