@@ -181,6 +181,8 @@ static __global__ void flash_attn_tile_ext_f32(
             }
         }
 
+        __syncthreads();
+
 #pragma unroll
         for (int j0 = 0; j0 < ncols; j0 += nwarps) {
             const int j = j0 + threadIdx.y;
@@ -207,6 +209,8 @@ static __global__ void flash_attn_tile_ext_f32(
                 VKQ[j0/nwarps][i0/warp_size].y *= KQ_max_scale;
             }
         }
+
+        __syncthreads();
 
         constexpr int lamo = 2*warp_size / (D / (2*warp_size));
 #pragma unroll
