@@ -214,12 +214,7 @@ static __global__ void flash_attn_tile_ext_f32(
             for (int k1 = 0; k1 < 2*warp_size; k1 += nwarps) {
                 const int k = k0 + threadIdx.y;
 
-#pragma unroll
-                for (int i0 = 0; i0 < D/2; i0 += warp_size) {
-                    const int i = i0 + threadIdx.x;
-
-                    KV_tmp2[k*(D/2) + i] = __half22float2(V_h2[int64_t(k_VKQ_0 + k)*stride_KV2 + i]);
-                }
+                KV_tmp2[k*warp_size + threadIdx.x] = __half22float2(V_h2[int64_t(k_VKQ_0 + k)*stride_KV2 + i]);
             }
 
             __syncthreads();
@@ -233,7 +228,7 @@ static __global__ void flash_attn_tile_ext_f32(
                 for (int i0 = 0; i0 < D/2; i0 += warp_size) {
                     const int i = i0 + threadIdx.x;
 
-                    V_k[i0/warp_size] = KV_tmp2[k1*(D/2) + i];
+                    V_k[i0/warp_size] = KV_tmp2[k1*warp_size + i];
                 }
 #pragma unroll
                 for (int j0 = 0; j0 < ncols; j0 += nwarps) {
