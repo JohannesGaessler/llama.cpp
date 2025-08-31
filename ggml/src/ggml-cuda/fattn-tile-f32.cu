@@ -146,7 +146,7 @@ static __global__ void flash_attn_tile_ext_f32(
                 for (int j_KQ_0 = 0; j_KQ_0 < ncols; j_KQ_0 += nwarps) {
                     const int j_KQ = j_KQ_0 + threadIdx.y;
 
-                    Q_k[j_KQ_0/nwarps] = Q_f[j_KQ][k_KQ_1];
+                    Q_k[j_KQ_0/nwarps] = Q_f[j_KQ][k_KQ_0 + k_KQ_1];
                 }
 
 #pragma unroll
