@@ -116,47 +116,49 @@ static __global__ void flash_attn_tile_ext_f32(
             kqmax_new[j] = kqmax[j];
         }
 
-#pragma unroll
-        for (int i_KQ_0 = 0; i_KQ_0 < kq_stride; i_KQ_0 += nwarps) {
-            const int i_KQ = i_KQ_0 + threadIdx.y;
-
-#pragma unroll
-            for (int k_KQ_0 = 0; k_KQ_0 < D; k_KQ_0 += 2*warp_size) {
-                const half2 tmp = K_h2[int64_t(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ_0/2 + threadIdx.x];
-                KV_tmp[i_KQ][k_KQ_0 + 0*warp_size + threadIdx.x] =  __low2float(tmp);
-                KV_tmp[i_KQ][k_KQ_0 + 1*warp_size + threadIdx.x] = __high2float(tmp);
-            }
-        }
-
-        __syncthreads();
-
         float sum[kq_stride/warp_size][ncols/nwarps] = {{0.0f}};
 
 #pragma unroll
-        for (int k_KQ = 0; k_KQ < D; ++k_KQ) {
-            float K_k[kq_stride/warp_size];
-            float Q_k[ncols/nwarps];
-
+        for (int k_KQ_0 = 0; k_KQ_0 < D; k_KQ_0 += 2*warp_size) {
 #pragma unroll
-            for (int i_KQ_0 = 0; i_KQ_0 < kq_stride; i_KQ_0 += warp_size) {
-                const int i_KQ = i_KQ_0 + threadIdx.x;
+            for (int i_KQ_0 = 0; i_KQ_0 < kq_stride; i_KQ_0 += nwarps) {
+                const int i_KQ = i_KQ_0 + threadIdx.y;
 
-                K_k[i_KQ_0/warp_size] = KV_tmp[i_KQ][k_KQ];
-            }
-#pragma unroll
-            for (int j_KQ_0 = 0; j_KQ_0 < ncols; j_KQ_0 += nwarps) {
-                const int j_KQ = j_KQ_0 + threadIdx.y;
-
-                Q_k[j_KQ_0/nwarps] = Q_f[j_KQ][k_KQ];
+                const half2 tmp = K_h2[int64_t(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ_0/2 + threadIdx.x];
+                KV_tmp[i_KQ][0*warp_size + threadIdx.x] =  __low2float(tmp);
+                KV_tmp[i_KQ][1*warp_size + threadIdx.x] = __high2float(tmp);
             }
 
+            __syncthreads();
+
 #pragma unroll
-            for (int i_KQ_0 = 0; i_KQ_0 < kq_stride; i_KQ_0 += warp_size) {
+            for (int k_KQ_1 = 0; k_KQ_1 < 2*warp_size; ++k_KQ_1) {
+                float K_k[kq_stride/warp_size];
+                float Q_k[ncols/nwarps];
+
+#pragma unroll
+                for (int i_KQ_0 = 0; i_KQ_0 < kq_stride; i_KQ_0 += warp_size) {
+                    const int i_KQ = i_KQ_0 + threadIdx.x;
+
+                    K_k[i_KQ_0/warp_size] = KV_tmp[i_KQ][k_KQ_1];
+                }
 #pragma unroll
                 for (int j_KQ_0 = 0; j_KQ_0 < ncols; j_KQ_0 += nwarps) {
-                    sum[i_KQ_0/warp_size][j_KQ_0/nwarps] += K_k[i_KQ_0/warp_size] * Q_k[j_KQ_0/nwarps];
+                    const int j_KQ = j_KQ_0 + threadIdx.y;
+
+                    Q_k[j_KQ_0/nwarps] = Q_f[j_KQ][k_KQ_1];
+                }
+
+#pragma unroll
+                for (int i_KQ_0 = 0; i_KQ_0 < kq_stride; i_KQ_0 += warp_size) {
+#pragma unroll
+                    for (int j_KQ_0 = 0; j_KQ_0 < ncols; j_KQ_0 += nwarps) {
+                        sum[i_KQ_0/warp_size][j_KQ_0/nwarps] += K_k[i_KQ_0/warp_size] * Q_k[j_KQ_0/nwarps];
+                    }
                 }
             }
+
+            __syncthreads();
         }
 
 #pragma unroll
@@ -178,8 +180,6 @@ static __global__ void flash_attn_tile_ext_f32(
                 KQ[j_KQ*kq_stride + i_KQ] = sum[i_KQ_0/warp_size][j_KQ_0/nwarps];
             }
         }
-
-        __syncthreads();
 
 #pragma unroll
         for (int j0 = 0; j0 < ncols; j0 += nwarps) {
@@ -208,53 +208,52 @@ static __global__ void flash_attn_tile_ext_f32(
             }
         }
 
-        __syncthreads();
+#pragma unroll
+        for (int k0 = 0; k0 < kq_stride; k0 += 2*warp_size) {
+#pragma unroll
+            for (int k1 = 0; k1 < 2*warp_size; k1 += nwarps) {
+                const int k = k0 + threadIdx.y;
 
 #pragma unroll
-        for (int k0 = 0; k0 < kq_stride; k0 += nwarps) {
-            const int k = k0 + threadIdx.y;
+                for (int i0 = 0; i0 < D/2; i0 += warp_size) {
+                    const int i = i0 + threadIdx.x;
 
-#pragma unroll
-            for (int i0 = 0; i0 < D/2; i0 += warp_size) {
-                const int i = i0 + threadIdx.x;
-
-                const half2 tmp = V_h2[int64_t(k_VKQ_0 + k)*stride_KV2 + i];
-                KV_tmp2[k*(D/2) + i].x =  __low2float(tmp);
-                KV_tmp2[k*(D/2) + i].y = __high2float(tmp);
-            }
-        }
-
-        __syncthreads();
-
-#pragma unroll
-        for (int k = 0; k < kq_stride; ++k) {
-            float2 V_k[(D/2)/warp_size];
-            float  KQ_k[ncols/nwarps];
-
-#pragma unroll
-            for (int i0 = 0; i0 < D/2; i0 += warp_size) {
-                const int i = i0 + threadIdx.x;
-
-                V_k[i0/warp_size] = KV_tmp2[k*(D/2) + i];
-            }
-#pragma unroll
-            for (int j0 = 0; j0 < ncols; j0 += nwarps) {
-                const int j = j0 + threadIdx.y;
-
-                KQ_k[j0/nwarps] = KQ[j*kq_stride + k];
-            }
-
-#pragma unroll
-            for (int i0 = 0; i0 < D/2; i0 += warp_size) {
-#pragma unroll
-                for (int j0 = 0; j0 < ncols; j0 += nwarps) {
-                    VKQ[j0/nwarps][i0/warp_size].x += V_k[i0/warp_size].x*KQ_k[j0/nwarps];
-                    VKQ[j0/nwarps][i0/warp_size].y += V_k[i0/warp_size].y*KQ_k[j0/nwarps];
+                    KV_tmp2[k*(D/2) + i] = __half22float2(V_h2[int64_t(k_VKQ_0 + k)*stride_KV2 + i]);
                 }
             }
-        }
 
-        __syncthreads();
+            __syncthreads();
+
+#pragma unroll
+            for (int k1 = 0; k1 < 2*warp_size; ++k1) {
+                float2 V_k[(D/2)/warp_size];
+                float  KQ_k[ncols/nwarps];
+
+#pragma unroll
+                for (int i0 = 0; i0 < D/2; i0 += warp_size) {
+                    const int i = i0 + threadIdx.x;
+
+                    V_k[i0/warp_size] = KV_tmp2[k1*(D/2) + i];
+                }
+#pragma unroll
+                for (int j0 = 0; j0 < ncols; j0 += nwarps) {
+                    const int j = j0 + threadIdx.y;
+
+                    KQ_k[j0/nwarps] = KQ[j*kq_stride + k1];
+                }
+
+#pragma unroll
+                for (int i0 = 0; i0 < D/2; i0 += warp_size) {
+#pragma unroll
+                    for (int j0 = 0; j0 < ncols; j0 += nwarps) {
+                        VKQ[j0/nwarps][i0/warp_size].x += V_k[i0/warp_size].x*KQ_k[j0/nwarps];
+                        VKQ[j0/nwarps][i0/warp_size].y += V_k[i0/warp_size].y*KQ_k[j0/nwarps];
+                    }
+                }
+            }
+
+            __syncthreads();
+        }
     }
 
 
