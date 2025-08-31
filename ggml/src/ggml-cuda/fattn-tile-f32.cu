@@ -212,7 +212,7 @@ static __global__ void flash_attn_tile_ext_f32(
             }
         }
 
-        constexpr int V_cols_per_iter = 2*warp_size / (D / (2*warp_size));
+        constexpr int V_cols_per_iter = kq_stride*2*warp_size / D;
         static_assert(kq_stride % V_cols_per_iter == 0, "bad V_cols_per_iter");
 #pragma unroll
         for (int k0 = 0; k0 < kq_stride; k0 += V_cols_per_iter) {
