@@ -2,24 +2,24 @@
 #include "fattn-common.cuh"
 #include "fattn-tile-f32.cuh"
 
-static int fattn_tile_get_kq_stride_host(const int D, const int /*ncols*/, const int /*cc*/) {
+static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int /*cc*/) {
     switch (D) {
         case 64:
         case 128:
         case 256:
-            return 32;
+            return ncols <= 16 ? 64 : 32;
         default:
             GGML_ABORT("fatal error");
             return -1;
     }
 }
 
-static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int /*ncols*/) {
+static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols) {
     switch (D) {
         case 64:
         case 128:
         case 256:
-            return 32;
+            return ncols <= 16 ? 64 : 32;
         default:
             return -1;
     }
@@ -61,7 +61,7 @@ static __global__ void flash_attn_tile_ext_f32(
     constexpr int kq_stride = fattn_tile_get_kq_stride_device(D, ncols);
     static_assert(D         % (2*warp_size) == 0, "D not divisible by 2*warp_size.");
     static_assert(kq_stride %    warp_size  == 0, "kq_stride not divisable by warp_size.");
-    constexpr int kq_nbatch = D <= 128 ? D : 128;
+    constexpr int kq_nbatch = D == 128 ? 128 : 64;
 
     // In this kernel Q, K, V are matrices while i, j, k are matrix indices.
 
