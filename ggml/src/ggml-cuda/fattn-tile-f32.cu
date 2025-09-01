@@ -128,7 +128,7 @@ static __global__ void flash_attn_tile_ext_f32(
                 const int i_KQ = i_KQ_0 + threadIdx.y;
 
 #pragma unroll
-                for (int k_KQ_1 = 0; k_KQ_1 < kq_nbatch/2; k_KQ_1 += 2*warp_size) {
+                for (int k_KQ_1 = 0; k_KQ_1 < kq_nbatch/2; k_KQ_1 += warp_size) {
                     KV_tmp[i_KQ][k_KQ_1 + threadIdx.x] = K_h2[int64_t(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ_0/2 + k_KQ_1 + threadIdx.x];
                 }
             }
