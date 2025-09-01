@@ -26,7 +26,7 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols
 }
 
 template<int D, int ncols, int nwarps, bool use_logit_softcap> // D == head size
-__launch_bounds__(nwarps*ggml_cuda_get_physical_warp_size(), 2)
+__launch_bounds__(nwarps*ggml_cuda_get_physical_warp_size(), 3)
 static __global__ void flash_attn_tile_ext_f32(
         const char * __restrict__ Q,
         const char * __restrict__ K,
@@ -61,7 +61,7 @@ static __global__ void flash_attn_tile_ext_f32(
     constexpr int kq_stride = fattn_tile_get_kq_stride_device(D, ncols);
     static_assert(D         % (2*warp_size) == 0, "D not divisible by 2*warp_size.");
     static_assert(kq_stride %    warp_size  == 0, "kq_stride not divisable by warp_size.");
-    constexpr int kq_nbatch = D == 128 ? 128 : 64;
+    constexpr int kq_nbatch = 64;
 
     // In this kernel Q, K, V are matrices while i, j, k are matrix indices.
 
