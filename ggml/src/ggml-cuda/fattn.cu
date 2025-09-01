@@ -1,8 +1,7 @@
 #include "common.cuh"
 #include "fattn-common.cuh"
 #include "fattn-mma-f16.cuh"
-#include "fattn-tile-f16.cuh"
-#include "fattn-tile-f32.cuh"
+#include "fattn-tile.cuh"
 #include "fattn-vec-f16.cuh"
 #include "fattn-vec-f32.cuh"
 #include "fattn-wmma-f16.cuh"
@@ -271,8 +270,7 @@ static void ggml_cuda_flash_attn_ext_vec_f32(ggml_backend_cuda_context & ctx, gg
 // Best FlashAttention kernel for a specific GPU:
 enum best_fattn_kernel {
     BEST_FATTN_KERNEL_NONE     =   0,
-    BEST_FATTN_KERNEL_TILE_F32 = 200,
-    BEST_FATTN_KERNEL_TILE_F16 = 210,
+    BEST_FATTN_KERNEL_TILE     = 200,
     BEST_FATTN_KERNEL_VEC_F32  = 100,
     BEST_FATTN_KERNEL_VEC_F16  = 110,
     BEST_FATTN_KERNEL_WMMA_F16 = 300,
@@ -410,11 +408,11 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
         return BEST_FATTN_KERNEL_WMMA_F16;
     }
 
-    // If there is no suitable kernel for tensor cores or small batch sizes, use the generic kernel for large batch sizes:
-    if (prec == GGML_PREC_DEFAULT && fast_fp16_available(cc)) {
-        return BEST_FATTN_KERNEL_TILE_F16;
+    if (Q->ne[0] % (2*warp_size) != 0) {
+        return BEST_FATTN_KERNEL_NONE;
     }
-    return BEST_FATTN_KERNEL_TILE_F32;
+    // If there is no suitable kernel for tensor cores or small batch sizes, use the generic kernel for large batch sizes:
+    return BEST_FATTN_KERNEL_TILE;
 }
 
 void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
@@ -422,11 +420,8 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
     switch (ggml_cuda_get_best_fattn_kernel(ggml_cuda_get_device(), dst)) {
         case BEST_FATTN_KERNEL_NONE:
             GGML_ABORT("fatal error");
-        case BEST_FATTN_KERNEL_TILE_F32:
-            ggml_cuda_flash_attn_ext_tile_f32(ctx, dst);
-            break;
-        case BEST_FATTN_KERNEL_TILE_F16:
-            ggml_cuda_flash_attn_ext_tile_f16(ctx, dst);
+        case BEST_FATTN_KERNEL_TILE:
+            ggml_cuda_flash_attn_ext_tile(ctx, dst);
             break;
         case BEST_FATTN_KERNEL_VEC_F32:
             ggml_cuda_flash_attn_ext_vec_f32(ctx, dst);

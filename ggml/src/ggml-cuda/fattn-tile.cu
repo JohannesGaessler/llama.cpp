@@ -1,6 +1,6 @@
 #include "common.cuh"
 #include "fattn-common.cuh"
-#include "fattn-tile-f32.cuh"
+#include "fattn-tile.cuh"
 
 static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int warp_size) {
     switch (D) {
@@ -414,10 +414,9 @@ static __global__ void flash_attn_tile_ext_f32(
 #endif // FLASH_ATTN_AVAILABLE
 }
 
-template <int D, bool use_logit_softcap>
+template <int warp_size, bool use_logit_softcap, int D>
 static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * Q = dst->src[0];
-    const int warp_size = ggml_cuda_info().devices[ggml_cuda_get_device()].warp_size;
 
     constexpr int    nwarps        = 8;
     constexpr size_t nbytes_shared = 0;
@@ -438,44 +437,58 @@ static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml
         (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
 }
 
-void ggml_cuda_flash_attn_ext_tile_f32(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-    const ggml_tensor * KQV = dst;
+template <int warp_size, bool use_logit_softcap>
+static void launch_fattn_tile_switch_head_size(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * Q = dst->src[0];
+    switch (Q->ne[0]) {
+        case  64:
+            if constexpr (!use_logit_softcap && 64 % (2*warp_size) == 0) {
+                launch_fattn_tile_switch_ncols<warp_size, use_logit_softcap, 64>(ctx, dst);
+            } else {
+                GGML_ABORT("fatal error");
+            }
+            break;
+        case 128:
+            launch_fattn_tile_switch_ncols<warp_size, use_logit_softcap, 128>(ctx, dst);
+            break;
+        case 256:
+            launch_fattn_tile_switch_ncols<warp_size, use_logit_softcap, 256>(ctx, dst);
+            break;
+        default:
+            GGML_ABORT("Unsupported head size");
+            break;
+    }
+}
+
+void ggml_cuda_flash_attn_ext_tile(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    const ggml_tensor * KQV = dst;
+
+    const int warp_size = ggml_cuda_info().devices[ggml_cuda_get_device()].warp_size;
 
     float logit_softcap;
     memcpy(&logit_softcap, (const float *) KQV->op_params + 2, sizeof(float));
 
-    if (logit_softcap == 0.0f) {
-        constexpr bool use_logit_softcap = false;
-        switch (Q->ne[0]) {
-#ifndef GGML_USE_HIP
-            // FIXME
-            case  64:
-                launch_fattn_tile_switch_ncols< 64, use_logit_softcap>(ctx, dst);
-                break;
-#endif // GGML_USE_HIP
-            case 128:
-                launch_fattn_tile_switch_ncols<128, use_logit_softcap>(ctx, dst);
-                break;
-            case 256:
-                launch_fattn_tile_switch_ncols<256, use_logit_softcap>(ctx, dst);
-                break;
-            default:
-                GGML_ABORT("Unsupported head size");
-                break;
-        }
-    } else {
-        constexpr bool use_logit_softcap = true;
-        switch (Q->ne[0]) {
-            case 128:
-                launch_fattn_tile_switch_ncols<128, use_logit_softcap>(ctx, dst);
-                break;
-            case 256:
-                launch_fattn_tile_switch_ncols<256, use_logit_softcap>(ctx, dst);
-                break;
-            default:
-                GGML_ABORT("Unsupported head size");
-                break;
-        }
+    switch (warp_size) {
+        case 32:
+            if (logit_softcap == 0.0f) {
+                constexpr bool use_logit_softcap = false;
+                launch_fattn_tile_switch_head_size<32, use_logit_softcap>(ctx, dst);
+            } else {
+                constexpr bool use_logit_softcap = true;
+                launch_fattn_tile_switch_head_size<32, use_logit_softcap>(ctx, dst);
+            }
+            break;
+        case 64:
+            if (logit_softcap == 0.0f) {
+                constexpr bool use_logit_softcap = false;
+                launch_fattn_tile_switch_head_size<64, use_logit_softcap>(ctx, dst);
+            } else {
+                constexpr bool use_logit_softcap = true;
+                launch_fattn_tile_switch_head_size<64, use_logit_softcap>(ctx, dst);
+            }
+            break;
+        default:
+            GGML_ABORT("unsupported warp size");
+            break;
     }
 }
