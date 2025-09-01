@@ -7,7 +7,7 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
         case 64:
         case 128:
         case 256:
-            return 64;
+            return 128;
         default:
             GGML_ABORT("fatal error");
             return -1;
@@ -19,7 +19,7 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols
         case 64:
         case 128:
         case 256:
-            return 64;
+            return 128;
         default:
             return -1;
     }
@@ -346,15 +346,6 @@ static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml
 
     constexpr int    nwarps        = 8;
     constexpr size_t nbytes_shared = 0;
-
-    if (Q->ne[1] > 32) {
-        constexpr int cols_per_block = 64;
-        fattn_kernel_t fattn_kernel = flash_attn_tile_ext_f32<D, cols_per_block, nwarps, use_logit_softcap>;
-        const int kq_stride = fattn_tile_get_kq_stride_host(D, cols_per_block, warp_size);
-        launch_fattn<D, cols_per_block, 1>
-            (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
-        return;
-    }
 
     if (Q->ne[1] > 16) {
         constexpr int cols_per_block = 32;
