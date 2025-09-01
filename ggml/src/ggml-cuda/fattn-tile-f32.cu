@@ -7,7 +7,7 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
         case 64:
         case 128:
         case 256:
-            return 128;
+            return 64;
         default:
             GGML_ABORT("fatal error");
             return -1;
@@ -19,14 +19,14 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols
         case 64:
         case 128:
         case 256:
-            return 128;
+            return 64;
         default:
             return -1;
     }
 }
 
 template<int D, int ncols, int nwarps, bool use_logit_softcap> // D == head size
-__launch_bounds__(nwarps*ggml_cuda_get_physical_warp_size(), 2)
+__launch_bounds__(nwarps*ggml_cuda_get_physical_warp_size(), 3)
 static __global__ void flash_attn_tile_ext_f32(
         const char * __restrict__ Q,
         const char * __restrict__ K,
