@@ -83,7 +83,6 @@ static __global__ void flash_attn_tile_ext_f32(
     __shared__ float KQ[ncols][kq_stride];
 #ifdef FAST_FP16_AVAILABLE
     __shared__ half2 Q_sram[ncols][D/2];
-    __shared__ half2 KQ[ncols][kq_stride/2];
     __shared__ half2 KV_tmp[kq_stride * (kq_nbatch/2 + 1)]; // Padded to avoid memory bank conflicts.
     half2 * KQ_h2 = (half2 *) KQ;
     half2 VKQ[ncols/nwarps][D/(2*warp_size)] = {{{0.0f, 0.0f}}};
@@ -142,7 +141,7 @@ static __global__ void flash_attn_tile_ext_f32(
                 for (int k_KQ_1 = 0; k_KQ_1 < kq_nbatch/2; k_KQ_1 += warp_size) {
                     const half2 tmph = K_h2[int64_t(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ_0/2 + k_KQ_1 + threadIdx.x];
 #ifdef FAST_FP16_AVAILABLE
-                    KV_tmp[i_KQ*(kq_nbatch + 1) + k_KQ_1 + threadIdx.x] = tmpf.x;
+                    KV_tmp[i_KQ*(kq_nbatch + 1) + k_KQ_1 + threadIdx.x] = tmph;
 #else
                     const float2 tmpf = __half22float2(tmph);
                     KV_tmp[i_KQ*(kq_nbatch + 1) + 2*k_KQ_1             + threadIdx.x] = tmpf.x;
