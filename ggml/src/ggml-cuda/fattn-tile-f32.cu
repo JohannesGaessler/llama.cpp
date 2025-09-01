@@ -7,7 +7,7 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
         case 64:
         case 128:
         case 256:
-            return ncols <= 16 || warp_size == 64 ? 64 : 32;
+            return 64;
         default:
             GGML_ABORT("fatal error");
             return -1;
@@ -19,7 +19,7 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols
         case 64:
         case 128:
         case 256:
-            return ncols <= 16 || ggml_cuda_get_physical_warp_size() == 64 ? 64 : 32;
+            return 64;
         default:
             return -1;
     }
@@ -61,7 +61,7 @@ static __global__ void flash_attn_tile_ext_f32(
     constexpr int kq_stride = fattn_tile_get_kq_stride_device(D, ncols);
     static_assert(D         % (2*warp_size) == 0, "D not divisible by 2*warp_size.");
     static_assert(kq_stride %    warp_size  == 0, "kq_stride not divisable by warp_size.");
-    constexpr int kq_nbatch = D == 128 ? 128 : 64;
+    constexpr int kq_nbatch = 64;
 
     // In this kernel Q, K, V are matrices while i, j, k are matrix indices.
 
@@ -82,7 +82,7 @@ static __global__ void flash_attn_tile_ext_f32(
 
     __shared__ float KQ[ncols*kq_stride];
 
-    __shared__ half2 KV_tmp[kq_stride][kq_nbatch + 1]; // Padded to avoid memory bank conflicts.
+    __shared__ half2 KV_tmp[kq_stride][kq_nbatch/2 + 1]; // Padded to avoid memory bank conflicts.
     float2 * KV_tmp2 = (float2 *) KV_tmp;
 
     float kqmax[ncols/nwarps];
@@ -150,7 +150,7 @@ static __global__ void flash_attn_tile_ext_f32(
                 for (int j_KQ_0 = 0; j_KQ_0 < ncols; j_KQ_0 += nwarps) {
                     const int j_KQ = j_KQ_0 + threadIdx.y;
 
-                    Q_k[j_KQ_0/nwarps] = __half22float2(Q_h2[j_KQ][k_KQ_0 + k_KQ_1]);
+                    Q_k[j_KQ_0/nwarps] = __half22float2(Q_h2[j_KQ][k_KQ_0/2 + k_KQ_1]);
                 }
 
 #pragma unroll
@@ -217,7 +217,7 @@ static __global__ void flash_attn_tile_ext_f32(
             }
         }
 
-        constexpr int V_cols_per_iter = kq_stride*kq_nbatch / D;
+        constexpr int V_cols_per_iter = kq_stride*(kq_nbatch/2) / D;
         static_assert(kq_stride % V_cols_per_iter == 0, "bad V_cols_per_iter");
 #pragma unroll
         for (int k0 = 0; k0 < kq_stride; k0 += V_cols_per_iter) {
@@ -347,6 +347,15 @@ static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml
     constexpr int    nwarps        = 8;
     constexpr size_t nbytes_shared = 0;
 
+    if (Q->ne[1] > 32) {
+        constexpr int cols_per_block = 64;
+        fattn_kernel_t fattn_kernel = flash_attn_tile_ext_f32<D, cols_per_block, nwarps, use_logit_softcap>;
+        const int kq_stride = fattn_tile_get_kq_stride_host(D, cols_per_block, warp_size);
+        launch_fattn<D, cols_per_block, 1>
+            (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
+        return;
+    }
+
     if (Q->ne[1] > 16) {
         constexpr int cols_per_block = 32;
         fattn_kernel_t fattn_kernel = flash_attn_tile_ext_f32<D, cols_per_block, nwarps, use_logit_softcap>;
@@ -382,9 +391,9 @@ void ggml_cuda_flash_attn_ext_tile_f32(ggml_backend_cuda_context & ctx, ggml_ten
             case 128:
                 launch_fattn_tile_switch_ncols<128, use_logit_softcap>(ctx, dst);
                 break;
-            case 256:
-                launch_fattn_tile_switch_ncols<256, use_logit_softcap>(ctx, dst);
-                break;
+            // case 256:
+            //     launch_fattn_tile_switch_ncols<256, use_logit_softcap>(ctx, dst);
+            //     break;
             default:
                 GGML_ABORT("Unsupported head size");
                 break;
@@ -395,9 +404,9 @@ void ggml_cuda_flash_attn_ext_tile_f32(ggml_backend_cuda_context & ctx, ggml_ten
             case 128:
                 launch_fattn_tile_switch_ncols<128, use_logit_softcap>(ctx, dst);
                 break;
-            case 256:
-                launch_fattn_tile_switch_ncols<256, use_logit_softcap>(ctx, dst);
-                break;
+            // case 256:
+            //     launch_fattn_tile_switch_ncols<256, use_logit_softcap>(ctx, dst);
+            //     break;
             default:
                 GGML_ABORT("Unsupported head size");
                 break;
