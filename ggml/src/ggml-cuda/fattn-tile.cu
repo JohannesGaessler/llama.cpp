@@ -177,7 +177,11 @@ static __global__ void flash_attn_tile(
                 for (int j_KQ_0 = 0; j_KQ_0 < ncols; j_KQ_0 += nwarps) {
                     const int j_KQ = j_KQ_0 + threadIdx.y;
 
+#ifdef FAST_FP16_AVAILABLE
+                    Q_k[j_KQ_0/nwarps] = Q_tmp[j_KQ][k_KQ_0/2 + k_KQ_1];
+#else
                     Q_k[j_KQ_0/nwarps] = Q_tmp[j_KQ][k_KQ_0 + k_KQ_1];
+#endif // FAST_FP16_AVAILABLE
                 }
 
 #pragma unroll
