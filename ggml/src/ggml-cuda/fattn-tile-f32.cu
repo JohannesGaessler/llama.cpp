@@ -82,7 +82,7 @@ static __global__ void flash_attn_tile_ext_f32(
 
     __shared__ float KQ[ncols*kq_stride];
 
-    __shared__ float KV_tmp[kq_stride][kq_nbatch + 1]; // Padded to avoid memory bank conflicts.
+    __shared__ half2 KV_tmp[kq_stride][kq_nbatch + 1]; // Padded to avoid memory bank conflicts.
     float2 * KV_tmp2 = (float2 *) KV_tmp;
 
     float kqmax[ncols/nwarps];
@@ -95,16 +95,15 @@ static __global__ void flash_attn_tile_ext_f32(
     float2 VKQ[ncols/nwarps][D/(2*warp_size)] = {{{0.0f, 0.0f}}};
 
     // Convert Q to half2 and store in registers:
-    __shared__ float Q_f[ncols][D];
+    __shared__ half2 Q_h2[ncols][D/2];
 #pragma unroll
     for (int j0 = 0; j0 < ncols; j0 += nwarps) {
         const int j = j0 + threadIdx.y;
 
 #pragma unroll
-        for (int i0 = 0; i0 < D; i0 += 2*warp_size) {
-            const float2 tmp = ic0 + j < ne01 ? Q_f2[j*(nb01/sizeof(float2)) + i0/2 + threadIdx.x] : make_float2(0.0f, 0.0f);
-            Q_f[j][i0 + 0*warp_size + threadIdx.x] = tmp.x * scale;
-            Q_f[j][i0 + 1*warp_size + threadIdx.x] = tmp.y * scale;
+        for (int i0 = 0; i0 < D/2; i0 += warp_size) {
+            const float2 tmp = ic0 + j < ne01 ? Q_f2[j*(nb01/sizeof(float2)) + i0 + threadIdx.x] : make_float2(0.0f, 0.0f);
+            Q_h2[j][i0 + threadIdx.x] = make_half2(tmp.x * scale, tmp.y * scale);
         }
     }
 
@@ -129,38 +128,37 @@ static __global__ void flash_attn_tile_ext_f32(
                 const int i_KQ = i_KQ_0 + threadIdx.y;
 
 #pragma unroll
-                for (int k_KQ_1 = 0; k_KQ_1 < kq_nbatch; k_KQ_1 += 2*warp_size) {
-                    const float2 tmp = __half22float2(K_h2[int64_t(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ_0/2 + k_KQ_1/2 + threadIdx.x]);
-                    KV_tmp[i_KQ][0*warp_size + k_KQ_1 + threadIdx.x] = tmp.x;
-                    KV_tmp[i_KQ][1*warp_size + k_KQ_1 + threadIdx.x] = tmp.y;
+                for (int k_KQ_1 = 0; k_KQ_1 < kq_nbatch/2; k_KQ_1 += 2*warp_size) {
+                    KV_tmp[i_KQ][k_KQ_1 + threadIdx.x] = K_h2[int64_t(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ_0/2 + k_KQ_1 + threadIdx.x];
                 }
             }
 
             __syncthreads();
 
 #pragma unroll
-            for (int k_KQ_1 = 0; k_KQ_1 < kq_nbatch; ++k_KQ_1) {
-                float K_k[kq_stride/warp_size];
-                float Q_k[ncols/nwarps];
+            for (int k_KQ_1 = 0; k_KQ_1 < kq_nbatch/2; ++k_KQ_1) {
+                float2 K_k[kq_stride/warp_size];
+                float2 Q_k[ncols/nwarps];
 
 #pragma unroll
                 for (int i_KQ_0 = 0; i_KQ_0 < kq_stride; i_KQ_0 += warp_size) {
                     const int i_KQ = i_KQ_0 + threadIdx.x;
 
-                    K_k[i_KQ_0/warp_size] = KV_tmp[i_KQ][k_KQ_1];
+                    K_k[i_KQ_0/warp_size] = __half22float2(KV_tmp[i_KQ][k_KQ_1]);
                 }
 #pragma unroll
                 for (int j_KQ_0 = 0; j_KQ_0 < ncols; j_KQ_0 += nwarps) {
                     const int j_KQ = j_KQ_0 + threadIdx.y;
 
-                    Q_k[j_KQ_0/nwarps] = Q_f[j_KQ][k_KQ_0 + k_KQ_1];
+                    Q_k[j_KQ_0/nwarps] = __half22float2(Q_h2[j_KQ][k_KQ_0 + k_KQ_1]);
                 }
 
 #pragma unroll
                 for (int i_KQ_0 = 0; i_KQ_0 < kq_stride; i_KQ_0 += warp_size) {
 #pragma unroll
                     for (int j_KQ_0 = 0; j_KQ_0 < ncols; j_KQ_0 += nwarps) {
-                        sum[i_KQ_0/warp_size][j_KQ_0/nwarps] += K_k[i_KQ_0/warp_size] * Q_k[j_KQ_0/nwarps];
+                        sum[i_KQ_0/warp_size][j_KQ_0/nwarps] += K_k[i_KQ_0/warp_size].x * Q_k[j_KQ_0/nwarps].x;
+                        sum[i_KQ_0/warp_size][j_KQ_0/nwarps] += K_k[i_KQ_0/warp_size].y * Q_k[j_KQ_0/nwarps].y;
                     }
                 }
             }
