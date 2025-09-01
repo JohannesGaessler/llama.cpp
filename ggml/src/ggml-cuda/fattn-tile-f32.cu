@@ -80,8 +80,8 @@ static __global__ void flash_attn_tile_ext_f32(
 
     const float slope = get_alibi_slope(max_bias, head, n_head_log2, m0, m1);
 
-    __shared__ float KQ[ncols*kq_stride];
-
+    __shared__ float Q_f[ncols][D];
+    __shared__ float KQ[ncols][kq_stride];
     __shared__ float KV_tmp[kq_stride][kq_nbatch + 1]; // Padded to avoid memory bank conflicts.
     float2 * KV_tmp2 = (float2 *) KV_tmp;
 
@@ -94,8 +94,6 @@ static __global__ void flash_attn_tile_ext_f32(
 
     float2 VKQ[ncols/nwarps][D/(2*warp_size)] = {{{0.0f, 0.0f}}};
 
-    // Convert Q to half2 and store in registers:
-    __shared__ float Q_f[ncols][D];
 #pragma unroll
     for (int j0 = 0; j0 < ncols; j0 += nwarps) {
         const int j = j0 + threadIdx.y;
@@ -186,7 +184,7 @@ static __global__ void flash_attn_tile_ext_f32(
 
                 kqmax_new[j_KQ_0/nwarps] = fmaxf(kqmax_new[j_KQ_0/nwarps], sum[i_KQ_0/warp_size][j_KQ_0/nwarps]);
 
-                KQ[j_KQ*kq_stride + i_KQ] = sum[i_KQ_0/warp_size][j_KQ_0/nwarps];
+                KQ[j_KQ][i_KQ] = sum[i_KQ_0/warp_size][j_KQ_0/nwarps];
             }
         }
 
@@ -205,10 +203,10 @@ static __global__ void flash_attn_tile_ext_f32(
             for (int i0 = 0; i0 < kq_stride; i0 += warp_size) {
                 const int i = i0 + threadIdx.x;
 
-                const float diff = KQ[j*kq_stride + i] - kqmax[j0/nwarps];
+                const float diff = KQ[j][i] - kqmax[j0/nwarps];
                 const float val = expf(diff);
                 kqsum_add += val;
-                KQ[j*kq_stride + i] = val;
+                KQ[j][i] = val;
             }
             kqsum[j0/nwarps] = kqsum[j0/nwarps]*KQ_max_scale + kqsum_add;
 
@@ -252,7 +250,7 @@ static __global__ void flash_attn_tile_ext_f32(
                 for (int j0 = 0; j0 < ncols; j0 += nwarps) {
                     const int j = j0 + threadIdx.y;
 
-                    KQ_k[j0/nwarps] = KQ[j*kq_stride + k0 + k1];
+                    KQ_k[j0/nwarps] = KQ[j][k0 + k1];
                 }
 
 #pragma unroll
