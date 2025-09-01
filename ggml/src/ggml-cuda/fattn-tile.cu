@@ -14,19 +14,19 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
     }
 }
 
-static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols) {
+static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols, int warp_size) {
     switch (D) {
         case 64:
         case 128:
         case 256:
-            return ncols <= 16 || ggml_cuda_get_physical_warp_size() == 64 ? 64 : 32;
+            return ncols <= 16 || warp_size == 64 ? 64 : 32;
         default:
             return -1;
     }
 }
 
 template<int D, int ncols, int nwarps, bool use_logit_softcap> // D == head size
-__launch_bounds__(nwarps*ggml_cuda_get_physical_warp_size(), 2)
+__launch_bounds__(nwarps*(D/2 < ggml_cuda_get_physical_warp_size() ? D : ggml_cuda_get_physical_warp_size()), 2)
 static __global__ void flash_attn_tile_ext_f32(
         const char * __restrict__ Q,
         const char * __restrict__ K,
@@ -59,7 +59,7 @@ static __global__ void flash_attn_tile_ext_f32(
 
     constexpr int warp_size_physical = ggml_cuda_get_physical_warp_size();
     constexpr int warp_size = D % (2*warp_size_physical) == 0 ? warp_size_physical : warp_size_physical/2;
-    constexpr int kq_stride = fattn_tile_get_kq_stride_device(D, ncols);
+    constexpr int kq_stride = fattn_tile_get_kq_stride_device(D, ncols, warp_size);
     static_assert(kq_stride % warp_size == 0, "kq_stride not divisable by warp_size.");
     constexpr int kq_nbatch = D == 128 ? 128 : 64;
 
