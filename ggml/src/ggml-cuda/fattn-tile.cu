@@ -61,7 +61,7 @@ static __global__ void flash_attn_tile(
     constexpr int warp_size = D % (2*warp_size_physical) == 0 ? warp_size_physical : warp_size_physical/2;
     constexpr int kq_stride = fattn_tile_get_kq_stride_device(D, ncols, warp_size);
     static_assert(kq_stride % warp_size == 0, "kq_stride not divisable by warp_size.");
-    constexpr int kq_nbatch = D == 128 ? 128 : 64;
+    constexpr int kq_nbatch = D == 128 || warp_size == 64 ? 128 : 64;
 
     // In this kernel Q, K, V are matrices while i, j, k are matrix indices.
 
