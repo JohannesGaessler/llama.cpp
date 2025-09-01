@@ -27,7 +27,7 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols
 
 template<int D, int ncols, int nwarps, bool use_logit_softcap> // D == head size
 __launch_bounds__(nwarps*(D/2 < ggml_cuda_get_physical_warp_size() ? D : ggml_cuda_get_physical_warp_size()), 2)
-static __global__ void flash_attn_tile_ext_f32(
+static __global__ void flash_attn_tile(
         const char * __restrict__ Q,
         const char * __restrict__ K,
         const char * __restrict__ V,
@@ -414,15 +414,16 @@ static __global__ void flash_attn_tile_ext_f32(
 #endif // FLASH_ATTN_AVAILABLE
 }
 
-template <int D, int warp_size, int nwarps, bool use_logit_softcap>
+template <int D, int warp_size, bool use_logit_softcap>
 static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * Q = dst->src[0];
 
+    constexpr int    nwarps        = 8;
     constexpr size_t nbytes_shared = 0;
 
     if (Q->ne[1] > 16) {
         constexpr int cols_per_block = 32;
-        fattn_kernel_t fattn_kernel = flash_attn_tile_ext_f32<D, cols_per_block, nwarps, use_logit_softcap>;
+        fattn_kernel_t fattn_kernel = flash_attn_tile<D, cols_per_block, nwarps, use_logit_softcap>;
         const int kq_stride = fattn_tile_get_kq_stride_host(D, cols_per_block, warp_size);
         launch_fattn<D, cols_per_block, 1>
             (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
@@ -430,7 +431,7 @@ static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml
     }
 
     constexpr int cols_per_block = 16;
-    fattn_kernel_t fattn_kernel = flash_attn_tile_ext_f32<D, cols_per_block, nwarps, use_logit_softcap>;
+    fattn_kernel_t fattn_kernel = flash_attn_tile<D, cols_per_block, nwarps, use_logit_softcap>;
     const int kq_stride = fattn_tile_get_kq_stride_host(D, cols_per_block, warp_size);
     launch_fattn<D, cols_per_block, 1>
         (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
@@ -445,17 +446,14 @@ static void launch_fattn_tile_switch_head_size(ggml_backend_cuda_context & ctx, 
                 GGML_ABORT("fatal error");
             } else {
                 constexpr int warp_size = 32;
-                constexpr int nwarps    =  8 * (64/warp_size_physical);
-                launch_fattn_tile_switch_ncols<64, warp_size, nwarps, use_logit_softcap>(ctx, dst);
+                launch_fattn_tile_switch_ncols<64, warp_size, use_logit_softcap>(ctx, dst);
             }
         } break;
         case 128: {
-            constexpr int nwarps = 8;
-            launch_fattn_tile_switch_ncols<128, warp_size_physical, nwarps, use_logit_softcap>(ctx, dst);
+            launch_fattn_tile_switch_ncols<128, warp_size_physical, use_logit_softcap>(ctx, dst);
         } break;
         case 256: {
-            constexpr int nwarps = 8;
-            launch_fattn_tile_switch_ncols<256, warp_size_physical, nwarps, use_logit_softcap>(ctx, dst);
+            launch_fattn_tile_switch_ncols<256, warp_size_physical, use_logit_softcap>(ctx, dst);
         } break;
         default: {
             GGML_ABORT("Unsupported head size");
