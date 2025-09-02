@@ -3,12 +3,38 @@
 #include "fattn-tile.cuh"
 
 static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int cc, const int warp_size) {
+    if (GGML_CUDA_CC_IS_AMD(cc)) {
+        GGML_ASSERT(fast_fp16_available(cc));
+        switch (D) {
+            case 64:
+                return ncols <= 16 ? 128 : 64;
+            case 128:
+                return 128;
+            case 256:
+                return 64;
+            default:
+                return -1;
+        }
+    }
+    GGML_ASSERT(warp_size == 32);
+    if (fast_fp16_available(cc)) {
+        switch (D) {
+            case 64:
+            case 128:
+                return 128;
+            case 256:
+                return ncols <= 16 ? 128 : 64;
+            default:
+                GGML_ABORT("fatal error");
+                return -1;
+        }
+    }
     switch (D) {
         case 64:
             return ncols <= 16 ? 128 : 64;
         case 128:
         case 256:
-            return ncols <= 16 || warp_size == 64 ? 64 : 32;
+            return ncols <= 16 ? 64 : 32;
         default:
             GGML_ABORT("fatal error");
             return -1;
@@ -16,28 +42,90 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
 }
 
 static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols, int warp_size) {
+#ifdef GGML_USE_HIP
+#ifndef FAST_FP16_AVAILABLE
+    static_assert(false, "unexpected AMD without fast FP16");
+#endif // FAST_FP16_AVAILABLE
+    switch (D) {
+        case 64:
+            return ncols <= 16 ? 128 : 64;
+        case 128:
+            return 128;
+        case 256:
+            return 64;
+        default:
+            return -1;
+    }
+#else
+    static_assert(ggml_cuda_get_physical_warp_size() == 32, "unexpected NVIDIA warp size");
+#ifdef FAST_FP16_AVAILABLE
+    switch (D) {
+        case 64:
+        case 128:
+            return 128;
+        case 256:
+            return ncols <= 16 ? 128 : 64;
+        default:
+            GGML_ABORT("fatal error");
+            return -1;
+    }
+#else
     switch (D) {
         case 64:
             return ncols <= 16 ? 128 : 64;
         case 128:
         case 256:
-            return ncols <= 16 || warp_size == 64 ? 64 : 32;
+            return ncols <= 16 ? 64 : 32;
+        default:
+            GGML_ABORT("fatal error");
+            return -1;
+    }
+#endif // FAST_FP16_AVAILABLE
+#endif // GGML_USE_HIP
+    GGML_UNUSED_VARS(ncols, warp_size);
+}
+
+static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int D, int ncols, int warp_size) {
+#ifdef GGML_USE_HIP
+#ifndef FAST_FP16_AVAILABLE
+    static_assert(false, "unexpected AMD without fast FP16");
+#endif // FAST_FP16_AVAILABLE
+    switch (D) {
+        case 64:
+            return 64;
+        case 128:
+        case 256:
+            return 128;
         default:
             return -1;
     }
-}
-
-static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int D, int /*ncols*/, int warp_size) {
+#else
+    static_assert(ggml_cuda_get_physical_warp_size() == 32, "unexpected NVIDIA warp size");
+#ifdef FAST_FP16_AVAILABLE
+    switch (D) {
+        case 64:
+            return 64;
+        case 128:
+            return ncols <= 16 ? 128 : 64;
+        case 256:
+            return ncols <= 16 ? 64 : 128;
+        default:
+            return -1;
+    }
+#else
     switch (D) {
         case 64:
             return 64;
         case 128:
             return 128;
         case 256:
-            return warp_size == 64 ? 128 : 64;
+            return 64;
         default:
             return -1;
     }
+#endif // FAST_FP16_AVAILABLE
+#endif // GGML_USE_HIP
+    GGML_UNUSED_VARS(ncols, warp_size);
 }
 
 template<int D, int ncols, int nwarps, bool use_logit_softcap> // D == head size
