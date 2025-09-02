@@ -7,11 +7,9 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
         GGML_ASSERT(fast_fp16_available(cc));
         switch (D) {
             case 64:
-                return ncols <= 16 ? 128 : 64;
             case 128:
-                return 128;
             case 256:
-                return 64;
+                return warp_size;
             default:
                 return -1;
         }
@@ -31,10 +29,9 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
     }
     switch (D) {
         case 64:
-            return ncols <= 16 ? 128 : 64;
         case 128:
         case 256:
-            return ncols <= 16 ? 64 : 32;
+            return 32;
         default:
             GGML_ABORT("fatal error");
             return -1;
@@ -48,11 +45,9 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols
 #endif // FAST_FP16_AVAILABLE
     switch (D) {
         case 64:
-            return ncols <= 16 ? 128 : 64;
         case 128:
-            return 128;
         case 256:
-            return 64;
+            return warp_size;
         default:
             return -1;
     }
@@ -72,10 +67,9 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols
 #else
     switch (D) {
         case 64:
-            return ncols <= 16 ? 128 : 64;
         case 128:
         case 256:
-            return ncols <= 16 ? 64 : 32;
+            return 32;
         default:
             GGML_ABORT("fatal error");
             return -1;
@@ -92,10 +86,9 @@ static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int D, int ncols
 #endif // FAST_FP16_AVAILABLE
     switch (D) {
         case 64:
-            return 64;
         case 128:
         case 256:
-            return 128;
+            return 2*warp_size;
         default:
             return -1;
     }
@@ -115,9 +108,7 @@ static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int D, int ncols
 #else
     switch (D) {
         case 64:
-            return 64;
         case 128:
-            return 128;
         case 256:
             return 64;
         default:
