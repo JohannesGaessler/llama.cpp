@@ -2,9 +2,10 @@
 #include "fattn-common.cuh"
 #include "fattn-tile.cuh"
 
-static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int warp_size) {
+static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int cc, const int warp_size) {
     switch (D) {
         case 64:
+            return ncols <= 16 ? 128 : 64;
         case 128:
         case 256:
             return ncols <= 16 || warp_size == 64 ? 64 : 32;
@@ -17,9 +18,23 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
 static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols, int warp_size) {
     switch (D) {
         case 64:
+            return ncols <= 16 ? 128 : 64;
         case 128:
         case 256:
             return ncols <= 16 || warp_size == 64 ? 64 : 32;
+        default:
+            return -1;
+    }
+}
+
+static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int D, int /*ncols*/, int warp_size) {
+    switch (D) {
+        case 64:
+            return 64;
+        case 128:
+            return 128;
+        case 256:
+            return warp_size == 64 ? 128 : 64;
         default:
             return -1;
     }
@@ -61,7 +76,7 @@ static __global__ void flash_attn_tile(
     constexpr int warp_size = D % (2*warp_size_physical) == 0 ? warp_size_physical : warp_size_physical/2;
     constexpr int kq_stride = fattn_tile_get_kq_stride_device(D, ncols, warp_size);
     static_assert(kq_stride % warp_size == 0, "kq_stride not divisable by warp_size.");
-    constexpr int kq_nbatch = D == 128 || warp_size == 64 ? 128 : 64;
+    constexpr int kq_nbatch = fattn_tile_get_kq_nbatch_device(D, ncols, warp_size);
     static_assert(kq_nbatch % (2*warp_size) == 0, "bad kq_nbatch");
 
     // In this kernel Q, K, V are matrices while i, j, k are matrix indices.
@@ -423,13 +438,15 @@ template <int D, int warp_size, bool use_logit_softcap>
 static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * Q = dst->src[0];
 
+    const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
+
     constexpr int    nwarps        = 8;
     constexpr size_t nbytes_shared = 0;
 
     if (Q->ne[1] > 16) {
         constexpr int cols_per_block = 32;
         fattn_kernel_t fattn_kernel = flash_attn_tile<D, cols_per_block, nwarps, use_logit_softcap>;
-        const int kq_stride = fattn_tile_get_kq_stride_host(D, cols_per_block, warp_size);
+        const int kq_stride = fattn_tile_get_kq_stride_host(D, cols_per_block, cc, warp_size);
         launch_fattn<D, cols_per_block, 1>
             (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
         return;
@@ -437,7 +454,7 @@ static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml
 
     constexpr int cols_per_block = 16;
     fattn_kernel_t fattn_kernel = flash_attn_tile<D, cols_per_block, nwarps, use_logit_softcap>;
-    const int kq_stride = fattn_tile_get_kq_stride_host(D, cols_per_block, warp_size);
+    const int kq_stride = fattn_tile_get_kq_stride_host(D, cols_per_block, cc, warp_size);
     launch_fattn<D, cols_per_block, 1>
         (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
 }
