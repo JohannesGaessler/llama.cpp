@@ -408,9 +408,6 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
         return BEST_FATTN_KERNEL_WMMA_F16;
     }
 
-    if (Q->ne[0] % (2*warp_size) != 0) {
-        return BEST_FATTN_KERNEL_NONE;
-    }
     // If there is no suitable kernel for tensor cores or small batch sizes, use the generic kernel for large batch sizes:
     return BEST_FATTN_KERNEL_TILE;
 }
