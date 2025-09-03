@@ -158,8 +158,7 @@ static __global__ void flash_attn_tile(
     return;
 #endif // FP16_MMA_AVAILABLE
 
-    constexpr int warp_size_physical = ggml_cuda_get_physical_warp_size();
-    constexpr int warp_size = D/2 < warp_size_physical ? D/2 : warp_size_physical;
+    constexpr int warp_size = 32;
     constexpr int nwarps    = FATTN_TILE_NTHREADS / warp_size;
     constexpr int kq_stride = fattn_tile_get_kq_stride_device(D, ncols, warp_size);
     static_assert(kq_stride % warp_size == 0, "kq_stride not divisable by warp_size.");
@@ -527,8 +526,7 @@ static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml
 
     const int id                 = ggml_cuda_get_device();
     const int cc                 = ggml_cuda_info().devices[id].cc;
-    const int warp_size_physical = ggml_cuda_info().devices[id].warp_size;
-    const int warp_size          = D/2 < warp_size_physical ? D/2 : warp_size_physical;
+    const int warp_size          = 32;
     const int nwarps             = FATTN_TILE_NTHREADS / warp_size;
 
     constexpr size_t nbytes_shared = 0;
