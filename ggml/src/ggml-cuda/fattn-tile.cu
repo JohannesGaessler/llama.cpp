@@ -7,7 +7,9 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
         GGML_ASSERT(fast_fp16_available(cc));
         switch (D) {
             case 64:
+                return warp_size;
             case 128:
+                return warp_size;
             case 256:
                 return warp_size;
             default:
@@ -47,7 +49,9 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols
 #endif // FAST_FP16_AVAILABLE
     switch (D) {
         case 64:
+            return warp_size;
         case 128:
+            return warp_size;
         case 256:
             return warp_size;
         default:
@@ -90,7 +94,9 @@ static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int D, int ncols
 #endif // FAST_FP16_AVAILABLE
     switch (D) {
         case 64:
+            return 2*warp_size;
         case 128:
+            return 2*warp_size;
         case 256:
             return 2*warp_size;
         default:
