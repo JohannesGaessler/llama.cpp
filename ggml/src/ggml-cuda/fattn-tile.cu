@@ -4,7 +4,6 @@
 
 static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int cc, const int warp_size) {
     if (GGML_CUDA_CC_IS_AMD(cc)) {
-        GGML_ASSERT(fast_fp16_available(cc));
         switch (D) {
             case 64:
                 return ncols <= 16 ? 32 : 64;
@@ -17,7 +16,6 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
                 return -1;
         }
     }
-    GGML_ASSERT(warp_size == 32);
     if (fast_fp16_available(cc)) {
         switch (D) {
             case 64:
@@ -45,9 +43,6 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
 
 static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols, int warp_size) {
 #ifdef GGML_USE_HIP
-#ifndef FAST_FP16_AVAILABLE
-    static_assert(false, "unexpected AMD without fast FP16");
-#endif // FAST_FP16_AVAILABLE
     switch (D) {
         case 64:
             return ncols <= 16 ? 32 : 64;
@@ -59,7 +54,6 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols
             return -1;
     }
 #else
-    static_assert(ggml_cuda_get_physical_warp_size() == 32, "unexpected NVIDIA warp size");
 #ifdef FAST_FP16_AVAILABLE
     switch (D) {
         case 64:
@@ -88,9 +82,6 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols
 
 static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int D, int ncols, int warp_size) {
 #ifdef GGML_USE_HIP
-#ifndef FAST_FP16_AVAILABLE
-    static_assert(false, "unexpected AMD without fast FP16");
-#endif // FAST_FP16_AVAILABLE
     switch (D) {
         case 64:
             return 64;
@@ -102,7 +93,6 @@ static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int D, int ncols
             return -1;
     }
 #else
-    static_assert(ggml_cuda_get_physical_warp_size() == 32, "unexpected NVIDIA warp size");
 #ifdef FAST_FP16_AVAILABLE
     switch (D) {
         case 64:
@@ -527,11 +517,14 @@ static __global__ void flash_attn_tile(
 #endif // FLASH_ATTN_AVAILABLE
 }
 
-template <int D, int warp_size, bool use_logit_softcap>
+template <int D, bool use_logit_softcap>
 static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * Q = dst->src[0];
 
-    const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
+    const int id                 = ggml_cuda_get_device();
+    const int cc                 = ggml_cuda_info().devices[id].cc;
+    const int warp_size_physical = ggml_cuda_info().devices[id].warp_size;
+    const int warp_size          = D/2 < warp_size_physical ? D/2 : warp_size_physical;
 
     constexpr int    nwarps        = 8;
     constexpr size_t nbytes_shared = 0;
@@ -552,23 +545,18 @@ static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml
         (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
 }
 
-template <int warp_size_physical, bool use_logit_softcap>
+template <bool use_logit_softcap>
 static void launch_fattn_tile_switch_head_size(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * Q = dst->src[0];
     switch (Q->ne[0]) {
         case  64: {
-            if constexpr (use_logit_softcap) {
-                GGML_ABORT("fatal error");
-            } else {
-                constexpr int warp_size = 32;
-                launch_fattn_tile_switch_ncols<64, warp_size, use_logit_softcap>(ctx, dst);
-            }
+            launch_fattn_tile_switch_ncols< 64, use_logit_softcap>(ctx, dst);
         } break;
         case 128: {
-            launch_fattn_tile_switch_ncols<128, warp_size_physical, use_logit_softcap>(ctx, dst);
+            launch_fattn_tile_switch_ncols<128, use_logit_softcap>(ctx, dst);
         } break;
         case 256: {
-            launch_fattn_tile_switch_ncols<256, warp_size_physical, use_logit_softcap>(ctx, dst);
+            launch_fattn_tile_switch_ncols<256, use_logit_softcap>(ctx, dst);
         } break;
         default: {
             GGML_ABORT("Unsupported head size");
@@ -579,32 +567,14 @@ static void launch_fattn_tile_switch_head_size(ggml_backend_cuda_context & ctx, 
 void ggml_cuda_flash_attn_ext_tile(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * KQV = dst;
 
-    const int warp_size_physical = ggml_cuda_info().devices[ggml_cuda_get_device()].warp_size;
-
     float logit_softcap;
     memcpy(&logit_softcap, (const float *) KQV->op_params + 2, sizeof(float));
 
-    switch (warp_size_physical) {
-        case 32:
-            if (logit_softcap == 0.0f) {
-                constexpr bool use_logit_softcap = false;
-                launch_fattn_tile_switch_head_size<32, use_logit_softcap>(ctx, dst);
-            } else {
-                constexpr bool use_logit_softcap = true;
-                launch_fattn_tile_switch_head_size<32, use_logit_softcap>(ctx, dst);
-            }
-            break;
-        case 64:
-            if (logit_softcap == 0.0f) {
-                constexpr bool use_logit_softcap = false;
-                launch_fattn_tile_switch_head_size<64, use_logit_softcap>(ctx, dst);
-            } else {
-                constexpr bool use_logit_softcap = true;
-                launch_fattn_tile_switch_head_size<64, use_logit_softcap>(ctx, dst);
-            }
-            break;
-        default:
-            GGML_ABORT("unsupported warp size");
-            break;
+    if (logit_softcap == 0.0f) {
+        constexpr bool use_logit_softcap = false;
+        launch_fattn_tile_switch_head_size<use_logit_softcap>(ctx, dst);
+    } else {
+        constexpr bool use_logit_softcap = true;
+        launch_fattn_tile_switch_head_size<use_logit_softcap>(ctx, dst);
     }
 }
