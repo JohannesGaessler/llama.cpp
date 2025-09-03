@@ -7,12 +7,13 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
         GGML_ASSERT(fast_fp16_available(cc));
         switch (D) {
             case 64:
-                return ncols <= 16 ? 128 : 64;
+                return ncols <= 16 ? 32 : 64;
             case 128:
-                return 128;
+                return ncols <= 16 ? 64 : warp_size;
             case 256:
                 return 64;
             default:
+                GGML_ABORT("fatal error");
                 return -1;
         }
     }
@@ -33,8 +34,9 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
         case 64:
             return ncols <= 16 ? 128 : 64;
         case 128:
+            return 64;
         case 256:
-            return ncols <= 16 ? 64 : 32;
+            return 32;
         default:
             GGML_ABORT("fatal error");
             return -1;
@@ -48,9 +50,9 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols
 #endif // FAST_FP16_AVAILABLE
     switch (D) {
         case 64:
-            return ncols <= 16 ? 128 : 64;
+            return ncols <= 16 ? 32 : 64;
         case 128:
-            return 128;
+            return ncols <= 16 ? 64 : warp_size;
         case 256:
             return 64;
         default:
@@ -66,7 +68,6 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols
         case 256:
             return ncols <= 16 ? 128 : 64;
         default:
-            GGML_ABORT("fatal error");
             return -1;
     }
 #else
@@ -74,10 +75,10 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols
         case 64:
             return ncols <= 16 ? 128 : 64;
         case 128:
+            return 64;
         case 256:
-            return ncols <= 16 ? 64 : 32;
+            return 32;
         default:
-            GGML_ABORT("fatal error");
             return -1;
     }
 #endif // FAST_FP16_AVAILABLE
@@ -94,8 +95,9 @@ static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int D, int ncols
         case 64:
             return 64;
         case 128:
+            return ncols <= 16 ? 2*warp_size : 128;
         case 256:
-            return 128;
+            return ncols <= 16 ? 128 : 2*warp_size;
         default:
             return -1;
     }
@@ -117,9 +119,8 @@ static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int D, int ncols
         case 64:
             return 64;
         case 128:
-            return 128;
         case 256:
-            return 64;
+            return 128;
         default:
             return -1;
     }
@@ -129,7 +130,11 @@ static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int D, int ncols
 }
 
 template<int D, int ncols, int nwarps, bool use_logit_softcap> // D == head size
-__launch_bounds__(nwarps*(D/2 < ggml_cuda_get_physical_warp_size() ? D : ggml_cuda_get_physical_warp_size()), 2)
+#ifdef GGML_USE_HIP
+__launch_bounds__(nwarps*(D/2 < ggml_cuda_get_physical_warp_size() ? D/2 : ggml_cuda_get_physical_warp_size()), 1)
+#else
+__launch_bounds__(nwarps*WARP_SIZE, 2)
+#endif // GGML_USE_HIP
 static __global__ void flash_attn_tile(
         const char * __restrict__ Q,
         const char * __restrict__ K,
@@ -161,7 +166,7 @@ static __global__ void flash_attn_tile(
 #endif // FP16_MMA_AVAILABLE
 
     constexpr int warp_size_physical = ggml_cuda_get_physical_warp_size();
-    constexpr int warp_size = D % (2*warp_size_physical) == 0 ? warp_size_physical : warp_size_physical/2;
+    constexpr int warp_size = D/2 < warp_size_physical ? D/2 : warp_size_physical;
     constexpr int kq_stride = fattn_tile_get_kq_stride_device(D, ncols, warp_size);
     static_assert(kq_stride % warp_size == 0, "kq_stride not divisable by warp_size.");
     constexpr int kq_nbatch = fattn_tile_get_kq_nbatch_device(D, ncols, warp_size);
