@@ -132,7 +132,11 @@ static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int D, int ncols
 }
 
 template<int D, int ncols, int nwarps, bool use_logit_softcap> // D == head size
-__launch_bounds__(nwarps*(D/2 < ggml_cuda_get_physical_warp_size() ? D : ggml_cuda_get_physical_warp_size()), 2)
+#ifdef GGML_USE_HIP
+__launch_bounds__(nwarps*(D/2 < ggml_cuda_get_physical_warp_size() ? D/2 : ggml_cuda_get_physical_warp_size()), 1)
+#else
+__launch_bounds__(nwarps*WARP_SIZE, 2)
+#endif //GGML_USE_HIP
 static __global__ void flash_attn_tile(
         const char * __restrict__ Q,
         const char * __restrict__ K,
