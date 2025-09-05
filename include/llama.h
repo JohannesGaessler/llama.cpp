@@ -1325,24 +1325,24 @@ extern "C" {
     //
     // Performance utils
     //
-    // NOTE: Used by llama.cpp examples, avoid using in third-party apps. Instead, do your own performance measurements.
+    // NOTE: Used by llama.cpp examples/tools, avoid using in third-party apps. Instead, do your own performance measurements.
     //
 
     struct llama_perf_context_data {
-        double t_start_ms;
-        double t_load_ms;
-        double t_p_eval_ms;
-        double t_eval_ms;
+        double t_start_ms;  // time needed for startup in ms
+        double t_load_ms;   // time needed for loading the model in ms
+        double t_p_eval_ms; // time needed for processing the prompt in ms
+        double t_eval_ms;   // time needed for generating tokens in ms
 
-        int32_t n_p_eval;
-        int32_t n_eval;
-        int32_t n_reused; // number of times a ggml compute graph had been reused
+        int32_t n_p_eval;   // number of prompt tokens
+        int32_t n_eval;     // number of generated tokens
+        int32_t n_reused;   // number of times a ggml compute graph had been reused
     };
 
     struct llama_perf_sampler_data {
-        double t_sample_ms;
+        double t_sample_ms; // time needed for sampling in ms
 
-        int32_t n_sample;
+        int32_t n_sample;   // number of sampled tokens
     };
 
     LLAMA_API struct llama_perf_context_data llama_perf_context      (const struct llama_context * ctx);
@@ -1353,6 +1353,29 @@ extern "C" {
     LLAMA_API struct llama_perf_sampler_data llama_perf_sampler      (const struct llama_sampler * chain);
     LLAMA_API void                           llama_perf_sampler_print(const struct llama_sampler * chain);
     LLAMA_API void                           llama_perf_sampler_reset(      struct llama_sampler * chain);
+
+    //
+    // backend utils
+    //
+
+    LLAMA_API size_t llama_backend_count(const struct llama_context * ctx);
+
+    struct llama_backend_info_data {
+        const char * name;
+
+        struct {
+            const char * name;
+            const char * description;
+
+            size_t memory_total;
+            size_t memory_free;
+            size_t memory_used_self;
+            size_t memory_used_other;
+        } device;
+    };
+
+    LLAMA_API struct llama_backend_info_data llama_backend_info        (const struct llama_context * ctx, size_t index);
+    LLAMA_API void                           llama_backend_print_memory(const struct llama_context * ctx);
 
     //
     // training
