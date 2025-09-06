@@ -2821,11 +2821,27 @@ void llama_backend_print_memory(const struct llama_context * ctx) {
     table_data[0] = {"", "", "total", "free", "model", "context", "other"};
 
     constexpr size_t MiB = 1024 * 1024;
+    const std::vector<std::string> desc_prefixes_strip = {"NVIDIA ", "GeForce ", "Tesla ", "AMD ", "Radeon ", "Instinct "};
+    const std::vector<std::string> desc_suffixes_strip = {
+        " 2-Core Processor", " 4-Core Processor", " 6-Core Processor", " 8-Core Processor", " 12-Core Processor", " 16-Core Processor"};
 
     for (size_t i = 0; i < backend_count; i++) {
         llama_backend_info_data info = llama_backend_info(ctx, i);
+
+        std::string desc = info.device.description;
+        for (const std::string & prefix : desc_prefixes_strip) {
+            if (desc.length() >= prefix.length() && desc.substr(0, prefix.length()) == prefix) {
+                desc = desc.substr(prefix.length());
+            }
+        }
+        for (const std::string & suffix : desc_suffixes_strip) {
+            if (desc.length() >= suffix.length() && desc.substr(desc.length() - suffix.length()) == suffix) {
+                desc = desc.substr(0, desc.length() - suffix.length());
+            }
+        }
+
         table_data[i + 1][0] = std::string("   - ") + info.name;
-        table_data[i + 1][1] = std::string("(") + info.device.description + "):";
+        table_data[i + 1][1] = "(" + desc + "):";
         table_data[i + 1][2] = std::to_string(info.device.memory_total / MiB);
         table_data[i + 1][3] = std::to_string(info.device.memory_free / MiB);
         table_data[i + 1][4] = std::to_string(info.device.memory_used_self_model / MiB);
