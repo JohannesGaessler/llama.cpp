@@ -2825,7 +2825,8 @@ void llama_backend_print_memory(const struct llama_context * ctx) {
     constexpr size_t MiB = 1024 * 1024;
     const std::vector<std::string> desc_prefixes_strip = {"NVIDIA ", "GeForce ", "Tesla ", "AMD ", "Radeon ", "Instinct "};
     const std::vector<std::string> desc_suffixes_strip = {
-        " 2-Core Processor", " 4-Core Processor", " 6-Core Processor", " 8-Core Processor", " 12-Core Processor", " 16-Core Processor"};
+        " 2-Core Processor", " 4-Core Processor", " 6-Core Processor", " 8-Core Processor", " 12-Core Processor", " 16-Core Processor",
+        " 24-Core Processor", " 32-Core Processor", " 40-Core Processor", " 48-Core Processor", " 56-Core Processor", " 64-Core Processor"};
 
     for (size_t i = 0; i < backend_count; i++) {
         llama_backend_info_data info = llama_backend_info(ctx, i);
