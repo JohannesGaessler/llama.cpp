@@ -2044,8 +2044,9 @@ llama_backend_info_data llama_context::backend_info(size_t index) const {
     const size_t self_context = memory->memory_use(dev);
     const size_t self = self_model + self_context;
 
-    // GGML_ASSERT(dev_props.memory_total >= dev_props.memory_free + self);
-    const size_t other = dev_props.memory_total - (dev_props.memory_free + self);
+    const size_t free = ggml_backend_is_cpu(backend) ? dev_props.memory_total - self : dev_props.memory_free;
+    GGML_ASSERT(dev_props.memory_total >= free + self);
+    const size_t other = dev_props.memory_total - (free + self);
 
     return {
         /*name =*/ ggml_backend_name(backend),
@@ -2055,7 +2056,7 @@ llama_backend_info_data llama_context::backend_info(size_t index) const {
             /*description              =*/ dev_props.description,
 
             /*memory_total             =*/ dev_props.memory_total,
-            /*memory_free              =*/ dev_props.memory_free,
+            /*memory_free              =*/ free,
             /*memory_used_self         =*/ self,
             /*memory_used_self_model   =*/ self_model,
             /*memory_used_self_context =*/ self_context,
