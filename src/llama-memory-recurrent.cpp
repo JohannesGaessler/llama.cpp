@@ -359,6 +359,12 @@ llama_pos llama_memory_recurrent::seq_pos_max(llama_seq_id seq_id) const {
     return result;
 }
 
+size_t llama_memory_recurrent::memory_use(ggml_backend_dev_t dev) const {
+    GGML_ABORT("fatal error");
+    GGML_UNUSED(dev);
+    return 0;
+}
+
 llama_memory_context_ptr llama_memory_recurrent::init_batch(llama_batch_allocr & balloc, uint32_t n_ubatch, bool embd_all) {
     do {
         balloc.split_reset();

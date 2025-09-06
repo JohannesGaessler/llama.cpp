@@ -5891,7 +5891,7 @@ size_t llama_model::memory_use(ggml_backend_dev_t dev) const {
     ggml_backend_buffer_type_t buft_dev = ggml_backend_dev_buffer_type(dev);
 
     size_t n_bytes = 0;
-    for (ggml_backend_buffer_ptr & buf_ptr : pimpl->bufs) {
+    for (const ggml_backend_buffer_ptr & buf_ptr : pimpl->bufs) {
         ggml_backend_buffer_type_t buft = ggml_backend_buffer_get_type(buf_ptr.get());
         if (buft != buft_dev) {
             continue;

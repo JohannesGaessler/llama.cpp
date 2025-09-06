@@ -2041,23 +2041,25 @@ llama_backend_info_data llama_context::backend_info(size_t index) const {
     ggml_backend_dev_get_props(dev, &dev_props);
 
     const size_t self_model = model.memory_use(dev);
-    const size_t self = self_model;
+    const size_t self_context = memory->memory_use(dev);
+    const size_t self = self_model + self_context;
 
-    GGML_ASSERT(dev_props.memory_total >= dev_props.memory_free + self);
+    // GGML_ASSERT(dev_props.memory_total >= dev_props.memory_free + self);
     const size_t other = dev_props.memory_total - (dev_props.memory_free + self);
 
     return {
         /*name =*/ ggml_backend_name(backend),
 
         /*device =*/ {
-            /*name                   =*/ dev_props.name,
-            /*description            =*/ dev_props.description,
+            /*name                     =*/ dev_props.name,
+            /*description              =*/ dev_props.description,
 
-            /*memory_total           =*/ dev_props.memory_total,
-            /*memory_free            =*/ dev_props.memory_free,
-            /*memory_used_self       =*/ self,
-            /*memory_used_self_model =*/ self_model,
-            /*memory_used_other      =*/ other,
+            /*memory_total             =*/ dev_props.memory_total,
+            /*memory_free              =*/ dev_props.memory_free,
+            /*memory_used_self         =*/ self,
+            /*memory_used_self_model   =*/ self_model,
+            /*memory_used_self_context =*/ self_context,
+            /*memory_used_other        =*/ other,
         },
     };
 }
@@ -2814,8 +2816,8 @@ llama_backend_info_data llama_backend_info(const struct llama_context * ctx, siz
 
 void llama_backend_print_memory(const struct llama_context * ctx) {
     const size_t backend_count = llama_backend_count(ctx);
-    std::vector<std::array<std::string, 6>> table_data(backend_count + 1);
-    table_data[0] = {"", "", "total", "free", "model", "other"};
+    std::vector<std::array<std::string, 7>> table_data(backend_count + 1);
+    table_data[0] = {"", "", "total", "free", "model", "context", "other"};
 
     constexpr size_t MiB = 1024 * 1024;
 
@@ -2826,7 +2828,8 @@ void llama_backend_print_memory(const struct llama_context * ctx) {
         table_data[i + 1][2] = std::to_string(info.device.memory_total / MiB);
         table_data[i + 1][3] = std::to_string(info.device.memory_free / MiB);
         table_data[i + 1][4] = std::to_string(info.device.memory_used_self_model / MiB);
-        table_data[i + 1][5] = std::to_string(info.device.memory_used_other / MiB);
+        table_data[i + 1][5] = std::to_string(info.device.memory_used_self_context / MiB);
+        table_data[i + 1][6] = std::to_string(info.device.memory_used_other / MiB);
     }
     for (size_t j = 0; j < table_data[0].size(); j++) {
         size_t max_len = 0;
@@ -2849,8 +2852,9 @@ void llama_backend_print_memory(const struct llama_context * ctx) {
     }
     for (size_t i = 0; i < backend_count + 1; i++) {
         const auto & td = table_data[i];
-        LLAMA_LOG_INFO("%s:%s %s %s = %s + %s + %s%s\n",
-            __func__, td[0].c_str(), td[1].c_str(), td[2].c_str(), td[3].c_str(), td[4].c_str(), td[5].c_str(), i == 0 ? "" : " MiB");
+        LLAMA_LOG_INFO("%s:%s %s %s = %s + %s + %s + %s%s\n",
+            __func__, td[0].c_str(), td[1].c_str(), td[2].c_str(), td[3].c_str(),
+            td[4].c_str(), td[5].c_str(), td[6].c_str(), i == 0 ? "" : " MiB");
     }
 }
 
