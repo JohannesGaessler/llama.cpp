@@ -1372,6 +1372,7 @@ extern "C" {
             size_t memory_used_self;
             size_t memory_used_self_model;
             size_t memory_used_self_context;
+            size_t memory_used_self_compute;
             size_t memory_used_other;
         } device;
     };
