@@ -2866,7 +2866,7 @@ void llama_print_memory_breakdown(const struct llama_context * ctx) {
     {
         auto & td = table_data[0];
         const size_t target_len = td[0].length() + td[1].length();
-        td[0] = " memory breakdown:";
+        td[0] = " memory breakdown [MiB]:";
         td[1] = "";
         if (td[0].length() < target_len) {
             td[0].insert(td[0].length(), target_len - td[0].length(), ' ');
@@ -2874,9 +2874,9 @@ void llama_print_memory_breakdown(const struct llama_context * ctx) {
     }
     for (size_t i = 0; i < backend_count + 1; i++) {
         const auto & td = table_data[i];
-        LLAMA_LOG_INFO("%s:%s %s %s = %s + (%s = %s + %s + %s) + %s%s\n",
+        LLAMA_LOG_INFO("%s:%s %s %s = %s + (%s = %s + %s + %s) + %s\n",
             __func__, td[0].c_str(), td[1].c_str(), td[2].c_str(), td[3].c_str(), td[4].c_str(),
-            td[5].c_str(), td[6].c_str(), td[7].c_str(), td[8].c_str(), i == 0 ? "" : " MiB");
+            td[5].c_str(), td[6].c_str(), td[7].c_str(), td[8].c_str());
     }
 }
 
