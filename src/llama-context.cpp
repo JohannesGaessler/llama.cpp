@@ -2820,7 +2820,7 @@ llama_backend_info_data llama_backend_info(const struct llama_context * ctx, siz
 void llama_print_memory_breakdown(const struct llama_context * ctx) {
     const size_t backend_count = llama_backend_count(ctx);
     std::vector<std::array<std::string, 9>> table_data(backend_count + 1);
-    table_data[0] = {"", "", "total", "free", "self", "model", "context", "compute", "other"};
+    table_data[0] = {"", "", "total", "free", "self", "model", "context", "compute", "unaccounted"};
 
     constexpr size_t MiB = 1024 * 1024;
     const std::vector<std::string> desc_prefixes_strip = {"NVIDIA ", "GeForce ", "Tesla ", "AMD ", "Radeon ", "Instinct "};
@@ -2866,7 +2866,7 @@ void llama_print_memory_breakdown(const struct llama_context * ctx) {
     {
         auto & td = table_data[0];
         const size_t target_len = td[0].length() + td[1].length();
-        td[0] = " memory breakdown [MiB]:";
+        td[0] = " memory breakdown:";
         td[1] = "";
         if (td[0].length() < target_len) {
             td[0].insert(td[0].length(), target_len - td[0].length(), ' ');
