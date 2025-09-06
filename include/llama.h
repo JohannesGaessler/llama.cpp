@@ -1377,8 +1377,9 @@ extern "C" {
         } device;
     };
 
-    LLAMA_API struct llama_backend_info_data llama_backend_info        (const struct llama_context * ctx, size_t index);
-    LLAMA_API void                           llama_backend_print_memory(const struct llama_context * ctx);
+    LLAMA_API struct llama_backend_info_data llama_backend_info(const struct llama_context * ctx, size_t index);
+
+    LLAMA_API void llama_print_memory_breakdown(const struct llama_context * ctx);
 
     //
     // training
