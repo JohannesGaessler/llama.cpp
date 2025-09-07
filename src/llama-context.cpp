@@ -2819,8 +2819,12 @@ llama_backend_info_data llama_backend_info(const struct llama_context * ctx, siz
 
 void llama_print_memory_breakdown(const struct llama_context * ctx) {
     const size_t backend_count = llama_backend_count(ctx);
-    std::vector<std::array<std::string, 9>> table_data(backend_count + 1);
-    table_data[0] = {"", "", "total", "free", "self", "model", "context", "compute", "unaccounted"};
+    std::vector<std::array<std::string, 10>> table_data(backend_count + 1);
+    const std::string template_header  = "%s:%s %s %s   %s    %s   %s   %s   %s    %s\n";
+    const std::string template_default = "%s:%s %s %s = %s + (%s = %s + %s + %s) + %s\n";
+    const std::string template_cpu     = "%s:%s %s %s   %s    %s = %s + %s + %s    %s\n";
+
+    table_data[0] = {template_header, "", "", "total", "free", "self", "model", "context", "compute", "unaccounted"};
 
     constexpr size_t MiB = 1024 * 1024;
     const std::vector<std::string> desc_prefixes_strip = {"NVIDIA ", "GeForce ", "Tesla ", "AMD ", "Radeon ", "Instinct "};
@@ -2843,15 +2847,17 @@ void llama_print_memory_breakdown(const struct llama_context * ctx) {
             }
         }
 
-        table_data[i + 1][0] = std::string("   - ") + info.name;
-        table_data[i + 1][1] = "(" + desc + "):";
-        table_data[i + 1][2] = std::to_string(info.device.memory_total / MiB);
-        table_data[i + 1][3] = std::to_string(info.device.memory_free / MiB);
-        table_data[i + 1][4] = std::to_string(info.device.memory_used_self / MiB);
-        table_data[i + 1][5] = std::to_string(info.device.memory_used_self_model / MiB);
-        table_data[i + 1][6] = std::to_string(info.device.memory_used_self_context / MiB);
-        table_data[i + 1][7] = std::to_string(info.device.memory_used_self_compute / MiB);
-        table_data[i + 1][8] = std::to_string(info.device.memory_used_other / MiB);
+        const bool is_cpu = info.name == std::string("CPU");
+        table_data[i + 1][0] = is_cpu ? template_cpu : template_default;
+        table_data[i + 1][1] = std::string("   - ") + info.name;
+        table_data[i + 1][2] = "(" + desc + "):";
+        table_data[i + 1][3] =               std::to_string(info.device.memory_total / MiB);
+        table_data[i + 1][4] = is_cpu ? "" : std::to_string(info.device.memory_free / MiB);
+        table_data[i + 1][5] =               std::to_string(info.device.memory_used_self / MiB);
+        table_data[i + 1][6] =               std::to_string(info.device.memory_used_self_model / MiB);
+        table_data[i + 1][7] =               std::to_string(info.device.memory_used_self_context / MiB);
+        table_data[i + 1][8] =               std::to_string(info.device.memory_used_self_compute / MiB);
+        table_data[i + 1][9] = is_cpu ? "" : std::to_string(info.device.memory_used_other / MiB);
     }
     for (size_t j = 0; j < table_data[0].size(); j++) {
         size_t max_len = 0;
@@ -2865,18 +2871,18 @@ void llama_print_memory_breakdown(const struct llama_context * ctx) {
     }
     {
         auto & td = table_data[0];
-        const size_t target_len = td[0].length() + td[1].length();
-        td[0] = " memory breakdown:";
-        td[1] = "";
-        if (td[0].length() < target_len) {
-            td[0].insert(td[0].length(), target_len - td[0].length(), ' ');
+        const size_t target_len = td[1].length() + td[2].length();
+        td[1] = " memory breakdown:";
+        td[2] = "";
+        if (td[1].length() < target_len) {
+            td[1].insert(td[1].length(), target_len - td[1].length(), ' ');
         }
     }
     for (size_t i = 0; i < backend_count + 1; i++) {
         const auto & td = table_data[i];
-        LLAMA_LOG_INFO("%s:%s %s %s = %s + (%s = %s + %s + %s) + %s\n",
-            __func__, td[0].c_str(), td[1].c_str(), td[2].c_str(), td[3].c_str(), td[4].c_str(),
-            td[5].c_str(), td[6].c_str(), td[7].c_str(), td[8].c_str());
+        LLAMA_LOG_INFO(td[0].c_str(),
+            __func__, td[1].c_str(), td[2].c_str(), td[3].c_str(), td[4].c_str(), td[5].c_str(),
+            td[6].c_str(), td[7].c_str(), td[8].c_str(), td[9].c_str());
     }
 }
 
