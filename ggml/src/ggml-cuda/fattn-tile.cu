@@ -196,14 +196,16 @@ static __global__ void flash_attn_tile(
 
     const float slope = get_alibi_slope(max_bias, head, n_head_log2, m0, m1);
 
+    constexpr int ne_copy = 2;
+
     __shared__ float KQ[ncols][kq_stride];
 #ifdef FAST_FP16_AVAILABLE
     __shared__ half2 Q_tmp[ncols][D/2];
-    __shared__ half2 KV_tmp_h2[kq_stride * (kq_nbatch/2 + 1)]; // Padded to avoid memory bank conflicts.
+    __shared__ half2 KV_tmp_h2[kq_stride * (kq_nbatch/2 + ne_copy)]; // Padded to avoid memory bank conflicts.
     half2 VKQ[ncols/nwarps][D/(2*warp_size)] = {{{0.0f, 0.0f}}};
 #else
     __shared__ float Q_tmp[ncols][D];
-    __shared__ float KV_tmp_f[kq_stride * (kq_nbatch + 1)]; // Padded to avoid memory bank conflicts.
+    __shared__ float KV_tmp_f[kq_stride * (kq_nbatch + ne_copy)]; // Padded to avoid memory bank conflicts.
     float2 * KV_tmp_f2 = (float2 *) KV_tmp_f;
     float2 VKQ[ncols/nwarps][D/(2*warp_size)] = {{{0.0f, 0.0f}}};
 #endif // FAST_FP16_AVAILABLE
@@ -256,11 +258,11 @@ static __global__ void flash_attn_tile(
                 for (int k_KQ_1 = 0; k_KQ_1 < kq_nbatch/2; k_KQ_1 += warp_size) {
                     const half2 tmp_h2 = K_h2[int64_t(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ_0/2 + k_KQ_1 + threadIdx.x];
 #ifdef FAST_FP16_AVAILABLE
-                    KV_tmp_h2[i_KQ*(kq_nbatch/2 + 1) + k_KQ_1 + threadIdx.x] = tmp_h2;
+                    KV_tmp_h2[i_KQ*(kq_nbatch/2 + ne_copy) + k_KQ_1 + threadIdx.x] = tmp_h2;
 #else
                     const float2 tmp_f2 = __half22float2(tmp_h2);
-                    KV_tmp_f[i_KQ*(kq_nbatch + 1) + 2*k_KQ_1             + threadIdx.x] = tmp_f2.x;
-                    KV_tmp_f[i_KQ*(kq_nbatch + 1) + 2*k_KQ_1 + warp_size + threadIdx.x] = tmp_f2.y;
+                    KV_tmp_f[i_KQ*(kq_nbatch + ne_copy) + 2*k_KQ_1             + threadIdx.x] = tmp_f2.x;
+                    KV_tmp_f[i_KQ*(kq_nbatch + ne_copy) + 2*k_KQ_1 + warp_size + threadIdx.x] = tmp_f2.y;
 #endif // FAST_FP16_AVAILABLE
                 }
             }
@@ -269,14 +271,14 @@ static __global__ void flash_attn_tile(
 
 #ifdef FAST_FP16_AVAILABLE
 #pragma unroll
-            for (int k_KQ_1 = 0; k_KQ_1 < kq_nbatch/2; ++k_KQ_1) {
-                half2 K_k[kq_stride/warp_size];
-                half2 Q_k[ncols/nwarps];
+            for (int k_KQ_1 = 0; k_KQ_1 < kq_nbatch/2; k_KQ_1 += ne_copy) {
+                half2 K_k[kq_stride/warp_size][ne_copy];
+                half2 Q_k[ncols/nwarps][ne_copy];
 #else
 #pragma unroll
-            for (int k_KQ_1 = 0; k_KQ_1 < kq_nbatch; ++k_KQ_1) {
-                float K_k[kq_stride/warp_size];
-                float Q_k[ncols/nwarps];
+            for (int k_KQ_1 = 0; k_KQ_1 < kq_nbatch; k_KQ_1 += ne_copy) {
+                float K_k[kq_stride/warp_size][ne_copy];
+                float Q_k[ncols/nwarps][ne_copy];
 #endif // FAST_FP16_AVAILABLE
 
 #pragma unroll
@@ -284,9 +286,9 @@ static __global__ void flash_attn_tile(
                     const int i_KQ = i_KQ_0 + threadIdx.x;
 
 #ifdef FAST_FP16_AVAILABLE
-                    K_k[i_KQ_0/warp_size] = KV_tmp_h2[i_KQ*(kq_nbatch/2 + 1) + k_KQ_1];
+                    *((int2 *) &K_k[i_KQ_0/warp_size]) = *((const int2 *) &KV_tmp_h2[i_KQ*(kq_nbatch/2 + ne_copy) + k_KQ_1]);
 #else
-                    K_k[i_KQ_0/warp_size] = KV_tmp_f [i_KQ*(kq_nbatch   + 1) + k_KQ_1];
+                    *((int2 *) &K_k[i_KQ_0/warp_size]) = *((const int2 *) &KV_tmp_f [i_KQ*(kq_nbatch   + ne_copy) + k_KQ_1]);
 #endif // FAST_FP16_AVAILABLE
                 }
 #pragma unroll
@@ -294,9 +296,9 @@ static __global__ void flash_attn_tile(
                     const int j_KQ = j_KQ_0 + threadIdx.y;
 
 #ifdef FAST_FP16_AVAILABLE
-                    Q_k[j_KQ_0/nwarps] = Q_tmp[j_KQ][k_KQ_0/2 + k_KQ_1];
+                    *((int2 *) &Q_k[j_KQ_0/nwarps]) = *((const int2 *) &Q_tmp[j_KQ][k_KQ_0/2 + k_KQ_1]);
 #else
-                    Q_k[j_KQ_0/nwarps] = Q_tmp[j_KQ][k_KQ_0   + k_KQ_1];
+                    *((int2 *) &Q_k[j_KQ_0/nwarps]) = *((const int2 *) &Q_tmp[j_KQ][k_KQ_0   + k_KQ_1]);
 #endif // FAST_FP16_AVAILABLE
                 }
 
@@ -304,7 +306,10 @@ static __global__ void flash_attn_tile(
                 for (int i_KQ_0 = 0; i_KQ_0 < kq_stride; i_KQ_0 += warp_size) {
 #pragma unroll
                     for (int j_KQ_0 = 0; j_KQ_0 < ncols; j_KQ_0 += nwarps) {
-                        ggml_cuda_mad(sum[i_KQ_0/warp_size][j_KQ_0/nwarps], K_k[i_KQ_0/warp_size], Q_k[j_KQ_0/nwarps]);
+#pragma unroll
+                        for (int k = 0; k < ne_copy; ++k) {
+                            ggml_cuda_mad(sum[i_KQ_0/warp_size][j_KQ_0/nwarps], K_k[i_KQ_0/warp_size][k], Q_k[j_KQ_0/nwarps][k]);
+                        }
                     }
                 }
             }
