@@ -3543,7 +3543,7 @@ static size_t mmq_get_nbytes_shared(const int mmq_x, const int mmq_y, const int 
     return nbs_ids + nbs_x + GGML_PAD(nbs_y, nwarps*warp_size*sizeof(int));
 }
 
-template <ggml_type type, int mmq_x>
+template <ggml_type type, bool need_check, int mmq_x>
 static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & args, cudaStream_t stream) {
     const int id = ggml_cuda_get_device();
     const int cc = ggml_cuda_info().devices[id].cc;
@@ -3570,23 +3570,12 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     const int sample_ratio  = args.nsamples_y  / args.nsamples_x;
 
     if (!args.use_stream_k) {
-        if (args.nrows_x % mmq_y == 0) {
-            constexpr bool need_check = false;
-            mul_mat_q<type, mmq_x, need_check><<<block_nums_xy_tiling, block_dims, nbytes_shared, stream>>>
-                (args.x, args.y, args.ids_dst, args.expert_bounds, args.dst, nullptr,
-                 args.ncols_x, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
-                 channel_ratio, args.nchannels_y, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
-                 sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst,
-                 args.ncols_max);
-        } else {
-            constexpr bool need_check = true;
-            mul_mat_q<type, mmq_x, need_check><<<block_nums_xy_tiling, block_dims, nbytes_shared, stream>>>
-                (args.x, args.y, args.ids_dst, args.expert_bounds, args.dst, nullptr,
-                 args.ncols_x, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
-                 channel_ratio, args.nchannels_y, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
-                 sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst,
-                 args.ncols_max);
-        }
+        mul_mat_q<type, mmq_x, need_check><<<block_nums_xy_tiling, block_dims, nbytes_shared, stream>>>
+            (args.x, args.y, args.ids_dst, args.expert_bounds, args.dst, nullptr,
+             args.ncols_x, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
+             channel_ratio, args.nchannels_y, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
+             sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst,
+             args.ncols_max);
         return;
     }
 
@@ -3599,44 +3588,24 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
         tmp_fixup.alloc(block_nums_stream_k.x * mmq_x*mmq_y);
     }
 
-    if (args.nrows_x % mmq_y == 0) {
-        constexpr bool need_check = false;
-        mul_mat_q<type, mmq_x, need_check><<<block_nums_stream_k, block_dims, nbytes_shared, stream>>>
-            (args.x, args.y, args.ids_dst, args.expert_bounds, args.dst, tmp_fixup.ptr,
-             args.ncols_x, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
-             channel_ratio, args.nchannels_y, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
-             sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst,
-             args.ncols_max);
+    mul_mat_q<type, mmq_x, need_check><<<block_nums_stream_k, block_dims, nbytes_shared, stream>>>
+        (args.x, args.y, args.ids_dst, args.expert_bounds, args.dst, tmp_fixup.ptr,
+         args.ncols_x, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
+         channel_ratio, args.nchannels_y, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
+         sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst,
+         args.ncols_max);
 
-        if (!fixup_needed) {
-            return;
-        }
-
-        mul_mat_q_stream_k_fixup<type, mmq_x, need_check><<<block_nums_stream_k, block_dims, 0, stream>>>
-            (args.ids_dst, args.expert_bounds, args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.ncols_dst,
-             args.nrows_dst, args.nchannels_y, args.stride_channel_dst, args.nsamples_y, args.stride_sample_dst,
-             args.ncols_max);
-    } else {
-        constexpr bool need_check = true;
-        mul_mat_q<type, mmq_x, need_check><<<block_nums_stream_k, block_dims, nbytes_shared, stream>>>
-            (args.x, args.y, args.ids_dst, args.expert_bounds, args.dst, tmp_fixup.ptr,
-             args.ncols_x, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
-             channel_ratio, args.nchannels_y, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
-             sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst,
-             args.ncols_max);
-
-        if (!fixup_needed) {
-            return;
-        }
-
-        mul_mat_q_stream_k_fixup<type, mmq_x, need_check><<<block_nums_stream_k, block_dims, 0, stream>>>
-            (args.ids_dst, args.expert_bounds, args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.ncols_dst,
-             args.nrows_dst, args.nchannels_y, args.stride_channel_dst, args.nsamples_y, args.stride_sample_dst,
-             args.ncols_max);
+    if (!fixup_needed) {
+        return;
     }
+
+    mul_mat_q_stream_k_fixup<type, mmq_x, need_check><<<block_nums_stream_k, block_dims, 0, stream>>>
+        (args.ids_dst, args.expert_bounds, args.dst, tmp_fixup.ptr, args.ncols_x, args.nrows_x, args.ncols_dst,
+         args.nrows_dst, args.nchannels_y, args.stride_channel_dst, args.nsamples_y, args.stride_sample_dst,
+         args.ncols_max);
 }
 
-template <ggml_type type>
+template <ggml_type type, bool need_check>
 void mul_mat_q_case(ggml_backend_cuda_context & ctx, const mmq_args & args, cudaStream_t stream) {
     const int    id     = ggml_cuda_get_device();
     const int    cc     = ggml_cuda_info().devices[id].cc;
@@ -3667,52 +3636,52 @@ void mul_mat_q_case(ggml_backend_cuda_context & ctx, const mmq_args & args, cuda
 
     switch (mmq_x_best) {
         case   8:
-            launch_mul_mat_q<type,   8>(ctx, args, stream);
+            launch_mul_mat_q<type, need_check,   8>(ctx, args, stream);
             break;
         case  16:
-            launch_mul_mat_q<type,  16>(ctx, args, stream);
+            launch_mul_mat_q<type, need_check,  16>(ctx, args, stream);
             break;
         case  24:
-            launch_mul_mat_q<type,  24>(ctx, args, stream);
+            launch_mul_mat_q<type, need_check,  24>(ctx, args, stream);
             break;
         case  32:
-            launch_mul_mat_q<type,  32>(ctx, args, stream);
+            launch_mul_mat_q<type, need_check,  32>(ctx, args, stream);
             break;
         case  40:
-            launch_mul_mat_q<type,  40>(ctx, args, stream);
+            launch_mul_mat_q<type, need_check,  40>(ctx, args, stream);
             break;
         case  48:
-            launch_mul_mat_q<type,  48>(ctx, args, stream);
+            launch_mul_mat_q<type, need_check,  48>(ctx, args, stream);
             break;
         case  56:
-            launch_mul_mat_q<type,  56>(ctx, args, stream);
+            launch_mul_mat_q<type, need_check,  56>(ctx, args, stream);
             break;
         case  64:
-            launch_mul_mat_q<type,  64>(ctx, args, stream);
+            launch_mul_mat_q<type, need_check,  64>(ctx, args, stream);
             break;
         case  72:
-            launch_mul_mat_q<type,  72>(ctx, args, stream);
+            launch_mul_mat_q<type, need_check,  72>(ctx, args, stream);
             break;
         case  80:
-            launch_mul_mat_q<type,  80>(ctx, args, stream);
+            launch_mul_mat_q<type, need_check,  80>(ctx, args, stream);
             break;
         case  88:
-            launch_mul_mat_q<type,  88>(ctx, args, stream);
+            launch_mul_mat_q<type, need_check,  88>(ctx, args, stream);
             break;
         case  96:
-            launch_mul_mat_q<type,  96>(ctx, args, stream);
+            launch_mul_mat_q<type, need_check,  96>(ctx, args, stream);
             break;
         case 104:
-            launch_mul_mat_q<type, 104>(ctx, args, stream);
+            launch_mul_mat_q<type, need_check, 104>(ctx, args, stream);
             break;
         case 112:
-            launch_mul_mat_q<type, 112>(ctx, args, stream);
+            launch_mul_mat_q<type, need_check, 112>(ctx, args, stream);
             break;
         case 120:
-            launch_mul_mat_q<type, 120>(ctx, args, stream);
+            launch_mul_mat_q<type, need_check, 120>(ctx, args, stream);
             break;
         case 128:
-            launch_mul_mat_q<type, 128>(ctx, args, stream);
+            launch_mul_mat_q<type, need_check, 128>(ctx, args, stream);
             break;
         default:
             fprintf(stderr, "mmq_x_best=%d\n", mmq_x_best);
@@ -3721,28 +3690,48 @@ void mul_mat_q_case(ggml_backend_cuda_context & ctx, const mmq_args & args, cuda
     }
 }
 
-#define DECL_MMQ_CASE(type)                                                        \
-    template void mul_mat_q_case<type>(ggml_backend_cuda_context & ctx, const mmq_args & args, cudaStream_t stream) \
+#define DECL_MMQ_CASE(type, need_check)                                               \
+    template void mul_mat_q_case<type, need_check>                                    \
+        (ggml_backend_cuda_context & ctx, const mmq_args & args, cudaStream_t stream) \
 
-extern DECL_MMQ_CASE(GGML_TYPE_Q4_0);
-extern DECL_MMQ_CASE(GGML_TYPE_Q4_1);
-extern DECL_MMQ_CASE(GGML_TYPE_Q5_0);
-extern DECL_MMQ_CASE(GGML_TYPE_Q5_1);
-extern DECL_MMQ_CASE(GGML_TYPE_Q8_0);
-extern DECL_MMQ_CASE(GGML_TYPE_MXFP4);
-extern DECL_MMQ_CASE(GGML_TYPE_Q2_K);
-extern DECL_MMQ_CASE(GGML_TYPE_Q3_K);
-extern DECL_MMQ_CASE(GGML_TYPE_Q4_K);
-extern DECL_MMQ_CASE(GGML_TYPE_Q5_K);
-extern DECL_MMQ_CASE(GGML_TYPE_Q6_K);
-extern DECL_MMQ_CASE(GGML_TYPE_IQ2_XXS);
-extern DECL_MMQ_CASE(GGML_TYPE_IQ2_XS);
-extern DECL_MMQ_CASE(GGML_TYPE_IQ2_S);
-extern DECL_MMQ_CASE(GGML_TYPE_IQ3_XXS);
-extern DECL_MMQ_CASE(GGML_TYPE_IQ3_S);
-extern DECL_MMQ_CASE(GGML_TYPE_IQ1_S);
-extern DECL_MMQ_CASE(GGML_TYPE_IQ4_NL);
-extern DECL_MMQ_CASE(GGML_TYPE_IQ4_XS);
+extern DECL_MMQ_CASE(GGML_TYPE_Q4_0,    true);
+extern DECL_MMQ_CASE(GGML_TYPE_Q4_1,    true);
+extern DECL_MMQ_CASE(GGML_TYPE_Q5_0,    true);
+extern DECL_MMQ_CASE(GGML_TYPE_Q5_1,    true);
+extern DECL_MMQ_CASE(GGML_TYPE_Q8_0,    true);
+extern DECL_MMQ_CASE(GGML_TYPE_MXFP4,   true);
+extern DECL_MMQ_CASE(GGML_TYPE_Q2_K,    true);
+extern DECL_MMQ_CASE(GGML_TYPE_Q3_K,    true);
+extern DECL_MMQ_CASE(GGML_TYPE_Q4_K,    true);
+extern DECL_MMQ_CASE(GGML_TYPE_Q5_K,    true);
+extern DECL_MMQ_CASE(GGML_TYPE_Q6_K,    true);
+extern DECL_MMQ_CASE(GGML_TYPE_IQ2_XXS, true);
+extern DECL_MMQ_CASE(GGML_TYPE_IQ2_XS,  true);
+extern DECL_MMQ_CASE(GGML_TYPE_IQ2_S,   true);
+extern DECL_MMQ_CASE(GGML_TYPE_IQ3_XXS, true);
+extern DECL_MMQ_CASE(GGML_TYPE_IQ3_S,   true);
+extern DECL_MMQ_CASE(GGML_TYPE_IQ1_S,   true);
+extern DECL_MMQ_CASE(GGML_TYPE_IQ4_NL,  true);
+extern DECL_MMQ_CASE(GGML_TYPE_IQ4_XS,  true);
+extern DECL_MMQ_CASE(GGML_TYPE_Q4_0,    false);
+extern DECL_MMQ_CASE(GGML_TYPE_Q4_1,    false);
+extern DECL_MMQ_CASE(GGML_TYPE_Q5_0,    false);
+extern DECL_MMQ_CASE(GGML_TYPE_Q5_1,    false);
+extern DECL_MMQ_CASE(GGML_TYPE_Q8_0,    false);
+extern DECL_MMQ_CASE(GGML_TYPE_MXFP4,   false);
+extern DECL_MMQ_CASE(GGML_TYPE_Q2_K,    false);
+extern DECL_MMQ_CASE(GGML_TYPE_Q3_K,    false);
+extern DECL_MMQ_CASE(GGML_TYPE_Q4_K,    false);
+extern DECL_MMQ_CASE(GGML_TYPE_Q5_K,    false);
+extern DECL_MMQ_CASE(GGML_TYPE_Q6_K,    false);
+extern DECL_MMQ_CASE(GGML_TYPE_IQ2_XXS, false);
+extern DECL_MMQ_CASE(GGML_TYPE_IQ2_XS,  false);
+extern DECL_MMQ_CASE(GGML_TYPE_IQ2_S,   false);
+extern DECL_MMQ_CASE(GGML_TYPE_IQ3_XXS, false);
+extern DECL_MMQ_CASE(GGML_TYPE_IQ3_S,   false);
+extern DECL_MMQ_CASE(GGML_TYPE_IQ1_S,   false);
+extern DECL_MMQ_CASE(GGML_TYPE_IQ4_NL,  false);
+extern DECL_MMQ_CASE(GGML_TYPE_IQ4_XS,  false);
 
 // -------------------------------------------------------------------------------------------------------------------------
 

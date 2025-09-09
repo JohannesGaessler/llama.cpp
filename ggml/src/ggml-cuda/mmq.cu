@@ -137,64 +137,75 @@ static void launch_mmq_ids_helper(
         (ids, ids_src1, ids_dst, expert_bounds, n_tokens, n_expert_used_var, nchannels_y, si1, sis1);
 }
 
+template <ggml_type type>
+static void ggml_cuda_mul_mat_q_switch_need_check(ggml_backend_cuda_context & ctx, const mmq_args & args, cudaStream_t stream) {
+    if (args.nrows_x % get_mmq_y_host(ggml_cuda_info().devices[ggml_cuda_get_device()].cc) == 0) {
+        constexpr bool need_check = false;
+        mul_mat_q_case<type, need_check>(ctx, args, stream);
+    } else {
+        constexpr bool need_check = true;
+        mul_mat_q_case<type, need_check>(ctx, args, stream);
+    }
+}
+
 static void ggml_cuda_mul_mat_q_switch_type(ggml_backend_cuda_context & ctx, const mmq_args & args, cudaStream_t stream) {
     switch (args.type_x) {
         case GGML_TYPE_Q4_0:
-            mul_mat_q_case<GGML_TYPE_Q4_0>(ctx, args, stream);
+            ggml_cuda_mul_mat_q_switch_need_check<GGML_TYPE_Q4_0>(ctx, args, stream);
             break;
         case GGML_TYPE_Q4_1:
-            mul_mat_q_case<GGML_TYPE_Q4_1>(ctx, args, stream);
+            ggml_cuda_mul_mat_q_switch_need_check<GGML_TYPE_Q4_1>(ctx, args, stream);
             break;
         case GGML_TYPE_Q5_0:
-            mul_mat_q_case<GGML_TYPE_Q5_0>(ctx, args, stream);
+            ggml_cuda_mul_mat_q_switch_need_check<GGML_TYPE_Q5_0>(ctx, args, stream);
             break;
         case GGML_TYPE_Q5_1:
-            mul_mat_q_case<GGML_TYPE_Q5_1>(ctx, args, stream);
+            ggml_cuda_mul_mat_q_switch_need_check<GGML_TYPE_Q5_1>(ctx, args, stream);
             break;
         case GGML_TYPE_Q8_0:
-            mul_mat_q_case<GGML_TYPE_Q8_0>(ctx, args, stream);
+            ggml_cuda_mul_mat_q_switch_need_check<GGML_TYPE_Q8_0>(ctx, args, stream);
             break;
         case GGML_TYPE_MXFP4:
-            mul_mat_q_case<GGML_TYPE_MXFP4>(ctx, args, stream);
+            ggml_cuda_mul_mat_q_switch_need_check<GGML_TYPE_MXFP4>(ctx, args, stream);
             break;
         case GGML_TYPE_Q2_K:
-            mul_mat_q_case<GGML_TYPE_Q2_K>(ctx, args, stream);
+            ggml_cuda_mul_mat_q_switch_need_check<GGML_TYPE_Q2_K>(ctx, args, stream);
             break;
         case GGML_TYPE_Q3_K:
-            mul_mat_q_case<GGML_TYPE_Q3_K>(ctx, args, stream);
+            ggml_cuda_mul_mat_q_switch_need_check<GGML_TYPE_Q3_K>(ctx, args, stream);
             break;
         case GGML_TYPE_Q4_K:
-            mul_mat_q_case<GGML_TYPE_Q4_K>(ctx, args, stream);
+            ggml_cuda_mul_mat_q_switch_need_check<GGML_TYPE_Q4_K>(ctx, args, stream);
             break;
         case GGML_TYPE_Q5_K:
-            mul_mat_q_case<GGML_TYPE_Q5_K>(ctx, args, stream);
+            ggml_cuda_mul_mat_q_switch_need_check<GGML_TYPE_Q5_K>(ctx, args, stream);
             break;
         case GGML_TYPE_Q6_K:
-            mul_mat_q_case<GGML_TYPE_Q6_K>(ctx, args, stream);
+            ggml_cuda_mul_mat_q_switch_need_check<GGML_TYPE_Q6_K>(ctx, args, stream);
             break;
         case GGML_TYPE_IQ2_XXS:
-            mul_mat_q_case<GGML_TYPE_IQ2_XXS>(ctx, args, stream);
+            ggml_cuda_mul_mat_q_switch_need_check<GGML_TYPE_IQ2_XXS>(ctx, args, stream);
             break;
         case GGML_TYPE_IQ2_XS:
-            mul_mat_q_case<GGML_TYPE_IQ2_XS>(ctx, args, stream);
+            ggml_cuda_mul_mat_q_switch_need_check<GGML_TYPE_IQ2_XS>(ctx, args, stream);
             break;
         case GGML_TYPE_IQ2_S:
-            mul_mat_q_case<GGML_TYPE_IQ2_S>(ctx, args, stream);
+            ggml_cuda_mul_mat_q_switch_need_check<GGML_TYPE_IQ2_S>(ctx, args, stream);
             break;
         case GGML_TYPE_IQ3_XXS:
-            mul_mat_q_case<GGML_TYPE_IQ3_XXS>(ctx, args, stream);
+            ggml_cuda_mul_mat_q_switch_need_check<GGML_TYPE_IQ3_XXS>(ctx, args, stream);
             break;
         case GGML_TYPE_IQ3_S:
-            mul_mat_q_case<GGML_TYPE_IQ3_S>(ctx, args, stream);
+            ggml_cuda_mul_mat_q_switch_need_check<GGML_TYPE_IQ3_S>(ctx, args, stream);
             break;
         case GGML_TYPE_IQ1_S:
-            mul_mat_q_case<GGML_TYPE_IQ1_S>(ctx, args, stream);
+            ggml_cuda_mul_mat_q_switch_need_check<GGML_TYPE_IQ1_S>(ctx, args, stream);
             break;
         case GGML_TYPE_IQ4_XS:
-            mul_mat_q_case<GGML_TYPE_IQ4_XS>(ctx, args, stream);
+            ggml_cuda_mul_mat_q_switch_need_check<GGML_TYPE_IQ4_XS>(ctx, args, stream);
             break;
         case GGML_TYPE_IQ4_NL:
-            mul_mat_q_case<GGML_TYPE_IQ4_NL>(ctx, args, stream);
+            ggml_cuda_mul_mat_q_switch_need_check<GGML_TYPE_IQ4_NL>(ctx, args, stream);
             break;
         default:
             GGML_ABORT("fatal error");
