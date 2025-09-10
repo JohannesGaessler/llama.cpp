@@ -464,9 +464,11 @@ static __global__ void flash_attn_tile(
                 for (int j0 = 0; j0 < ncols; j0 += nwarps) {
                     const int j = j0 + threadIdx.y;
 
+                    half tmp[2*cpy_ne];
+                    *(cpy_t *) tmp = *(const cpy_t *) &KQ[j][(k0 + k1) / 2];
 #pragma unroll
                     for (int k2 = 0; k2 < 2*cpy_ne; ++k2) {
-                        KQ_k[j0/nwarps][k2] = __half2half2(((const half *)KQ[j])[k0 + k1 + k2]);
+                        KQ_k[j0/nwarps][k2] = __half2half2(tmp[k2]);
                     }
                 }
 
