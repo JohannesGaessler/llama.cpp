@@ -620,7 +620,7 @@ static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml
         return;
     }
 
-    constexpr int cols_per_block = 32;
+    constexpr int cols_per_block = 16;
     fattn_kernel_t fattn_kernel = flash_attn_tile<D, cols_per_block, use_logit_softcap>;
     const int kq_stride = fattn_tile_get_kq_stride_host(D, cols_per_block, cc, warp_size);
     launch_fattn<D, cols_per_block, 1>
