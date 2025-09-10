@@ -570,6 +570,20 @@ static __device__ __forceinline__ void ggml_cuda_mad(float & acc, const half2 v,
 #endif // defined(GGML_USE_HIP) && defined(GCN)
 }
 
+// Aligned memory transfers of 8/16 bytes can be faster than 2 transfers with 4 bytes, especially on AMD.
+template <int nbytes>
+static __device__ __forceinline__ void ggml_cuda_memcpy_1(void * __restrict__ dst, const void * __restrict__ src) {
+    if constexpr (nbytes == 4) {
+        *(int *) dst = *(const int *) src;
+    } else if constexpr (nbytes == 8) {
+        *(int2 *) dst = *(const int2 *) src;
+    } else if constexpr (nbytes == 16) {
+        *(int4 *) dst = *(const int4 *) src;
+    } else {
+        static_assert(nbytes == 0 && nbytes == -1, "bad nbytes");
+    }
+}
+
 static __device__ __forceinline__ float ggml_cuda_e8m0_to_fp32(uint8_t x) {
 #if CUDART_VERSION >= 12080
     const nv_bfloat16 e = __nv_cvt_e8m0_to_bf16raw(x);
