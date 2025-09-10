@@ -216,12 +216,13 @@ static __global__ void flash_attn_tile(
 
     const float slope = get_alibi_slope(max_bias, head, n_head_log2, m0, m1);
 
+    typedef int  b32_t;
     typedef int2 b64_t;
     typedef int4 b128_t;
 #if defined(GGML_USE_HIP)
     typedef b128_t cpy_t;
 #else
-    typedef b64_t cpy_t;
+    typedef b32_t cpy_t;
 #endif // defined(GGML_USE_HIP) && defined(GCN)
     constexpr int cpy_ne = sizeof(cpy_t) / sizeof(half2);
 
