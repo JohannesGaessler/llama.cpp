@@ -54,13 +54,13 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols
             return 64;
         case 128:
 #if defined(GCN) || defined(CDNA)
-            return nvols <= 16 ? 64 : 32;
+            return ncols <= 16 ? 64 : 32;
 #else
             return 64;
 #endif // defined(GCN) || defined(CDNA)
         case 256:
 #if defined(GCN) || defined(CDNA)
-            return nvols <= 16 ? 64 : 32;
+            return ncols <= 16 ? 64 : 32;
 #else
             return 64;
 #endif // defined(GCN) || defined(CDNA)
