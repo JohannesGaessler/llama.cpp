@@ -369,12 +369,7 @@ static __global__ void flash_attn_tile(
                     val.w = expf(val.w - kqmax[j0/nwarps]);
                     kqsum_add += val.x + val.y + val.z + val.w;
 
-#ifdef FAST_FP16_AVAILABLE
-                    const half2 tmp[2] = {make_half2(val.x, val.y), make_half2(val.z, val.w)};
-                    *(b64_t *) &KQ[j][i/2] = *(const b64_t *) &tmp;
-#else
                     *(float4 *) &KQ[j][i] = val;
-#endif // FAST_FP16_AVAILABLE
                 }
             } else if (kq_stride % (2*warp_size) == 0 && cpy_ne % 2 == 0) {
 #pragma unroll
@@ -385,11 +380,7 @@ static __global__ void flash_attn_tile(
                     val.x = expf(val.x - kqmax[j0/nwarps]);
                     val.y = expf(val.y - kqmax[j0/nwarps]);
                     kqsum_add += val.x + val.y;
-#ifdef FAST_FP16_AVAILABLE
-                    *(half2 *) &KQ[j][i/2] = make_half2(val.x, val.y);
-#else
                     *(float2 *) &KQ[j][i] = val;
-#endif // FAST_FP16_AVAILABLE
                 }
             } else {
                 for (int i0 = 0; i0 < kq_stride; i0 += warp_size) {
@@ -398,11 +389,7 @@ static __global__ void flash_attn_tile(
                     const float diff = KQ[j][i] - kqmax[j0/nwarps];
                     const float val = expf(diff);
                     kqsum_add += val;
-#ifdef FAST_FP16_AVAILABLE
-                    ((half *) KQ[j])[i] = val;
-#else
                     KQ[j][i] = val;
-#endif // FAST_FP16_AVAILABLE
                 }
             }
             kqsum[j0/nwarps] = kqsum[j0/nwarps]*KQ_max_scale + kqsum_add;
@@ -447,16 +434,16 @@ static __global__ void flash_attn_tile(
 
 #ifdef FAST_FP16_AVAILABLE
 #pragma unroll
-            for (int k1 = 0; k1 < V_cols_per_iter; k1 += 2*cpy_ne) {
-                half2 V_k[(D/2)/warp_size][2*cpy_ne];
-                half2 KQ_k[ncols/nwarps][2*cpy_ne];
+            for (int k1 = 0; k1 < V_cols_per_iter; k1 += cpy_ne) {
+                half2 V_k[(D/2)/warp_size][cpy_ne];
+                half2 KQ_k[ncols/nwarps][cpy_ne];
 
 #pragma unroll
                 for (int i0 = 0; i0 < D/2; i0 += warp_size) {
                     const int i = i0 + threadIdx.x;
 
 #pragma unroll
-                    for (int k2 = 0; k2 < 2*cpy_ne; ++k2) {
+                    for (int k2 = 0; k2 < cpy_ne; ++k2) {
                         V_k[i0/warp_size][k2] = KV_tmp_h2[(k1 + k2)*(D/2) + i];
                     }
                 }
@@ -464,11 +451,11 @@ static __global__ void flash_attn_tile(
                 for (int j0 = 0; j0 < ncols; j0 += nwarps) {
                     const int j = j0 + threadIdx.y;
 
-                    half tmp[2*cpy_ne];
-                    *(cpy_t *) tmp = *(const cpy_t *) &KQ[j][(k0 + k1) / 2];
+                    float tmp[cpy_ne];
+                    *(cpy_t *) tmp = *(const cpy_t *) &KQ[j][k0 + k1];
 #pragma unroll
-                    for (int k2 = 0; k2 < 2*cpy_ne; ++k2) {
-                        KQ_k[j0/nwarps][k2] = __half2half2(tmp[k2]);
+                    for (int k2 = 0; k2 < cpy_ne; ++k2) {
+                        KQ_k[j0/nwarps][k2] = make_half2(tmp[k2], tmp[k2]);
                     }
                 }
 
@@ -477,7 +464,7 @@ static __global__ void flash_attn_tile(
 #pragma unroll
                     for (int j0 = 0; j0 < ncols; j0 += nwarps) {
 #pragma unroll
-                        for (int k2 = 0; k2 < 2*cpy_ne; ++k2) {
+                        for (int k2 = 0; k2 < cpy_ne; ++k2) {
                             VKQ[j0/nwarps][i0/warp_size] += V_k[i0/warp_size][k2]*KQ_k[j0/nwarps][k2];
                         }
                     }
