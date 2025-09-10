@@ -8,11 +8,14 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
     if (GGML_CUDA_CC_IS_AMD(cc)) {
         switch (D) {
             case 64:
-                return 32;
+                return 64;
             case 128:
-                return 32;
             case 256:
-                return 32;
+                if (GGML_CUDA_CC_IS_GCN(cc) || GGML_CUDA_CC_IS_CDNA(cc)) {
+                    return ncols <= 16 ? 64 : 32;
+                } else {
+                    return 64;
+                }
             default:
                 GGML_ABORT("fatal error");
                 return -1;
@@ -48,11 +51,19 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols
 #ifdef GGML_USE_HIP
     switch (D) {
         case 64:
-            return 32;
+            return 64;
         case 128:
-            return 32;
+#if defined(GCN) || defined(CDNA)
+            return nvols <= 16 ? 64 : 32;
+#else
+            return 64;
+#endif // defined(GCN) || defined(CDNA)
         case 256:
-            return 32;
+#if defined(GCN) || defined(CDNA)
+            return nvols <= 16 ? 64 : 32;
+#else
+            return 64;
+#endif // defined(GCN) || defined(CDNA)
         default:
             return -1;
     }
@@ -89,9 +100,17 @@ static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int D, int ncols
         case 64:
             return 64;
         case 128:
+#if defined(GCN) || defined(CDNA)
+            return ncols <= 16 ? 64 : 128;
+#else
             return 64;
+#endif // defined(GCN) || defined(CDNA)
         case 256:
-            return 64;
+#if defined(GCN) || defined(CDNA)
+            return ncols <= 16 ? 64 : 128;
+#else
+            return ncols <= 16 ? 64 : 256;
+#endif // defined(GCN) || defined(CDNA)
         default:
             return -1;
     }
@@ -591,16 +610,16 @@ static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml
 
     constexpr size_t nbytes_shared = 0;
 
-    // if (Q->ne[1] > 16) {
-    //     constexpr int cols_per_block = 32;
-    //     fattn_kernel_t fattn_kernel = flash_attn_tile<D, cols_per_block, use_logit_softcap>;
-    //     const int kq_stride = fattn_tile_get_kq_stride_host(D, cols_per_block, cc, warp_size);
-    //     launch_fattn<D, cols_per_block, 1>
-    //         (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
-    //     return;
-    // }
+    if (Q->ne[1] > 16) {
+        constexpr int cols_per_block = 32;
+        fattn_kernel_t fattn_kernel = flash_attn_tile<D, cols_per_block, use_logit_softcap>;
+        const int kq_stride = fattn_tile_get_kq_stride_host(D, cols_per_block, cc, warp_size);
+        launch_fattn<D, cols_per_block, 1>
+            (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
+        return;
+    }
 
-    constexpr int cols_per_block = 16;
+    constexpr int cols_per_block = 32;
     fattn_kernel_t fattn_kernel = flash_attn_tile<D, cols_per_block, use_logit_softcap>;
     const int kq_stride = fattn_tile_get_kq_stride_host(D, cols_per_block, cc, warp_size);
     launch_fattn<D, cols_per_block, 1>
