@@ -485,9 +485,9 @@ static __global__ void flash_attn_tile(
                     half2 tmp[cpy_ne/2];
                     ggml_cuda_memcpy_1<cpy_nb/2>(&tmp, &KQ[j][(k0 + k1) / 2]);
 #pragma unroll
-                    for (int k2 = 0; k2 < cpy_ne/2; k2 += 2) {
-                        KQ_k[j0/nwarps][k2 + 0] = __half2half2( __low2half(tmp[k2]));
-                        KQ_k[j0/nwarps][k2 + 1] = __half2half2(__high2half(tmp[k2]));
+                    for (int k2 = 0; k2 < cpy_ne; k2 += 2) {
+                        KQ_k[j0/nwarps][k2 + 0] = __half2half2( __low2half(tmp[k2/2]));
+                        KQ_k[j0/nwarps][k2 + 1] = __half2half2(__high2half(tmp[k2/2]));
                     }
                 }
 
