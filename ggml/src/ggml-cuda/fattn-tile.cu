@@ -443,7 +443,9 @@ static __global__ void flash_attn_tile(
 
         constexpr int V_cols_per_iter = kq_stride*kq_nbatch / D;
         static_assert(kq_stride % V_cols_per_iter == 0, "bad V_cols_per_iter");
+#ifndef GGML_USE_HIP
 #pragma unroll
+#endif // GGML_USE_HIP
         for (int k0 = 0; k0 < kq_stride; k0 += V_cols_per_iter) {
 
 #ifdef FAST_FP16_AVAILABLE
