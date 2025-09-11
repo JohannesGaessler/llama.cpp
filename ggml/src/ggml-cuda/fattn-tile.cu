@@ -445,6 +445,64 @@ static __global__ void flash_attn_tile(
         static_assert(kq_stride % V_cols_per_iter == 0, "bad V_cols_per_iter");
 #pragma unroll
         for (int k0 = 0; k0 < kq_stride; k0 += V_cols_per_iter) {
+
+#ifdef FAST_FP16_AVAILABLE
+            static_assert(V_cols_per_iter % nwarps*cpy_ne == 0, "bad V_cols_per_iter");
+#pragma unroll
+            for (int k1 = 0; k1 < V_cols_per_iter; k1 += nwarps*cpy_ne) {
+                const int k_tile_0 = k1 + threadIdx.y*cpy_ne;
+
+#pragma unroll
+                for (int i0 = 0; i0 < D/2; i0 += warp_size) {
+                    const int i = i0 + threadIdx.x;
+
+                    half2 tmp[cpy_ne];
+#pragma unroll
+                    for (int k2 = 0; k2 < cpy_ne; ++k2) {
+                        tmp[k2] = V_h2[int64_t(k_VKQ_0 + k0 + k_tile_0 + k2)*stride_KV2 + i];
+                    }
+                    ggml_cuda_memcpy_1<cpy_nb>(&KV_tmp_h2[k_tile_0*(D/2) + i*cpy_ne], tmp);
+                }
+            }
+
+            __syncthreads();
+
+#pragma unroll
+            for (int k1 = 0; k1 < V_cols_per_iter; k1 += cpy_ne) {
+                half2 V_k[(D/2)/warp_size][cpy_ne];
+                half2 KQ_k[ncols/nwarps][cpy_ne];
+
+#pragma unroll
+                for (int i0 = 0; i0 < D/2; i0 += warp_size) {
+                    const int i = i0 + threadIdx.x;
+
+                    ggml_cuda_memcpy_1<cpy_nb>(&V_k[i0/warp_size], &KV_tmp_h2[k1*(D/2) + i*cpy_ne]);
+                }
+#pragma unroll
+                for (int j0 = 0; j0 < ncols; j0 += nwarps) {
+                    const int j = j0 + threadIdx.y;
+
+                    half2 tmp[cpy_ne/2];
+                    ggml_cuda_memcpy_1<cpy_nb/2>(&tmp, &KQ[j][(k0 + k1) / 2]);
+#pragma unroll
+                    for (int k2 = 0; k2 < cpy_ne/2; k2 += 2) {
+                        KQ_k[j0/nwarps][k2 + 0] = __half2half2( __low2half(tmp[k2]));
+                        KQ_k[j0/nwarps][k2 + 1] = __half2half2(__high2half(tmp[k2]));
+                    }
+                }
+
+#pragma unroll
+                for (int i0 = 0; i0 < D/2; i0 += warp_size) {
+#pragma unroll
+                    for (int j0 = 0; j0 < ncols; j0 += nwarps) {
+#pragma unroll
+                        for (int k2 = 0; k2 < cpy_ne; ++k2) {
+                            VKQ[j0/nwarps][i0/warp_size] += V_k[i0/warp_size][k2]*KQ_k[j0/nwarps][k2];
+                        }
+                    }
+                }
+            }
+#else
 #pragma unroll
             for (int k1 = 0; k1 < V_cols_per_iter; k1 += nwarps) {
                 const int k_tile = k1 + threadIdx.y;
@@ -454,11 +512,7 @@ static __global__ void flash_attn_tile(
                     const int i = i0 + threadIdx.x;
 
                     const half2 tmp = V_h2[int64_t(k_VKQ_0 + k0 + k_tile)*stride_KV2 + i];
-#ifdef FAST_FP16_AVAILABLE
-                    KV_tmp_h2[k_tile*(D/2) + i] = tmp;
-#else
                     KV_tmp_f2[k_tile*(D/2) + i] = __half22float2(tmp);
-#endif // FAST_FP16_AVAILABLE
                 }
             }
 
@@ -466,48 +520,32 @@ static __global__ void flash_attn_tile(
 
 #pragma unroll
             for (int k1 = 0; k1 < V_cols_per_iter; ++k1) {
-#ifdef FAST_FP16_AVAILABLE
-                half2 V_k[(D/2)/warp_size];
-                half2 KQ_k[ncols/nwarps];
-#else
                 float2 V_k[(D/2)/warp_size];
                 float  KQ_k[ncols/nwarps];
-#endif // FAST_FP16_AVAILABLE
 
 #pragma unroll
                 for (int i0 = 0; i0 < D/2; i0 += warp_size) {
                     const int i = i0 + threadIdx.x;
 
-#ifdef FAST_FP16_AVAILABLE
-                    V_k[i0/warp_size] = KV_tmp_h2[k1*(D/2) + i];
-#else
                     V_k[i0/warp_size] = KV_tmp_f2[k1*(D/2) + i];
-#endif // FAST_FP16_AVAILABLE
                 }
 #pragma unroll
                 for (int j0 = 0; j0 < ncols; j0 += nwarps) {
                     const int j = j0 + threadIdx.y;
 
-#ifdef FAST_FP16_AVAILABLE
-                    KQ_k[j0/nwarps] = __half2half2(((const half *)KQ[j])[k0 + k1]);
-#else
                     KQ_k[j0/nwarps] = KQ[j][k0 + k1];
-#endif // FAST_FP16_AVAILABLE
                 }
 
 #pragma unroll
                 for (int i0 = 0; i0 < D/2; i0 += warp_size) {
 #pragma unroll
                     for (int j0 = 0; j0 < ncols; j0 += nwarps) {
-#ifdef FAST_FP16_AVAILABLE
-                        VKQ[j0/nwarps][i0/warp_size]   += V_k[i0/warp_size]  *KQ_k[j0/nwarps];
-#else
                         VKQ[j0/nwarps][i0/warp_size].x += V_k[i0/warp_size].x*KQ_k[j0/nwarps];
                         VKQ[j0/nwarps][i0/warp_size].y += V_k[i0/warp_size].y*KQ_k[j0/nwarps];
-#endif // FAST_FP16_AVAILABLE
                     }
                 }
             }
+#endif // FAST_FP16_AVAILABLE
 
             __syncthreads();
         }
