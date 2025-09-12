@@ -506,53 +506,71 @@ static __global__ void flash_attn_tile(
 
             __syncthreads();
 
-#pragma unroll
-            for (int k1 = 0; k1 < V_cols_per_iter; ++k1) {
 #ifdef FAST_FP16_AVAILABLE
-                half2 V_k[(D/2)/warp_size];
-                half2 KQ_k[ncols/nwarps];
-#else
-                float2 V_k[(D/2)/warp_size];
-                float  KQ_k[ncols/nwarps];
-#endif // FAST_FP16_AVAILABLE
-
-#ifdef FAST_FP16_AVAILABLE
-                constexpr int cpy_ne_D = cpy_ne/2 < (D/2)/warp_size ? cpy_ne/2 : (D/2)/warp_size;
 #pragma unroll
-                for (int i0 = 0; i0 < D/2; i0 += warp_size*cpy_ne_D) {
-                    ggml_cuda_memcpy_1<cpy_ne_D*4>(&V_k[i0/warp_size], &KV_tmp_h2[k1*(D/2) + i0 + threadIdx.x*cpy_ne_D]);
-                }
-#else
-                constexpr int cpy_ne_D = cpy_ne < D/warp_size ? cpy_ne : D/warp_size;
-#pragma unroll
-                for (int i0 = 0; i0 < D; i0 += warp_size*cpy_ne_D) {
-                    ggml_cuda_memcpy_1<cpy_ne_D*4>(&V_k[i0/(2*warp_size)], &KV_tmp_f[k1*D + i0 + threadIdx.x*cpy_ne_D]);
-                }
-#endif // FAST_FP16_AVAILABLE
+            for (int k1 = 0; k1 < V_cols_per_iter; k1 += 2*cpy_ne) {
+                half KQ_buffered[ncols/nwarps][2*cpy_ne];
 #pragma unroll
                 for (int j0 = 0; j0 < ncols; j0 += nwarps) {
                     const int j = j0 + threadIdx.y;
 
-#ifdef FAST_FP16_AVAILABLE
-                    KQ_k[j0/nwarps] = __half2half2(((const half *)KQ[j])[k0 + k1]);
-#else
-                    KQ_k[j0/nwarps] = KQ[j][k0 + k1];
-#endif // FAST_FP16_AVAILABLE
+                    ggml_cuda_memcpy_1<cpy_nb>(KQ_buffered[j0/nwarps], &KQ[j][(k0 + k1)/2]);
                 }
-
 #pragma unroll
-                for (int i0 = 0; i0 < D/2; i0 += warp_size) {
+                for (int k2 = 0; k2 < 2*cpy_ne; ++k2) {
+                    half2 V_k[(D/2)/warp_size];
+                    half2 KQ_k[ncols/nwarps];
+
+                    constexpr int cpy_ne_D = cpy_ne/2 < (D/2)/warp_size ? cpy_ne/2 : (D/2)/warp_size;
+#pragma unroll
+                    for (int i0 = 0; i0 < D/2; i0 += warp_size*cpy_ne_D) {
+                        ggml_cuda_memcpy_1<cpy_ne_D*4>(&V_k[i0/warp_size], &KV_tmp_h2[(k1 + k2)*(D/2) + i0 + threadIdx.x*cpy_ne_D]);
+                    }
 #pragma unroll
                     for (int j0 = 0; j0 < ncols; j0 += nwarps) {
-#ifdef FAST_FP16_AVAILABLE
-                        VKQ[j0/nwarps][i0/warp_size]   += V_k[i0/warp_size]  *KQ_k[j0/nwarps];
-#else
-                        VKQ[j0/nwarps][i0/warp_size].x += V_k[i0/warp_size].x*KQ_k[j0/nwarps];
-                        VKQ[j0/nwarps][i0/warp_size].y += V_k[i0/warp_size].y*KQ_k[j0/nwarps];
-#endif // FAST_FP16_AVAILABLE
+                        KQ_k[j0/nwarps] = __half2half2(KQ_buffered[j0/nwarps][k2]);
+                    }
+
+#pragma unroll
+                    for (int i0 = 0; i0 < D/2; i0 += warp_size) {
+#pragma unroll
+                        for (int j0 = 0; j0 < ncols; j0 += nwarps) {
+                            VKQ[j0/nwarps][i0/warp_size] += V_k[i0/warp_size]*KQ_k[j0/nwarps];
+                        }
                     }
                 }
             }
+#else
+#pragma unroll
+            for (int k1 = 0; k1 < V_cols_per_iter; k1 += cpy_ne) {
+                float KQ_buffered[ncols/nwarps][cpy_ne];
+#pragma unroll
+                for (int j0 = 0; j0 < ncols; j0 += nwarps) {
+                    const int j = j0 + threadIdx.y;
+
+                    ggml_cuda_memcpy_1<cpy_nb>(KQ_buffered[j0/nwarps], &KQ[j][k0 + k1]);
+                }
+#pragma unroll
+                for (int k2 = 0; k2 < cpy_ne; ++k2) {
+                    float2 V_k[(D/2)/warp_size];
+
+                    constexpr int cpy_ne_D = cpy_ne < D/warp_size ? cpy_ne : D/warp_size;
+#pragma unroll
+                    for (int i0 = 0; i0 < D; i0 += warp_size*cpy_ne_D) {
+                        ggml_cuda_memcpy_1<cpy_ne_D*4>(&V_k[i0/(2*warp_size)], &KV_tmp_f[(k1 + k2)*D + i0 + threadIdx.x*cpy_ne_D]);
+                    }
+#pragma unroll
+                    for (int i0 = 0; i0 < D/2; i0 += warp_size) {
+#pragma unroll
+                        for (int j0 = 0; j0 < ncols; j0 += nwarps) {
+                            VKQ[j0/nwarps][i0/warp_size].x += V_k[i0/warp_size].x*KQ_buffered[j0/nwarps][k2];
+                            VKQ[j0/nwarps][i0/warp_size].y += V_k[i0/warp_size].y*KQ_buffered[j0/nwarps][k2];
+                        }
+                    }
+                }
+            }
+#endif // FAST_FP16_AVAILABLE
+
 
             __syncthreads();
         }
