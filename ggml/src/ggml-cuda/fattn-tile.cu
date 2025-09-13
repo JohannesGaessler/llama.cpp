@@ -225,17 +225,21 @@ static __global__ void flash_attn_tile(
 
     constexpr int cpw = ncols/nwarps;
 #ifdef FAST_FP16_AVAILABLE
-    __shared__ half  KQ[ncols * kq_stride];
+    constexpr int softmax_iter_j = cpw < 2*cpy_ne ? cpw : 2*cpy_ne;
+
+    __shared__ half  KQ[ncols/softmax_iter_j][kq_stride][softmax_iter_j];
     __shared__ half2 Q_tmp[ncols][D/2];
     __shared__ half2 KV_tmp_h2[kq_stride * (kq_nbatch/2 + cpy_ne)]; // Padded to avoid memory bank conflicts.
     half2 VKQ[cpw][D/(2*warp_size)] = {{{0.0f, 0.0f}}};
 #else
-    __shared__ float KQ[ncols * kq_stride];
+    constexpr int softmax_iter_j = cpw < 1*cpy_ne ? cpw : 1*cpy_ne;
+
+    __shared__ float KQ[ncols/softmax_iter_j][kq_stride][softmax_iter_j];
     __shared__ float Q_tmp[ncols][D];
     __shared__ float KV_tmp_f[kq_stride * (kq_nbatch + cpy_ne)]; // Padded to avoid memory bank conflicts.
     float2 VKQ[cpw][D/(2*warp_size)] = {{{0.0f, 0.0f}}};
 #endif // FAST_FP16_AVAILABLE
-
+    static_assert(cpw % softmax_iter_j == 0, "bad softmax_iter_j");
 
     float kqmax[cpw];
 #pragma unroll
@@ -394,12 +398,6 @@ static __global__ void flash_attn_tile(
 
         __syncthreads();
 
-#ifdef FAST_FP16_AVAILABLE
-        constexpr int softmax_iter_j = cpw < 2*cpy_ne ? cpw : 2*cpy_ne;
-#else
-        constexpr int softmax_iter_j = cpw < 1*cpy_ne ? cpw : 1*cpy_ne;
-#endif // FAST_FP16_AVAILABLE
-
 #pragma unroll
         for (int j0 = 0; j0 < cpw; j0 += softmax_iter_j) {
 #ifdef FAST_FP16_AVAILABLE
@@ -446,8 +444,8 @@ static __global__ void flash_attn_tile(
             for (int i0 = 0; i0 < kq_stride; i0 += warp_size) {
                 const int i = i0 + threadIdx.x;
 
-                ggml_cuda_memcpy_1<softmax_iter_j*sizeof(KQ[0])>(
-                    &KQ[(j0 + threadIdx.y*cpw)*kq_stride + i*softmax_iter_j], tmp[i0/warp_size]);
+                ggml_cuda_memcpy_1<sizeof(tmp[0])>(
+                    KQ[j0/softmax_iter_j + threadIdx.y*(cpw/softmax_iter_j)][i], tmp[i0/warp_size]);
             }
         }
 
@@ -501,11 +499,11 @@ static __global__ void flash_attn_tile(
                 }
 #pragma unroll
                 for (int j0 = 0; j0 < cpw; j0 += softmax_iter_j) {
-                    const int j = j0 + threadIdx.y*cpw;
+                    const int j = j0/softmax_iter_j + threadIdx.y*(cpw/softmax_iter_j);
 
                     half tmp[softmax_iter_j];
                     ggml_cuda_memcpy_1<softmax_iter_j*sizeof(half)>(
-                        &tmp, &KQ[j*kq_stride + (k0 + k1)*softmax_iter_j]);
+                        &tmp, KQ[j][k0 + k1]);
 #pragma unroll
                     for (int j1 = 0; j1 < softmax_iter_j; ++j1) {
                         KQ_k[j0+j1] = __half2half2(tmp[j1]);
@@ -533,10 +531,10 @@ static __global__ void flash_attn_tile(
                 }
 #pragma unroll
                 for (int j0 = 0; j0 < cpw; j0 += softmax_iter_j) {
-                    const int j = j0 + threadIdx.y*cpw;
+                    const int j = j0/softmax_iter_j + threadIdx.y*(cpw/softmax_iter_j);
 
                     ggml_cuda_memcpy_1<softmax_iter_j*sizeof(float)>(
-                        &KQ_k[j0], &KQ[j*kq_stride + (k0 + k1)*softmax_iter_j]);
+                        &KQ_k[j0], KQ[j][k0 + k1]);
                 }
 
 #pragma unroll
