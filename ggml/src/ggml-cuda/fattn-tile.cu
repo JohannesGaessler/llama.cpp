@@ -395,79 +395,66 @@ static __global__ void flash_attn_tile(
 
         __syncthreads();
 
-#pragma unroll
-        for (int j0 = 0; j0 < cpw; ++j0) {
-            const int j = j0 + threadIdx.y*cpw;
-
-            kqmax_new[j0] = warp_reduce_max<warp_size>(kqmax_new[j0]);
-            const float KQ_max_scale = expf(kqmax[j0] - kqmax_new[j0]);
-            kqmax[j0] = kqmax_new[j0];
-
-            float kqsum_add = 0.0f;
-            if (kq_stride % (4*warp_size) == 0 && cpy_ne % 4 == 0) {
-#pragma unroll
-                for (int i0 = 0; i0 < kq_stride; i0 += 4*warp_size) {
-                    const int i = i0 + 4*threadIdx.x;
-
-                    float4 val = *(const float4 *) &KQ[j*kq_stride + i];
-                    val.x = expf(val.x - kqmax[j0]);
-                    val.y = expf(val.y - kqmax[j0]);
-                    val.z = expf(val.z - kqmax[j0]);
-                    val.w = expf(val.w - kqmax[j0]);
-                    kqsum_add += val.x + val.y + val.z + val.w;
-
 #ifdef FAST_FP16_AVAILABLE
-                    const half2 tmp[2] = {make_half2(val.x, val.y), make_half2(val.z, val.w)};
-                    ggml_cuda_memcpy_1<sizeof(tmp)>(&KQ[j*kq_stride + i/2], &tmp);
+        constexpr int softmax_iter_j = cpw < 2*cpy_ne ? cpw : 2*cpy_ne;
 #else
-                    ggml_cuda_memcpy_1<sizeof(val)>(&KQ[j*kq_stride + i], &val);
+        constexpr int softmax_iter_j = cpw < 1*cpy_ne ? cpw : 1*cpy_ne;
 #endif // FAST_FP16_AVAILABLE
-                }
-            } else if (kq_stride % (2*warp_size) == 0 && cpy_ne % 2 == 0) {
-#pragma unroll
-                for (int i0 = 0; i0 < kq_stride; i0 += 2*warp_size) {
-                    const int i = i0 + 2*threadIdx.x;
 
-                    float2 val = *(const float2 *) &KQ[j*kq_stride + i];
-                    val.x = expf(val.x - kqmax[j0]);
-                    val.y = expf(val.y - kqmax[j0]);
-                    kqsum_add += val.x + val.y;
+#pragma unroll
+        for (int j0 = 0; j0 < cpw; j0 += softmax_iter_j) {
 #ifdef FAST_FP16_AVAILABLE
-                    const half2 tmp = make_half2(val.x, val.y);
-                    ggml_cuda_memcpy_1<sizeof(tmp)>(&KQ[j*kq_stride + i/2], &tmp);
+            half  tmp[kq_stride/warp_size][softmax_iter_j];
 #else
-                    ggml_cuda_memcpy_1<sizeof(val)>(&KQ[j*kq_stride + i], &val);
+            float tmp[kq_stride/warp_size][softmax_iter_j];
 #endif // FAST_FP16_AVAILABLE
-                }
-            } else {
+
+#pragma unroll
+            for (int j1 = 0; j1 < softmax_iter_j; ++j1) {
+                const int j = j0+j1 + threadIdx.y*cpw;
+
+                kqmax_new[j0+j1] = warp_reduce_max<warp_size>(kqmax_new[j0+j1]);
+                const float KQ_max_scale = expf(kqmax[j0+j1] - kqmax_new[j0+j1]);
+                kqmax[j0+j1] = kqmax_new[j0+j1];
+
+                float kqsum_add = 0.0f;
+#pragma unroll
                 for (int i0 = 0; i0 < kq_stride; i0 += warp_size) {
                     const int i = i0 + threadIdx.x;
 
-                    const float diff = KQ[j*kq_stride + i] - kqmax[j0];
-                    const float val = expf(diff);
+                    const float val = expf(KQ[j*kq_stride + i] - kqmax[j0+j1]);
                     kqsum_add += val;
-#ifdef FAST_FP16_AVAILABLE
-                    ((half *) KQ)[j*(2*kq_stride) + i] = val;
-#else
-                    KQ[j*kq_stride + i] = val;
-#endif // FAST_FP16_AVAILABLE
+                    tmp[i0/warp_size][j1] = val;
                 }
-            }
-            kqsum[j0] = kqsum[j0]*KQ_max_scale + kqsum_add;
+                kqsum[j0+j1] = kqsum[j0+j1]*KQ_max_scale + kqsum_add;
 
 #ifdef FAST_FP16_AVAILABLE
-            const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale, KQ_max_scale);
+                const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale, KQ_max_scale);
 #pragma unroll
-            for (int i0 = 0; i0 < D/2; i0 += warp_size) {
-                VKQ[j0][i0/warp_size] *= KQ_max_scale_h2;
-            }
+                for (int i0 = 0; i0 < D/2; i0 += warp_size) {
+                    VKQ[j0+j1][i0/warp_size] *= KQ_max_scale_h2;
+                }
 #else
 #pragma unroll
-            for (int i0 = 0; i0 < D/2; i0 += warp_size) {
-                VKQ[j0][i0/warp_size].x *= KQ_max_scale;
-                VKQ[j0][i0/warp_size].y *= KQ_max_scale;
-            }
+                for (int i0 = 0; i0 < D/2; i0 += warp_size) {
+                    VKQ[j0+j1][i0/warp_size].x *= KQ_max_scale;
+                    VKQ[j0+j1][i0/warp_size].y *= KQ_max_scale;
+                }
 #endif // FAST_FP16_AVAILABLE
+            }
+
+#pragma unroll
+            for (int i0 = 0; i0 < kq_stride; i0 += warp_size) {
+                const int i = i0 + threadIdx.x;
+
+#ifdef FAST_FP16_AVAILABLE
+                ggml_cuda_memcpy_1<softmax_iter_j*sizeof(half)>(
+                    &KQ[(j0 + threadIdx.y*cpw)*kq_stride + i*(softmax_iter_j/2)], tmp[i0/warp_size]);
+#else
+                ggml_cuda_memcpy_1<softmax_iter_j*sizeof(float)>(
+                    &KQ[(j0 + threadIdx.y*cpw)*kq_stride + i* softmax_iter_j],    tmp[i0/warp_size]);
+#endif // FAST_FP16_AVAILABLE
+            }
         }
 
         constexpr int V_cols_per_iter = kq_stride*kq_nbatch / D;
@@ -531,18 +518,25 @@ static __global__ void flash_attn_tile(
                 }
 #endif // FAST_FP16_AVAILABLE
 #ifdef FAST_FP16_AVAILABLE
-                half tmp[cpw];
-                ggml_cuda_memcpy_1<sizeof(tmp)>(tmp, &KQ[threadIdx.y*(cpw*2*kq_stride) + (k0 + k1)*cpw]);
 #pragma unroll
-                for (int j0 = 0; j0 < cpw; ++j0) {
-                    KQ_k[j0] = __half2half2(tmp[j0]);
+                for (int j0 = 0; j0 < cpw; j0 += softmax_iter_j) {
+                    const int j = j0 + threadIdx.y*cpw;
+
+                    half tmp[softmax_iter_j];
+                    ggml_cuda_memcpy_1<softmax_iter_j*sizeof(half)>(
+                        &tmp, &KQ[j*kq_stride + (k0 + k1)*(softmax_iter_j/2)]);
+#pragma unroll
+                    for (int j1 = 0; j1 < softmax_iter_j; ++j1) {
+                        KQ_k[j0+j1] = __half2half2(tmp[j1]);
+                    }
                 }
 #else
 #pragma unroll
-                for (int j0 = 0; j0 < cpw; ++j0) {
+                for (int j0 = 0; j0 < cpw; j0 += softmax_iter_j) {
                     const int j = j0 + threadIdx.y*cpw;
 
-                    KQ_k[j0] = KQ[j*kq_stride + k0 + k1];
+                    ggml_cuda_memcpy_1<softmax_iter_j*sizeof(float)>(
+                        &KQ_k[j0], &KQ[j*kq_stride + (k0 + k1)*softmax_iter_j]);
                 }
 #endif // FAST_FP16_AVAILABLE
 
