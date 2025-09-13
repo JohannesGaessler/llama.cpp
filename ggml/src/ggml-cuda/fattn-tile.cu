@@ -57,29 +57,16 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
 
 static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols, int warp_size) {
 #ifdef GGML_USE_HIP
-#ifdef RDNA
     switch (D) {
         case 64:
             return 128;
         case 128:
             return ncols <= 32 ? 128 : 64;
         case 256:
-            return 64;
+            return ncols <= 32 ? 64 : 32;
         default:
             return -1;
     }
-#else
-    switch (D) {
-        case 64:
-            return ncols <= 32 ? 128 : 64;
-        case 128:
-            return ncols <= 32 ?  64 : 32;
-        case 256:
-            return ncols <= 16 ?  64 : 32;
-        default:
-            return -1;
-    }
-#endif // RDNA
 #else
 #ifdef FAST_FP16_AVAILABLE
     switch (D) {
@@ -113,8 +100,9 @@ static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int D, int ncols
         case 64:
             return 64;
         case 128:
-        case 256:
             return 128;
+        case 256:
+            return 256;
         default:
             return -1;
     }
@@ -148,21 +136,15 @@ static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int D, int ncols
 
 static int fattn_tile_get_nthreads_host(const int cc, const int ncols) {
     if (GGML_CUDA_CC_IS_AMD(cc)) {
-        if (GGML_CUDA_CC_IS_RDNA(cc) || GGML_CUDA_CC_IS_CDNA2(cc) || GGML_CUDA_CC_IS_CDNA3(cc)) {
-            return ncols <= 16 ? 256 : 512;
-        }
-        return 256;
+        return ncols <= 16 ? 256 : 512;
     }
     return 256;
+    GGML_UNUSED_VARS(cc, ncols);
 }
 
 static constexpr __device__ int fattn_tile_get_nthreads_device(int ncols) {
 #ifdef GGML_USE_HIP
-#if defined(RDNA) || defined(CDNA2) || defined(CDNA3)
     return ncols <= 16 ? 256 : 512;
-#else
-    return 256;
-#endif // defined(RDNA) || defined(CDNA2) || defined(CDNA3) || defined(CDNA4)
 #else
     return 256;
 #endif // GGML_USE_HIP
@@ -170,15 +152,11 @@ static constexpr __device__ int fattn_tile_get_nthreads_device(int ncols) {
 }
 
 static constexpr __device__ int fattn_tile_get_occupancy_device() {
-#ifdef GGML_USE_HIP
-#if defined(RDNA2) || defined(RDNA3)
-    return 3;
-#else
+#ifdef RDNA
     return 2;
-#endif // defined(RDNA2) || defined(RDNA3)
 #else
-    return 2;
-#endif // GGML_USE_HIP
+    return 1;
+#endif // RDNA
 }
 
 template<int D, int ncols, bool use_logit_softcap> // D == head size
