@@ -2,8 +2,6 @@
 #include "fattn-common.cuh"
 #include "fattn-tile.cuh"
 
-#define FATTN_TILE_NTHREADS 256
-
 static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int cc, const int warp_size) {
     if (GGML_CUDA_CC_IS_AMD(cc)) {
         if (GGML_CUDA_CC_IS_RDNA(cc)) {
@@ -148,16 +146,42 @@ static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int D, int ncols
     GGML_UNUSED_VARS(ncols, warp_size);
 }
 
-template<int D, int ncols, bool use_logit_softcap> // D == head size
+static int fattn_tile_get_nthreads_host(int cc) {
+    if (GGML_CUDA_CC_IS_AMD(cc)) {
+        if (GGML_CUDA_CC_IS_RDNA(cc) || GGML_CUDA_CC_IS_CDNA2(cc) || GGML_CUDA_CC_IS_CDNA3(cc)) {
+            return 256;
+        }
+        return 128;
+    }
+    return 128;
+}
+
+static constexpr __device__ int fattn_tile_get_nthreads_device() {
 #ifdef GGML_USE_HIP
-#ifdef RDNA
-__launch_bounds__(FATTN_TILE_NTHREADS, 3)
+#if defined(RDNA) || defined(CDNA2) || defined(CDNA3)
+    return 256;
 #else
-__launch_bounds__(FATTN_TILE_NTHREADS, 2)
-#endif // RDNA
+    return 128;
+#endif // defined(RDNA) || defined(CDNA2) || defined(CDNA3) || defined(CDNA4)
 #else
-__launch_bounds__(FATTN_TILE_NTHREADS, 2)
+    return 128;
 #endif // GGML_USE_HIP
+}
+
+static constexpr __device__ int fattn_tile_get_occupancy_device() {
+#ifdef GGML_USE_HIP
+#if defined(RDNA2) || defined(RDNA3)
+    return 3;
+#else
+    return 2;
+#endif // defined(RDNA2) || defined(RDNA3)
+#else
+    return 2;
+#endif // GGML_USE_HIP
+}
+
+template<int D, int ncols, bool use_logit_softcap> // D == head size
+__launch_bounds__(fattn_tile_get_nthreads_device(), fattn_tile_get_occupancy_device())
 static __global__ void flash_attn_tile(
         const char * __restrict__ Q,
         const char * __restrict__ K,
@@ -203,7 +227,7 @@ static __global__ void flash_attn_tile(
     }
 
     constexpr int warp_size = 32;
-    constexpr int nwarps    = FATTN_TILE_NTHREADS / warp_size;
+    constexpr int nwarps    = fattn_tile_get_nthreads_device() / warp_size;
     constexpr int kq_stride = fattn_tile_get_kq_stride_device(D, ncols, warp_size);
     static_assert(kq_stride % warp_size == 0, "kq_stride not divisable by warp_size.");
     constexpr int kq_nbatch = fattn_tile_get_kq_nbatch_device(D, ncols, warp_size);
@@ -673,10 +697,10 @@ template <int D, bool use_logit_softcap>
 static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * Q = dst->src[0];
 
-    const int id                 = ggml_cuda_get_device();
-    const int cc                 = ggml_cuda_info().devices[id].cc;
-    const int warp_size          = 32;
-    const int nwarps             = FATTN_TILE_NTHREADS / warp_size;
+    const int id        = ggml_cuda_get_device();
+    const int cc        = ggml_cuda_info().devices[id].cc;
+    const int warp_size = 32;
+    const int nwarps    = fattn_tile_get_nthreads_host(cc) / warp_size;
 
     constexpr size_t nbytes_shared = 0;
 
