@@ -530,16 +530,21 @@ static __global__ void flash_attn_tile(
                     ggml_cuda_memcpy_1<cpy_ne_D*4>(&V_k[i0/(2*warp_size)], &KV_tmp_f[k1*D + i0 + threadIdx.x*cpy_ne_D]);
                 }
 #endif // FAST_FP16_AVAILABLE
+#ifdef FAST_FP16_AVAILABLE
+                half tmp[cpw];
+                ggml_cuda_memcpy_1<sizeof(tmp)>(tmp, &KQ[threadIdx.y*(cpw*2*kq_stride) + (k0 + k1)*cpw]);
+#pragma unroll
+                for (int j0 = 0; j0 < cpw; ++j0) {
+                    KQ_k[j0] = __half2half2(tmp[j0]);
+                }
+#else
 #pragma unroll
                 for (int j0 = 0; j0 < cpw; ++j0) {
                     const int j = j0 + threadIdx.y*cpw;
 
-#ifdef FAST_FP16_AVAILABLE
-                    KQ_k[j0] = __half2half2(((const half *)KQ)[j*(2*kq_stride) + k0 + k1]);
-#else
                     KQ_k[j0] = KQ[j*kq_stride + k0 + k1];
-#endif // FAST_FP16_AVAILABLE
                 }
+#endif // FAST_FP16_AVAILABLE
 
 #pragma unroll
                 for (int i0 = 0; i0 < D/2; i0 += warp_size) {
