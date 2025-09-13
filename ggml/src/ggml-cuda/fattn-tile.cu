@@ -146,26 +146,27 @@ static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int D, int ncols
     GGML_UNUSED_VARS(ncols, warp_size);
 }
 
-static int fattn_tile_get_nthreads_host(int cc) {
+static int fattn_tile_get_nthreads_host(const int cc, const int ncols) {
     if (GGML_CUDA_CC_IS_AMD(cc)) {
         if (GGML_CUDA_CC_IS_RDNA(cc) || GGML_CUDA_CC_IS_CDNA2(cc) || GGML_CUDA_CC_IS_CDNA3(cc)) {
-            return 256;
+            return ncols <= 16 ? 256 : 512;
         }
-        return 128;
+        return 256;
     }
-    return 128;
+    return 256;
 }
 
-static constexpr __device__ int fattn_tile_get_nthreads_device() {
+static constexpr __device__ int fattn_tile_get_nthreads_device(int ncols) {
 #ifdef GGML_USE_HIP
 #if defined(RDNA) || defined(CDNA2) || defined(CDNA3)
-    return 256;
+    return ncols <= 16 ? 256 : 512;
 #else
-    return 128;
+    return 256;
 #endif // defined(RDNA) || defined(CDNA2) || defined(CDNA3) || defined(CDNA4)
 #else
-    return 128;
+    return 256;
 #endif // GGML_USE_HIP
+    GGML_UNUSED(ncols);
 }
 
 static constexpr __device__ int fattn_tile_get_occupancy_device() {
@@ -181,7 +182,7 @@ static constexpr __device__ int fattn_tile_get_occupancy_device() {
 }
 
 template<int D, int ncols, bool use_logit_softcap> // D == head size
-__launch_bounds__(fattn_tile_get_nthreads_device(), fattn_tile_get_occupancy_device())
+__launch_bounds__(fattn_tile_get_nthreads_device(ncols), fattn_tile_get_occupancy_device())
 static __global__ void flash_attn_tile(
         const char * __restrict__ Q,
         const char * __restrict__ K,
@@ -227,7 +228,7 @@ static __global__ void flash_attn_tile(
     }
 
     constexpr int warp_size = 32;
-    constexpr int nwarps    = fattn_tile_get_nthreads_device() / warp_size;
+    constexpr int nwarps    = fattn_tile_get_nthreads_device(ncols) / warp_size;
     constexpr int kq_stride = fattn_tile_get_kq_stride_device(D, ncols, warp_size);
     static_assert(kq_stride % warp_size == 0, "kq_stride not divisable by warp_size.");
     constexpr int kq_nbatch = fattn_tile_get_kq_nbatch_device(D, ncols, warp_size);
@@ -700,7 +701,6 @@ static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml
     const int id        = ggml_cuda_get_device();
     const int cc        = ggml_cuda_info().devices[id].cc;
     const int warp_size = 32;
-    const int nwarps    = fattn_tile_get_nthreads_host(cc) / warp_size;
 
     constexpr size_t nbytes_shared = 0;
 
@@ -708,6 +708,7 @@ static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml
     if constexpr (D <= 128) {
         if (Q->ne[1] > 32) {
             constexpr int cols_per_block = 64;
+            const int nwarps = fattn_tile_get_nthreads_host(cc, cols_per_block) / warp_size;
             fattn_kernel_t fattn_kernel = flash_attn_tile<D, cols_per_block, use_logit_softcap>;
             const int kq_stride = fattn_tile_get_kq_stride_host(D, cols_per_block, cc, warp_size);
             launch_fattn<D, cols_per_block, 1>
@@ -719,6 +720,7 @@ static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml
 
     if (Q->ne[1] > 16) {
         constexpr int cols_per_block = 32;
+        const int nwarps = fattn_tile_get_nthreads_host(cc, cols_per_block) / warp_size;
         fattn_kernel_t fattn_kernel = flash_attn_tile<D, cols_per_block, use_logit_softcap>;
         const int kq_stride = fattn_tile_get_kq_stride_host(D, cols_per_block, cc, warp_size);
         launch_fattn<D, cols_per_block, 1>
@@ -727,6 +729,7 @@ static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml
     }
 
     constexpr int cols_per_block = 16;
+    const int nwarps = fattn_tile_get_nthreads_host(cc, cols_per_block) / warp_size;
     fattn_kernel_t fattn_kernel = flash_attn_tile<D, cols_per_block, use_logit_softcap>;
     const int kq_stride = fattn_tile_get_kq_stride_host(D, cols_per_block, cc, warp_size);
     launch_fattn<D, cols_per_block, 1>
