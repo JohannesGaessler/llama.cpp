@@ -432,8 +432,6 @@ static __global__ void flash_attn_tile(
 
 #pragma unroll
             for (int j1 = 0; j1 < softmax_iter_j; ++j1) {
-                const int j = j0+j1 + threadIdx.y*cpw;
-
                 KQ_max_new[j0+j1] = warp_reduce_max<warp_size>(KQ_max_new[j0+j1]);
                 const float KQ_max_scale = expf(KQ_max[j0+j1] - KQ_max_new[j0+j1]);
                 KQ_max[j0+j1] = KQ_max_new[j0+j1];
@@ -441,8 +439,6 @@ static __global__ void flash_attn_tile(
                 float KQ_sum_add = 0.0f;
 #pragma unroll
                 for (int i0 = 0; i0 < kq_stride; i0 += warp_size) {
-                    const int i = i0 + threadIdx.x;
-
                     const float val = expf(KQ_acc[i0/warp_size][j0+j1] - KQ_max[j0+j1]);
                     KQ_sum_add += val;
                     tmp[i0/warp_size][j1] = val;
