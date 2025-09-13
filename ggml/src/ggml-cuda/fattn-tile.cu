@@ -680,6 +680,7 @@ static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml
 
     constexpr size_t nbytes_shared = 0;
 
+#ifdef GGML_USE_HIP
     if constexpr (D <= 128) {
         if (Q->ne[1] > 32) {
             constexpr int cols_per_block = 64;
@@ -690,6 +691,7 @@ static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml
             return;
         }
     }
+#endif // GGML_USE_HIP
 
     if (Q->ne[1] > 16) {
         constexpr int cols_per_block = 32;
