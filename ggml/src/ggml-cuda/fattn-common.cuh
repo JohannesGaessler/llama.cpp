@@ -647,9 +647,7 @@ static __global__ void flash_attn_stream_k_fixup(
 }
 
 template<int D> // D == head size
-#if !defined(GGML_USE_HIP)
 __launch_bounds__(D, 1)
-#endif // !(defined(GGML_USE_HIP)
 static __global__ void flash_attn_combine_results(
         const float  * __restrict__ VKQ_parts,
         const float2 * __restrict__ VKQ_meta,
@@ -692,10 +690,7 @@ static __global__ void flash_attn_combine_results(
     float VKQ_numerator   = 0.0f;
     float VKQ_denominator = 0.0f;
     for (int l = 0; l < parallel_blocks; ++l) {
-        const float diff = meta[l].x - kqmax;
-        float KQ_max_scale = expf(diff);
-        const uint32_t ftz_mask = 0xFFFFFFFF * (diff > SOFTMAX_FTZ_THRESHOLD);
-        *((uint32_t *) &KQ_max_scale) &= ftz_mask;
+        const float KQ_max_scale = expf(meta[l].x - kqmax);
 
         VKQ_numerator   += KQ_max_scale * VKQ_parts[l*D + tid];
         VKQ_denominator += KQ_max_scale * meta[l].y;
