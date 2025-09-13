@@ -6,6 +6,19 @@
 
 static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int cc, const int warp_size) {
     if (GGML_CUDA_CC_IS_AMD(cc)) {
+        if (GGML_CUDA_CC_IS_RDNA(cc)) {
+            switch (D) {
+                case 64:
+                    return 128;
+                case 128:
+                    return ncols <= 32 ? 128 : 64;
+                case 256:
+                    return 64;
+                default:
+                    GGML_ABORT("fatal error");
+                    return -1;
+            }
+        }
         switch (D) {
             case 64:
                 return ncols <= 32 ? 128 : 64;
@@ -46,6 +59,18 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
 
 static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols, int warp_size) {
 #ifdef GGML_USE_HIP
+#ifdef RDNA
+    switch (D) {
+        case 64:
+            return 128;
+        case 128:
+            return ncols <= 32 ? 128 : 64;
+        case 256:
+            return 64;
+        default:
+            return -1;
+    }
+#else
     switch (D) {
         case 64:
             return ncols <= 32 ? 128 : 64;
@@ -56,6 +81,7 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols
         default:
             return -1;
     }
+#endif // RDNA
 #else
 #ifdef FAST_FP16_AVAILABLE
     switch (D) {
@@ -124,7 +150,11 @@ static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int D, int ncols
 
 template<int D, int ncols, bool use_logit_softcap> // D == head size
 #ifdef GGML_USE_HIP
+#ifdef RDNA
+__launch_bounds__(FATTN_TILE_NTHREADS, 3)
+#else
 __launch_bounds__(FATTN_TILE_NTHREADS, 2)
+#endif // RDNA
 #else
 __launch_bounds__(FATTN_TILE_NTHREADS, 2)
 #endif // GGML_USE_HIP
