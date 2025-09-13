@@ -9,9 +9,9 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
                 case 64:
                     return 128;
                 case 128:
-                    return ncols <= 32 ? 128 : 64;
-                case 256:
                     return 64;
+                case 256:
+                    return 32;
                 default:
                     GGML_ABORT("fatal error");
                     return -1;
@@ -19,11 +19,11 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
         }
         switch (D) {
             case 64:
-                return ncols <= 32 ? 128 : 64;
+                return ncols == 32 ? 128 : 64;
             case 128:
-                return ncols <= 32 ?  64 : 32;
+                return ncols == 32 ? 64 : 32;
             case 256:
-                return ncols <= 16 ?  64 : 32;
+                return 32;
             default:
                 GGML_ABORT("fatal error");
                 return -1;
@@ -57,16 +57,29 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
 
 static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols, int warp_size) {
 #ifdef GGML_USE_HIP
+#ifdef RDNA
     switch (D) {
         case 64:
             return 128;
         case 128:
-            return ncols <= 32 ? 128 : 64;
+            return 64;
         case 256:
-            return ncols <= 32 ? 64 : 32;
+            return 32;
         default:
             return -1;
     }
+#else
+    switch (D) {
+        case 64:
+            return ncols == 32 ? 128 : 64;
+        case 128:
+            return ncols == 32 ? 64 : 32;
+        case 256:
+            return 32;
+        default:
+            return -1;
+    }
+#endif // RDNA
 #else
 #ifdef FAST_FP16_AVAILABLE
     switch (D) {
@@ -102,7 +115,11 @@ static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int D, int ncols
         case 128:
             return 128;
         case 256:
-            return 256;
+#ifdef RDNA
+            return ncols <= 32 ? 256 : 128;
+#else
+            return 128;
+#endif // RDNA
         default:
             return -1;
     }
@@ -135,32 +152,26 @@ static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int D, int ncols
 }
 
 static int fattn_tile_get_nthreads_host(const int cc, const int ncols) {
-    if (GGML_CUDA_CC_IS_AMD(cc)) {
-        return ncols <= 16 ? 256 : 512;
-    }
     return 256;
     GGML_UNUSED_VARS(cc, ncols);
 }
 
 static constexpr __device__ int fattn_tile_get_nthreads_device(int ncols) {
-#ifdef GGML_USE_HIP
-    return ncols <= 16 ? 256 : 512;
-#else
     return 256;
-#endif // GGML_USE_HIP
     GGML_UNUSED(ncols);
 }
 
-static constexpr __device__ int fattn_tile_get_occupancy_device() {
+static constexpr __device__ int fattn_tile_get_occupancy_device(int ncols) {
 #ifdef RDNA
-    return 2;
+    return ncols <= 16 ? 4 : 3;
 #else
-    return 1;
+    return ncols <= 16 ? 3 : 2;
 #endif // RDNA
+    GGML_UNUSED(ncols);
 }
 
 template<int D, int ncols, bool use_logit_softcap> // D == head size
-__launch_bounds__(fattn_tile_get_nthreads_device(ncols), fattn_tile_get_occupancy_device())
+__launch_bounds__(fattn_tile_get_nthreads_device(ncols), fattn_tile_get_occupancy_device(ncols))
 static __global__ void flash_attn_tile(
         const char * __restrict__ Q,
         const char * __restrict__ K,
@@ -683,16 +694,14 @@ static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml
     constexpr size_t nbytes_shared = 0;
 
 #ifdef GGML_USE_HIP
-    if constexpr (D <= 128) {
-        if (Q->ne[1] > 32) {
-            constexpr int cols_per_block = 64;
-            const int nwarps = fattn_tile_get_nthreads_host(cc, cols_per_block) / warp_size;
-            fattn_kernel_t fattn_kernel = flash_attn_tile<D, cols_per_block, use_logit_softcap>;
-            const int kq_stride = fattn_tile_get_kq_stride_host(D, cols_per_block, cc, warp_size);
-            launch_fattn<D, cols_per_block, 1>
-                (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
-            return;
-        }
+    if ((D <= 128 || GGML_CUDA_CC_IS_RDNA(cc)) && Q->ne[1] > 32) {
+        constexpr int cols_per_block = 64;
+        const int nwarps = fattn_tile_get_nthreads_host(cc, cols_per_block) / warp_size;
+        fattn_kernel_t fattn_kernel = flash_attn_tile<D, cols_per_block, use_logit_softcap>;
+        const int kq_stride = fattn_tile_get_kq_stride_host(D, cols_per_block, cc, warp_size);
+        launch_fattn<D, cols_per_block, 1>
+            (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
+        return;
     }
 #endif // GGML_USE_HIP
 
