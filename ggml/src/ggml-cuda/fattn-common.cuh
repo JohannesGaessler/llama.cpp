@@ -33,9 +33,7 @@ typedef void (* fattn_kernel_t)(
                             const int32_t ne31, const int32_t ne32, const int32_t ne33,
                             const int32_t nb31, const int32_t nb32, const int64_t nb33);
 
-typedef half (*vec_dot_KQ_f16_t)(
-    const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8 , const void * __restrict__ Q_ds);
-typedef float (*vec_dot_KQ_f32_t)(
+typedef float (*vec_dot_KQ_t)(
     const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8 , const void * __restrict__ Q_ds);
 
 template<typename T, int D, int warp_size>
@@ -339,8 +337,7 @@ static __device__ __forceinline__ void quantize_q8_1_to_shared(
     }
 }
 
-typedef half  (*dequantize_1_f16_t)(const void *, const int64_t);
-typedef float (*dequantize_1_f32_t)(const void *, const int64_t);
+typedef float (*dequantize_1_t)(const void *, const int64_t);
 
 template <typename T>
 static __device__ __forceinline__ T dequantize_1_q4_0(const void * __restrict__ vx, const int64_t i) {
@@ -461,45 +458,42 @@ static __device__ __forceinline__ T dequantize_1_f16(const void * __restrict__ v
 }
 
 template <int D, int warp_size = WARP_SIZE>
-constexpr __device__ vec_dot_KQ_f16_t get_vec_dot_KQ_f16(ggml_type type_K) {
-    return type_K == GGML_TYPE_Q4_0 ? vec_dot_fattn_vec_KQ_q4_0<half, D, warp_size> :
-        type_K == GGML_TYPE_Q4_1 ? vec_dot_fattn_vec_KQ_q4_1<half, D, warp_size> :
-        type_K == GGML_TYPE_Q5_0 ? vec_dot_fattn_vec_KQ_q5_0<half, D, warp_size> :
-        type_K == GGML_TYPE_Q5_1 ? vec_dot_fattn_vec_KQ_q5_1<half, D, warp_size> :
-        type_K == GGML_TYPE_Q8_0 ? vec_dot_fattn_vec_KQ_q8_0<half, D, warp_size> :
-        type_K == GGML_TYPE_F16 ? vec_dot_fattn_vec_KQ_f16<half, D, warp_size> :
-        nullptr;
+constexpr __device__ vec_dot_KQ_t get_vec_dot_KQ(ggml_type type_K) {
+    switch (type_K) {
+        case GGML_TYPE_F16:
+            return vec_dot_fattn_vec_KQ_f16<float, D, warp_size>;
+        case GGML_TYPE_Q4_0:
+            return vec_dot_fattn_vec_KQ_q4_0<float, D, warp_size>;
+        case GGML_TYPE_Q4_1:
+            return vec_dot_fattn_vec_KQ_q4_1<float, D, warp_size>;
+        case GGML_TYPE_Q5_0:
+            return vec_dot_fattn_vec_KQ_q5_0<float, D, warp_size>;
+        case GGML_TYPE_Q5_1:
+            return vec_dot_fattn_vec_KQ_q5_1<float, D, warp_size>;
+        case GGML_TYPE_Q8_0:
+            return vec_dot_fattn_vec_KQ_q8_0<float, D, warp_size>;
+        default:
+            return nullptr;
+    }
 }
 
-template <int D, int warp_size = WARP_SIZE>
-constexpr __device__ vec_dot_KQ_f32_t get_vec_dot_KQ_f32(ggml_type type_K) {
-    return type_K == GGML_TYPE_Q4_0 ? vec_dot_fattn_vec_KQ_q4_0<float, D, warp_size> :
-        type_K == GGML_TYPE_Q4_1 ? vec_dot_fattn_vec_KQ_q4_1<float, D, warp_size> :
-        type_K == GGML_TYPE_Q5_0 ? vec_dot_fattn_vec_KQ_q5_0<float, D, warp_size> :
-        type_K == GGML_TYPE_Q5_1 ? vec_dot_fattn_vec_KQ_q5_1<float, D, warp_size> :
-        type_K == GGML_TYPE_Q8_0 ? vec_dot_fattn_vec_KQ_q8_0<float, D, warp_size> :
-        type_K == GGML_TYPE_F16 ? vec_dot_fattn_vec_KQ_f16<float, D, warp_size> :
-        nullptr;
-}
-
-constexpr __device__ dequantize_1_f16_t get_dequantize_1_f16(ggml_type type_V) {
-    return type_V == GGML_TYPE_Q4_0 ? dequantize_1_q4_0<half> :
-        type_V == GGML_TYPE_Q4_1 ? dequantize_1_q4_1<half> :
-        type_V == GGML_TYPE_Q5_0 ? dequantize_1_q5_0<half> :
-        type_V == GGML_TYPE_Q5_1 ? dequantize_1_q5_1<half> :
-        type_V == GGML_TYPE_Q8_0 ? dequantize_1_q8_0<half> :
-        type_V == GGML_TYPE_F16 ? dequantize_1_f16<half> :
-        nullptr;
-}
-
-constexpr __device__ dequantize_1_f32_t get_dequantize_1_f32(ggml_type type_V) {
-    return type_V == GGML_TYPE_Q4_0 ? dequantize_1_q4_0<float> :
-        type_V == GGML_TYPE_Q4_1 ? dequantize_1_q4_1<float> :
-        type_V == GGML_TYPE_Q5_0 ? dequantize_1_q5_0<float> :
-        type_V == GGML_TYPE_Q5_1 ? dequantize_1_q5_1<float> :
-        type_V == GGML_TYPE_Q8_0 ? dequantize_1_q8_0<float> :
-        type_V == GGML_TYPE_F16 ? dequantize_1_f16<float> :
-        nullptr;
+constexpr __device__ dequantize_1_t get_dequantize_1(ggml_type type_V) {
+    switch (type_V) {
+        case GGML_TYPE_F16:
+            return dequantize_1_f16<float>;
+        case GGML_TYPE_Q4_0:
+            return dequantize_1_q4_0<float>;
+        case GGML_TYPE_Q4_1:
+            return dequantize_1_q4_1<float>;
+        case GGML_TYPE_Q5_0:
+            return dequantize_1_q5_0<float>;
+        case GGML_TYPE_Q5_1:
+            return dequantize_1_q5_1<float>;
+        case GGML_TYPE_Q8_0:
+            return dequantize_1_q8_0<float>;
+        default:
+            return nullptr;
+    }
 }
 
 template <int ncols1>
