@@ -122,7 +122,7 @@ static __global__ void flash_attn_ext_vec(
     __syncthreads();
 
     // Convert Q to float2 (f16 K) or q8_1 (quantized K) and store in registers:
-    float2  Q_f2[ncols][D/(2*WARP_SIZE)] = {{{0.0f, 0.0f}}};
+    float2  Q_f2[ncols][D/(2*nthreads_KQ)] = {{{0.0f, 0.0f}}};
     int    Q_i32[ncols][D/(sizeof(int)*QK8_1) == 0 ? 1 : D >= D/(sizeof(int)*QK8_1)];
     float2  Q_ds[ncols][D/QK8_1 == 0 ? 1 : D/QK8_1];
     if constexpr (Q_q8_1) {
