@@ -471,21 +471,21 @@ static __device__ __forceinline__ T dequantize_1_f16(const void * __restrict__ v
     return x[i];
 }
 
-template <int D, int warp_size = WARP_SIZE>
+template <int D, int nthreads = WARP_SIZE>
 constexpr __device__ vec_dot_KQ_t get_vec_dot_KQ(ggml_type type_K) {
     switch (type_K) {
         case GGML_TYPE_F16:
-            return vec_dot_fattn_vec_KQ_f16<float, D, warp_size>;
+            return vec_dot_fattn_vec_KQ_f16<float, D, nthreads>;
         case GGML_TYPE_Q4_0:
-            return vec_dot_fattn_vec_KQ_q4_0<float, D, warp_size>;
+            return vec_dot_fattn_vec_KQ_q4_0<float, D, nthreads>;
         case GGML_TYPE_Q4_1:
-            return vec_dot_fattn_vec_KQ_q4_1<float, D, warp_size>;
+            return vec_dot_fattn_vec_KQ_q4_1<float, D, nthreads>;
         case GGML_TYPE_Q5_0:
-            return vec_dot_fattn_vec_KQ_q5_0<float, D, warp_size>;
+            return vec_dot_fattn_vec_KQ_q5_0<float, D, nthreads>;
         case GGML_TYPE_Q5_1:
-            return vec_dot_fattn_vec_KQ_q5_1<float, D, warp_size>;
+            return vec_dot_fattn_vec_KQ_q5_1<float, D, nthreads>;
         case GGML_TYPE_Q8_0:
-            return vec_dot_fattn_vec_KQ_q8_0<float, D, warp_size>;
+            return vec_dot_fattn_vec_KQ_q8_0<float, D, nthreads>;
         default:
             return nullptr;
     }

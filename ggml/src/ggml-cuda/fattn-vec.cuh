@@ -69,12 +69,12 @@ static __global__ void flash_attn_ext_vec(
     constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
     constexpr int cpy_ne = cpy_nb / 4;
 
-    constexpr vec_dot_KQ_t vec_dot_KQ = get_vec_dot_KQ<D>(type_K);
-    constexpr bool Q_q8_1 = type_K != GGML_TYPE_F16;
-    constexpr dequantize_1_t dequantize_1_v = get_dequantize_1(type_V);
-
     constexpr int nthreads    = ggml_cuda_fattn_vec_get_nthreads_device();
     constexpr int nthreads_KQ = type_K == GGML_TYPE_F16 ? 128 / cpy_nb : WARP_SIZE;
+
+    constexpr vec_dot_KQ_t vec_dot_KQ = get_vec_dot_KQ<D, nthreads>(type_K);
+    constexpr bool Q_q8_1 = type_K != GGML_TYPE_F16;
+    constexpr dequantize_1_t dequantize_1_v = get_dequantize_1(type_V);
 
     const int ic0 = blockIdx.x * ncols; // Index of the Q/QKV column to work on.
 
@@ -215,13 +215,13 @@ static __global__ void flash_attn_ext_vec(
         }
 
 #pragma unroll
-        for (int i_KQ_0 = 0; i_KQ_0 < WARP_SIZE; ++i_KQ_0) {
-            const int i_KQ = i_KQ_0 + threadIdx.y*WARP_SIZE;
+        for (int i_KQ_0 = 0; i_KQ_0 < nthreads_KQ; ++i_KQ_0) {
+            const int i_KQ = threadIdx.y*WARP_SIZE + (threadIdx.x & ~(nthreads_KQ-1)) + i_KQ_0;
 
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
                 float sum = vec_dot_KQ(K + i_KQ*nb11, Q_f2[j], Q_i32[j], Q_ds[j]);
-                sum = warp_reduce_sum(sum);
+                sum = warp_reduce_sum<nthreads_KQ>(sum);
 
                 if (use_logit_softcap) {
                     sum = logit_softcap*tanhf(sum);
@@ -231,7 +231,7 @@ static __global__ void flash_attn_ext_vec(
 
                 kqmax_new_arr[j] = fmaxf(kqmax_new_arr[j], sum);
 
-                if (threadIdx.x == i_KQ_0) {
+                if (threadIdx.x % nthreads_KQ == i_KQ) {
                     KQr[j] = sum;
                 }
             }
@@ -239,6 +239,10 @@ static __global__ void flash_attn_ext_vec(
 
 #pragma unroll
         for (int j = 0; j < ncols; ++j) {
+#pragma unroll
+            for (int offset = nthreads_KQ; offset < WARP_SIZE; offset <<= 1) {
+                kqmax_new_arr[j] = fmaxf(kqmax_new_arr[j], __shfl_xor_sync(0xFFFFFFFF, kqmax_new_arr[j], offset, WARP_SIZE));
+            }
             const float KQ_max_scale = expf(kqmax[j] - kqmax_new_arr[j]);
             kqmax[j] = kqmax_new_arr[j];
 
