@@ -277,7 +277,7 @@ static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_f16(
 #pragma unroll
         for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += nthreads*cpy_ne) {
             half2 tmp[cpy_ne];
-            ggml_cuda_memcpy_1<cpy_nb>(tmp, K_h2 + k_KQ_0 + threadIdx.x*cpy_ne);
+            ggml_cuda_memcpy_1<cpy_nb>(tmp, K_h2 + k_KQ_0 + (threadIdx.x % nthreads)*cpy_ne);
 #pragma unroll
             for (int k_KQ_1 = 0; k_KQ_1 < cpy_ne; ++k_KQ_1) {
                 ggml_cuda_mad(sum, tmp[k_KQ_1], Q_h2[k_KQ_0/nthreads + k_KQ_1]);
