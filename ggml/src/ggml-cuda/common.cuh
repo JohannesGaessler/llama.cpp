@@ -589,7 +589,9 @@ static __device__ __forceinline__ void ggml_cuda_mad(float & acc, const half2 v,
 // Aligned memory transfers of 8/16 bytes can be faster than 2 transfers with 4 bytes, especially on AMD.
 template <int nbytes, int alignment = 0>
 static __device__ __forceinline__ void ggml_cuda_memcpy_1(void * __restrict__ dst, const void * __restrict__ src) {
-    static_assert(alignment == 0 || nbytes % alignment == 0, "bad alignment");
+    if constexpr (alignment != 0) {
+        static_assert(nbytes % alignment == 0, "bad alignment");
+    }
     constexpr int nb_per_cpy = alignment == 0 ? nbytes : alignment;
 
 #pragma unroll
