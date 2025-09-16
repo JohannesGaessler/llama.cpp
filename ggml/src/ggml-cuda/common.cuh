@@ -595,7 +595,7 @@ static __device__ __forceinline__ void ggml_cuda_mad(half2 & acc, const half2 v,
     float2 tmpacc = __half22float2(acc);
     tmpacc.x += tmpv.x * tmpu.x;
     tmpacc.y += tmpv.y * tmpu.y;
-    acc = make_half2(tmpacc);
+    acc = make_half2(tmpacc.x, tmpacc.y);
 #endif // FAST_FP16_AVAILABLE
 }
 
