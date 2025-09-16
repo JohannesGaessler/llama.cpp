@@ -587,16 +587,26 @@ static __device__ __forceinline__ void ggml_cuda_mad(float & acc, const half2 v,
 }
 
 // Aligned memory transfers of 8/16 bytes can be faster than 2 transfers with 4 bytes, especially on AMD.
-template <int nbytes>
+template <int nbytes, int alignment = 0>
 static __device__ __forceinline__ void ggml_cuda_memcpy_1(void * __restrict__ dst, const void * __restrict__ src) {
-    if constexpr (nbytes == 4) {
-        *(int *) dst = *(const int *) src;
-    } else if constexpr (nbytes == 8) {
-        *(int2 *) dst = *(const int2 *) src;
-    } else if constexpr (nbytes == 16) {
-        *(int4 *) dst = *(const int4 *) src;
-    } else {
-        static_assert(nbytes == 0 && nbytes == -1, "bad nbytes");
+    static_assert(alignment == 0 || nbytes % alignment == 0, "bad alignment");
+    constexpr int nb_per_cpy = alignment == 0 ? nb_per_cpy : alignment;
+
+#pragma unroll
+    for (int i = 0; i < nbytes/nb_per_cpy; ++i) {
+        if constexpr (nb_per_cpy == 1) {
+            ((char *) dst)[i] = ((const char *) src)[i];
+        } else if constexpr (nb_per_cpy == 2) {
+            ((short *) dst)[i] = ((const short *) src)[i];
+        } else if constexpr (nb_per_cpy == 4) {
+            ((int *) dst)[i] = ((const int *) src)[i];
+        } else if constexpr (nb_per_cpy == 8) {
+            ((int2 *) dst)[i] = ((const int2 *) src)[i];
+        } else if constexpr (nb_per_cpy == 16) {
+            ((int4 *) dst)[i] = ((const int4 *) src)[i];
+        } else {
+            static_assert(nbytes == 0 && nbytes == -1, "bad nbytes");
+        }
     }
 }
 
