@@ -590,7 +590,7 @@ static __device__ __forceinline__ void ggml_cuda_mad(float & acc, const half2 v,
 template <int nbytes, int alignment = 0>
 static __device__ __forceinline__ void ggml_cuda_memcpy_1(void * __restrict__ dst, const void * __restrict__ src) {
     static_assert(alignment == 0 || nbytes % alignment == 0, "bad alignment");
-    constexpr int nb_per_cpy = alignment == 0 ? nb_per_cpy : alignment;
+    constexpr int nb_per_cpy = alignment == 0 ? nbytes : alignment;
 
 #pragma unroll
     for (int i = 0; i < nbytes/nb_per_cpy; ++i) {
