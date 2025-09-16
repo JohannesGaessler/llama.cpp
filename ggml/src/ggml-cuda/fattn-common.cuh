@@ -265,11 +265,11 @@ static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_f16(
     GGML_UNUSED(Q_q8);
     GGML_UNUSED(Q_ds_v);
 
-    constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
+    constexpr int cpy_nb = 4;
     constexpr int cpy_ne = cpy_nb / 4;
 
 #ifdef FP16_AVAILABLE
-    if (std::is_same<T, half>::value) {
+    if (std::is_same_v<T, half>) {
         const half2 * Q_h2 = (const half2 *) Q_v;
 
         half2 sum = make_half2(0.0f, 0.0f);

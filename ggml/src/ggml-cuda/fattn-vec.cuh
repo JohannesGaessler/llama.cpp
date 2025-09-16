@@ -66,7 +66,7 @@ static __global__ void flash_attn_ext_vec(
 
     //In this kernel Q, K, V are matrices while i, j, k are matrix indices.
 
-    constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
+    constexpr int cpy_nb = 4;
     constexpr int cpy_ne = cpy_nb / 4;
 
     constexpr int nthreads    = ggml_cuda_fattn_vec_get_nthreads_device();
