@@ -183,7 +183,8 @@ static __global__ void flash_attn_ext_vec(
 #pragma unroll
             for (int i0 = 0; i0 < D/2; i0 += nthreads*cpy_ne) {
                 if (ncols <= 2 || ic0 + j < ne01) {
-                    ggml_cuda_memcpy_1<2*cpy_nb>(&Q_f2[j][i0/nthreads], &Q_f2_j[i0 + threadIdx.x*cpy_ne]);
+                    ggml_cuda_memcpy_1<cpy_nb>(&Q_f2[j][i0/nthreads],            &Q_f2_j[i0 + threadIdx.x*cpy_ne]);
+                    ggml_cuda_memcpy_1<cpy_nb>(&Q_f2[j][i0/nthreads + cpy_ne/2], &Q_f2_j[i0 + threadIdx.x*cpy_ne + cpy_ne/2]);
                 }
             }
 #pragma unroll
