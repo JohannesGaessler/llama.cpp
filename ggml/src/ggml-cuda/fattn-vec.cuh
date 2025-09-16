@@ -182,9 +182,10 @@ static __global__ void flash_attn_ext_vec(
             const float2 * Q_f2_j = (const float2 *) (Q + j*nb01);
 #pragma unroll
             for (int i0 = 0; i0 < D/2; i0 += nthreads_KQ*cpy_ne) {
+                const int i = i0 + (threadIdx.x % nthreads_KQ)*cpy_ne;
                 if (ncols <= 2 || ic0 + j < ne01) {
-                    ggml_cuda_memcpy_1<cpy_nb>(&Q_f2[j][i0/nthreads_KQ],            &Q_f2_j[i0 + threadIdx.x*cpy_ne]);
-                    ggml_cuda_memcpy_1<cpy_nb>(&Q_f2[j][i0/nthreads_KQ + cpy_ne/2], &Q_f2_j[i0 + threadIdx.x*cpy_ne + cpy_ne/2]);
+                    ggml_cuda_memcpy_1<cpy_nb>(&Q_f2[j][i0/nthreads_KQ],            &Q_f2_j[i]);
+                    ggml_cuda_memcpy_1<cpy_nb>(&Q_f2[j][i0/nthreads_KQ + cpy_ne/2], &Q_f2_j[i + cpy_ne/2]);
                 }
             }
 #pragma unroll
