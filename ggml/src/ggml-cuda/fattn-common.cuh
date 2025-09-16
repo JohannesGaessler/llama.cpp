@@ -257,37 +257,30 @@ static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_q8_0(
     return sum;
 }
 
-template <typename T, int D, int nthreads>
-static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_f16(
+template <typename T, int D, int warp_size>
+static __device__ __forceinline__ T vec_dot_fattn_vec_KQ_f16(
     const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8 , const void * __restrict__ Q_ds_v) {
 
     const half2 * K_h2 = (const half2 *) K_c;
     GGML_UNUSED(Q_q8);
     GGML_UNUSED(Q_ds_v);
 
-    constexpr int cpy_nb = 4;
-    constexpr int cpy_ne = cpy_nb / 4;
-
 #ifdef FP16_AVAILABLE
-    if (std::is_same_v<T, half>) {
+    if (std::is_same<T, half>::value) {
         const half2 * Q_h2 = (const half2 *) Q_v;
 
-        half2 sum = make_half2(0.0f, 0.0f);
+        half2 sum2 = make_half2(0.0f, 0.0f);
 
 #pragma unroll
-        for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += nthreads*cpy_ne) {
-            half2 tmp[cpy_ne];
-            ggml_cuda_memcpy_1<cpy_nb>(tmp, K_h2 + k_KQ_0 + (threadIdx.x % nthreads)*cpy_ne);
-#pragma unroll
-            for (int k_KQ_1 = 0; k_KQ_1 < cpy_ne; ++k_KQ_1) {
-                ggml_cuda_mad(sum, tmp[k_KQ_1], Q_h2[k_KQ_0/nthreads + k_KQ_1]);
-            }
+        for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += warp_size) {
+            const int k_KQ = k_KQ_0 + threadIdx.x;
+
+            const half2 K_ik = K_h2[k_KQ];
+            sum2 += K_ik * Q_h2[k_KQ_0/warp_size];
         }
 
-        return __low2half(sum) + __high2half(sum);
+        return __low2half(sum2) + __high2half(sum2);
     }
-#else
-    static_assert(std::is_same_v<T, float>, "fp16 not supported");
 #endif // FP16_AVAILABLE
 
     const float2 * Q_f2 = (const float2 *) Q_v;
@@ -295,13 +288,12 @@ static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_f16(
     float sum = 0.0f;
 
 #pragma unroll
-    for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += nthreads*cpy_ne) {
-        half2 tmp[cpy_ne];
-        ggml_cuda_memcpy_1<sizeof(tmp)>(tmp, K_h2 + k_KQ_0 + (threadIdx.x % nthreads)*cpy_ne);
-#pragma unroll
-        for (int k_KQ_1 = 0; k_KQ_1 < cpy_ne; ++k_KQ_1) {
-            ggml_cuda_mad(sum, __half22float2(tmp[k_KQ_1]), Q_f2[k_KQ_0/nthreads + k_KQ_1]);
-        }
+    for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += warp_size) {
+        const int k_KQ = k_KQ_0 + threadIdx.x;
+
+        const half2 K_ik = K_h2[k_KQ];
+        sum +=  __low2float(K_ik) * Q_f2[k_KQ_0/warp_size].x;
+        sum += __high2float(K_ik) * Q_f2[k_KQ_0/warp_size].y;
     }
 
     return sum;
