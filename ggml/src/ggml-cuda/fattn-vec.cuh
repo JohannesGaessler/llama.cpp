@@ -339,7 +339,7 @@ static __global__ void flash_attn_ext_vec(
 
         float dst_val = KQ[j_VKQ*nwarps*D + 0*D + tid];
 #pragma unroll
-        for (int iw = 0; iw < nwarps; ++iw) {
+        for (int iw = 1; iw < nwarps; ++iw) {
             dst_val += KQ[j_VKQ*nwarps*D + iw*D + tid];
         }
         if (gridDim.y == 1) {
