@@ -70,7 +70,7 @@ static __global__ void flash_attn_ext_vec(
     constexpr int cpy_ne = cpy_nb / 4;
 
     constexpr int nthreads    = ggml_cuda_fattn_vec_get_nthreads_device();
-    constexpr int nthreads_KQ = type_K == GGML_TYPE_F16 ? 128 / cpy_nb : WARP_SIZE;
+    constexpr int nthreads_KQ = false && type_K == GGML_TYPE_F16 ? 128 / cpy_nb : WARP_SIZE;
 
     constexpr vec_dot_KQ_t vec_dot_KQ = get_vec_dot_KQ<D, nthreads_KQ>(type_K);
     constexpr bool Q_q8_1 = type_K != GGML_TYPE_F16;
