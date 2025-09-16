@@ -257,6 +257,8 @@ static __global__ void flash_attn_ext_vec(
             }
         }
 
+        __syncthreads(); // FIXME
+
 #pragma unroll
         for (int k0 = 0; k0 < WARP_SIZE; ++k0) {
             const int k = k0 + threadIdx.y*WARP_SIZE;
