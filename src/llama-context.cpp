@@ -374,8 +374,9 @@ llama_context::llama_context(
         }
 
         for (size_t i = 0; i < backend_ptrs.size(); ++i) {
-            ggml_backend_buffer_type_t buft = backend_buft[i];
-            size_t size = ggml_backend_sched_get_buffer_size(sched.get(), buft);
+            ggml_backend_t             backend = backend_ptrs[i];
+            ggml_backend_buffer_type_t buft    = backend_buft[i];
+            size_t size = ggml_backend_sched_get_buffer_size(sched.get(), backend);
             if (size > 1) {
                 LLAMA_LOG_INFO("%s: %10s compute buffer size = %8.2f MiB\n", __func__,
                         ggml_backend_buft_name(buft),
@@ -2029,26 +2030,26 @@ void llama_context::perf_reset() {
 std::map<ggml_backend_buffer_type_t, llama_memory_breakdown_data> llama_context::memory_breakdown() const {
     std::map<ggml_backend_buffer_type_t, llama_memory_breakdown_data> ret;
 
-    auto get_memory_breakdown = [&](ggml_backend_buffer_type_t buft) {
-        llama_memory_breakdown_data data;
-        data.model   = model.memory_use(buft);
-        data.context = memory->memory_use(buft);
-        data.compute = ggml_backend_sched_get_buffer_size(sched.get(), buft);
-        return data;
-    };
-
     for (const auto & backend_ptr : backends) {
         ggml_backend_t     backend = backend_ptr.get();
         ggml_backend_dev_t dev     = ggml_backend_get_device(backend);
 
         ggml_backend_buffer_type_t buft = ggml_backend_get_default_buffer_type(backend);
-        ret[buft] = get_memory_breakdown(buft);
+        llama_memory_breakdown_data data;
+        data.model   = model.memory_use(buft);
+        data.context = memory->memory_use(buft);
+        data.compute = ggml_backend_sched_get_buffer_size(sched.get(), backend);
+        ret[buft] = data;
 
         ggml_backend_buffer_type_t buft_host = ggml_backend_dev_host_buffer_type(dev);
         if (!buft_host) {
             continue;
         }
-        ret[buft_host] = get_memory_breakdown(buft_host);
+        llama_memory_breakdown_data data_host;
+        data.model   = model.memory_use(buft_host);
+        data.context = memory->memory_use(buft_host);
+        data.compute = 0; // compute buffers are always on the device using them
+        ret[buft_host] = data_host;
     }
     return ret;
 }
