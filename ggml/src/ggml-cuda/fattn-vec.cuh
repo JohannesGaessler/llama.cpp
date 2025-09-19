@@ -165,6 +165,7 @@ static __global__ void flash_attn_ext_vec(
             int    * tmp_q_i32 = (int    *) &KQ[j*D];
             float2 * tmp_q_ds  = (float2 *) (tmp_q_i32 + D/sizeof(int));
 
+            static_assert(nthreads_KQ == WARP_SIZE, "bad nthreads_KQ");
 #pragma unroll
             for (int i0 = 0; i0 < int(D/sizeof(int)); i0 += WARP_SIZE) {
                 const int i = i0 + threadIdx.x;
@@ -210,13 +211,13 @@ static __global__ void flash_attn_ext_vec(
         }
 
 #pragma unroll
-        for (int i_KQ_0 = 0; i_KQ_0 < WARP_SIZE; ++i_KQ_0) {
-            const int i_KQ = i_KQ_0 + threadIdx.y*WARP_SIZE;
+        for (int i_KQ_0 = 0; i_KQ_0 < nthreads_KQ; ++i_KQ_0) {
+            const int i_KQ = threadIdx.y*WARP_SIZE + (threadIdx.x & ~(nthreads_KQ-1)) + i_KQ_0;
 
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
                 float sum = vec_dot_KQ(K + i_KQ*nb11, Q_f2[j], Q_i32[j], Q_ds[j]);
-                sum = warp_reduce_sum(sum);
+                sum = warp_reduce_sum<nthreads_KQ>(sum);
 
                 if (use_logit_softcap) {
                     sum = logit_softcap*tanhf(sum);
@@ -226,7 +227,7 @@ static __global__ void flash_attn_ext_vec(
 
                 kqmax_new_arr[j] = fmaxf(kqmax_new_arr[j], sum);
 
-                if (threadIdx.x == i_KQ_0) {
+                if (threadIdx.x % nthreads_KQ == i_KQ) {
                     KQr[j] = sum;
                 }
             }
@@ -234,6 +235,10 @@ static __global__ void flash_attn_ext_vec(
 
 #pragma unroll
         for (int j = 0; j < ncols; ++j) {
+#pragma unroll
+            for (int offset = nthreads_KQ; offset < WARP_SIZE; offset <<= 1) {
+                kqmax_new_arr[j] = fmaxf(kqmax_new_arr[j], __shfl_xor_sync(0xFFFFFFFF, kqmax_new_arr[j], offset, WARP_SIZE));
+            }
             const float KQ_max_scale = expf(kqmax[j] - kqmax_new_arr[j]);
             kqmax[j] = kqmax_new_arr[j];
 
