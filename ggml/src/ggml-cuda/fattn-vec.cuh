@@ -121,7 +121,7 @@ static __global__ void flash_attn_ext_vec(
     __syncthreads();
 
     // Convert Q to float2 (f16 K) or q8_1 (quantized K) and store in registers:
-#ifdef FAST_FP16_AVAILABLE_
+#ifdef FAST_FP16_AVAILABLE
     half2  Q_reg[ncols][D/(2*nthreads_KQ)]; // Will be initialized completely.
 #else
     float2 Q_reg[ncols][D/(2*nthreads_KQ)] = {{{0.0f, 0.0f}}}; // May be only partially initialized.
@@ -181,7 +181,7 @@ static __global__ void flash_attn_ext_vec(
 
         __syncthreads();
     } else {
-#ifdef FAST_FP16_AVAILABLE_
+#ifdef FAST_FP16_AVAILABLE
         constexpr int cols_per_iter = D > nthreads ? (D/2)/nthreads : 1;
         const half2 scale_h2 = make_half2(scale, scale);
 #pragma unroll
