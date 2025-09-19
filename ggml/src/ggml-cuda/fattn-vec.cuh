@@ -124,7 +124,7 @@ static __global__ void flash_attn_ext_vec(
     float2  Q_f2[ncols][D/(2*WARP_SIZE)];
     int    Q_i32[ncols][D/(sizeof(int)*QK8_1) == 0 ? 1 : D >= D/(sizeof(int)*QK8_1)];
     float2  Q_ds[ncols][D/QK8_1 == 0 ? 1 : D/QK8_1];
-    if (Q_q8_1) {
+    if constexpr (Q_q8_1) {
 #pragma unroll
         for (int j0 = 0; j0 < ncols; j0 += nwarps) {
             const int j = j0 + threadIdx.y;
@@ -181,12 +181,17 @@ static __global__ void flash_attn_ext_vec(
         for (int j = 0; j < ncols; ++j) {
             const float2 * Q_f2_j = (const float2 *) (Q + j*nb01);
 #pragma unroll
-            for (int i0 = 0; i0 < D/2; i0 += WARP_SIZE) {
-                const int i = i0 + threadIdx.x;
-
-                Q_f2[j][i0/WARP_SIZE]    = ncols <= 2 || ic0 + j < ne01 ? Q_f2_j[i] : make_float2(0.0f, 0.0f);
-                Q_f2[j][i0/WARP_SIZE].x *= scale;
-                Q_f2[j][i0/WARP_SIZE].y *= scale;
+            for (int i0 = 0; i0 < D/2; i0 += nthreads_KQ*cpy_ne) {
+                const int i = i0 + (threadIdx.x % nthreads_KQ)*cpy_ne;
+                if (ncols <= 2 || ic0 + j < ne01) {
+                    ggml_cuda_memcpy_1<cpy_nb>(&Q_f2[j][i0/nthreads_KQ],            &Q_f2_j[i]);
+                    ggml_cuda_memcpy_1<cpy_nb>(&Q_f2[j][i0/nthreads_KQ + cpy_ne/2], &Q_f2_j[i + cpy_ne/2]);
+                }
+            }
+#pragma unroll
+            for (int k = 0; k < (D/2)/nthreads_KQ; ++k) {
+                Q_f2[j][k].x *= scale;
+                Q_f2[j][k].y *= scale;
             }
         }
     }
