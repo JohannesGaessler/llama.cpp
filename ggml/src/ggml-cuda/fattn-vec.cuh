@@ -288,7 +288,9 @@ static __global__ void flash_attn_ext_vec(
             }
         }
 
+#ifndef GGML_USE_HIP
         __syncwarp();
+#endif // GGML_USE_HIP
 
 #pragma unroll
         for (int k0 = 0; k0 < WARP_SIZE; ++k0) {
