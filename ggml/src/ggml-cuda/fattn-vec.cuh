@@ -122,9 +122,9 @@ static __global__ void flash_attn_ext_vec(
 
     // Convert Q to float2 (f16 K) or q8_1 (quantized K) and store in registers:
 #ifdef FAST_FP16_AVAILABLE_
-    half2   Q_reg[ncols][D/(2*nthreads_KQ)];
+    half2  Q_reg[ncols][D/(2*nthreads_KQ)]; // Will be initialized completely.
 #else
-    float2  Q_reg[ncols][D/(2*nthreads_KQ)];
+    float2 Q_reg[ncols][D/(2*nthreads_KQ)] = {{{0.0f, 0.0f}}}; // May be only partially initialized.
 #endif // FAST_FP16_AVAILABLE
     int    Q_i32[ncols][D/(sizeof(int)*QK8_1) == 0 ? 1 : D >= D/(sizeof(int)*QK8_1)];
     float2  Q_ds[ncols][D/QK8_1 == 0 ? 1 : D/QK8_1];
@@ -185,67 +185,43 @@ static __global__ void flash_attn_ext_vec(
         constexpr int cols_per_iter = D > nthreads ? (D/2)/nthreads : 1;
         const half2 scale_h2 = make_half2(scale, scale);
 #pragma unroll
-        for (int j0 = 0; j0 < ncols; j0 += cols_per_iter) {
-            const int j = j0 + (nthreads > D/2 ? tid / D : 0);
-
-            if (j0 + cols_per_iter > ncols && j >= ncols) {
-                break;
-            }
-
-            const float2 * Q_vram = (const float2 *) (Q  + j*nb01);
-            half2        * Q_sram = (half2        *)  KQ + j*(D/2);
-
-#pragma unroll
-            for (int i0 = 0; i0 < D/2; i0 += nthreads) {
-                const int i = i0 + (nthreads > D/2 ? tid % D/2 : tid);
-
-                const float2 tmp = ncols <= 2 || ic0 + j < ne01 ? Q_vram[i] : make_float2(0.0f, 0.0f);
-                Q_sram[i] = scale_h2*make_half2(tmp.x, tmp.y);
-            }
-        }
-
-        __syncthreads();
-
-#pragma unroll
         for (int j = 0; j < ncols; ++j) {
-            const half2 * Q_sram = (const half2 *) KQ + j*(D/2);
+            const float2 * Q_j = (const float2 *) (Q + j*nb01);
 #pragma unroll
             for (int i0 = 0; i0 < D/2; i0 += nthreads_KQ*cpy_ne) {
                 const int i = i0 + (threadIdx.x % nthreads_KQ)*cpy_ne;
-                ggml_cuda_memcpy_1<cpy_nb>(&Q_reg[j][i0/nthreads_KQ], &Q_sram[i]);
+
+                float2 tmp[cpy_ne] = {{0.0f, 0.0f}};
+                if (ncols <= 2 || ic0 + j < ne01) {
+                    ggml_cuda_memcpy_1<cpy_nb>(tmp,            &Q_j[i]);
+                    ggml_cuda_memcpy_1<cpy_nb>(tmp + cpy_ne/2, &Q_j[i + cpy_ne/2]);
+                }
+#pragma unroll
+                for (int i1 = 0; i1 < cpy_ne; ++i1) {
+                    Q_reg[j][i0/nthreads_KQ + i1] = make_half2(tmp[i1].x, tmp[i1].y);
+                }
+            }
+#pragma unroll
+            for (int k = 0; k < (D/2)/nthreads_KQ; ++k) {
+                Q_reg[j][k] *= scale_h2;
             }
         }
 #else
-        constexpr int cols_per_iter = D > nthreads ? D/nthreads : 1;
-#pragma unroll
-        for (int j0 = 0; j0 < ncols; j0 += cols_per_iter) {
-            const int j = j0 + (nthreads > D ? tid / D : 0);
-
-            if (j0 + cols_per_iter > ncols && j >= ncols) {
-                break;
-            }
-
-            const float * Q_vram = (const float *) (Q  + j*nb01);
-            float       * Q_sram = (float       *)  KQ + j*D;
-
-#pragma unroll
-            for (int i0 = 0; i0 < D; i0 += nthreads) {
-                const int i = i0 + (nthreads > D ? tid % D : tid);
-
-                Q_sram[i] = ncols <= 2 || ic0 + j < ne01 ? scale*Q_vram[i] : 0.0f;
-            }
-        }
-
-        __syncthreads();
-
 #pragma unroll
         for (int j = 0; j < ncols; ++j) {
-            const float2 * Q_sram = (const float2 *) KQ + j*(D/2);
+            const float2 * Q_j = (const float2 *) (Q + j*nb01);
 #pragma unroll
             for (int i0 = 0; i0 < D/2; i0 += nthreads_KQ*cpy_ne) {
                 const int i = i0 + (threadIdx.x % nthreads_KQ)*cpy_ne;
-                ggml_cuda_memcpy_1<cpy_nb>(&Q_reg[j][i0/nthreads_KQ],            &Q_sram[i]);
-                ggml_cuda_memcpy_1<cpy_nb>(&Q_reg[j][i0/nthreads_KQ + cpy_ne/2], &Q_sram[i + cpy_ne/2]);
+                if (ncols <= 2 || ic0 + j < ne01) {
+                    ggml_cuda_memcpy_1<cpy_nb>(&Q_reg[j][i0/nthreads_KQ],            &Q_j[i]);
+                    ggml_cuda_memcpy_1<cpy_nb>(&Q_reg[j][i0/nthreads_KQ + cpy_ne/2], &Q_j[i + cpy_ne/2]);
+                }
+            }
+#pragma unroll
+            for (int k = 0; k < (D/2)/nthreads_KQ; ++k) {
+                Q_reg[j][k].x *= scale;
+                Q_reg[j][k].y *= scale;
             }
         }
 #endif // FAST_FP16_AVAILABLE
