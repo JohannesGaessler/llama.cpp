@@ -121,7 +121,11 @@ static __global__ void flash_attn_ext_vec(
     __syncthreads();
 
     // Convert Q to float2 (f16 K) or q8_1 (quantized K) and store in registers:
-    float2  Q_f2[ncols][D/(2*nthreads_KQ)];
+#ifdef FAST_FP16_AVAILABLE_
+    half2   Q_reg[ncols][D/(2*nthreads_KQ)];
+#else
+    float2  Q_reg[ncols][D/(2*nthreads_KQ)];
+#endif // FAST_FP16_AVAILABLE
     int    Q_i32[ncols][D/(sizeof(int)*QK8_1) == 0 ? 1 : D >= D/(sizeof(int)*QK8_1)];
     float2  Q_ds[ncols][D/QK8_1 == 0 ? 1 : D/QK8_1];
     if constexpr (Q_q8_1) {
@@ -177,23 +181,74 @@ static __global__ void flash_attn_ext_vec(
 
         __syncthreads();
     } else {
+#ifdef FAST_FP16_AVAILABLE_
+        constexpr int cols_per_iter = D > nthreads ? (D/2)/nthreads : 1;
+        const half2 scale_h2 = make_half2(scale, scale);
+#pragma unroll
+        for (int j0 = 0; j0 < ncols; j0 += cols_per_iter) {
+            const int j = j0 + (nthreads > D/2 ? tid / D : 0);
+
+            if (j0 + cols_per_iter > ncols && j >= ncols) {
+                break;
+            }
+
+            const float2 * Q_vram = (const float2 *) (Q  + j*nb01);
+            half2        * Q_sram = (half2        *)  KQ + j*(D/2);
+
+#pragma unroll
+            for (int i0 = 0; i0 < D/2; i0 += nthreads) {
+                const int i = i0 + (nthreads > D/2 ? tid % D/2 : tid);
+
+                const float2 tmp = ncols <= 2 || ic0 + j < ne01 ? Q_vram[i] : make_float2(0.0f, 0.0f);
+                Q_sram[i] = scale_h2*make_half2(tmp.x, tmp.y);
+            }
+        }
+
+        __syncthreads();
+
 #pragma unroll
         for (int j = 0; j < ncols; ++j) {
-            const float2 * Q_f2_j = (const float2 *) (Q + j*nb01);
+            const half2 * Q_sram = (const half2 *) KQ + j*(D/2);
 #pragma unroll
             for (int i0 = 0; i0 < D/2; i0 += nthreads_KQ*cpy_ne) {
                 const int i = i0 + (threadIdx.x % nthreads_KQ)*cpy_ne;
-                if (ncols <= 2 || ic0 + j < ne01) {
-                    ggml_cuda_memcpy_1<cpy_nb>(&Q_f2[j][i0/nthreads_KQ],            &Q_f2_j[i]);
-                    ggml_cuda_memcpy_1<cpy_nb>(&Q_f2[j][i0/nthreads_KQ + cpy_ne/2], &Q_f2_j[i + cpy_ne/2]);
-                }
-            }
-#pragma unroll
-            for (int k = 0; k < (D/2)/nthreads_KQ; ++k) {
-                Q_f2[j][k].x *= scale;
-                Q_f2[j][k].y *= scale;
+                ggml_cuda_memcpy_1<cpy_nb>(&Q_reg[j][i0/nthreads_KQ], &Q_sram[i]);
             }
         }
+#else
+        constexpr int cols_per_iter = D > nthreads ? D/nthreads : 1;
+#pragma unroll
+        for (int j0 = 0; j0 < ncols; j0 += cols_per_iter) {
+            const int j = j0 + (nthreads > D ? tid / D : 0);
+
+            if (j0 + cols_per_iter > ncols && j >= ncols) {
+                break;
+            }
+
+            const float * Q_vram = (const float *) (Q  + j*nb01);
+            float       * Q_sram = (float       *)  KQ + j*D;
+
+#pragma unroll
+            for (int i0 = 0; i0 < D; i0 += nthreads) {
+                const int i = i0 + (nthreads > D ? tid % D : tid);
+
+                Q_sram[i] = ncols <= 2 || ic0 + j < ne01 ? scale*Q_vram[i] : 0.0f;
+            }
+        }
+
+        __syncthreads();
+
+#pragma unroll
+        for (int j = 0; j < ncols; ++j) {
+            const float2 * Q_sram = (const float2 *) KQ + j*(D/2);
+#pragma unroll
+            for (int i0 = 0; i0 < D/2; i0 += nthreads_KQ*cpy_ne) {
+                const int i = i0 + (threadIdx.x % nthreads_KQ)*cpy_ne;
+                ggml_cuda_memcpy_1<cpy_nb>(&Q_reg[j][i0/nthreads_KQ],            &Q_sram[i]);
+                ggml_cuda_memcpy_1<cpy_nb>(&Q_reg[j][i0/nthreads_KQ + cpy_ne/2], &Q_sram[i + cpy_ne/2]);
+            }
+        }
+#endif // FAST_FP16_AVAILABLE
     }
 
     float VKQ[ncols][D/WARP_SIZE] = {{0.0f}};
@@ -221,7 +276,7 @@ static __global__ void flash_attn_ext_vec(
 
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
-                float sum = vec_dot_KQ(K + i_KQ*nb11, Q_f2[j], Q_i32[j], Q_ds[j]);
+                float sum = vec_dot_KQ(K + i_KQ*nb11, Q_reg[j], Q_i32[j], Q_ds[j]);
                 sum = warp_reduce_sum<nthreads_KQ>(sum);
 
                 if (use_logit_softcap) {

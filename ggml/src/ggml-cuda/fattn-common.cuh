@@ -257,7 +257,7 @@ static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_q8_0(
     return sum;
 }
 
-template <typename T, int D, int nthreads>
+template <int D, int nthreads>
 static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_f16(
     const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8 , const void * __restrict__ Q_ds_v) {
 
@@ -268,30 +268,6 @@ static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_f16(
     constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
     constexpr int cpy_ne = cpy_nb / 4;
 
-#ifdef FP16_AVAILABLE
-    if (std::is_same_v<T, half>) {
-        const half2 * Q_h2 = (const half2 *) Q_v;
-
-        half2 sum = make_half2(0.0f, 0.0f);
-
-#pragma unroll
-        for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += nthreads*cpy_ne) {
-            half2 tmp[cpy_ne];
-            ggml_cuda_memcpy_1<cpy_nb>(tmp, K_h2 + k_KQ_0 + (threadIdx.x % nthreads)*cpy_ne);
-#pragma unroll
-            for (int k_KQ_1 = 0; k_KQ_1 < cpy_ne; ++k_KQ_1) {
-                ggml_cuda_mad(sum, tmp[k_KQ_1], Q_h2[k_KQ_0/nthreads + k_KQ_1]);
-            }
-        }
-
-        return __low2half(sum) + __high2half(sum);
-    }
-#else
-    static_assert(std::is_same_v<T, float>, "fp16 not supported");
-#endif // FP16_AVAILABLE
-
-    const float2 * Q_f2 = (const float2 *) Q_v;
-
     float sum = 0.0f;
 
 #pragma unroll
@@ -300,7 +276,11 @@ static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_f16(
         ggml_cuda_memcpy_1<sizeof(tmp)>(tmp, K_h2 + k_KQ_0 + (threadIdx.x % nthreads)*cpy_ne);
 #pragma unroll
         for (int k_KQ_1 = 0; k_KQ_1 < cpy_ne; ++k_KQ_1) {
-            ggml_cuda_mad(sum, __half22float2(tmp[k_KQ_1]), Q_f2[k_KQ_0/nthreads + k_KQ_1]);
+#ifdef FAST_FP16_AVAILABLE_
+            ggml_cuda_mad(sum, __half22float2(tmp[k_KQ_1]), ((const float2 *) Q_v)[k_KQ_0/nthreads + k_KQ_1]);
+#else
+            ggml_cuda_mad(sum,                tmp[k_KQ_1] , ((const half2  *) Q_v)[k_KQ_0/nthreads + k_KQ_1]);
+#endif // FP16_AVAILABLE
         }
     }
 
@@ -475,7 +455,7 @@ template <int D, int nthreads = WARP_SIZE>
 constexpr __device__ vec_dot_KQ_t get_vec_dot_KQ(ggml_type type_K) {
     switch (type_K) {
         case GGML_TYPE_F16:
-            return vec_dot_fattn_vec_KQ_f16<float, D, nthreads>;
+            return vec_dot_fattn_vec_KQ_f16<D, nthreads>;
         case GGML_TYPE_Q4_0:
             return vec_dot_fattn_vec_KQ_q4_0<float, D, nthreads>;
         case GGML_TYPE_Q4_1:
