@@ -265,7 +265,7 @@ static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_f16(
     GGML_UNUSED(Q_q8);
     GGML_UNUSED(Q_ds_v);
 
-    constexpr int cpy_nb = 4;
+    constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
     constexpr int cpy_ne = cpy_nb / 4;
 
 #ifdef FP16_AVAILABLE

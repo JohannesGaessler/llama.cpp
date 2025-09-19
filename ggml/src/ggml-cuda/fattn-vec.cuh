@@ -65,11 +65,11 @@ static __global__ void flash_attn_ext_vec(
 
     //In this kernel Q, K, V are matrices while i, j, k are matrix indices.
 
-    constexpr int cpy_nb = 4;
+    constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
     constexpr int cpy_ne = cpy_nb / 4;
 
     constexpr int nthreads    = ggml_cuda_fattn_vec_get_nthreads_device();
-    constexpr int nthreads_KQ = false && type_K == GGML_TYPE_F16 ? 128 / cpy_nb : WARP_SIZE;
+    constexpr int nthreads_KQ = type_K == GGML_TYPE_F16 ? 128 / cpy_nb : WARP_SIZE;
 
     constexpr vec_dot_KQ_t vec_dot_KQ = get_vec_dot_KQ<D, nthreads_KQ>(type_K);
     constexpr bool Q_q8_1 = type_K != GGML_TYPE_F16;
@@ -121,7 +121,7 @@ static __global__ void flash_attn_ext_vec(
     __syncthreads();
 
     // Convert Q to float2 (f16 K) or q8_1 (quantized K) and store in registers:
-    float2  Q_f2[ncols][D/(2*WARP_SIZE)];
+    float2  Q_f2[ncols][D/(2*nthreads_KQ)];
     int    Q_i32[ncols][D/(sizeof(int)*QK8_1) == 0 ? 1 : D >= D/(sizeof(int)*QK8_1)];
     float2  Q_ds[ncols][D/QK8_1 == 0 ? 1 : D/QK8_1];
     if constexpr (Q_q8_1) {
@@ -184,9 +184,8 @@ static __global__ void flash_attn_ext_vec(
             for (int i0 = 0; i0 < D/2; i0 += nthreads_KQ*cpy_ne) {
                 const int i = i0 + (threadIdx.x % nthreads_KQ)*cpy_ne;
                 if (ncols <= 2 || ic0 + j < ne01) {
-                    ggml_cuda_memcpy_1<2*cpy_nb>(&Q_f2[j][i0/nthreads_KQ],            &Q_f2_j[i]);
-                    // ggml_cuda_memcpy_1<cpy_nb>(&Q_f2[j][i0/nthreads_KQ],            &Q_f2_j[i]);
-                    // ggml_cuda_memcpy_1<cpy_nb>(&Q_f2[j][i0/nthreads_KQ + cpy_ne/2], &Q_f2_j[i + cpy_ne/2]);
+                    ggml_cuda_memcpy_1<cpy_nb>(&Q_f2[j][i0/nthreads_KQ],            &Q_f2_j[i]);
+                    ggml_cuda_memcpy_1<cpy_nb>(&Q_f2[j][i0/nthreads_KQ + cpy_ne/2], &Q_f2_j[i + cpy_ne/2]);
                 }
             }
 #pragma unroll
