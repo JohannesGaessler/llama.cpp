@@ -227,7 +227,7 @@ static __global__ void flash_attn_ext_vec(
 
                 kqmax_new_arr[j] = fmaxf(kqmax_new_arr[j], sum);
 
-                if (threadIdx.x % nthreads_KQ == i_KQ) {
+                if (threadIdx.x % nthreads_KQ == i_KQ_0) {
                     KQr[j] = sum;
                 }
             }
