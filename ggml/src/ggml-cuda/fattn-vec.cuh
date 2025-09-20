@@ -254,7 +254,7 @@ static __global__ void flash_attn_ext_vec(
 
 #pragma unroll
         for (int i_KQ_0 = 0; i_KQ_0 < nthreads_KQ; ++i_KQ_0) {
-            const int i_KQ = threadIdx.y*WARP_SIZE + (threadIdx.x & ~(nthreads_KQ-1)) + i_KQ_0;
+            const int i_KQ = threadIdx.y*WARP_SIZE + (nthreads_KQ == WARP_SIZE ? 0 : (threadIdx.x & ~(nthreads_KQ-1))) + i_KQ_0;
 
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
@@ -271,7 +271,7 @@ static __global__ void flash_attn_ext_vec(
 
                 kqmax_new_arr[j] = fmaxf(kqmax_new_arr[j], sum);
 
-                if (threadIdx.x % nthreads_KQ == i_KQ_0) {
+                if ((nthreads_KQ == WARP_SIZE ? threadIdx.x : threadIdx.x % nthreads_KQ) == i_KQ_0) {
                     KQr[j] = sum;
                 }
             }
