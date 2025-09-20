@@ -132,9 +132,9 @@ static __global__ void flash_attn_ext_vec(
 
     // Convert Q to float2 (f16 K) or q8_1 (quantized K) and store in registers:
 #ifdef FAST_FP16_AVAILABLE
-    half2  Q_reg[ncols][D/(2*nthreads_KQ)]; // Will be initialized completely.
+    half2  Q_reg[ncols][(D/2)/nthreads_KQ]; // Will be initialized completely.
 #else
-    float2 Q_reg[ncols][D/(2*nthreads_KQ)] = {{{0.0f, 0.0f}}}; // May be only partially initialized.
+    float2 Q_reg[ncols][(D/2)/nthreads_KQ] = {{{0.0f, 0.0f}}}; // May be only partially initialized.
 #endif // FAST_FP16_AVAILABLE
     int    Q_i32[ncols][D/(sizeof(int)*QK8_1) == 0 ? 1 : D >= D/(sizeof(int)*QK8_1)];
     float2  Q_ds[ncols][D/QK8_1 == 0 ? 1 : D/QK8_1];
@@ -192,7 +192,6 @@ static __global__ void flash_attn_ext_vec(
         __syncthreads();
     } else {
 #ifdef FAST_FP16_AVAILABLE
-        constexpr int cols_per_iter = D > nthreads ? (D/2)/nthreads : 1;
         const half2 scale_h2 = make_half2(scale, scale);
 #pragma unroll
         for (int j = 0; j < ncols; ++j) {
@@ -453,18 +452,21 @@ static __global__ void flash_attn_ext_vec(
         kqsum[j_VKQ] = kqsum_shared[j_VKQ][threadIdx.x];
         kqsum[j_VKQ] = warp_reduce_sum(kqsum[j_VKQ]);
 
-        float dst_val = 0;
 #pragma unroll
-        for (int iw = 0; iw < nwarps; ++iw) {
+        for (int i0 = 0; i0 < D; i0 += nthreads) {
+            float dst_val = 0;
 #pragma unroll
-            for (int iv = 0; iv < V_cols_per_iter; ++iv) {
-                dst_val += float(KQ[j_VKQ*nwarps*V_cols_per_iter*D + iw*V_cols_per_iter*D + iv*D + tid]);
+            for (int w = 0; w < nwarps; ++w) {
+#pragma unroll
+                for (int v = 0; v < V_cols_per_iter; ++v) {
+                    dst_val += float(KQ[j_VKQ*nwarps*V_cols_per_iter*D + w*V_cols_per_iter*D + v*D + i0 + tid]);
+                }
             }
+            if (gridDim.y == 1) {
+                dst_val /= kqsum[j_VKQ];
+            }
+            dst[(((sequence*ne01 + ic0 + j_VKQ)*ne02 + head)*gridDim.y + blockIdx.y)*D + i0 + tid] = dst_val;
         }
-        if (gridDim.y == 1) {
-            dst_val /= kqsum[j_VKQ];
-        }
-        dst[(((sequence*ne01 + ic0 + j_VKQ)*ne02 + head)*gridDim.y + blockIdx.y)*D + tid] = dst_val;
     }
 
     if (gridDim.y != 1 && tid < ncols && (ncols <= 2 || ic0 + tid < ne01)) {
