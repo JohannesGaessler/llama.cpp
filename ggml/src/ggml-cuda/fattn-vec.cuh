@@ -104,7 +104,7 @@ static __global__ void flash_attn_ext_vec(
 
 #ifdef FAST_FP16_AVAILABLE
     half2            VKQ[ncols][(D/2)/nthreads_V] = {{{0.0f, 0.0f}}};
-    __shared__ half   KQ[nwarps*V_cols_per_iter*ncols*D*2];
+    __shared__ half   KQ[nwarps*V_cols_per_iter*ncols*D];
 #else
     float2           VKQ[ncols][(D/2)/nthreads_V] = {{{0.0f, 0.0f}}};
     __shared__ float  KQ[nwarps*V_cols_per_iter*ncols*D];
@@ -400,6 +400,21 @@ static __global__ void flash_attn_ext_vec(
         const float kqmax_scale = expf(kqmax[j] - kqmax_new);
         kqmax[j] = kqmax_new;
 
+#ifdef FAST_FP16_AVAILABLE
+        half2 * KQ_j = (half2 *) KQ + j*(nwarps*V_cols_per_iter*D/2) + threadIdx.y*(V_cols_per_iter*D/2) + (threadIdx.x / nthreads_V)*(D/2);
+
+        const half2 kqmax_scale_h2 = make_half2(kqmax_scale, kqmax_scale);
+#pragma unroll
+        for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V) {
+            VKQ[j][i_VKQ_0/nthreads_V] *= kqmax_scale_h2;
+        }
+#pragma unroll
+        for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V*cpy_ne) {
+            const int i_VKQ = i_VKQ_0 + (threadIdx.x % nthreads_V)*cpy_ne;
+
+            ggml_cuda_memcpy_1<cpy_nb>(KQ_j + i_VKQ, &VKQ[j][i_VKQ_0/nthreads_V]);
+        }
+#else
         float2 * KQ_j = (float2 *) KQ + j*(nwarps*V_cols_per_iter*D/2) + threadIdx.y*(V_cols_per_iter*D/2) + (threadIdx.x / nthreads_V)*(D/2);
 
 #pragma unroll
@@ -411,20 +426,10 @@ static __global__ void flash_attn_ext_vec(
         for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V*cpy_ne) {
             const int i_VKQ = i_VKQ_0 + (threadIdx.x % nthreads_V)*cpy_ne;
 
-#ifdef FAST_FP16_AVAILABLE
-            float2 tmp[cpy_ne];
-#pragma unroll
-            for (int i_VKQ_1 = 0; i_VKQ_1 < cpy_ne; ++i_VKQ_1) {
-                tmp[i_VKQ_1] = __half22float2(VKQ[j][i_VKQ_0/nthreads_V + i_VKQ_1]);
-            }
-
-            ggml_cuda_memcpy_1<cpy_nb>(KQ_j + i_VKQ,            tmp);
-            ggml_cuda_memcpy_1<cpy_nb>(KQ_j + i_VKQ + cpy_ne/2, tmp + cpy_ne/2);
-#else
             ggml_cuda_memcpy_1<cpy_nb>(KQ_j + i_VKQ,            &VKQ[j][i_VKQ_0/nthreads_V]);
             ggml_cuda_memcpy_1<cpy_nb>(KQ_j + i_VKQ + cpy_ne/2, &VKQ[j][i_VKQ_0/nthreads_V + cpy_ne/2]);
-#endif // FAST_FP16_AVAILABLE
         }
+#endif // FAST_FP16_AVAILABLE
 
         kqsum[j] *= kqmax_scale;
         kqsum[j] = warp_reduce_sum(kqsum[j]);
@@ -453,7 +458,7 @@ static __global__ void flash_attn_ext_vec(
         for (int iw = 0; iw < nwarps; ++iw) {
 #pragma unroll
             for (int iv = 0; iv < V_cols_per_iter; ++iv) {
-                dst_val += ((float *) KQ)[j_VKQ*nwarps*V_cols_per_iter*D + iw*V_cols_per_iter*D + iv*D + tid];
+                dst_val += float(KQ[j_VKQ*nwarps*V_cols_per_iter*D + iw*V_cols_per_iter*D + iv*D + tid]);
             }
         }
         if (gridDim.y == 1) {
