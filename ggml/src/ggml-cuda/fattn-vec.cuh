@@ -93,7 +93,6 @@ static __global__ void flash_attn_ext_vec(
     V += nb23*sequence + nb22*(head / gqa_ratio);
 
     const half  * maskh  = (const half  *) (mask + nb33*(sequence % ne33) + nb31*ic0);
-    const float * sinksf = (const float *) (sinks);
 
     const float slope = get_alibi_slope(max_bias, head, n_head_log2, m0, m1);
 
@@ -266,7 +265,9 @@ static __global__ void flash_attn_ext_vec(
                     sum = logit_softcap*tanhf(sum);
                 }
 
-                sum += slope*__half2float(maskh[j*ne11 + i_KQ]);
+                if (mask) {
+                    sum += slope*__half2float(maskh[j*ne11 + i_KQ]);
+                }
 
                 kqmax_new_arr[j] = fmaxf(kqmax_new_arr[j], sum);
 
@@ -353,36 +354,29 @@ static __global__ void flash_attn_ext_vec(
         }
     }
 
-//     if (sinksf && blockIdx.y == 0) {
-//         const float sink = sinksf[head];
+    if (sinks && blockIdx.y == 0 && threadIdx.y < ncols) {
+        const float sink = ((const float *) sinks)[head];
 
-// #pragma unroll
-//         for (int j = 0; j < ncols; ++j) {
-//             if (threadIdx.x == 0) {
-//                 kqmax_shared[j][threadIdx.y] = fmaxf(kqmax[j], sink);
-//             }
-//         }
+        const float kqmax_new_j = fmaxf(sink, kqmax[threadIdx.y]);
+        const float KQ_max_scale = expf(kqmax[threadIdx.y] - kqmax_new_j);
+        kqmax[threadIdx.y] = kqmax_new_j;
 
-//         __syncthreads();
+        kqsum[threadIdx.y] = kqsum[threadIdx.y]*KQ_max_scale + (threadIdx.x == 0 ? expf(sink - kqmax[threadIdx.y]) : 0.0f);
 
-// #pragma unroll
-//         for (int j = 0; j < ncols; ++j) {
-//             float kqmax_new_j = kqmax_shared[j][threadIdx.x];
-//             kqmax_new_j = warp_reduce_max(kqmax_new_j);
-
-//             const float KQ_max_scale = expf(kqmax[j] - kqmax_new_j);
-//             kqmax[j] = kqmax_new_j;
-
-//             const float val = expf(sink - kqmax[j]);
-//             kqsum[j] = kqsum[j]*KQ_max_scale;
-
-//             if (tid == 0) {
-//                 kqsum[j] += val;
-//             }
-
-//             VKQ[j] *= KQ_max_scale;
-//         }
-//     }
+#ifdef FAST_FP16_AVAILABLE
+        const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale, KQ_max_scale);
+#pragma unroll
+        for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V) {
+            VKQ[threadIdx.y][i_VKQ_0/nthreads_V] *= KQ_max_scale_h2;
+        }
+#else
+#pragma unroll
+        for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V) {
+            VKQ[threadIdx.y][i_VKQ_0/nthreads_V].x *= KQ_max_scale;
+            VKQ[threadIdx.y][i_VKQ_0/nthreads_V].y *= KQ_max_scale;
+        }
+#endif // FAST_FP16_AVAILABLE
+    }
 
 #pragma unroll
     for (int j = 0; j < ncols; ++j) {
