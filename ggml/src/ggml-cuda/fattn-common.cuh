@@ -314,25 +314,42 @@ static __device__ __forceinline__ void quantize_q8_1_to_shared(
 
 typedef void (*dequantize_V_t)(const void *, void *, const int64_t);
 
-template <typename T>
-static __device__ __forceinline__ T dequantize_1_q4_0(const void * __restrict__ vx, const int64_t i) {
+template <typename T, int ne>
+static __device__ __forceinline__ void dequantize_V_q4_0(const void * __restrict__ vx, void * __restrict__ dst, const int64_t i0) {
     const block_q4_0 * x = (const block_q4_0 *) vx;
 
-    const int64_t ib    =  i          /  QK4_0;
-    const int     iqs   =  i          % (QK4_0/2);
-    const int     shift = (i % QK4_0) / (QK4_0/2);
+    const int64_t ib    =  i0          /  QK4_0;
+    const int     iqs   =  i0          % (QK4_0/2);
+    const int     shift = (i0 % QK4_0) / (QK4_0/2);
 
-    const T   d  = x[ib].d;
-    const int q0 = x[ib].qs[iqs];
-    const int q  = ((q0 >> (4*shift)) & 0x0F) - 8;
+    int q = 0;
+    ggml_cuda_memcpy_1<ne>(&q, x[ib].qs + iqs);
+    q >>= 4*shift;
+    q &= 0x0F0F0F0F;
+    q = __vsubss4(q, 0x08080808);
+
+    const int8_t * q8 = (const int8_t *) &q;
 
 #ifdef FP16_AVAILABLE
-    if (std::is_same<T, half>::value) {
-        return ((half) d)*((half) q);
-    }
-#endif // FP16_AVAILABLE
+    if constexpr (std::is_same_v<T, half>) {
+        const half2 d = __half2half2(x[ib].d);
 
-    return ((float) d)*((float) q);
+#pragma unroll
+        for (int l0 = 0; l0 < ne; l0 += 2) {
+            ((half2 *) dst)[l0/2] = d * make_half2(q8[l0 + 0], q8[l0 + 1]);
+        }
+    } else
+#endif // FP16_AVAILABLE
+    if constexpr (std::is_same_v<T, float>) {
+        const float d = x[ib].d;
+
+#pragma unroll
+        for (int l = 0; l < ne; ++l) {
+            ((float *) dst)[l] = d * q8[l];
+        }
+    } else {
+        static_assert(std::is_same_v<T, void>, "bad type");
+    }
 }
 
 template <typename T>
@@ -482,8 +499,8 @@ constexpr __device__ dequantize_V_t get_dequantize_V(ggml_type type_V) {
     switch (type_V) {
         case GGML_TYPE_F16:
             return dequantize_V_f16<T, ne>;
-        // case GGML_TYPE_Q4_0:
-        //     return dequantize_V_q4_0<float>;
+        case GGML_TYPE_Q4_0:
+            return dequantize_V_q4_0<T, ne>;
         // case GGML_TYPE_Q4_1:
         //     return dequantize_V_q4_1<float>;
         // case GGML_TYPE_Q5_0:
