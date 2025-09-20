@@ -331,7 +331,7 @@ static __device__ __forceinline__ void quantize_q8_1_to_shared(
     }
 }
 
-typedef float (*dequantize_1_t)(const void *, const int64_t);
+typedef void (*dequantize_V_t)(const void *, void *, const int64_t);
 
 template <typename T>
 static __device__ __forceinline__ T dequantize_1_q4_0(const void * __restrict__ vx, const int64_t i) {
@@ -444,11 +444,22 @@ static __device__ __forceinline__ T dequantize_1_q8_0(const void * __restrict__ 
     return ((float) d)*((float) q);
 }
 
-template <typename T>
-static __device__ __forceinline__ T dequantize_1_f16(const void * __restrict__ vx, const int64_t i) {
-    const half * x = (const half *) vx;
-
-    return x[i];
+template <typename T, int ne>
+static __device__ __forceinline__ void dequantize_V_f16(const void * __restrict__ vx, void * __restrict__ dst, const int64_t i) {
+    if constexpr (std::is_same_v<T, half>) {
+        ggml_cuda_memcpy_1<ne*sizeof(half)>(dst, (const half *) vx + i);
+    } else if constexpr (std::is_same_v<T, float>) {
+        static_assert(ne % 2 == 0, "bad ne");
+        half2 tmp[ne/2];
+        ggml_cuda_memcpy_1<ne*sizeof(half)>(tmp, (const half *) vx + i);
+        float2 * dst_f2 = (float2 *) dst;
+#pragma unroll
+        for (int l = 0; l < ne/2; ++l) {
+            dst_f2[l] = __half22float2(tmp[l]);
+        }
+    } else {
+        static_assert(std::is_same_v<T, void>, "unsupported type");
+    }
 }
 
 template <int D, int nthreads = WARP_SIZE>
@@ -471,20 +482,21 @@ constexpr __device__ vec_dot_KQ_t get_vec_dot_KQ(ggml_type type_K) {
     }
 }
 
-constexpr __device__ dequantize_1_t get_dequantize_1(ggml_type type_V) {
+template <typename T, int ne>
+constexpr __device__ dequantize_V_t get_dequantize_V(ggml_type type_V) {
     switch (type_V) {
         case GGML_TYPE_F16:
-            return dequantize_1_f16<float>;
-        case GGML_TYPE_Q4_0:
-            return dequantize_1_q4_0<float>;
-        case GGML_TYPE_Q4_1:
-            return dequantize_1_q4_1<float>;
-        case GGML_TYPE_Q5_0:
-            return dequantize_1_q5_0<float>;
-        case GGML_TYPE_Q5_1:
-            return dequantize_1_q5_1<float>;
-        case GGML_TYPE_Q8_0:
-            return dequantize_1_q8_0<float>;
+            return dequantize_V_f16<T, ne>;
+        // case GGML_TYPE_Q4_0:
+        //     return dequantize_1_q4_0<float>;
+        // case GGML_TYPE_Q4_1:
+        //     return dequantize_1_q4_1<float>;
+        // case GGML_TYPE_Q5_0:
+        //     return dequantize_1_q5_0<float>;
+        // case GGML_TYPE_Q5_1:
+        //     return dequantize_1_q5_1<float>;
+        // case GGML_TYPE_Q8_0:
+        //     return dequantize_1_q8_0<float>;
         default:
             return nullptr;
     }
