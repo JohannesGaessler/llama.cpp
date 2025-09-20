@@ -73,14 +73,15 @@ static __global__ void flash_attn_ext_vec(
     constexpr int nthreads_V  = ncols == 1 && type_V == GGML_TYPE_F16 ? 128 / cpy_nb : WARP_SIZE;
 
     static_assert(WARP_SIZE % nthreads_V == 0, "bad nthreads_V");
-    constexpr int V_cols_per_iter = WARP_SIZE / nthreads_V;
+    constexpr int V_rows_per_thread = type_V == GGML_TYPE_F16 ? 2*cpy_ne : 2;
+    constexpr int V_cols_per_iter   = WARP_SIZE / nthreads_V;
 
     constexpr vec_dot_KQ_t vec_dot_KQ = get_vec_dot_KQ<D, nthreads_KQ>(type_K);
     constexpr bool Q_q8_1 = type_K != GGML_TYPE_F16;
 #ifdef FAST_FP16_AVAILABLE
-    constexpr dequantize_V_t dequantize_V = get_dequantize_V<half,  2*cpy_ne>(type_V);
+    constexpr dequantize_V_t dequantize_V = get_dequantize_V<half,  V_rows_per_thread>(type_V);
 #else
-    constexpr dequantize_V_t dequantize_V = get_dequantize_V<float, 2*cpy_ne>(type_V);
+    constexpr dequantize_V_t dequantize_V = get_dequantize_V<float, V_rows_per_thread>(type_V);
 #endif // FAST_FP16_AVAILABLE
 
     const int ic0 = blockIdx.x * ncols; // Index of the Q/QKV column to work on.
@@ -320,11 +321,11 @@ static __global__ void flash_attn_ext_vec(
                 KQ_k[j] = __half2half2(KQ[j*nthreads + k]);
             }
 #pragma unroll
-            for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V*cpy_ne) {
-                half2 tmp[cpy_ne];
-                dequantize_V(V + k*nb21, tmp, 2*(i_VKQ_0 + (threadIdx.x % nthreads_V)*cpy_ne));
+            for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V*V_rows_per_thread/2) {
+                half2 tmp[V_rows_per_thread/2];
+                dequantize_V(V + k*nb21, tmp, 2*i_VKQ_0 + (threadIdx.x % nthreads_V)*V_rows_per_thread);
 #pragma unroll
-                for (int i_VKQ_1 = 0; i_VKQ_1 < cpy_ne; ++i_VKQ_1) {
+                for (int i_VKQ_1 = 0; i_VKQ_1 < V_rows_per_thread/2; ++i_VKQ_1) {
 #pragma unroll
                     for (int j = 0; j < ncols; ++j) {
                         VKQ[j][i_VKQ_0/nthreads_V + i_VKQ_1] += tmp[i_VKQ_1]*KQ_k[j];
@@ -338,11 +339,11 @@ static __global__ void flash_attn_ext_vec(
                 KQ_k[j] = KQ[j*nthreads + k];
             }
 #pragma unroll
-            for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V*cpy_ne) {
-                float2 tmp[cpy_ne];
-                dequantize_V(V + k*nb21, tmp, 2*(i_VKQ_0 + (threadIdx.x % nthreads_V)*cpy_ne));
+            for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V*V_rows_per_thread/2) {
+                float2 tmp[V_rows_per_thread/2];
+                dequantize_V(V + k*nb21, tmp, 2*i_VKQ_0 + (threadIdx.x % nthreads_V)*V_rows_per_thread);
 #pragma unroll
-                for (int i_VKQ_1 = 0; i_VKQ_1 < cpy_ne; ++i_VKQ_1) {
+                for (int i_VKQ_1 = 0; i_VKQ_1 < V_rows_per_thread/2; ++i_VKQ_1) {
 #pragma unroll
                     for (int j = 0; j < ncols; ++j) {
                         VKQ[j][i_VKQ_0/nthreads_V + i_VKQ_1].x += tmp[i_VKQ_1].x*KQ_k[j];
