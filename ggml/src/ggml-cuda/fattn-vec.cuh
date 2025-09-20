@@ -73,7 +73,7 @@ static __global__ void flash_attn_ext_vec(
     constexpr int nthreads_V  = ncols == 1 && type_V == GGML_TYPE_F16 ? 128 / cpy_nb : WARP_SIZE;
 
     static_assert(WARP_SIZE % nthreads_V == 0, "bad nthreads_V");
-    constexpr int V_rows_per_thread = type_V == GGML_TYPE_F16 ? 2*cpy_ne : 2;
+    constexpr int V_rows_per_thread = type_V == GGML_TYPE_F16 ? 2*cpy_ne : 4;
     constexpr int V_cols_per_iter   = WARP_SIZE / nthreads_V;
 
     constexpr vec_dot_KQ_t vec_dot_KQ = get_vec_dot_KQ<D, nthreads_KQ>(type_K);
@@ -403,10 +403,10 @@ static __global__ void flash_attn_ext_vec(
             VKQ[j][i_VKQ_0/nthreads_V] *= kqmax_scale_h2;
         }
 #pragma unroll
-        for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V*cpy_ne) {
-            const int i_VKQ = i_VKQ_0 + (threadIdx.x % nthreads_V)*cpy_ne;
+        for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V*V_rows_per_thread/2) {
+            const int i_VKQ = i_VKQ_0 + (threadIdx.x % nthreads_V)*(V_rows_per_thread/2);
 
-            ggml_cuda_memcpy_1<cpy_nb>(KQ_j + i_VKQ, &VKQ[j][i_VKQ_0/nthreads_V]);
+            ggml_cuda_memcpy_1<V_rows_per_thread*sizeof(half)>(KQ_j + i_VKQ, &VKQ[j][i_VKQ_0/nthreads_V]);
         }
 #else
         float2 * KQ_j = (float2 *) KQ + j*(nwarps*V_cols_per_iter*D/2) + threadIdx.y*(V_cols_per_iter*D/2) + (threadIdx.x / nthreads_V)*(D/2);
@@ -417,11 +417,11 @@ static __global__ void flash_attn_ext_vec(
             VKQ[j][i_VKQ_0/nthreads_V].y *= kqmax_scale;
         }
 #pragma unroll
-        for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V*cpy_ne) {
-            const int i_VKQ = i_VKQ_0 + (threadIdx.x % nthreads_V)*cpy_ne;
+        for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V*V_rows_per_thread/2) {
+            const int i_VKQ = i_VKQ_0 + (threadIdx.x % nthreads_V)*(V_rows_per_thread/2);
 
-            ggml_cuda_memcpy_1<cpy_nb>(KQ_j + i_VKQ,            &VKQ[j][i_VKQ_0/nthreads_V]);
-            ggml_cuda_memcpy_1<cpy_nb>(KQ_j + i_VKQ + cpy_ne/2, &VKQ[j][i_VKQ_0/nthreads_V + cpy_ne/2]);
+            ggml_cuda_memcpy_1<V_rows_per_thread/2*sizeof(float)>(KQ_j + i_VKQ,                       &VKQ[j][i_VKQ_0/nthreads_V]);
+            ggml_cuda_memcpy_1<V_rows_per_thread/2*sizeof(float)>(KQ_j + i_VKQ + V_rows_per_thread/4, &VKQ[j][i_VKQ_0/nthreads_V + V_rows_per_thread/4]);
         }
 #endif // FAST_FP16_AVAILABLE
 

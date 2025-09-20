@@ -415,7 +415,7 @@ static __device__ __forceinline__ void dequantize_V_q8_0(const void * __restrict
 
     static_assert(ne % 2 == 0, "bad ne");
     int8_t qs[ne];
-    ggml_cuda_memcpy_1<2>(qs, x[ib].qs + iqs);
+    ggml_cuda_memcpy_1<ne, 2>(qs, x[ib].qs + iqs);
 
 #ifdef FP16_AVAILABLE
     if constexpr (std::is_same<T, half>::value) {
