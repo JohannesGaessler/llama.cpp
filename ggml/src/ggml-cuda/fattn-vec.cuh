@@ -104,12 +104,14 @@ static __global__ void flash_attn_ext_vec(
     const int tid = WARP_SIZE*threadIdx.y + threadIdx.x;
     __builtin_assume(tid < nthreads);
 
+    constexpr int ne_KQ      = ncols*D;
+    constexpr int ne_combine = nwarps*V_cols_per_iter*D;
 #ifdef FAST_FP16_AVAILABLE
     half2            VKQ[ncols][(D/2)/nthreads_V] = {{{0.0f, 0.0f}}};
-    __shared__ half   KQ[nwarps*V_cols_per_iter*ncols*D];
+    __shared__ half   KQ[ne_KQ > ne_combine ? ne_KQ : ne_combine];
 #else
     float2           VKQ[ncols][(D/2)/nthreads_V] = {{{0.0f, 0.0f}}};
-    __shared__ float  KQ[nwarps*V_cols_per_iter*ncols*D];
+    __shared__ float  KQ[ne_KQ > ne_combine ? ne_KQ : ne_combine];
 #endif // FAST_FP16_AVAILABLE
 
     float kqmax[ncols];
@@ -400,79 +402,74 @@ static __global__ void flash_attn_ext_vec(
     __syncthreads();
 
 #pragma unroll
-    for (int j = 0; j < ncols; ++j) {
-        float kqmax_new = kqmax_shared[j][threadIdx.x];
-        kqmax_new = warp_reduce_max(kqmax_new);
-        const float kqmax_scale = expf(kqmax[j] - kqmax_new);
-        kqmax[j] = kqmax_new;
-
-#ifdef FAST_FP16_AVAILABLE
-        half2 * KQ_j = (half2 *) KQ + j*(nwarps*V_cols_per_iter*D/2) + threadIdx.y*(V_cols_per_iter*D/2) + (threadIdx.x / nthreads_V)*(D/2);
-
-        const half2 kqmax_scale_h2 = make_half2(kqmax_scale, kqmax_scale);
-#pragma unroll
-        for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V) {
-            VKQ[j][i_VKQ_0/nthreads_V] *= kqmax_scale_h2;
-        }
-#pragma unroll
-        for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V*V_rows_per_thread/2) {
-            const int i_VKQ = i_VKQ_0 + (threadIdx.x % nthreads_V)*(V_rows_per_thread/2);
-
-            ggml_cuda_memcpy_1<V_rows_per_thread*sizeof(half)>(KQ_j + i_VKQ, &VKQ[j][i_VKQ_0/nthreads_V]);
-        }
-#else
-        float2 * KQ_j = (float2 *) KQ + j*(nwarps*V_cols_per_iter*D/2) + threadIdx.y*(V_cols_per_iter*D/2) + (threadIdx.x / nthreads_V)*(D/2);
-
-#pragma unroll
-        for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V) {
-            VKQ[j][i_VKQ_0/nthreads_V].x *= kqmax_scale;
-            VKQ[j][i_VKQ_0/nthreads_V].y *= kqmax_scale;
-        }
-#pragma unroll
-        for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V*V_rows_per_thread/2) {
-            const int i_VKQ = i_VKQ_0 + (threadIdx.x % nthreads_V)*(V_rows_per_thread/2);
-
-            ggml_cuda_memcpy_1<V_rows_per_thread/2*sizeof(float)>(KQ_j + i_VKQ,                       &VKQ[j][i_VKQ_0/nthreads_V]);
-            ggml_cuda_memcpy_1<V_rows_per_thread/2*sizeof(float)>(KQ_j + i_VKQ + V_rows_per_thread/4, &VKQ[j][i_VKQ_0/nthreads_V + V_rows_per_thread/4]);
-        }
-#endif // FAST_FP16_AVAILABLE
-
-        kqsum[j] *= kqmax_scale;
-        kqsum[j] = warp_reduce_sum(kqsum[j]);
-        if (threadIdx.x == 0) {
-            kqsum_shared[j][threadIdx.y] = kqsum[j];
-        }
-    }
-
-    if (nthreads > D && tid >= D) {
-        return;
-    }
-
-    __syncthreads();
-
-#pragma unroll
     for (int j_VKQ = 0; j_VKQ < ncols; ++j_VKQ) {
         if (ncols > 2 && ic0 + j_VKQ >= ne01) {
             break;
         }
 
-        kqsum[j_VKQ] = kqsum_shared[j_VKQ][threadIdx.x];
-        kqsum[j_VKQ] = warp_reduce_sum(kqsum[j_VKQ]);
+        float kqmax_new = kqmax_shared[j_VKQ][threadIdx.x];
+        kqmax_new = warp_reduce_max(kqmax_new);
+        const float kqmax_scale = expf(kqmax[j_VKQ] - kqmax_new);
+        kqmax[j_VKQ] = kqmax_new;
+
+#ifdef FAST_FP16_AVAILABLE
+        half2 * VKQ_tmp = (half2 *) KQ + j_VKQ*(nwarps*V_cols_per_iter*D/2) + threadIdx.y*(V_cols_per_iter*D/2) + (threadIdx.x / nthreads_V)*(D/2);
+
+        const half2 kqmax_scale_h2 = make_half2(kqmax_scale, kqmax_scale);
+#pragma unroll
+        for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V) {
+            VKQ[j_VKQ][i_VKQ_0/nthreads_V] *= kqmax_scale_h2;
+        }
+#pragma unroll
+        for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V*V_rows_per_thread/2) {
+            const int i_VKQ = i_VKQ_0 + (threadIdx.x % nthreads_V)*(V_rows_per_thread/2);
+
+            ggml_cuda_memcpy_1<V_rows_per_thread*sizeof(half)>(VKQ_tmp + i_VKQ, &VKQ[j_VKQ][i_VKQ_0/nthreads_V]);
+        }
+#else
+        float2 * VKQ_tmp = (float2 *) KQ + j_VKQ*(nwarps*V_cols_per_iter*D/2) + threadIdx.y*(V_cols_per_iter*D/2) + (threadIdx.x / nthreads_V)*(D/2);
 
 #pragma unroll
-        for (int i0 = 0; i0 < D; i0 += nthreads) {
-            float dst_val = 0;
+        for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V) {
+            VKQ[j_VKQ][i_VKQ_0/nthreads_V].x *= kqmax_scale;
+            VKQ[j_VKQ][i_VKQ_0/nthreads_V].y *= kqmax_scale;
+        }
 #pragma unroll
-            for (int w = 0; w < nwarps; ++w) {
+        for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V*V_rows_per_thread/2) {
+            const int i_VKQ = i_VKQ_0 + (threadIdx.x % nthreads_V)*(V_rows_per_thread/2);
+
+            ggml_cuda_memcpy_1<V_rows_per_thread/2*sizeof(float)>(VKQ_tmp + i_VKQ,                       &VKQ[j_VKQ][i_VKQ_0/nthreads_V]);
+            ggml_cuda_memcpy_1<V_rows_per_thread/2*sizeof(float)>(VKQ_tmp + i_VKQ + V_rows_per_thread/4, &VKQ[j_VKQ][i_VKQ_0/nthreads_V + V_rows_per_thread/4]);
+        }
+#endif // FAST_FP16_AVAILABLE
+
+        kqsum[j_VKQ] *= kqmax_scale;
+        kqsum[j_VKQ] = warp_reduce_sum(kqsum[j_VKQ]);
+        if (threadIdx.x == 0) {
+            kqsum_shared[j_VKQ][threadIdx.y] = kqsum[j_VKQ];
+        }
+
+        __syncthreads();
+
+        if (nthreads <= D || tid < D) {
+            kqsum[j_VKQ] = kqsum_shared[j_VKQ][threadIdx.x];
+            kqsum[j_VKQ] = warp_reduce_sum(kqsum[j_VKQ]);
+
 #pragma unroll
-                for (int v = 0; v < V_cols_per_iter; ++v) {
-                    dst_val += float(KQ[j_VKQ*nwarps*V_cols_per_iter*D + w*V_cols_per_iter*D + v*D + i0 + tid]);
+            for (int i0 = 0; i0 < D; i0 += nthreads) {
+                float dst_val = 0;
+#pragma unroll
+                for (int w = 0; w < nwarps; ++w) {
+#pragma unroll
+                    for (int v = 0; v < V_cols_per_iter; ++v) {
+                        dst_val += float(KQ[j_VKQ*nwarps*V_cols_per_iter*D + w*V_cols_per_iter*D + v*D + i0 + tid]);
+                    }
                 }
+                if (gridDim.y == 1) {
+                    dst_val /= kqsum[j_VKQ];
+                }
+                dst[(((sequence*ne01 + ic0 + j_VKQ)*ne02 + head)*gridDim.y + blockIdx.y)*D + i0 + tid] = dst_val;
             }
-            if (gridDim.y == 1) {
-                dst_val /= kqsum[j_VKQ];
-            }
-            dst[(((sequence*ne01 + ic0 + j_VKQ)*ne02 + head)*gridDim.y + blockIdx.y)*D + i0 + tid] = dst_val;
         }
     }
 
