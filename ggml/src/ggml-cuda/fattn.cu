@@ -274,9 +274,8 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
         const bool gqa_opt_applies = gqa_ratio % 2 == 0 && mask; // The mma-based kernels have GQA-specific optimizations
         const bool mma_needs_data_conversion = K->type != GGML_TYPE_F16 || V->type != GGML_TYPE_F16;
         const bool mma_faster_for_rtx4000 = Q->ne[3] > 1 || (gqa_ratio > 4 && K->ne[1] >= 8192);
-        const bool mma_faster_for_bs1 = gqa_opt_applies && !mma_needs_data_conversion &&
-            (cc < GGML_CUDA_CC_ADA_LOVELACE || mma_faster_for_rtx4000);
-        if (Q->ne[1] == 1 && can_use_vector_kernel && !mma_faster_for_bs1) {
+        const bool mma_faster_for_bs1 = gqa_opt_applies && (cc < GGML_CUDA_CC_ADA_LOVELACE || mma_faster_for_rtx4000);
+        if (can_use_vector_kernel && ((Q->ne[1] == 1 && !mma_faster_for_bs1) || (Q->ne[1] <= 2 && mma_needs_data_conversion))) {
             return BEST_FATTN_KERNEL_VEC;
         }
         return BEST_FATTN_KERNEL_MMA_F16;
