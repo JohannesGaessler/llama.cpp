@@ -413,7 +413,7 @@ static __global__ void flash_attn_ext_vec(
         kqmax[j_VKQ] = kqmax_new;
 
 #ifdef FAST_FP16_AVAILABLE
-        half2 * VKQ_tmp = (half2 *) KQ + j_VKQ*(nwarps*V_cols_per_iter*D/2) + threadIdx.y*(V_cols_per_iter*D/2) + (threadIdx.x / nthreads_V)*(D/2);
+        half2 * VKQ_tmp = (half2 *) KQ + threadIdx.y*(V_cols_per_iter*D/2) + (threadIdx.x / nthreads_V)*(D/2);
 
         const half2 kqmax_scale_h2 = make_half2(kqmax_scale, kqmax_scale);
 #pragma unroll
@@ -427,7 +427,7 @@ static __global__ void flash_attn_ext_vec(
             ggml_cuda_memcpy_1<V_rows_per_thread*sizeof(half)>(VKQ_tmp + i_VKQ, &VKQ[j_VKQ][i_VKQ_0/nthreads_V]);
         }
 #else
-        float2 * VKQ_tmp = (float2 *) KQ + j_VKQ*(nwarps*V_cols_per_iter*D/2) + threadIdx.y*(V_cols_per_iter*D/2) + (threadIdx.x / nthreads_V)*(D/2);
+        float2 * VKQ_tmp = (float2 *) KQ + threadIdx.y*(V_cols_per_iter*D/2) + (threadIdx.x / nthreads_V)*(D/2);
 
 #pragma unroll
         for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V) {
@@ -462,7 +462,7 @@ static __global__ void flash_attn_ext_vec(
                 for (int w = 0; w < nwarps; ++w) {
 #pragma unroll
                     for (int v = 0; v < V_cols_per_iter; ++v) {
-                        dst_val += float(KQ[j_VKQ*nwarps*V_cols_per_iter*D + w*V_cols_per_iter*D + v*D + i0 + tid]);
+                        dst_val += float(KQ[w*V_cols_per_iter*D + v*D + i0 + tid]);
                     }
                 }
                 if (gridDim.y == 1) {
@@ -471,6 +471,11 @@ static __global__ void flash_attn_ext_vec(
                 dst[(((sequence*ne01 + ic0 + j_VKQ)*ne02 + head)*gridDim.y + blockIdx.y)*D + i0 + tid] = dst_val;
             }
         }
+
+        if (j_VKQ < ncols-1) {
+            __syncthreads();
+        }
+
     }
 
     if (gridDim.y != 1 && tid < ncols && (ncols <= 2 || ic0 + tid < ne01)) {
