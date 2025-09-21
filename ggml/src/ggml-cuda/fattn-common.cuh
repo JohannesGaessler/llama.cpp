@@ -323,7 +323,7 @@ static __device__ __forceinline__ void dequantize_V_q4_0(const void * __restrict
     const int     shift = (i0 % QK4_0) / (QK4_0/2);
 
     int q = 0;
-    ggml_cuda_memcpy_1<ne>(&q, x[ib].qs + iqs);
+    ggml_cuda_memcpy_1<ne, 2>(&q, x[ib].qs + iqs);
     q >>= 4*shift;
     q &= 0x0F0F0F0F;
     q = __vsubss4(q, 0x08080808);
