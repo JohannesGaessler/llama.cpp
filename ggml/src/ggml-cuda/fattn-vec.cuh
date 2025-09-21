@@ -69,8 +69,8 @@ static __global__ void flash_attn_ext_vec(
     constexpr int cpy_ne = cpy_nb / 4;
 
     constexpr int nthreads    = ggml_cuda_fattn_vec_get_nthreads_device();
-    constexpr int nthreads_KQ = ncols == 1 && type_K == GGML_TYPE_F16 ? 128 / cpy_nb : (D/4 < WARP_SIZE ? D/4 : WARP_SIZE);
-    constexpr int nthreads_V  = ncols == 1 && type_V == GGML_TYPE_F16 ? 128 / cpy_nb : (D/4 < WARP_SIZE ? D/4 : WARP_SIZE);
+    constexpr int nthreads_KQ = type_K == GGML_TYPE_F16 ? 128 / cpy_nb : (D/4 < WARP_SIZE ? D/4 : WARP_SIZE);
+    constexpr int nthreads_V  = type_V == GGML_TYPE_F16 ? 128 / cpy_nb : (D/4 < WARP_SIZE ? D/4 : WARP_SIZE);
 
     static_assert(WARP_SIZE % nthreads_KQ == 0, "bad nthreads_K");
     static_assert(WARP_SIZE % nthreads_V  == 0, "bad nthreads_V");
