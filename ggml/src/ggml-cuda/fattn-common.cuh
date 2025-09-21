@@ -199,7 +199,7 @@ static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_q5_1(
 
         {
             int vh;
-            ggml_cuda_memcpy_1<sizeof(int), 2>(&vh, K_q5_1[ib].qh);
+            ggml_cuda_memcpy_1<sizeof(int)>(&vh, K_q5_1[ib].qh);
             vh >>= iqs8 * QI5_0;
 
             v |= (vh <<  4) & 0x00000010; // 0 ->  4
@@ -453,13 +453,13 @@ static __device__ __forceinline__ void dequantize_V_q5_1(const void * __restrict
 
     int q;
     static_assert(ne == 2 || ne == 4, "bad ne");
-    ggml_cuda_memcpy_1<ne, 2>(&q, x[ib].qs + iqs);
+    ggml_cuda_memcpy_1<ne>(&q, x[ib].qs + iqs);
     q >>= 4*shift;
     q &= 0x0F0F0F0F;
 
     {
         int qh;
-        ggml_cuda_memcpy_1<ne, 2>(&qh, x[ib].qh);
+        ggml_cuda_memcpy_1<ne>(&qh, x[ib].qh);
 #pragma unroll
         for (int l = 0; l < ne; ++l) {
             q |= ((qh >> (idq + l)) & 0x00000001) << (8*l + 4);
