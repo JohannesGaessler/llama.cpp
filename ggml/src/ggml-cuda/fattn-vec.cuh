@@ -95,7 +95,7 @@ static __global__ void flash_attn_ext_vec(
     K += nb13*sequence + nb12*(head / gqa_ratio);
     V += nb23*sequence + nb22*(head / gqa_ratio);
 
-    const half  * maskh  = (const half  *) (mask + nb33*(sequence % ne33) + nb31*ic0);
+    const half * maskh  = (const half  *) (mask + nb33*(sequence % ne33) + nb31*ic0);
 
     const float slope = get_alibi_slope(max_bias, head, n_head_log2, m0, m1);
 
@@ -114,25 +114,13 @@ static __global__ void flash_attn_ext_vec(
     __shared__ float  KQ[ne_KQ > ne_combine ? ne_KQ : ne_combine];
 #endif // FAST_FP16_AVAILABLE
 
-    float kqmax[ncols];
-    float kqsum[ncols];
+    float KQ_max[ncols];
+    float KQ_sum[ncols];
 #pragma unroll
     for (int j = 0; j < ncols; ++j) {
-        kqmax[j] = -FLT_MAX/2.0f;
-        kqsum[j] = 0.0f;
+        KQ_max[j] = -FLT_MAX/2.0f;
+        KQ_sum[j] = 0.0f;
     }
-
-    __shared__ float kqmax_shared[ncols][WARP_SIZE];
-    __shared__ float kqsum_shared[ncols][WARP_SIZE];
-#pragma unroll
-    for (int j = 0; j < ncols; ++j) {
-        if (threadIdx.y == 0) {
-            kqmax_shared[j][threadIdx.x] = -FLT_MAX/2.0f;
-            kqsum_shared[j][threadIdx.x] = 0.0f;
-        }
-    }
-
-    __syncthreads();
 
     // Convert Q to float2 (f16 K) or q8_1 (quantized K) and store in registers:
 #ifdef FAST_FP16_AVAILABLE
@@ -173,7 +161,7 @@ static __global__ void flash_attn_ext_vec(
 #pragma unroll
                 for (int i0 = 0; i0 < int(D/sizeof(int)); i0 += nthreads_KQ) {
                     quantize_q8_1_to_shared<float2, nthreads_KQ>
-                        (Q_f + 4*i0, scale, tmp_q_i32 + i0, tmp_q_ds + i0/QI8_1);
+                        (Q_f + i0*sizeof(int), scale, tmp_q_i32 + i0, tmp_q_ds + i0/QI8_1);
                 }
             }
         }
@@ -203,7 +191,7 @@ static __global__ void flash_attn_ext_vec(
             const float2 * Q_j = (const float2 *) (Q + j*nb01);
 #pragma unroll
             for (int i0 = 0; i0 < D/2; i0 += nthreads_KQ*cpy_ne) {
-                const int i = i0 + (threadIdx.x % nthreads_KQ)*cpy_ne;
+                const int i = i0 + (nthreads_KQ == WARP_SIZE ? threadIdx.x : threadIdx.x % nthreads_KQ)*cpy_ne;
 
                 float2 tmp[cpy_ne] = {{0.0f, 0.0f}};
                 if (ncols <= 2 || ic0 + j < ne01) {
@@ -226,7 +214,7 @@ static __global__ void flash_attn_ext_vec(
             const float2 * Q_j = (const float2 *) (Q + j*nb01);
 #pragma unroll
             for (int i0 = 0; i0 < D/2; i0 += nthreads_KQ*cpy_ne) {
-                const int i = i0 + (threadIdx.x % nthreads_KQ)*cpy_ne;
+                const int i = i0 + (nthreads_KQ == WARP_SIZE ? threadIdx.x : threadIdx.x % nthreads_KQ)*cpy_ne;
                 if (ncols <= 2 || ic0 + j < ne01) {
                     ggml_cuda_memcpy_1<cpy_nb>(&Q_reg[j][i0/nthreads_KQ],            &Q_j[i]);
                     ggml_cuda_memcpy_1<cpy_nb>(&Q_reg[j][i0/nthreads_KQ + cpy_ne/2], &Q_j[i + cpy_ne/2]);
@@ -250,12 +238,12 @@ static __global__ void flash_attn_ext_vec(
              K += gridDim.y*nthreads*nb11, V += gridDim.y*nthreads*nb21, maskh += gridDim.y*nthreads) {
 
         // Calculate KQ tile and keep track of new maximum KQ values:
-        float KQr[ncols]; // FIXME name
+        float KQ_reg[ncols]; // KQ in registers.
 
-        float kqmax_new_arr[ncols];
+        float KQ_max_new[ncols];
 #pragma unroll
         for (int j = 0; j < ncols; ++j) {
-            kqmax_new_arr[j] = kqmax[j];
+            KQ_max_new[j] = KQ_max[j];
         }
 
 #pragma unroll
@@ -275,10 +263,10 @@ static __global__ void flash_attn_ext_vec(
                     sum += slope*__half2float(maskh[j*ne11 + i_KQ]);
                 }
 
-                kqmax_new_arr[j] = fmaxf(kqmax_new_arr[j], sum);
+                KQ_max_new[j] = fmaxf(KQ_max_new[j], sum);
 
                 if ((nthreads_KQ == WARP_SIZE ? threadIdx.x : threadIdx.x % nthreads_KQ) == i_KQ_0) {
-                    KQr[j] = sum;
+                    KQ_reg[j] = sum;
                 }
             }
         }
@@ -287,14 +275,14 @@ static __global__ void flash_attn_ext_vec(
         for (int j = 0; j < ncols; ++j) {
 #pragma unroll
             for (int offset = nthreads_KQ; offset < WARP_SIZE; offset <<= 1) {
-                kqmax_new_arr[j] = fmaxf(kqmax_new_arr[j], __shfl_xor_sync(0xFFFFFFFF, kqmax_new_arr[j], offset, WARP_SIZE));
+                KQ_max_new[j] = fmaxf(KQ_max_new[j], __shfl_xor_sync(0xFFFFFFFF, KQ_max_new[j], offset, WARP_SIZE));
             }
-            const float KQ_max_scale = expf(kqmax[j] - kqmax_new_arr[j]);
-            kqmax[j] = kqmax_new_arr[j];
+            const float KQ_max_scale = expf(KQ_max[j] - KQ_max_new[j]);
+            KQ_max[j] = KQ_max_new[j];
 
-            KQr[j] = expf(KQr[j] - kqmax[j]);
-            kqsum[j] = kqsum[j]*KQ_max_scale + KQr[j];
-            KQ[j*nthreads + tid] = KQr[j];
+            KQ_reg[j] = expf(KQ_reg[j] - KQ_max[j]);
+            KQ_sum[j] = KQ_sum[j]*KQ_max_scale + KQ_reg[j];
+            KQ[j*nthreads + tid] = KQ_reg[j];
 
 #ifdef FAST_FP16_AVAILABLE
             const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale, KQ_max_scale);
@@ -317,7 +305,7 @@ static __global__ void flash_attn_ext_vec(
 
 #pragma unroll
         for (int k0 = 0; k0 < WARP_SIZE; k0 += V_cols_per_iter) {
-            const int k = threadIdx.y*WARP_SIZE + k0 + threadIdx.x / nthreads_V;
+            const int k = threadIdx.y*WARP_SIZE + k0 + (nthreads_V == WARP_SIZE ? 0 : threadIdx.x / nthreads_V);
 
 #ifdef FAST_FP16_AVAILABLE
             half2 KQ_k[ncols];
@@ -328,7 +316,8 @@ static __global__ void flash_attn_ext_vec(
 #pragma unroll
             for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V*V_rows_per_thread/2) {
                 half2 tmp[V_rows_per_thread/2];
-                dequantize_V(V + k*nb21, tmp, 2*i_VKQ_0 + (threadIdx.x % nthreads_V)*V_rows_per_thread);
+                dequantize_V(V + k*nb21, tmp,
+                    2*i_VKQ_0 + (nthreads_V == WARP_SIZE ? threadIdx.x : threadIdx.x % nthreads_V)*V_rows_per_thread);
 #pragma unroll
                 for (int i_VKQ_1 = 0; i_VKQ_1 < V_rows_per_thread/2; ++i_VKQ_1) {
 #pragma unroll
@@ -346,7 +335,8 @@ static __global__ void flash_attn_ext_vec(
 #pragma unroll
             for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V*V_rows_per_thread/2) {
                 float2 tmp[V_rows_per_thread/2];
-                dequantize_V(V + k*nb21, tmp, 2*i_VKQ_0 + (threadIdx.x % nthreads_V)*V_rows_per_thread);
+                dequantize_V(V + k*nb21, tmp,
+                    2*i_VKQ_0 + (nthreads_V == WARP_SIZE ? threadIdx.x : threadIdx.x % nthreads_V)*V_rows_per_thread);
 #pragma unroll
                 for (int i_VKQ_1 = 0; i_VKQ_1 < V_rows_per_thread/2; ++i_VKQ_1) {
 #pragma unroll
@@ -371,11 +361,11 @@ static __global__ void flash_attn_ext_vec(
                 break;
             }
 
-            const float kqmax_new_j = fmaxf(sink, kqmax[j]);
-            const float KQ_max_scale = expf(kqmax[j] - kqmax_new_j);
-            kqmax[j] = kqmax_new_j;
+            const float kqmax_new_j = fmaxf(sink, KQ_max[j]);
+            const float KQ_max_scale = expf(KQ_max[j] - kqmax_new_j);
+            KQ_max[j] = kqmax_new_j;
 
-            kqsum[j] = kqsum[j]*KQ_max_scale + (threadIdx.x == 0 ? expf(sink - kqmax[j]) : 0.0f);
+            KQ_sum[j] = KQ_sum[j]*KQ_max_scale + (threadIdx.x == 0 ? expf(sink - KQ_max[j]) : 0.0f);
 
 #ifdef FAST_FP16_AVAILABLE
             const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale, KQ_max_scale);
@@ -393,10 +383,22 @@ static __global__ void flash_attn_ext_vec(
         }
     }
 
+    __shared__ float KQ_max_shared[ncols][WARP_SIZE];
+    __shared__ float KQ_sum_shared[ncols][WARP_SIZE];
+#pragma unroll
+    for (int j = 0; j < ncols; ++j) {
+        if (threadIdx.y == 0) {
+            KQ_max_shared[j][threadIdx.x] = -FLT_MAX/2.0f;
+            KQ_sum_shared[j][threadIdx.x] = 0.0f;
+        }
+    }
+
+    __syncthreads();
+
 #pragma unroll
     for (int j = 0; j < ncols; ++j) {
         if (threadIdx.x == 0) {
-            kqmax_shared[j][threadIdx.y] = kqmax[j];
+            KQ_max_shared[j][threadIdx.y] = KQ_max[j];
         }
     }
     __syncthreads();
@@ -407,13 +409,14 @@ static __global__ void flash_attn_ext_vec(
             break;
         }
 
-        float kqmax_new = kqmax_shared[j_VKQ][threadIdx.x];
+        float kqmax_new = KQ_max_shared[j_VKQ][threadIdx.x];
         kqmax_new = warp_reduce_max(kqmax_new);
-        const float kqmax_scale = expf(kqmax[j_VKQ] - kqmax_new);
-        kqmax[j_VKQ] = kqmax_new;
+        const float kqmax_scale = expf(KQ_max[j_VKQ] - kqmax_new);
+        KQ_max[j_VKQ] = kqmax_new;
 
 #ifdef FAST_FP16_AVAILABLE
-        half2 * VKQ_tmp = (half2 *) KQ + threadIdx.y*(V_cols_per_iter*D/2) + (threadIdx.x / nthreads_V)*(D/2);
+        half2 * VKQ_tmp = (half2 *) KQ + threadIdx.y*(V_cols_per_iter*D/2)
+            + (nthreads_V == WARP_SIZE ? 0 : threadIdx.x / nthreads_V)*(D/2);
 
         const half2 kqmax_scale_h2 = make_half2(kqmax_scale, kqmax_scale);
 #pragma unroll
@@ -422,12 +425,13 @@ static __global__ void flash_attn_ext_vec(
         }
 #pragma unroll
         for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V*V_rows_per_thread/2) {
-            const int i_VKQ = i_VKQ_0 + (threadIdx.x % nthreads_V)*(V_rows_per_thread/2);
+            const int i_VKQ = i_VKQ_0 + (nthreads_V == WARP_SIZE ? threadIdx.x : threadIdx.x % nthreads_V)*(V_rows_per_thread/2);
 
             ggml_cuda_memcpy_1<V_rows_per_thread*sizeof(half)>(VKQ_tmp + i_VKQ, &VKQ[j_VKQ][i_VKQ_0/nthreads_V]);
         }
 #else
-        float2 * VKQ_tmp = (float2 *) KQ + threadIdx.y*(V_cols_per_iter*D/2) + (threadIdx.x / nthreads_V)*(D/2);
+        float2 * VKQ_tmp = (float2 *) KQ + threadIdx.y*(V_cols_per_iter*D/2)
+            + (nthreads_V == WARP_SIZE ? 0 : threadIdx.x / nthreads_V)*(D/2);
 
 #pragma unroll
         for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V) {
@@ -436,24 +440,24 @@ static __global__ void flash_attn_ext_vec(
         }
 #pragma unroll
         for (int i_VKQ_0 = 0; i_VKQ_0 < D/2; i_VKQ_0 += nthreads_V*V_rows_per_thread/2) {
-            const int i_VKQ = i_VKQ_0 + (threadIdx.x % nthreads_V)*(V_rows_per_thread/2);
+            const int i_VKQ = i_VKQ_0 + (nthreads_V == WARP_SIZE ? threadIdx.x : threadIdx.x % nthreads_V)*(V_rows_per_thread/2);
 
             ggml_cuda_memcpy_1<V_rows_per_thread/2*sizeof(float)>(VKQ_tmp + i_VKQ,                       &VKQ[j_VKQ][i_VKQ_0/nthreads_V]);
             ggml_cuda_memcpy_1<V_rows_per_thread/2*sizeof(float)>(VKQ_tmp + i_VKQ + V_rows_per_thread/4, &VKQ[j_VKQ][i_VKQ_0/nthreads_V + V_rows_per_thread/4]);
         }
 #endif // FAST_FP16_AVAILABLE
 
-        kqsum[j_VKQ] *= kqmax_scale;
-        kqsum[j_VKQ] = warp_reduce_sum(kqsum[j_VKQ]);
+        KQ_sum[j_VKQ] *= kqmax_scale;
+        KQ_sum[j_VKQ] = warp_reduce_sum(KQ_sum[j_VKQ]);
         if (threadIdx.x == 0) {
-            kqsum_shared[j_VKQ][threadIdx.y] = kqsum[j_VKQ];
+            KQ_sum_shared[j_VKQ][threadIdx.y] = KQ_sum[j_VKQ];
         }
 
         __syncthreads();
 
         if (nthreads <= D || tid < D) {
-            kqsum[j_VKQ] = kqsum_shared[j_VKQ][threadIdx.x];
-            kqsum[j_VKQ] = warp_reduce_sum(kqsum[j_VKQ]);
+            KQ_sum[j_VKQ] = KQ_sum_shared[j_VKQ][threadIdx.x];
+            KQ_sum[j_VKQ] = warp_reduce_sum(KQ_sum[j_VKQ]);
 
 #pragma unroll
             for (int i0 = 0; i0 < D; i0 += nthreads) {
@@ -466,7 +470,7 @@ static __global__ void flash_attn_ext_vec(
                     }
                 }
                 if (gridDim.y == 1) {
-                    dst_val /= kqsum[j_VKQ];
+                    dst_val /= KQ_sum[j_VKQ];
                 }
                 dst[(((sequence*ne01 + ic0 + j_VKQ)*ne02 + head)*gridDim.y + blockIdx.y)*D + i0 + tid] = dst_val;
             }
@@ -479,7 +483,7 @@ static __global__ void flash_attn_ext_vec(
     }
 
     if (gridDim.y != 1 && tid < ncols && (ncols <= 2 || ic0 + tid < ne01)) {
-        dst_meta[((sequence*ne01 + ic0 + tid)*ne02 + head)*gridDim.y + blockIdx.y] = make_float2(kqmax[tid], kqsum[tid]);
+        dst_meta[((sequence*ne01 + ic0 + tid)*ne02 + head)*gridDim.y + blockIdx.y] = make_float2(KQ_max[tid], KQ_sum[tid]);
     }
 #else
     GGML_UNUSED_VARS(Q, K, V, mask, sinks, KV_max, dst, dst_meta, scale,
