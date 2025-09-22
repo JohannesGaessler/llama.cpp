@@ -271,14 +271,28 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
 
     // If Turing tensor cores available, use them except for some cases with batch size 1:
     if (turing_mma_available(cc)) {
-        const bool gqa_opt_applies = gqa_ratio % 2 == 0 && mask; // The mma-based kernels have GQA-specific optimizations
-        const bool mma_needs_data_conversion = K->type != GGML_TYPE_F16 || V->type != GGML_TYPE_F16;
-        const bool mma_faster_for_rtx4000 = Q->ne[3] > 1 || (gqa_ratio > 4 && K->ne[1] >= 8192);
-        const bool mma_faster_for_bs1 = gqa_opt_applies && (cc < GGML_CUDA_CC_ADA_LOVELACE || mma_faster_for_rtx4000);
-        if (can_use_vector_kernel && ((Q->ne[1] == 1 && !mma_faster_for_bs1) || (Q->ne[1] <= 2 && mma_needs_data_conversion))) {
-            return BEST_FATTN_KERNEL_VEC;
+        best_fattn_kernel best = BEST_FATTN_KERNEL_MMA_F16;
+
+        if (K->type == GGML_TYPE_F16 && V->type == GGML_TYPE_F16) {
+            if (cc >= GGML_CUDA_CC_ADA_LOVELACE && Q->ne[1] == 1 && Q->ne[3] == 1 && !(gqa_ratio > 4 && K->ne[1] >= 8192)) {
+                best = BEST_FATTN_KERNEL_VEC;
+            }
+        } else {
+            if (cc >= GGML_CUDA_CC_ADA_LOVELACE) {
+                if (Q->ne[1] <= 2) {
+                    best = BEST_FATTN_KERNEL_VEC;
+                }
+            } else {
+                if (Q->ne[1] == 1) {
+                    best = BEST_FATTN_KERNEL_VEC;
+                }
+            }
         }
-        return BEST_FATTN_KERNEL_MMA_F16;
+        if ((gqa_ratio % 2 != 0 || !mask) && Q->ne[1] == 1) {
+            best = BEST_FATTN_KERNEL_VEC; // GQA-specific optimizations in the mma kernel do not apply.
+        }
+
+        return best;
     }
 
     // Use kernels specialized for small batch sizes if possible:
