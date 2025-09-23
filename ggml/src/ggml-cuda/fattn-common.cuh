@@ -933,7 +933,7 @@ void launch_fattn(
             const int efficiency_percent = 100 * nblocks_total / (nwaves*blocks_per_wave);
 
             // Stop trying configurations with more waves if we already have good efficiency to avoid excessive overhead.
-            if (efficiency_percent_best >= 90 && nwaves > nwaves_best) {
+            if (efficiency_percent_best >= 95 && nwaves > nwaves_best) {
                 break;
             }
 
