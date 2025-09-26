@@ -270,7 +270,7 @@ llama_context::llama_context(
         }
     }
 
-    if (!hparams.vocab_only) {
+    if (!hparams.vocab_only && !hparams.no_alloc) {
         llama_memory_context_ptr mctx;
         if (memory) {
             LLAMA_LOG_DEBUG("%s: reserving full memory module\n", __func__);
@@ -2032,8 +2032,10 @@ std::map<ggml_backend_buffer_type_t, llama_memory_breakdown_data> llama_context:
     for (const auto & buft_size : model.memory_breakdown()) {
         ret[buft_size.first].model += buft_size.second;
     }
-    for (const auto & buft_size : memory->memory_breakdown()) {
-        ret[buft_size.first].context += buft_size.second;
+    if (memory) {
+        for (const auto & buft_size : memory->memory_breakdown()) {
+            ret[buft_size.first].context += buft_size.second;
+        }
     }
     for (const auto & backend_ptr : backends) {
         ggml_backend_t backend = backend_ptr.get();
