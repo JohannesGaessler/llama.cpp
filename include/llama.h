@@ -297,6 +297,7 @@ extern "C" {
         bool check_tensors;   // validate model tensor data
         bool use_extra_bufts; // use extra buffer types (used for weight repacking)
         bool no_host;         // bypass host buffer allowing extra buffers to be used
+        bool no_alloc;        // only load metadata and simulate memory allocations
     };
 
     // NOTE: changing the default values of parameters marked as [EXPERIMENTAL] may cause crashes or incorrect results in certain configurations
@@ -449,6 +450,14 @@ extern "C" {
 
     // Frees all allocated memory
     LLAMA_API void llama_free(struct llama_context * ctx);
+
+    LLAMA_API bool llama_params_fit_to_free_memory(
+                                       const char   * path_model,
+                        struct llama_model_params   * mparams,
+                        struct llama_context_params * cparams,
+                                              float * tensor_split,
+            struct llama_model_tensor_buft_override * tensor_buft_overrides,
+                                enum ggml_log_level   log_level);
 
     LLAMA_API int64_t llama_time_us(void);
 
@@ -1332,7 +1341,8 @@ extern "C" {
 
     // Set callback for all future logging events.
     // If this is not called, or NULL is supplied, everything is output on stderr.
-    LLAMA_API void llama_log_set(ggml_log_callback log_callback, void * user_data);
+    LLAMA_API void llama_log_get(ggml_log_callback * log_callback, void ** user_data);
+    LLAMA_API void llama_log_set(ggml_log_callback   log_callback, void *  user_data);
 
     //
     // Performance utils
