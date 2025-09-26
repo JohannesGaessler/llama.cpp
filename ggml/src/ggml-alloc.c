@@ -1110,7 +1110,8 @@ static bool alloc_tensor_range(struct ggml_context * ctx,
     return true;
 }
 
-ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_context * ctx, ggml_backend_buffer_type_t buft) {
+static ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft_impl(
+        struct ggml_context * ctx, ggml_backend_buffer_type_t buft, size_t * nbytes_total, bool no_alloc) {
     GGML_ASSERT(ggml_get_no_alloc(ctx) == true);
 
     size_t alignment = ggml_backend_buft_get_alignment(buft);
@@ -1118,6 +1119,7 @@ ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_conte
 
     ggml_backend_buffer_t * buffers = NULL;
     size_t n_buffers = 0;
+    *nbytes_total = 0;
 
     size_t cur_buf_size = 0;
     struct ggml_tensor * first = ggml_get_first_tensor(ctx);
@@ -1129,10 +1131,13 @@ ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_conte
 
         if (cur_buf_size > 0 && (cur_buf_size + this_size) > max_size) {
             // allocate tensors in the current buffer
-            if (!alloc_tensor_range(ctx, first, t, buft, cur_buf_size, &buffers, &n_buffers)) {
-                return NULL;
+            if (!no_alloc) {
+                if (!alloc_tensor_range(ctx, first, t, buft, cur_buf_size, &buffers, &n_buffers)) {
+                    return NULL;
+                }
             }
             first = t;
+            *nbytes_total += cur_buf_size;
             cur_buf_size = this_size;
         } else {
             cur_buf_size += this_size;
@@ -1141,15 +1146,23 @@ ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_conte
 
     // allocate remaining tensors
     if (cur_buf_size > 0) {
-        if (!alloc_tensor_range(ctx, first, NULL, buft, cur_buf_size, &buffers, &n_buffers)) {
-            return NULL;
+        *nbytes_total += cur_buf_size;
+        if (!no_alloc) {
+            if (!alloc_tensor_range(ctx, first, NULL, buft, cur_buf_size, &buffers, &n_buffers)) {
+                return NULL;
+            }
         }
+    }
+
+    if (no_alloc) {
+        return NULL;
     }
 
     if (n_buffers == 0) {
 #ifndef NDEBUG
         GGML_LOG_DEBUG("%s: all tensors in the context are already allocated\n", __func__);
 #endif
+        GGML_ASSERT(!buffers);
         return NULL;
     }
 
@@ -1159,8 +1172,22 @@ ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_conte
     } else {
         buffer = ggml_backend_multi_buffer_alloc_buffer(buffers, n_buffers);
     }
-    free(buffers);
+    if (buffers) {
+        free(buffers); // can be NULL if context is empty or no_alloc
+    }
     return buffer;
+}
+
+size_t ggml_backend_alloc_ctx_tensors_from_buft_size(struct ggml_context * ctx, ggml_backend_buffer_type_t buft) {
+    size_t nbytes_total = 0;
+    ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft_impl(ctx, buft, &nbytes_total, /*no_alloc=*/ true);
+    GGML_ASSERT(!buf);
+    return nbytes_total;
+}
+
+ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_context * ctx, ggml_backend_buffer_type_t buft) {
+    size_t nbytes_total = 0;
+    return ggml_backend_alloc_ctx_tensors_from_buft_impl(ctx, buft, &nbytes_total, /*no_alloc =*/ false);
 }
 
 ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors(struct ggml_context * ctx, ggml_backend_t backend) {

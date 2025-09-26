@@ -1,6 +1,9 @@
+#include "llama.h"
+
 #include "llama-impl.h"
 
 #include "llama-chat.h"
+#include "llama-context.h"
 #include "llama-mmap.h"
 #include "llama-vocab.h"
 #include "llama-model-loader.h"
@@ -35,6 +38,75 @@ const char * llama_flash_attn_type_name(enum llama_flash_attn_type flash_attn_ty
             return "enabled";
     }
     GGML_ABORT("fatal error");
+}
+
+struct llama_device_memory_data {
+    size_t total;
+    size_t free;
+
+    llama_memory_breakdown_data mb;
+};
+
+static std::map<ggml_backend_dev_t, llama_device_memory_data> llama_get_device_memory_data(
+        const char * path_model, const llama_model_params & mparams, const llama_context_params & cparams) {
+    llama_model_params mparams_copy = mparams;
+    mparams_copy.no_alloc = true;
+    mparams_copy.use_mmap = false;
+
+    llama_model * model = llama_model_load_from_file(path_model, mparams_copy);
+    if (model == nullptr) {
+        throw std::runtime_error("failed to load model");
+    }
+
+    llama_context * ctx = llama_init_from_model(model, cparams);
+    llama_memory_breakdown_print(ctx);
+    if (ctx == nullptr) {
+        llama_model_free(model);
+        throw std::runtime_error("failed to create llama_context from model");
+    }
+
+    std::map<ggml_backend_buffer_type_t, llama_memory_breakdown_data> memory_breakdown = ctx->memory_breakdown();
+    std::map<ggml_backend_dev_t,         llama_device_memory_data>    ret;
+
+    for (const auto & buft_mb : memory_breakdown) {
+        ggml_backend_buffer_type_t          buft = buft_mb.first;
+        const llama_memory_breakdown_data & mb   = buft_mb.second;
+
+        ggml_backend_dev_t dev = ggml_backend_buft_get_device(buft);
+        if (!dev) {
+            continue;
+        }
+        ret[dev].mb.model   += mb.model;
+        ret[dev].mb.context += mb.context;
+        ret[dev].mb.compute += mb.compute;
+    }
+    for (auto & dev_dmd : ret) {
+        ggml_backend_dev_memory(dev_dmd.first, &dev_dmd.second.free, &dev_dmd.second.total);
+    }
+    return ret;
+}
+
+bool llama_fit_params_to_free_memory(const char * path_model, struct llama_model_params * mparams, struct llama_context_params * cparams) {
+    llama_model_params   mparams_cur = *mparams;
+    llama_context_params cparams_cur = *cparams;
+    std::map<ggml_backend_dev_t, llama_device_memory_data> device_memory_data = llama_get_device_memory_data(path_model, mparams_cur, cparams_cur);
+
+    fprintf(stderr, "%s: ===================================================\n", __func__);
+    fprintf(stderr, "%s: \n", __func__);
+    for (const auto & dev_dmd : device_memory_data) {
+        ggml_backend_dev_t               dev = dev_dmd.first;
+        const llama_device_memory_data & dmd = dev_dmd.second;
+
+        constexpr size_t MB = 1024*1024;
+        fprintf(stderr, "%s: name=%s free=%zu total=%zu model=%zu context=%zu compute=%zu\n",
+            __func__, ggml_backend_dev_name(dev), dmd.free/MB, dmd.total/MB, dmd.mb.model/MB, dmd.mb.context/MB, dmd.mb.compute/MB);
+    }
+    fprintf(stderr, "%s: \n", __func__);
+    fprintf(stderr, "%s: ===================================================\n", __func__);
+
+    *mparams = mparams_cur;
+    *cparams = cparams_cur;
+    return true;
 }
 
 struct llama_sampler_chain_params llama_sampler_chain_default_params() {
@@ -108,11 +180,12 @@ static int llama_model_load(const std::string & fname, std::vector<std::string> 
     model.t_start_us = tm.t_start_us;
 
     try {
-        llama_model_loader ml(fname, splits, params.use_mmap, params.check_tensors, params.kv_overrides, params.tensor_buft_overrides);
+        llama_model_loader ml(fname, splits, params.use_mmap, params.check_tensors, params.no_alloc, params.kv_overrides, params.tensor_buft_overrides);
 
         ml.print_info();
 
         model.hparams.vocab_only = params.vocab_only;
+        model.hparams.no_alloc   = params.no_alloc;
 
         try {
             model.load_arch(ml);

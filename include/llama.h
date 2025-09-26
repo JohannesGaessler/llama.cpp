@@ -297,6 +297,7 @@ extern "C" {
         bool check_tensors;   // validate model tensor data
         bool use_extra_bufts; // use extra buffer types (used for weight repacking)
         bool no_host;         // bypass host buffer allowing extra buffers to be used
+        bool no_alloc;        // only load metadata and simulate memory allocations
     };
 
     // NOTE: changing the default values of parameters marked as [EXPERIMENTAL] may cause crashes or incorrect results in certain configurations
@@ -449,6 +450,8 @@ extern "C" {
 
     // Frees all allocated memory
     LLAMA_API void llama_free(struct llama_context * ctx);
+
+    LLAMA_API bool llama_fit_params_to_free_memory(const char * path_model, struct llama_model_params * mparams, struct llama_context_params * cparams);
 
     LLAMA_API int64_t llama_time_us(void);
 
