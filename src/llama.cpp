@@ -1,6 +1,9 @@
+#include "llama.h"
+
 #include "llama-impl.h"
 
 #include "llama-chat.h"
+#include "llama-context.h"
 #include "llama-mmap.h"
 #include "llama-vocab.h"
 #include "llama-model-loader.h"
@@ -11,11 +14,14 @@
 #include "ggml-backend.h"
 
 #include <algorithm>
+#include <cinttypes>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <iomanip>
+#include <sstream>
 
 #if defined(_MSC_VER)
 #pragma warning(disable: 4244 4267) // possible loss of data
@@ -35,6 +41,282 @@ const char * llama_flash_attn_type_name(enum llama_flash_attn_type flash_attn_ty
             return "enabled";
     }
     GGML_ABORT("fatal error");
+}
+
+struct llama_device_memory_data {
+    size_t total;
+    size_t free;
+
+    llama_memory_breakdown_data mb;
+};
+
+static std::vector<std::pair<ggml_backend_dev_t, llama_device_memory_data>> llama_get_device_memory_data(
+        const char * path_model, const llama_model_params * mparams, const llama_context_params * cparams,
+        uint32_t & n_ctx_train, uint32_t & n_expert, const ggml_log_level log_level) {
+    struct user_data_t {
+        struct {
+            ggml_log_callback callback;
+            void * user_data;
+        } original_logger;
+        ggml_log_level level;
+    };
+    user_data_t ud;
+    llama_log_get(&ud.original_logger.callback, &ud.original_logger.user_data);
+    ud.level = log_level;
+
+    llama_log_set([](ggml_log_level level, const char * text, void * user_data) {
+        const user_data_t * ud = (const user_data_t *) user_data;
+        if (level >= ud->level) {
+            ud->original_logger.callback(level, text, ud->original_logger.user_data);
+        }
+    }, &ud);
+
+    llama_model_params mparams_copy = *mparams;
+    mparams_copy.no_alloc = true;
+    mparams_copy.use_mmap = false;
+
+    llama_model * model = llama_model_load_from_file(path_model, mparams_copy);
+    if (model == nullptr) {
+        throw std::runtime_error("failed to load model");
+    }
+
+    llama_context * ctx = llama_init_from_model(model, *cparams);
+    llama_memory_breakdown_print(ctx);
+    if (ctx == nullptr) {
+        llama_model_free(model);
+        throw std::runtime_error("failed to create llama_context from model");
+    }
+
+    std::vector<std::pair<ggml_backend_dev_t, llama_device_memory_data>> ret;
+    for (ggml_backend_dev_t dev : model->devices) {
+        llama_device_memory_data data; // FIXME
+        ret.push_back(std::make_pair(dev, data));
+    }
+
+    std::map<ggml_backend_buffer_type_t, llama_memory_breakdown_data> memory_breakdown = ctx->memory_breakdown();
+
+    for (const auto & buft_mb : memory_breakdown) {
+        ggml_backend_buffer_type_t          buft = buft_mb.first;
+        const llama_memory_breakdown_data & mb   = buft_mb.second;
+
+        if (ggml_backend_buft_is_host(buft)) {
+            continue;
+        }
+
+        ggml_backend_dev_t dev = ggml_backend_buft_get_device(buft);
+        if (!dev) {
+            continue;
+        }
+        for (auto & dev_dmd : ret) {
+            if (dev_dmd.first == dev) {
+                dev_dmd.second.mb.model   += mb.model;
+                dev_dmd.second.mb.context += mb.context;
+                dev_dmd.second.mb.compute += mb.compute;
+            }
+        }
+    }
+    for (auto & dev_dmd : ret) {
+        ggml_backend_dev_memory(dev_dmd.first, &dev_dmd.second.free, &dev_dmd.second.total);
+    }
+
+    n_ctx_train = model->hparams.n_ctx_train;
+    n_expert    = model->hparams.n_expert;
+
+    llama_free(ctx);
+    llama_model_free(model);
+    llama_log_set(ud.original_logger.callback, ud.original_logger.user_data);
+    return ret;
+}
+
+bool llama_fit_params_to_free_memory(
+        const char * path_model, struct llama_model_params * mparams, struct llama_context_params * cparams,
+        float * tensor_split, enum ggml_log_level log_level) {
+    constexpr int64_t MiB = 1024*1024;
+    constexpr int64_t target_margin = 1024 * MiB;
+    constexpr uint32_t n_ctx_min = 4096;
+
+    typedef std::vector<std::pair<ggml_backend_dev_t, llama_device_memory_data>> dmd_t;
+
+    const llama_model_params default_mparams = llama_model_default_params();
+
+    uint32_t n_ctx_train = 0;
+    uint32_t n_expert    = 0;
+
+    dmd_t device_memory_data = llama_get_device_memory_data(path_model, mparams, cparams, n_ctx_train, n_expert, log_level);
+
+    size_t sum_total = 0;
+    size_t sum_free = 0;
+    llama_memory_breakdown_data sum_used_mb;
+    int64_t min_margin = INT64_MAX;
+
+    LLAMA_LOG_INFO("%s: memory breakdown with initial parameters [MiB]:\n", __func__);
+    for (const auto & dev_dmd : device_memory_data) {
+        ggml_backend_dev_t               dev = dev_dmd.first;
+        const llama_device_memory_data & dmd = dev_dmd.second;
+
+        sum_total           += dmd.total;
+        sum_free            += dmd.free;
+        sum_used_mb.model   += dmd.mb.model;
+        sum_used_mb.context += dmd.mb.context;
+        sum_used_mb.compute += dmd.mb.compute;
+
+        const int64_t free_after_alloc = int64_t(dmd.free) - int64_t(dmd.mb.model + dmd.mb.context + dmd.mb.compute);
+        min_margin = std::min(min_margin, free_after_alloc);
+
+        LLAMA_LOG_INFO("%s:   - %s: total=%zu free=%zu model=%zu context=%zu compute=%zu free_after_alloc=%" PRId64 "\n",
+            __func__, ggml_backend_dev_name(dev), dmd.total/MiB, dmd.free/MiB,
+            dmd.mb.model/MiB, dmd.mb.context/MiB, dmd.mb.compute/MiB, free_after_alloc/MiB);
+    }
+    const size_t sum_used = sum_used_mb.model + sum_used_mb.context + sum_used_mb.compute;
+    if (min_margin >= target_margin) {
+        LLAMA_LOG_INFO("%s: allocation projected to use a total of %zu MiB, "
+            "will leave at least %" PRId64 " >= %" PRId64 " MiB of free memory on all devices, no changes needed\n",
+            __func__, sum_used/MiB, min_margin/MiB, target_margin/MiB);
+        return true;
+    }
+
+    const int64_t sum_margin = int64_t(device_memory_data.size()) * target_margin;
+    int64_t global_deficit = (int64_t(sum_used) + sum_margin) - int64_t(sum_free);
+    if (global_deficit > 0) {
+        LLAMA_LOG_INFO("%s: allocation projected to use too much memory to fulfill margin of %" PRId64 " MiB on all devices, "
+            "need to reduce memory use by %" PRId64 " MiB\n",
+            __func__, target_margin/MiB, global_deficit/MiB);
+
+        if (cparams->n_ctx == 0) {
+            if (n_ctx_train > n_ctx_min) {
+                const size_t bytes_per_ctx = sum_used_mb.context / n_ctx_train;
+                const size_t ctx_reduction = std::min(
+                    (size_t(global_deficit) + bytes_per_ctx - 1) / bytes_per_ctx, size_t(n_ctx_train - n_ctx_min));
+                cparams->n_ctx = n_ctx_train - ctx_reduction;
+                const size_t deficit_reduction = ctx_reduction * bytes_per_ctx;
+                LLAMA_LOG_INFO("%s: context size reduced from %" PRIu32 " to %" PRIu32 " -> need %zu MiB less memory\n",
+                    __func__, n_ctx_train, cparams->n_ctx, deficit_reduction/MiB);
+                for (auto & dev_dmd : device_memory_data) {
+                    llama_device_memory_data & dmd = dev_dmd.second;
+                    dmd.mb.context -= deficit_reduction * sum_used_mb.context/dmd.mb.context;
+                }
+            } else {
+                LLAMA_LOG_INFO("%s: default model context size is %" PRIu32 " which is <= the min. context size of %" PRIu32 " -> no change\n",
+                    __func__, n_ctx_train, n_ctx_min);
+            }
+        } else {
+            LLAMA_LOG_INFO("%s: context size set by user to %" PRIu32 " -> no change\n", __func__, cparams->n_ctx);
+        }
+    }
+
+    if (device_memory_data.size() == 1 && global_deficit <= 0) {
+        LLAMA_LOG_INFO("%s: model can be fit on a single device without moving weights to system memory -> we're done\n", __func__);
+        return true;
+    }
+
+    bool tensor_split_set_by_user = false;
+    if (mparams->tensor_split) {
+        for (size_t i = 0; i < device_memory_data.size(); i++) {
+            if (mparams->tensor_split[i] != 0.0f) {
+                tensor_split_set_by_user = true;
+                break;
+            }
+        }
+    }
+    if (!tensor_split_set_by_user && tensor_split && device_memory_data.size() > 1 && global_deficit <= 0) {
+        const double mean_total = double(sum_total) / double(device_memory_data.size());
+        const double global_used_per_free = double(sum_used_mb.model + sum_used_mb.context + sum_used_mb.compute)
+            / (double(sum_free) - double(device_memory_data.size()*target_margin));
+        std::stringstream ss;
+        for (size_t i = 0; i < device_memory_data.size(); i++) {
+            const llama_device_memory_data & dmd = device_memory_data[i].second;
+            const size_t used = dmd.mb.model + dmd.mb.context + dmd.mb.compute;
+            tensor_split[i] = (dmd.total / mean_total)
+                * ((double(used)/(double(dmd.free) - double(target_margin))) / global_used_per_free);
+            if (i >= 1) {
+                ss << ", ";
+            }
+            ss << std::fixed << std::setprecision(2) << tensor_split[i];
+        }
+        mparams->tensor_split = tensor_split;
+        const std::string str = ss.str();
+        LLAMA_LOG_INFO("%s: model fits across GPUs by setting tensor split to [%s] -> we're done\n", __func__, str.c_str());
+        return true;
+    }
+
+    if (mparams->n_gpu_layers != default_mparams.n_gpu_layers) {
+        LLAMA_LOG_INFO("%s: n_gpu_layers set by user to %" PRId32 " -> no change to weight allocation\n", __func__, mparams->n_gpu_layers);
+        return false;
+    }
+    if (mparams->tensor_buft_overrides != default_mparams.tensor_buft_overrides) {
+        LLAMA_LOG_INFO("%s: tensor_buft_overrides set by user -> no change to weight allocation\n", __func__);
+        return false;
+    }
+    if (device_memory_data.size() > 1) {
+        if (tensor_split_set_by_user) {
+            LLAMA_LOG_INFO("%s: tensor_split already set by user\n", __func__);
+            return false;
+        }
+        if (!tensor_split) {
+            LLAMA_LOG_INFO("%s: did not provide buffer to automatically set tensor_split\n", __func__);
+            return false;
+        }
+    }
+    if (device_memory_data.size() > 1 && mparams->split_mode == LLAMA_SPLIT_MODE_ROW) {
+        LLAMA_LOG_INFO("%s: changing weight allocation for LLAMA_SPLIT_MODE_ROW not implemented -> abort\n", __func__);
+        return false;
+    }
+
+    auto get_memory_for_const_layer = [&](const int layers_per_device) -> std::vector<size_t> {
+        llama_model_params mparams_copy = *mparams;
+        mparams_copy.n_gpu_layers = device_memory_data.size() * layers_per_device;
+        if (device_memory_data.size() > 1) {
+            for (size_t i = 0; i < device_memory_data.size(); i++) {
+                tensor_split[i] = 1.0f;
+            }
+        }
+        mparams_copy.tensor_split = tensor_split;
+        dmd_t dmd_1_layer = llama_get_device_memory_data(path_model, &mparams_copy, cparams, n_ctx_train, n_expert, log_level);
+
+        std::vector<size_t> ret;
+        ret.reserve(device_memory_data.size());
+        for (const auto & dmd : dmd_1_layer) {
+            const llama_memory_breakdown_data & mb = dmd.second.mb;
+            ret.push_back(mb.model + mb.context + mb.compute);
+        }
+        return ret;
+    };
+    const std::vector<size_t> size_1_layer  = get_memory_for_const_layer(1);
+    const std::vector<size_t> size_2_layers = get_memory_for_const_layer(2);
+
+    std::vector<size_t> size_base;
+    std::vector<size_t> size_per_layer;
+    size_base.reserve(size_1_layer.size());
+    size_per_layer.reserve(size_1_layer.size());
+    for (size_t i = 0; i < size_1_layer.size(); i++) {
+        const size_t per_layer = size_2_layers[i] - size_1_layer[i];
+        size_base.push_back(size_1_layer[i] - per_layer);
+        size_per_layer.push_back(per_layer);
+    }
+
+    mparams->n_gpu_layers = 0;
+    std::vector<int32_t> ngl_per_device;
+    ngl_per_device.reserve(device_memory_data.size());
+    for (size_t i = 0; i < device_memory_data.size(); i++) {
+        const int32_t ngl = (device_memory_data[i].second.free - target_margin - size_base[i]) / size_per_layer[i];
+        mparams->n_gpu_layers += ngl;
+        ngl_per_device.push_back(ngl);
+    }
+    if (device_memory_data.size() == 1) {
+        const size_t projected_use = size_base[0] + size_per_layer[0]*ngl_per_device[0];
+        const size_t projected_margin = device_memory_data[0].second.free - projected_use;
+        LLAMA_LOG_INFO("%s: set n_gpu_layers to %" PRId32 ", projected to use %zu MiB with %zu MiB free\n",
+            __func__, mparams->n_gpu_layers, projected_use/MiB, projected_margin/MiB);
+        return true;
+    }
+    LLAMA_LOG_INFO("%s: set n_gpu_layers to %" PRId32 ", projected memory use:\n", __func__, mparams->n_gpu_layers);
+    for (size_t i = 0; i < device_memory_data.size(); i++) {
+        const size_t projected_use = size_base[i] + size_per_layer[i]*ngl_per_device[i];
+        const size_t projected_margin = device_memory_data[i].second.free - projected_use;
+        LLAMA_LOG_INFO("%s:   - %s: %d layers, %zu MiB used, %zu MiB free\n",
+            __func__, ggml_backend_dev_name(device_memory_data[i].first), ngl_per_device[i], projected_use/MiB, projected_margin/MiB);
+    }
+    return true;
 }
 
 struct llama_sampler_chain_params llama_sampler_chain_default_params() {
@@ -108,11 +390,12 @@ static int llama_model_load(const std::string & fname, std::vector<std::string> 
     model.t_start_us = tm.t_start_us;
 
     try {
-        llama_model_loader ml(fname, splits, params.use_mmap, params.check_tensors, params.kv_overrides, params.tensor_buft_overrides);
+        llama_model_loader ml(fname, splits, params.use_mmap, params.check_tensors, params.no_alloc, params.kv_overrides, params.tensor_buft_overrides);
 
         ml.print_info();
 
         model.hparams.vocab_only = params.vocab_only;
+        model.hparams.no_alloc   = params.no_alloc;
 
         try {
             model.load_arch(ml);

@@ -6075,9 +6075,11 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
 
         ggml_backend_buffer_t buf = nullptr;
         if (ml.use_mmap && use_mmap_buffer && buffer_from_host_ptr_supported && is_default_buft) {
+            GGML_ASSERT(!ml.no_alloc);
             for (uint32_t idx = 0; idx < ml.files.size(); idx++) {
                 // only the mmap region containing the tensors in the model is mapped to the backend buffer
-                // this is important for metal with apple silicon: if the entire model could be mapped to a metal buffer, then we could just use metal for all layers
+                // this is important for metal with apple silicon: if the entire model could be mapped to a metal buffer,
+                //     then we could just use metal for all layers
                 // this allows using partial offloading when the model size exceeds the metal buffer size, but not the RAM size
                 void * addr = nullptr;
                 size_t first, last; // NOLINT
@@ -6092,9 +6094,15 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                 }
                 buf_map.emplace(idx, buf);
             }
-        }
-        else {
-            buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
+        } else {
+            if (ml.no_alloc) {
+                buf = ggml_backend_buft_alloc_buffer(buft, /*size =*/ 0); // dummy buffer
+                for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != nullptr; t = ggml_get_next_tensor(ctx, t)) {
+                    t->buffer = buf; // set dummy buffer for weights so that the backend scheduler won't try to allocate them
+                }
+            } else {
+                buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft); // real buffer
+            }
             if (buf == nullptr) {
                 throw std::runtime_error(format("unable to allocate %s buffer", ggml_backend_buft_name(buft)));
             }
@@ -6147,6 +6155,10 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
         }
     }
 
+    if (ml.no_alloc) {
+        return true;
+    }
+
     // load tensor data
     for (auto & it : ctx_buf_maps) {
         ggml_context * ctx = it.first;
@@ -6192,8 +6204,17 @@ size_t llama_model::n_devices() const {
 std::map<ggml_backend_buffer_type_t, size_t> llama_model::memory_breakdown() const {
     std::map<ggml_backend_buffer_type_t, size_t> ret;
     for (const auto & ctx_buf : pimpl->ctxs_bufs) {
-        ggml_backend_buffer_t buf = ctx_buf.second.get();
-        ret[ggml_backend_buffer_get_type(buf)] += ggml_backend_buffer_get_size(buf);
+        ggml_context               * ctx  = ctx_buf.first.get();
+        ggml_backend_buffer_t        buf  = ctx_buf.second.get();
+        ggml_backend_buffer_type_t   buft = ggml_backend_buffer_get_type(buf);
+
+        if (hparams.no_alloc) {
+            GGML_ASSERT(ggml_backend_buffer_get_base(buf) == nullptr);
+            ret[buft] += ggml_backend_alloc_ctx_tensors_from_buft_size(ctx, buft);
+        } else {
+            GGML_ASSERT(ggml_backend_buffer_get_base(buf) != nullptr);
+            ret[buft] += ggml_backend_buffer_get_size(buf);
+        }
     }
     return ret;
 }
@@ -19940,6 +19961,7 @@ llama_model_params llama_model_default_params() {
         /*.check_tensors               =*/ false,
         /*.use_extra_bufts             =*/ true,
         /*.no_host                     =*/ false,
+        /*.no_alloc                    =*/ false,
     };
 
     return result;
