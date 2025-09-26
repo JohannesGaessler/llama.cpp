@@ -471,6 +471,7 @@ llama_model_loader::llama_model_loader(
         std::vector<std::string> & splits,
         bool use_mmap,
         bool check_tensors,
+        bool no_alloc,
         const llama_model_kv_override * param_overrides_p,
         const llama_model_tensor_buft_override * param_tensor_buft_overrides_p) {
     int trace = 0;
