@@ -71,6 +71,7 @@ struct llama_model_loader {
 
     bool use_mmap = false;
     bool check_tensors;
+    bool no_alloc;
 
     llama_files files;
     llama_ftype ftype;

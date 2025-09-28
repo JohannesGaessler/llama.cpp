@@ -93,8 +93,9 @@ bool llama_fit_params_to_free_memory(const char * path_model, struct llama_model
         ggml_backend_dev_t               dev = dev_dmd.first;
         const llama_device_memory_data & dmd = dev_dmd.second;
 
+        constexpr size_t MB = 1024*1024;
         fprintf(stderr, "%s: name=%s free=%zu total=%zu model=%zu context=%zu compute=%zu\n",
-            __func__, ggml_backend_dev_name(dev), dmd.free, dmd.total, dmd.mb.model, dmd.mb.context, dmd.mb.compute);
+            __func__, ggml_backend_dev_name(dev), dmd.free/MB, dmd.total/MB, dmd.mb.model/MB, dmd.mb.context/MB, dmd.mb.compute/MB);
     }
     fprintf(stderr, "%s: \n", __func__);
     fprintf(stderr, "%s: ===================================================\n", __func__);
