@@ -6076,9 +6076,19 @@ size_t llama_model::n_devices() const {
 
 std::map<ggml_backend_buffer_type_t, size_t> llama_model::memory_breakdown() const {
     std::map<ggml_backend_buffer_type_t, size_t> ret;
-    for (const ggml_backend_buffer_ptr & buf_ptr : pimpl->bufs) {
-        ret[ggml_backend_buffer_get_type(buf_ptr.get())] += ggml_backend_buffer_get_size(buf_ptr.get());
+
+    for (size_t i = 0; i < pimpl->bufs.size(); i++) {
+        ggml_backend_buffer_t      buf  = pimpl->bufs[i].get();
+        ggml_backend_buffer_type_t buft = ggml_backend_buffer_get_type(buf);
+
+        const bool is_alloc = ggml_backend_buffer_get_base(buf) != nullptr;
+        if (is_alloc) {
+            ret[buft] += ggml_backend_buffer_get_size(buf);
+        } else {
+            ret[buft] += ggml_backend_alloc_ctx_tensors_from_buft_size(pimpl->ctxs[i].get(), buft);
+        }
     }
+
     return ret;
 }
 
