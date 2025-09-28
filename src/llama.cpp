@@ -1,3 +1,5 @@
+#include "llama.h"
+
 #include "llama-impl.h"
 
 #include "llama-chat.h"
@@ -49,6 +51,7 @@ static std::map<ggml_backend_dev_t, llama_device_memory_data> llama_get_device_m
         const char * path_model, const llama_model_params & mparams, const llama_context_params & cparams) {
     llama_model_params mparams_copy = mparams;
     mparams_copy.no_alloc = true;
+    mparams_copy.use_mmap = false;
 
     llama_model * model = llama_model_load_from_file(path_model, mparams_copy);
     if (model == nullptr) {
@@ -56,6 +59,7 @@ static std::map<ggml_backend_dev_t, llama_device_memory_data> llama_get_device_m
     }
 
     llama_context * ctx = llama_init_from_model(model, cparams);
+    llama_memory_breakdown_print(ctx);
     if (ctx == nullptr) {
         llama_model_free(model);
         throw std::runtime_error("failed to create llama_context from model");
@@ -181,6 +185,7 @@ static int llama_model_load(const std::string & fname, std::vector<std::string> 
         ml.print_info();
 
         model.hparams.vocab_only = params.vocab_only;
+        model.hparams.no_alloc   = params.no_alloc;
 
         try {
             model.load_arch(ml);

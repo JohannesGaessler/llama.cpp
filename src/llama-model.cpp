@@ -5950,47 +5950,48 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
         bool buffer_from_host_ptr_supported = props.caps.buffer_from_host_ptr;
         bool is_default_buft = buft == ggml_backend_dev_buffer_type(dev);
 
-        if (!ml.no_alloc) {
-            if (ml.use_mmap && use_mmap_buffer && buffer_from_host_ptr_supported && is_default_buft) {
-                for (uint32_t idx = 0; idx < ml.files.size(); idx++) {
-                    // only the mmap region containing the tensors in the model is mapped to the backend buffer
-                    // this is important for metal with apple silicon: if the entire model could be mapped to a metal buffer,
-                    //     then we could just use metal for all layers
-                    // this allows using partial offloading when the model size exceeds the metal buffer size, but not the RAM size
-                    void * addr = nullptr;
-                    size_t first, last; // NOLINT
-                    ml.get_mapping_range(&first, &last, &addr, idx, ctx);
-                    if (first >= last) {
-                        continue;
-                    }
-                    const size_t max_size = ggml_get_max_tensor_size(ctx);
-                    ggml_backend_buffer_t buf = ggml_backend_dev_buffer_from_host_ptr(dev, (char *) addr + first, last - first, max_size);
-                    if (buf == nullptr) {
-                        throw std::runtime_error(format("unable to allocate %s buffer", ggml_backend_buft_name(buft)));
-                    }
-                    pimpl->bufs.emplace_back(buf);
-                    buf_map.emplace(idx, buf);
+        if (ml.use_mmap && use_mmap_buffer && buffer_from_host_ptr_supported && is_default_buft) {
+            GGML_ASSERT(!ml.no_alloc);
+            for (uint32_t idx = 0; idx < ml.files.size(); idx++) {
+                // only the mmap region containing the tensors in the model is mapped to the backend buffer
+                // this is important for metal with apple silicon: if the entire model could be mapped to a metal buffer,
+                //     then we could just use metal for all layers
+                // this allows using partial offloading when the model size exceeds the metal buffer size, but not the RAM size
+                void * addr = nullptr;
+                size_t first, last; // NOLINT
+                ml.get_mapping_range(&first, &last, &addr, idx, ctx);
+                if (first >= last) {
+                    continue;
                 }
-            } else {
-                ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
+                const size_t max_size = ggml_get_max_tensor_size(ctx);
+                ggml_backend_buffer_t buf = ggml_backend_dev_buffer_from_host_ptr(dev, (char *) addr + first, last - first, max_size);
                 if (buf == nullptr) {
                     throw std::runtime_error(format("unable to allocate %s buffer", ggml_backend_buft_name(buft)));
                 }
                 pimpl->bufs.emplace_back(buf);
-                if (use_mlock && ggml_backend_buffer_is_host(buf)) {
-                    pimpl->mlock_bufs.emplace_back(new llama_mlock);
-                    auto & mlock_buf = pimpl->mlock_bufs.back();
-                    mlock_buf->init   (ggml_backend_buffer_get_base(buf));
-                    mlock_buf->grow_to(ggml_backend_buffer_get_size(buf));
-                }
-                for (uint32_t idx = 0; idx < ml.files.size(); idx++) {
-                    buf_map.emplace(idx, buf);
-                }
+                buf_map.emplace(idx, buf);
             }
+        } else {
+            ggml_backend_buffer_t buf = ml.no_alloc ?
+                ggml_backend_buft_alloc_buffer(buft, /*size =*/ 0) : // dummy buffer
+                ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft); // real buffer
+            if (buf == nullptr) {
+                throw std::runtime_error(format("unable to allocate %s buffer", ggml_backend_buft_name(buft)));
+            }
+            pimpl->bufs.emplace_back(buf);
+            if (use_mlock && ggml_backend_buffer_is_host(buf)) {
+                pimpl->mlock_bufs.emplace_back(new llama_mlock);
+                auto & mlock_buf = pimpl->mlock_bufs.back();
+                mlock_buf->init   (ggml_backend_buffer_get_base(buf));
+                mlock_buf->grow_to(ggml_backend_buffer_get_size(buf));
+            }
+            for (uint32_t idx = 0; idx < ml.files.size(); idx++) {
+                buf_map.emplace(idx, buf);
+            }
+        }
 
-            if (pimpl->bufs.empty()) {
-                throw std::runtime_error("failed to allocate buffer");
-            }
+        if (pimpl->bufs.empty()) {
+            throw std::runtime_error("failed to allocate buffer");
         }
 
         for (auto & buf : buf_map) {
@@ -6081,11 +6082,12 @@ std::map<ggml_backend_buffer_type_t, size_t> llama_model::memory_breakdown() con
         ggml_backend_buffer_t      buf  = pimpl->bufs[i].get();
         ggml_backend_buffer_type_t buft = ggml_backend_buffer_get_type(buf);
 
-        const bool is_alloc = ggml_backend_buffer_get_base(buf) != nullptr;
-        if (is_alloc) {
-            ret[buft] += ggml_backend_buffer_get_size(buf);
-        } else {
+        if (hparams.no_alloc) {
+            GGML_ASSERT(ggml_backend_buffer_get_base(buf) == nullptr);
             ret[buft] += ggml_backend_alloc_ctx_tensors_from_buft_size(pimpl->ctxs[i].get(), buft);
+        } else {
+            GGML_ASSERT(ggml_backend_buffer_get_base(buf) != nullptr);
+            ret[buft] += ggml_backend_buffer_get_size(buf);
         }
     }
 

@@ -36,12 +36,11 @@ const char * ggml_backend_buft_name(ggml_backend_buffer_type_t buft) {
 }
 
 ggml_backend_buffer_t ggml_backend_buft_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
+    GGML_ASSERT(buft);
     if (size == 0) {
         // return a dummy buffer for zero-sized allocations
         return ggml_backend_buffer_init(buft, {}, NULL, 0);
     }
-
-    GGML_ASSERT(buft);
     return buft->iface.alloc_buffer(buft, size);
 }
 
