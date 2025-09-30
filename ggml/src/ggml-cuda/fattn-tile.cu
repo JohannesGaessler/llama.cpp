@@ -311,7 +311,7 @@ static __device__ __forceinline__ void flash_attn_tile_load_tile(
 }
 
 template <int warp_size, int nwarps, int ncols, int D, int kq_stride, int kq_nbatch,
-    bool use_logit_softcap, bool oob_check, typename T_vec_dot, typename T_acc>
+    bool use_logit_softcap, bool oob_check, typename T_vec_dot, typename T_KQ, typename T_acc>
 static __device__ __forceinline__ void flash_attn_tile_iter(
         T_vec_dot * const Q_tmp,
         const half2 * const __restrict__ K_h2,
@@ -320,6 +320,7 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
         const float logit_softcap,
         const int ne11,
         const float slope,
+        T_KQ      * const KQ,
         T_vec_dot * const KV_tmp,
         const int stride_KV2,
         float * const KQ_max,
@@ -338,12 +339,8 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
     // KQ is originally 2D but uses a Z-shaped memory pattern for larger reads/writes.
 #ifdef FAST_FP16_AVAILABLE
     constexpr int softmax_iter_j = cpw < 2*cpy_ne ? cpw : 2*cpy_ne;
-
-    __shared__ half  KQ[ncols * kq_stride];
 #else
     constexpr int softmax_iter_j = cpw < 1*cpy_ne ? cpw : 1*cpy_ne;
-
-    __shared__ float KQ[ncols * kq_stride];
 #endif // FAST_FP16_AVAILABLE
     static_assert(cpw % softmax_iter_j == 0, "bad softmax_iter_j");
     const int k_sup = k_VKQ_max - k_VKQ_0; // k supremum, only smaller k values have valid KV data
@@ -643,10 +640,12 @@ static __global__ void flash_attn_tile(
 #ifdef FAST_FP16_AVAILABLE
     __shared__ half2 Q_tmp[ncols * D/2];
     __shared__ half2 KV_tmp[kq_stride * (kq_nbatch/2 + cpy_ne) + Dp-D];
+    __shared__ half  KQ[ncols * kq_stride];
     half2 VKQ[cpw * ((Dp/2)/warp_size)] = {{0.0f, 0.0f}};
 #else
     __shared__ float Q_tmp[ncols * D];
     __shared__ float KV_tmp[kq_stride * (kq_nbatch + cpy_ne) + Dp-D];
+    __shared__ float KQ[ncols * kq_stride];
     float2 VKQ[cpw * ((Dp/2)/warp_size)] = {{0.0f, 0.0f}};
 #endif // FAST_FP16_AVAILABLE
 
@@ -699,7 +698,7 @@ static __global__ void flash_attn_tile(
     for (; k_VKQ_0 < k_VKQ_max; k_VKQ_0 += gridDim.y*kq_stride) {
         constexpr bool oob_check = true;
         flash_attn_tile_iter<warp_size, nwarps, ncols, D, kq_stride, kq_nbatch, use_logit_softcap, oob_check>
-            (Q_tmp, K_h2, V_h2, maskh, logit_softcap, ne11, slope, KV_tmp, stride_KV2, KQ_max, KQ_sum, VKQ, k_VKQ_0, k_VKQ_max);
+            (Q_tmp, K_h2, V_h2, maskh, logit_softcap, ne11, slope, KQ, KV_tmp, stride_KV2, KQ_max, KQ_sum, VKQ, k_VKQ_0, k_VKQ_max);
     }
 
 
