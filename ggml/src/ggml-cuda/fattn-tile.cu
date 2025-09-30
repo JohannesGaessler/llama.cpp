@@ -562,7 +562,7 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
     }
 }
 
-template<int D, int ncols, bool use_logit_softcap, bool oob_check> // D == head size
+template<int D, int ncols, bool use_logit_softcap> // D == head size
 __launch_bounds__(fattn_tile_get_nthreads_device(ncols), fattn_tile_get_occupancy_device(ncols))
 static __global__ void flash_attn_tile(
         const char * __restrict__ Q,
@@ -695,7 +695,9 @@ static __global__ void flash_attn_tile(
 
     // Main loop over KV cache:
     const int k_VKQ_max = KV_max ? KV_max[sequence*gridDim.x + blockIdx.x] : ne11;
-    for (int k_VKQ_0 = blockIdx.y*kq_stride; k_VKQ_0 < k_VKQ_max; k_VKQ_0 += gridDim.y*kq_stride) {
+    int k_VKQ_0 = blockIdx.y*kq_stride;
+    for (; k_VKQ_0 < k_VKQ_max; k_VKQ_0 += gridDim.y*kq_stride) {
+        constexpr bool oob_check = true;
         flash_attn_tile_iter<warp_size, nwarps, ncols, D, kq_stride, kq_nbatch, use_logit_softcap, oob_check>
             (Q_tmp, K_h2, V_h2, maskh, logit_softcap, ne11, slope, KV_tmp, stride_KV2, KQ_max, KQ_sum, VKQ, k_VKQ_0, k_VKQ_max);
     }
@@ -813,7 +815,7 @@ static __global__ void flash_attn_tile(
 #endif // FLASH_ATTN_AVAILABLE
 }
 
-template <int D, bool use_logit_softcap, bool oob_check>
+template <int D, bool use_logit_softcap>
 static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * Q = dst->src[0];
 
@@ -828,7 +830,7 @@ static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml
         if (Q->ne[1] > 32) {
             constexpr int cols_per_block = 64;
             const int nwarps = fattn_tile_get_nthreads_host(cc, cols_per_block) / warp_size;
-            fattn_kernel_t fattn_kernel = flash_attn_tile<D, cols_per_block, use_logit_softcap, oob_check>;
+            fattn_kernel_t fattn_kernel = flash_attn_tile<D, cols_per_block, use_logit_softcap>;
             const int kq_stride = fattn_tile_get_kq_stride_host(D, cols_per_block, cc, warp_size);
             launch_fattn<D, cols_per_block, 1>
                 (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
@@ -840,7 +842,7 @@ static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml
     if (Q->ne[1] > 16) {
         constexpr int cols_per_block = 32;
         const int nwarps = fattn_tile_get_nthreads_host(cc, cols_per_block) / warp_size;
-        fattn_kernel_t fattn_kernel = flash_attn_tile<D, cols_per_block, use_logit_softcap, oob_check>;
+        fattn_kernel_t fattn_kernel = flash_attn_tile<D, cols_per_block, use_logit_softcap>;
         const int kq_stride = fattn_tile_get_kq_stride_host(D, cols_per_block, cc, warp_size);
         launch_fattn<D, cols_per_block, 1>
             (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
@@ -849,36 +851,36 @@ static void launch_fattn_tile_switch_ncols(ggml_backend_cuda_context & ctx, ggml
 
     constexpr int cols_per_block = 16;
     const int nwarps = fattn_tile_get_nthreads_host(cc, cols_per_block) / warp_size;
-    fattn_kernel_t fattn_kernel = flash_attn_tile<D, cols_per_block, use_logit_softcap, oob_check>;
+    fattn_kernel_t fattn_kernel = flash_attn_tile<D, cols_per_block, use_logit_softcap>;
     const int kq_stride = fattn_tile_get_kq_stride_host(D, cols_per_block, cc, warp_size);
     launch_fattn<D, cols_per_block, 1>
         (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
 }
 
-template <bool use_logit_softcap, bool oob_check>
+template <bool use_logit_softcap>
 static void launch_fattn_tile_switch_head_size(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * Q = dst->src[0];
     switch (Q->ne[0]) {
         case  40: {
-            launch_fattn_tile_switch_ncols< 40, use_logit_softcap, oob_check>(ctx, dst);
+            launch_fattn_tile_switch_ncols< 40, use_logit_softcap>(ctx, dst);
         } break;
         case  64: {
-            launch_fattn_tile_switch_ncols< 64, use_logit_softcap, oob_check>(ctx, dst);
+            launch_fattn_tile_switch_ncols< 64, use_logit_softcap>(ctx, dst);
         } break;
         case  80: {
-            launch_fattn_tile_switch_ncols< 80, use_logit_softcap, oob_check>(ctx, dst);
+            launch_fattn_tile_switch_ncols< 80, use_logit_softcap>(ctx, dst);
         } break;
         case  96: {
-            launch_fattn_tile_switch_ncols< 96, use_logit_softcap, oob_check>(ctx, dst);
+            launch_fattn_tile_switch_ncols< 96, use_logit_softcap>(ctx, dst);
         } break;
         case 112: {
-            launch_fattn_tile_switch_ncols<112, use_logit_softcap, oob_check>(ctx, dst);
+            launch_fattn_tile_switch_ncols<112, use_logit_softcap>(ctx, dst);
         } break;
         case 128: {
-            launch_fattn_tile_switch_ncols<128, use_logit_softcap, oob_check>(ctx, dst);
+            launch_fattn_tile_switch_ncols<128, use_logit_softcap>(ctx, dst);
         } break;
         case 256: {
-            launch_fattn_tile_switch_ncols<256, use_logit_softcap, oob_check>(ctx, dst);
+            launch_fattn_tile_switch_ncols<256, use_logit_softcap>(ctx, dst);
         } break;
         default: {
             GGML_ABORT("Unsupported head size");
@@ -888,26 +890,15 @@ static void launch_fattn_tile_switch_head_size(ggml_backend_cuda_context & ctx, 
 
 void ggml_cuda_flash_attn_ext_tile(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * KQV = dst;
-    const ggml_tensor * K   = dst->src[1];
 
     float logit_softcap;
     memcpy(&logit_softcap, (const float *) KQV->op_params + 2, sizeof(float));
 
-    const bool oob_check = K->ne[1] % FATTN_KQ_STRIDE != 0;
-
     if (logit_softcap == 0.0f) {
         constexpr bool use_logit_softcap = false;
-        if (oob_check) {
-            launch_fattn_tile_switch_head_size<use_logit_softcap, /*oob_check =*/ true>(ctx, dst);
-        } else {
-            launch_fattn_tile_switch_head_size<use_logit_softcap, /*oob_check =*/ false>(ctx, dst);
-        }
+        launch_fattn_tile_switch_head_size<use_logit_softcap>(ctx, dst);
     } else {
         constexpr bool use_logit_softcap = true;
-        if (oob_check) {
-            launch_fattn_tile_switch_head_size<use_logit_softcap, /*oob_check =*/ true>(ctx, dst);
-        } else {
-            launch_fattn_tile_switch_head_size<use_logit_softcap, /*oob_check =*/ false>(ctx, dst);
-        }
+        launch_fattn_tile_switch_head_size<use_logit_softcap>(ctx, dst);
     }
 }
