@@ -210,6 +210,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
 
     switch (K->ne[0]) {
         case  64:
+        case  96:
         case 128:
         case 256:
             if (V->ne[0] != K->ne[0]) {
@@ -217,7 +218,6 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
             }
             break;
         case  80:
-        case  96:
         case 112:
             if (V->ne[0] != K->ne[0]) {
                 return BEST_FATTN_KERNEL_NONE;
@@ -267,7 +267,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
     const bool can_use_vector_kernel = Q->ne[0] <= 256 && Q->ne[0] % 64 == 0 && K->ne[1] % FATTN_KQ_STRIDE == 0;
 
     // If Turing tensor cores available, use them except for some cases with batch size 1:
-    if (turing_mma_available(cc) && K->ne[1] % FATTN_KQ_STRIDE == 0) {
+    if (turing_mma_available(cc) && K->ne[1] % FATTN_KQ_STRIDE == 0 && Q->ne[0] != 40) {
         best_fattn_kernel best = BEST_FATTN_KERNEL_MMA_F16;
 
         if (can_use_vector_kernel) {
@@ -300,7 +300,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
     }
 
     // For large batch sizes, use the WMMA kernel if possible:
-    if (fp16_mma_available(cc) && K->ne[1] % FATTN_KQ_STRIDE == 0) {
+    if (fp16_mma_available(cc) && K->ne[1] % FATTN_KQ_STRIDE == 0 && Q->ne[0] != 40) {
         return BEST_FATTN_KERNEL_WMMA_F16;
     }
 
