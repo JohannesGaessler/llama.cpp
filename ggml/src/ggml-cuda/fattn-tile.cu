@@ -9,8 +9,12 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
     if (GGML_CUDA_CC_IS_AMD(cc)) {
         if (GGML_CUDA_CC_IS_RDNA(cc)) {
             switch (D) {
+                case 40:
                 case 64:
                     return 128;
+                case 80:
+                case 96:
+                case 112:
                 case 128:
                 case 256:
                     return ncols <= 16 ? 128 : 64;
@@ -20,8 +24,12 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
             }
         }
         switch (D) {
+            case 40:
             case 64:
                 return ncols == 32 ? 128 : 64;
+            case 80:
+            case 96:
+            case 112:
             case 128:
                 return ncols == 32 ? 64 : 32;
             case 256:
@@ -33,7 +41,11 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
     }
     if (fast_fp16_available(cc)) {
         switch (D) {
+            case 40:
             case 64:
+            case 80:
+            case 96:
+            case 112:
             case 128:
             case 256:
                 return ncols <= 16 ? 128 : 64;
@@ -43,8 +55,12 @@ static int fattn_tile_get_kq_stride_host(const int D, const int ncols, const int
         }
     }
     switch (D) {
+        case 40:
         case 64:
             return ncols <= 16 ? 128 : 64;
+        case 80:
+        case 96:
+        case 112:
         case 128:
             return ncols <= 16 ? 64 : 32;
         case 256:
@@ -60,8 +76,12 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols
 #ifdef GGML_USE_HIP
 #ifdef RDNA
     switch (D) {
+        case 40:
         case 64:
             return 128;
+        case 80:
+        case 96:
+        case 112:
         case 128:
         case 256:
             return ncols <= 16 ? 128 : 64;
@@ -70,8 +90,12 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols
     }
 #else
     switch (D) {
+        case 40:
         case 64:
             return ncols == 32 ? 128 : 64;
+        case 80:
+        case 96:
+        case 112:
         case 128:
             return ncols == 32 ? 64 : 32;
         case 256:
@@ -83,7 +107,11 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols
 #else
 #ifdef FAST_FP16_AVAILABLE
     switch (D) {
+        case 40:
         case 64:
+        case 80:
+        case 96:
+        case 112:
         case 128:
         case 256:
             return ncols <= 16 ? 128 : 64;
@@ -92,8 +120,12 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols
     }
 #else
     switch (D) {
+        case 40:
         case 64:
             return ncols <= 16 ? 128 : 64;
+        case 80:
+        case 96:
+        case 112:
         case 128:
             return ncols <= 16 ? 64 : 32;
         case 256:
@@ -109,8 +141,16 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int D, int ncols
 static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int D, int ncols, int warp_size) {
 #ifdef GGML_USE_HIP
     switch (D) {
+        case 40:
+            return 40;
         case 64:
             return 64;
+        case 80:
+            return 80;
+        case 96:
+            return 96;
+        case 112:
+            return 112;
         case 128:
         case 256:
             return 128;
@@ -120,8 +160,16 @@ static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int D, int ncols
 #else
 #ifdef FAST_FP16_AVAILABLE
     switch (D) {
+        case 40:
+            return 40;
         case 64:
             return 64;
+        case 80:
+            return 80;
+        case 96:
+            return 96;
+        case 112:
+            return 112;
         case 128:
         case 256:
             return 128;
@@ -130,8 +178,16 @@ static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int D, int ncols
     }
 #else
     switch (D) {
+        case 40:
+            return 40;
         case 64:
             return 64;
+        case 80:
+            return 80;
+        case 96:
+            return 96;
+        case 112:
+            return 112;
         case 128:
             return 128;
         case 256:
@@ -161,6 +217,49 @@ static constexpr __device__ int fattn_tile_get_occupancy_device(int ncols) {
     return ncols <= 16 ? 3 : 2;
 #endif // RDNA
     GGML_UNUSED(ncols);
+}
+
+// TODO: deduplicate with mma-f16
+template<int warp_size, int nwarps, int I, int J, bool oob_check>
+static __device__ __forceinline__ void flash_attn_tile_load_tile(
+        const half2 * const __restrict__ KV, half2 * const __restrict__ tile_KV, const int stride_KV, const int i_sup) {
+    constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
+    constexpr int cpy_ne = cpy_nb / 4;
+
+    auto load = [&] __device__ (const int n) {
+        const int stride_j = warp_size >> n;
+        const int j0_start = stride_j == warp_size ? 0 : ((J/2)/cpy_ne) - ((J/2)/cpy_ne) % (2*stride_j);
+        const int j0_stop  =                             ((J/2)/cpy_ne) - ((J/2)/cpy_ne) % (1*stride_j);
+        const int stride_i = warp_size / stride_j;
+
+        if (j0_start == j0_stop) {
+            return;
+        }
+
+#pragma unroll
+        for (int i0 = 0; i0 < I; i0 += nwarps*stride_i) {
+            const int i = i0 + threadIdx.y*stride_i + (stride_j == warp_size ? 0 : threadIdx.x / stride_j);
+
+            if (i0 + nwarps*stride_i <= I || i < I) {
+#pragma unroll
+                for (int j0 = j0_start; j0 < j0_stop; j0 += stride_j) {
+                    const int j = j0*cpy_ne + (stride_j == warp_size ? threadIdx.x : threadIdx.x % stride_j)*cpy_ne;
+
+                    const int zero[cpy_ne] = {0};
+                    ggml_cuda_memcpy_1<cpy_nb>(
+                        tile_KV + i*(J/2 + cpy_ne) + j,
+                        !oob_check || i < i_sup ? (const void *)(KV + i*stride_KV + j) : (const void *) zero);
+                }
+            }
+        }
+    };
+    // 1: max 32*16=512 bytes, 256 half
+    // 2: max 16*16=256 bytes, 128 half
+    // 3: max  8*16=128 bytes,  64 half
+    // 4: max  4*16= 64 bytes,  32 half
+    // 5: max  2*16= 32 bytes,  16 half
+    // 6: max  1*16= 16 bytes,   8 half
+    ggml_cuda_unroll<6>{}(load);
 }
 
 template<int D, int ncols, bool use_logit_softcap, bool oob_check> // D == head size
@@ -216,7 +315,6 @@ static __global__ void flash_attn_tile(
     constexpr int kq_stride = fattn_tile_get_kq_stride_device(D, ncols, warp_size);
     static_assert(kq_stride % warp_size == 0, "kq_stride not divisable by warp_size.");
     constexpr int kq_nbatch = fattn_tile_get_kq_nbatch_device(D, ncols, warp_size);
-    static_assert(kq_nbatch % (2*warp_size) == 0, "bad kq_nbatch");
 
     // In this kernel Q, K, V are matrices while i, j, k are matrix indices.
 
@@ -303,6 +401,8 @@ static __global__ void flash_attn_tile(
     // Main loop over KV cache:
     const int k_VKQ_max = KV_max ? KV_max[sequence*gridDim.x + blockIdx.x] : ne11;
     for (int k_VKQ_0 = blockIdx.y*kq_stride; k_VKQ_0 < k_VKQ_max; k_VKQ_0 += gridDim.y*kq_stride) {
+        const int k_sup = k_VKQ_max - k_VKQ_0; // k supremum, only smaller k values have valid KV data
+
         // Calculate KQ tile and keep track of new maximum KQ values:
 
         float KQ_max_new[cpw];
@@ -316,50 +416,32 @@ static __global__ void flash_attn_tile(
         // KQ = K @ Q matrix multiplication:
 #pragma unroll
         for (int k_KQ_0 = 0; k_KQ_0 < D; k_KQ_0 += kq_nbatch) {
+
+#ifdef FAST_FP16_AVAILABLE
+            flash_attn_tile_load_tile<warp_size, nwarps, kq_stride, kq_nbatch, oob_check>
+                (K_h2 + int64_t(k_VKQ_0)*stride_KV2 + k_KQ_0/2, KV_tmp, stride_KV2, k_sup);
+#else
 #pragma unroll
             for (int i_KQ_0 = 0; i_KQ_0 < kq_stride; i_KQ_0 += nwarps) {
                 const int i_KQ = i_KQ_0 + threadIdx.y;
 
-                if (oob_check && k_VKQ_0 + i_KQ >= ne11) {
-#ifdef FAST_FP16_AVAILABLE
+                constexpr int cpy_ne_kqnb = cpy_ne < kq_nbatch/warp_size ? cpy_ne : kq_nbatch/warp_size;
 #pragma unroll
-                    for (int k_KQ_1 = 0; k_KQ_1 < kq_nbatch/2; k_KQ_1 += warp_size) {
-                        KV_tmp[i_KQ*(kq_nbatch/2 + cpy_ne) + k_KQ_1 + threadIdx.x] = make_half2(0.0f, 0.0f);
-                    }
-#else
-#pragma unroll
-                    for (int k_KQ_1 = 0; k_KQ_1 < kq_nbatch; k_KQ_1 += warp_size) {
-                        KV_tmp[i_KQ*(kq_nbatch + cpy_ne) + k_KQ_1 + threadIdx.x] = 0.0f;
-                    }
-#endif // FAST_FP16_AVAILABLE
-                } else {
-#ifdef FAST_FP16_AVAILABLE
-                    constexpr int cpy_ne_kqnb = cpy_ne < kq_nbatch/(2*warp_size) ? cpy_ne : kq_nbatch/(2*warp_size);
-#pragma unroll
-                    for (int k_KQ_1 = 0; k_KQ_1 < kq_nbatch/2; k_KQ_1 += warp_size*cpy_ne_kqnb) {
-                        ggml_cuda_memcpy_1<cpy_ne_kqnb*4>(
-                            &KV_tmp[i_KQ*(kq_nbatch/2 + cpy_ne) + k_KQ_1 + threadIdx.x*cpy_ne_kqnb],
-                            &K_h2[int64_t(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ_0/2 + k_KQ_1 + threadIdx.x*cpy_ne_kqnb]);
-                    }
-#else
-                    constexpr int cpy_ne_kqnb = cpy_ne < kq_nbatch/warp_size ? cpy_ne : kq_nbatch/warp_size;
-#pragma unroll
-                    for (int k_KQ_1 = 0; k_KQ_1 < kq_nbatch; k_KQ_1 += warp_size*cpy_ne_kqnb) {
-                        half2 tmp_h2[cpy_ne_kqnb/2];
-                        ggml_cuda_memcpy_1<sizeof(tmp_h2)>(
-                            tmp_h2, &K_h2[int64_t(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ_0/2 + k_KQ_1/2 + threadIdx.x*(cpy_ne_kqnb/2)]);
+                for (int k_KQ_1 = 0; k_KQ_1 < kq_nbatch; k_KQ_1 += warp_size*cpy_ne_kqnb) {
+                    half2 tmp_h2[cpy_ne_kqnb/2];
+                    ggml_cuda_memcpy_1<sizeof(tmp_h2)>(
+                        tmp_h2, &K_h2[int64_t(k_VKQ_0 + i_KQ)*stride_KV2 + k_KQ_0/2 + k_KQ_1/2 + threadIdx.x*(cpy_ne_kqnb/2)]);
 
-                        float2 tmp_f2[cpy_ne_kqnb/2];
+                    float2 tmp_f2[cpy_ne_kqnb/2];
 #pragma unroll
-                        for (int k_KQ_2 = 0; k_KQ_2 < cpy_ne_kqnb/2; ++k_KQ_2) {
-                            tmp_f2[k_KQ_2] = __half22float2(tmp_h2[k_KQ_2]);
-                        }
-                        ggml_cuda_memcpy_1<sizeof(tmp_f2)>(
-                            &KV_tmp[i_KQ*(kq_nbatch + cpy_ne) + k_KQ_1 + threadIdx.x*cpy_ne_kqnb], tmp_f2);
+                    for (int k_KQ_2 = 0; k_KQ_2 < cpy_ne_kqnb/2; ++k_KQ_2) {
+                        tmp_f2[k_KQ_2] = __half22float2(tmp_h2[k_KQ_2]);
                     }
-#endif // FAST_FP16_AVAILABLE
+                    ggml_cuda_memcpy_1<sizeof(tmp_f2)>(
+                        &KV_tmp[i_KQ*(kq_nbatch + cpy_ne) + k_KQ_1 + threadIdx.x*cpy_ne_kqnb], tmp_f2);
                 }
             }
+#endif // FAST_FP16_AVAILABLE
 
             __syncthreads();
 
@@ -755,9 +837,21 @@ template <bool use_logit_softcap, bool oob_check>
 static void launch_fattn_tile_switch_head_size(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * Q = dst->src[0];
     switch (Q->ne[0]) {
+        // case  40: {
+        //     launch_fattn_tile_switch_ncols< 40, use_logit_softcap, oob_check>(ctx, dst);
+        // } break;
         case  64: {
             launch_fattn_tile_switch_ncols< 64, use_logit_softcap, oob_check>(ctx, dst);
         } break;
+        // case  80: {
+        //     launch_fattn_tile_switch_ncols< 80, use_logit_softcap, oob_check>(ctx, dst);
+        // } break;
+        // case  96: {
+        //     launch_fattn_tile_switch_ncols< 96, use_logit_softcap, oob_check>(ctx, dst);
+        // } break;
+        // case 112: {
+        //     launch_fattn_tile_switch_ncols<112, use_logit_softcap, oob_check>(ctx, dst);
+        // } break;
         case 128: {
             launch_fattn_tile_switch_ncols<128, use_logit_softcap, oob_check>(ctx, dst);
         } break;
