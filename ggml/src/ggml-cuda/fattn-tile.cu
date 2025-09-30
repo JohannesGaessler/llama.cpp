@@ -828,21 +828,21 @@ template <bool use_logit_softcap, bool oob_check>
 static void launch_fattn_tile_switch_head_size(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * Q = dst->src[0];
     switch (Q->ne[0]) {
-        // case  40: {
-        //     launch_fattn_tile_switch_ncols< 40, use_logit_softcap, oob_check>(ctx, dst);
-        // } break;
+        case  40: {
+            launch_fattn_tile_switch_ncols< 40, use_logit_softcap, oob_check>(ctx, dst);
+        } break;
         case  64: {
             launch_fattn_tile_switch_ncols< 64, use_logit_softcap, oob_check>(ctx, dst);
         } break;
-        // case  80: {
-        //     launch_fattn_tile_switch_ncols< 80, use_logit_softcap, oob_check>(ctx, dst);
-        // } break;
+        case  80: {
+            launch_fattn_tile_switch_ncols< 80, use_logit_softcap, oob_check>(ctx, dst);
+        } break;
         case  96: {
             launch_fattn_tile_switch_ncols< 96, use_logit_softcap, oob_check>(ctx, dst);
         } break;
-        // case 112: {
-        //     launch_fattn_tile_switch_ncols<112, use_logit_softcap, oob_check>(ctx, dst);
-        // } break;
+        case 112: {
+            launch_fattn_tile_switch_ncols<112, use_logit_softcap, oob_check>(ctx, dst);
+        } break;
         case 128: {
             launch_fattn_tile_switch_ncols<128, use_logit_softcap, oob_check>(ctx, dst);
         } break;
