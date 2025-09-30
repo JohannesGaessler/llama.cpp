@@ -224,7 +224,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
             if (V->ne[0] != 512) {
                 return BEST_FATTN_KERNEL_NONE;
             }
-            if (!turing_mma_available(cc) || gqa_ratio % 16 != 0) {
+            if (!turing_mma_available(cc) || gqa_ratio % 16 != 0 || K->ne[1] % FATTN_KQ_STRIDE != 0) {
                 return BEST_FATTN_KERNEL_NONE;
             }
             break;

@@ -338,7 +338,7 @@ static __global__ void flash_attn_tile(
 
     // Skip unused kernel variants for faster compilation:
 #ifdef FP16_MMA_AVAILABLE
-    if (!oob_check) {
+    if (D != 40 && !oob_check) {
         NO_DEVICE_CODE;
         return;
     }
