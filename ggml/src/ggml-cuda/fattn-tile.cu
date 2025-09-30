@@ -560,7 +560,9 @@ static __global__ void flash_attn_tile(
 #pragma unroll
                 for (int i0 = 0; i0 < kq_stride; i0 += warp_size) {
                     const float val = expf(KQ_acc[i0/warp_size][j0+j1] - KQ_max[j0+j1]);
-                    KQ_sum_add += val;
+                    if (!oob_check || i0 + threadIdx.x < k_sup) {
+                        KQ_sum_add += val;
+                    }
                     tmp[i0/warp_size][j1] = val;
                 }
                 KQ_sum[j0+j1] = KQ_sum[j0+j1]*KQ_max_scale + KQ_sum_add;
@@ -595,7 +597,7 @@ static __global__ void flash_attn_tile(
 #pragma unroll
         for (int k0 = 0; k0 < kq_stride; k0 += V_cols_per_iter) {
             flash_attn_tile_load_tile<warp_size, nwarps, V_cols_per_iter, D, 0, oob_check>
-                (V_h2 + int64_t(k_VKQ_0 + k0)*stride_KV2, KV_tmp, stride_KV2, k_sup);
+                (V_h2 + int64_t(k_VKQ_0 + k0)*stride_KV2, KV_tmp, stride_KV2, k_sup - k0);
             __syncthreads();
 
 #ifdef FAST_FP16_AVAILABLE
