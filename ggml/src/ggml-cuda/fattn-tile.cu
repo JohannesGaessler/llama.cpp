@@ -339,11 +339,11 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
 #ifdef FAST_FP16_AVAILABLE
     constexpr int softmax_iter_j = cpw < 2*cpy_ne ? cpw : 2*cpy_ne;
 
-    __shared__ half  KQ[ncols/softmax_iter_j][kq_stride][softmax_iter_j];
+    __shared__ half  KQ[ncols * kq_stride];
 #else
     constexpr int softmax_iter_j = cpw < 1*cpy_ne ? cpw : 1*cpy_ne;
 
-    __shared__ float KQ[ncols/softmax_iter_j][kq_stride][softmax_iter_j];
+    __shared__ float KQ[ncols * kq_stride];
 #endif // FAST_FP16_AVAILABLE
     static_assert(cpw % softmax_iter_j == 0, "bad softmax_iter_j");
     const int k_sup = k_VKQ_max - k_VKQ_0; // k supremum, only smaller k values have valid KV data
@@ -483,7 +483,7 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
             const int i = i0 + threadIdx.x;
 
             ggml_cuda_memcpy_1<sizeof(tmp[0])>(
-                KQ[j0/softmax_iter_j + threadIdx.y*(cpw/softmax_iter_j)][i], tmp[i0/warp_size]);
+                KQ + (j0/softmax_iter_j + threadIdx.y*(cpw/softmax_iter_j))*(kq_stride*softmax_iter_j) + i*softmax_iter_j, tmp[i0/warp_size]);
         }
     }
 
@@ -513,7 +513,7 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
 
                 half tmp[softmax_iter_j];
                 ggml_cuda_memcpy_1<softmax_iter_j*sizeof(half)>(
-                    &tmp, KQ[j][k0 + k1]);
+                    &tmp, KQ + j*(kq_stride*softmax_iter_j) + (k0 + k1)*softmax_iter_j);
 #pragma unroll
                 for (int j1 = 0; j1 < softmax_iter_j; ++j1) {
                     KQ_k[j0+j1] = __half2half2(tmp[j1]);
@@ -544,7 +544,7 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
                 const int j = j0/softmax_iter_j + threadIdx.y*(cpw/softmax_iter_j);
 
                 ggml_cuda_memcpy_1<softmax_iter_j*sizeof(float)>(
-                    &KQ_k[j0], KQ[j][k0 + k1]);
+                    &KQ_k[j0], KQ + j*(kq_stride*softmax_iter_j) + (k0 + k1)*softmax_iter_j);
             }
 
 #pragma unroll
