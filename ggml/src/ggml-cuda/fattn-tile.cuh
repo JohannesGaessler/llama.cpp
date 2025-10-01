@@ -617,13 +617,6 @@ static __global__ void flash_attn_tile(
 #ifdef FLASH_ATTN_AVAILABLE
 
     // Skip unused kernel variants for faster compilation:
-#ifdef FP16_MMA_AVAILABLE
-    if (DV != 40) {
-        NO_DEVICE_CODE;
-        return;
-    }
-#endif // FP16_MMA_AVAILABLE
-
     if (use_logit_softcap && !(DV == 128 || DV == 256)) {
         GGML_UNUSED_VARS(Q, K, V, mask, sinks, KV_max, dst, dst_meta, scale,
             max_bias, m0, m1, n_head_log2, logit_softcap,
