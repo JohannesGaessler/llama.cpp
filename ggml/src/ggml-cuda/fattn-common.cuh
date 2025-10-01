@@ -940,6 +940,7 @@ void launch_fattn(
                 parallel_blocks = parallel_blocks_test;
             }
         }
+        parallel_blocks = 1;
 
         blocks_num.x = ntiles_x;
         blocks_num.y = parallel_blocks;

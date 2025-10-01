@@ -420,7 +420,7 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
 
 #pragma unroll
         for (int jc_KQ_0 = 0; jc_KQ_0 < cpw; ++jc_KQ_0) {
-            const int j_KQ = jc_KQ_0/ncols2 + threadIdx.y*(cpw/ncols2);
+            const int j_KQ = (jc_KQ_0 + threadIdx.y*cpw)/ncols2;
 
             if (use_logit_softcap) {
                 KQ_acc[i_KQ_0/warp_size][jc_KQ_0] = logit_softcap * tanhf(KQ_acc[i_KQ_0/warp_size][jc_KQ_0]);
@@ -619,8 +619,8 @@ static __global__ void flash_attn_tile(
 
     const int ic0 = blockIdx.x * ncols1; // Index of the Q/QKV column to work on.
 
-    const int sequence = blockIdx.z / ne02;
-    const int head0 = (blockIdx.z - sequence*ne02) * ncols2;
+    const int sequence = blockIdx.z / (ne02/ncols2);
+    const int head0 = (blockIdx.z - sequence*(ne02/ncols2))*ncols2;
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
     const float * Q_f  = (const float *) (Q + nb03*sequence + nb02* head0              + nb01*ic0);
     const half2 * K_h2 = (const half2 *) (K + nb13*sequence + nb12*(head0 / gqa_ratio));
@@ -635,6 +635,7 @@ static __global__ void flash_attn_tile(
     constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
     constexpr int cpy_ne = cpy_nb / 4;
 
+    static_assert(ncols % nwarps == 0, "bad ncols/nwarps");
     constexpr int cpw = ncols/nwarps; // cols per warp
 
     constexpr int Dp = (D + 2*warp_size - 1) & ~(2*warp_size - 1); // D padded to multiple of 2*warp_size.
@@ -717,7 +718,8 @@ static __global__ void flash_attn_tile(
     if (sinks && blockIdx.y == 0) {
 #pragma unroll
         for (int jc0 = 0; jc0 < cpw; ++jc0) {
-            const float sink = ((const float *) sinks)[head0 + jc0 % ncols2];
+            const int jc = jc0 + threadIdx.y*cpw;
+            const float sink = ((const float *) sinks)[head0 + jc % ncols2];
 
             float KQ_max_new_j = fmaxf(KQ_max[jc0], sink);
             KQ_max_new_j = warp_reduce_max<warp_size>(KQ_max_new_j);
@@ -880,8 +882,7 @@ static void launch_fattn_tile_switch_ncols2(ggml_backend_cuda_context & ctx, ggm
     float max_bias = 0.0f;
     memcpy(&max_bias, (const float *) KQV->op_params + 1, sizeof(float));
 
-    // const bool use_gqa_opt = mask && max_bias == 0.0f;
-    const bool use_gqa_opt = false;
+    const bool use_gqa_opt = mask && max_bias == 0.0f;
 
     GGML_ASSERT(Q->ne[2] % K->ne[2] == 0);
     const int gqa_ratio = Q->ne[2] / K->ne[2];
@@ -908,27 +909,27 @@ template <bool use_logit_softcap>
 static void launch_fattn_tile_switch_head_size(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * Q = dst->src[0];
     switch (Q->ne[0]) {
-        case  40: {
-            launch_fattn_tile_switch_ncols2< 40, use_logit_softcap>(ctx, dst);
-        } break;
-        case  64: {
-            launch_fattn_tile_switch_ncols2< 64, use_logit_softcap>(ctx, dst);
-        } break;
-        case  80: {
-            launch_fattn_tile_switch_ncols2< 80, use_logit_softcap>(ctx, dst);
-        } break;
-        case  96: {
-            launch_fattn_tile_switch_ncols2< 96, use_logit_softcap>(ctx, dst);
-        } break;
-        case 112: {
-            launch_fattn_tile_switch_ncols2<112, use_logit_softcap>(ctx, dst);
-        } break;
+        // case  40: {
+        //     launch_fattn_tile_switch_ncols2< 40, use_logit_softcap>(ctx, dst);
+        // } break;
+        // case  64: {
+        //     launch_fattn_tile_switch_ncols2< 64, use_logit_softcap>(ctx, dst);
+        // } break;
+        // case  80: {
+        //     launch_fattn_tile_switch_ncols2< 80, use_logit_softcap>(ctx, dst);
+        // } break;
+        // case  96: {
+        //     launch_fattn_tile_switch_ncols2< 96, use_logit_softcap>(ctx, dst);
+        // } break;
+        // case 112: {
+        //     launch_fattn_tile_switch_ncols2<112, use_logit_softcap>(ctx, dst);
+        // } break;
         case 128: {
             launch_fattn_tile_switch_ncols2<128, use_logit_softcap>(ctx, dst);
         } break;
-        case 256: {
-            launch_fattn_tile_switch_ncols2<256, use_logit_softcap>(ctx, dst);
-        } break;
+        // case 256: {
+        //     launch_fattn_tile_switch_ncols2<256, use_logit_softcap>(ctx, dst);
+        // } break;
         default: {
             GGML_ABORT("Unsupported head size");
         } break;
