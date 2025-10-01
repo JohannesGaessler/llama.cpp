@@ -18,7 +18,7 @@ static int fattn_tile_get_kq_stride_host(const int DV, const int ncols, const in
                 case 256:
                     return ncols <= 16 ? 128 : 64;
                 case 512:
-                    return 32;
+                    return 64;
                 default:
                     GGML_ABORT("fatal error");
                     return -1;
@@ -34,8 +34,9 @@ static int fattn_tile_get_kq_stride_host(const int DV, const int ncols, const in
             case 128:
                 return ncols == 32 ? 64 : 32;
             case 256:
-            case 512:
                 return 32;
+            case 512:
+                return 64;
             default:
                 GGML_ABORT("fatal error");
                 return -1;
@@ -91,7 +92,7 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int DV, int ncol
         case 256:
             return ncols <= 16 ? 128 : 64;
         case 512:
-            return 32;
+            return 64;
         default:
             return -1;
     }
@@ -106,8 +107,9 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int DV, int ncol
         case 128:
             return ncols == 32 ? 64 : 32;
         case 256:
-        case 512:
             return 32;
+        case 512:
+            return 64;
         default:
             return -1;
     }
@@ -228,11 +230,15 @@ static constexpr __device__ int fattn_tile_get_nthreads_device(int ncols) {
 }
 
 static constexpr __device__ int fattn_tile_get_occupancy_device(int DV, int ncols) {
+#ifdef GGML_USE_HIP
 #ifdef RDNA
     return DV <= 256 ? 3 : 2;
 #else
-    return DV <= 256 && ncols <= 16 ? 3 : 2;
+    return DV <= 256 ? (ncols <= 16 ? 3 : 2) : (ncols <= 16 ? 2 : 1);
 #endif // RDNA
+#else
+    return DV <= 256 && ncols <= 16 ? 3 : 2;
+#endif // GGML_USE_HIP
     GGML_UNUSED(ncols);
 }
 
@@ -879,16 +885,14 @@ static void launch_fattn_tile_switch_ncols1(ggml_backend_cuda_context & ctx, ggm
     }
 #endif // GGML_USE_HIP
 
-    if constexpr (DV <= 256) {
-        if (Q->ne[1] > 16/ncols2) {
-            constexpr int cols_per_block = 32;
-            const int nwarps = fattn_tile_get_nthreads_host(cc, cols_per_block) / warp_size;
-            fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
-            const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc, warp_size);
-            launch_fattn<DV, cols_per_block/ncols2, ncols2>
-                (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
-            return;
-        }
+    if (Q->ne[1] > 16/ncols2) {
+        constexpr int cols_per_block = 32;
+        const int nwarps = fattn_tile_get_nthreads_host(cc, cols_per_block) / warp_size;
+        fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
+        const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc, warp_size);
+        launch_fattn<DV, cols_per_block/ncols2, ncols2>
+            (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
+        return;
     }
 
     if (Q->ne[1] > 8/ncols2) {
