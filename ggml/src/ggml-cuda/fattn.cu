@@ -206,6 +206,8 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
     const int gqa_ratio = Q->ne[2] / K->ne[2];
     GGML_ASSERT(Q->ne[2] % K->ne[2] == 0);
 
+    const bool gqa_opt_applies = gqa_ratio % 2 == 0 && mask; // The effective batch size for the kernel can be increased by gqa_ratio.
+
     const int cc = ggml_cuda_info().devices[device].cc;
 
     switch (K->ne[0]) {
@@ -224,7 +226,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
             if (V->ne[0] != 512) {
                 return BEST_FATTN_KERNEL_NONE;
             }
-            if (gqa_ratio % 16 != 0) {
+            if (!gqa_opt_applies || gqa_ratio % 16 != 0) {
                 return BEST_FATTN_KERNEL_NONE;
             }
             break;
@@ -260,7 +262,6 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
 
     // For small batch sizes the vector kernel may be preferable over the kernels optimized for large batch sizes:
     const bool can_use_vector_kernel = Q->ne[0] <= 256 && Q->ne[0] % 64 == 0 && K->ne[1] % FATTN_KQ_STRIDE == 0;
-    const bool gqa_opt_applies = gqa_ratio % 2 == 0 && mask; // The effective batch size for the kernel can be increased by gqa_ratio.
 
     // If Turing tensor cores available, use them:
     if (turing_mma_available(cc) && K->ne[1] % FATTN_KQ_STRIDE == 0 && Q->ne[0] != 40) {
