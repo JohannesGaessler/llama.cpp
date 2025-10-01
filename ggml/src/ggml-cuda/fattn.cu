@@ -258,47 +258,56 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
         return BEST_FATTN_KERNEL_NONE;
     }
 
+    // For small batch sizes the vector kernel may be preferable over the kernels optimized for large batch sizes:
     const bool can_use_vector_kernel = Q->ne[0] <= 256 && Q->ne[0] % 64 == 0 && K->ne[1] % FATTN_KQ_STRIDE == 0;
+    const bool gqa_opt_applies = gqa_ratio % 2 == 0 && mask; // The effective batch size for the kernel can be increased by gqa_ratio.
 
-    // If Turing tensor cores available, use them except for some cases with batch size 1:
+    // If Turing tensor cores available, use them:
     if (turing_mma_available(cc) && K->ne[1] % FATTN_KQ_STRIDE == 0 && Q->ne[0] != 40) {
-        best_fattn_kernel best = BEST_FATTN_KERNEL_MMA_F16;
-
         if (can_use_vector_kernel) {
             if (K->type == GGML_TYPE_F16 && V->type == GGML_TYPE_F16) {
                 if (cc >= GGML_CUDA_CC_ADA_LOVELACE && Q->ne[1] == 1 && Q->ne[3] == 1 && !(gqa_ratio > 4 && K->ne[1] >= 8192)) {
-                    best = BEST_FATTN_KERNEL_VEC;
+                    return BEST_FATTN_KERNEL_VEC;
                 }
             } else {
                 if (cc >= GGML_CUDA_CC_ADA_LOVELACE) {
                     if (Q->ne[1] <= 2) {
-                        best = BEST_FATTN_KERNEL_VEC;
+                        return BEST_FATTN_KERNEL_VEC;
                     }
                 } else {
                     if (Q->ne[1] == 1) {
-                        best = BEST_FATTN_KERNEL_VEC;
+                        return BEST_FATTN_KERNEL_VEC;
                     }
                 }
             }
-            if ((gqa_ratio % 2 != 0 || !mask) && Q->ne[1] == 1) {
-                best = BEST_FATTN_KERNEL_VEC; // GQA-specific optimizations in the mma kernel do not apply.
+            if (!gqa_opt_applies && Q->ne[1] == 1) {
+                return BEST_FATTN_KERNEL_VEC;
             }
         }
 
-        return best;
+        return BEST_FATTN_KERNEL_MMA_F16;
     }
 
-    // Use kernels specialized for small batch sizes if possible:
-    if (Q->ne[1] <= 2 && can_use_vector_kernel) {
-        return BEST_FATTN_KERNEL_VEC;
-    }
-
-    // For large batch sizes, use the WMMA kernel if possible:
+    // Use the WMMA kernel if possible:
     if (fp16_mma_available(cc) && K->ne[1] % FATTN_KQ_STRIDE == 0 && Q->ne[0] != 40 && Q->ne[0] != 576) {
+        if (can_use_vector_kernel && Q->ne[1] <= 2) {
+            return BEST_FATTN_KERNEL_VEC;
+        }
         return BEST_FATTN_KERNEL_WMMA_F16;
     }
 
-    // If there is no suitable kernel for tensor cores or small batch sizes, use the generic kernel for large batch sizes:
+    // If there are no tensor cores available, use the generic tile kernel:
+    if (can_use_vector_kernel) {
+        if (K->type == GGML_TYPE_F16 && V->type == GGML_TYPE_F16) {
+            if (!gqa_opt_applies) {
+                return BEST_FATTN_KERNEL_VEC;
+            }
+        } else {
+            if (Q->ne[1] <= 2) {
+                return BEST_FATTN_KERNEL_VEC;
+            }
+        }
+    }
     return BEST_FATTN_KERNEL_TILE;
 }
 

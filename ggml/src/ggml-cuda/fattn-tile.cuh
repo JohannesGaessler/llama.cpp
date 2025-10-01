@@ -218,12 +218,12 @@ static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int DV, int ncol
 }
 
 static int fattn_tile_get_nthreads_host(const int cc, const int ncols) {
-    return 256;
+    return ncols <= 4 ? 128 : 256;
     GGML_UNUSED_VARS(cc, ncols);
 }
 
 static constexpr __device__ int fattn_tile_get_nthreads_device(int ncols) {
-    return 256;
+    return ncols <= 4 ? 128 : 256;
     GGML_UNUSED(ncols);
 }
 
@@ -887,12 +887,39 @@ static void launch_fattn_tile_switch_ncols1(ggml_backend_cuda_context & ctx, ggm
         }
     }
 
-    constexpr int cols_per_block = 16;
-    const int nwarps = fattn_tile_get_nthreads_host(cc, cols_per_block) / warp_size;
-    fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
-    const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc, warp_size);
-    launch_fattn<DV, cols_per_block/ncols2, ncols2>
-        (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
+    if (Q->ne[1] > 8/ncols2) {
+        constexpr int cols_per_block = 16;
+        const int nwarps = fattn_tile_get_nthreads_host(cc, cols_per_block) / warp_size;
+        fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
+        const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc, warp_size);
+        launch_fattn<DV, cols_per_block/ncols2, ncols2>
+            (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
+        return;
+    }
+
+    if constexpr (ncols2 <= 8) {
+        if (Q->ne[1] > 4/ncols2) {
+            constexpr int cols_per_block = 8;
+            const int nwarps = fattn_tile_get_nthreads_host(cc, cols_per_block) / warp_size;
+            fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
+            const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc, warp_size);
+            launch_fattn<DV, cols_per_block/ncols2, ncols2>
+                (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
+            return;
+        }
+    }
+
+    if constexpr (ncols2 <= 4) {
+        constexpr int cols_per_block = 4;
+        const int nwarps = fattn_tile_get_nthreads_host(cc, cols_per_block) / warp_size;
+        fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
+        const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc, warp_size);
+        launch_fattn<DV, cols_per_block/ncols2, ncols2>
+            (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
+        return;
+    }
+
+    GGML_ABORT("fatal error");
 }
 
 template <int DKQ, int DV, bool use_logit_softcap>
@@ -915,22 +942,26 @@ static void launch_fattn_tile_switch_ncols2(ggml_backend_cuda_context & ctx, ggm
         return;
     }
 
-    if (use_gqa_opt && gqa_ratio % 8 == 0) {
-        launch_fattn_tile_switch_ncols1<DKQ, DV, 8, use_logit_softcap>(ctx, dst);
+    if constexpr (DV <= 256) {
+        if (use_gqa_opt && gqa_ratio % 8 == 0) {
+            launch_fattn_tile_switch_ncols1<DKQ, DV, 8, use_logit_softcap>(ctx, dst);
+            return;
+        }
+
+        if (use_gqa_opt && gqa_ratio % 4 == 0) {
+            launch_fattn_tile_switch_ncols1<DKQ, DV, 4, use_logit_softcap>(ctx, dst);
+            return;
+        }
+
+        if (use_gqa_opt && gqa_ratio % 2 == 0) {
+            launch_fattn_tile_switch_ncols1<DKQ, DV, 2, use_logit_softcap>(ctx, dst);
+            return;
+        }
+
+        launch_fattn_tile_switch_ncols1<DKQ, DV, 1, use_logit_softcap>(ctx, dst);
         return;
     }
-
-    if (use_gqa_opt && gqa_ratio % 4 == 0) {
-        launch_fattn_tile_switch_ncols1<DKQ, DV, 4, use_logit_softcap>(ctx, dst);
-        return;
-    }
-
-    if (use_gqa_opt && gqa_ratio % 2 == 0) {
-        launch_fattn_tile_switch_ncols1<DKQ, DV, 2, use_logit_softcap>(ctx, dst);
-        return;
-    }
-
-    launch_fattn_tile_switch_ncols1<DKQ, DV, 1, use_logit_softcap>(ctx, dst);
+    GGML_ABORT("fatal error");
 }
 
 template <int DKQ, int DV>
