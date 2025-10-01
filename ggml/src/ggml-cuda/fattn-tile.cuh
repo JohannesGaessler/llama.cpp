@@ -437,16 +437,23 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
     for (int i_KQ_0 = 0; i_KQ_0 < kq_stride; i_KQ_0 += warp_size) {
         const int i_KQ = i_KQ_0 + threadIdx.x;
 
+        float mask_val[cpw/ncols2 > 1 ? cpw/ncols2 : 1] = {0.0f};
+        if ((ncols2 > 1 || mask) && (!oob_check || k_VKQ_0 + i_KQ < ne11)) {
+#pragma unroll
+            for (int jc_KQ_0 = 0; jc_KQ_0 < cpw; jc_KQ_0 += ncols2) {
+                const int j_KQ = (jc_KQ_0 + threadIdx.y*cpw)/ncols2;
+
+                mask_val[jc_KQ_0/ncols2] = slope*__half2float(mask[j_KQ*stride_mask + k_VKQ_0 + i_KQ]);
+            }
+        }
+
 #pragma unroll
         for (int jc_KQ_0 = 0; jc_KQ_0 < cpw; ++jc_KQ_0) {
-            const int j_KQ = (jc_KQ_0 + threadIdx.y*cpw)/ncols2;
-
             if (use_logit_softcap) {
                 KQ_acc[i_KQ_0/warp_size][jc_KQ_0] = logit_softcap * tanhf(KQ_acc[i_KQ_0/warp_size][jc_KQ_0]);
             }
 
-            KQ_acc[i_KQ_0/warp_size][jc_KQ_0] += (ncols2 > 1 || mask) && (!oob_check || k_VKQ_0 + i_KQ < ne11) ?
-                slope*__half2float(mask[j_KQ*stride_mask + k_VKQ_0 + i_KQ]) : 0.0f;
+            KQ_acc[i_KQ_0/warp_size][jc_KQ_0] += mask_val[jc_KQ_0/ncols2];
 
             KQ_max_new[jc_KQ_0] = fmaxf(KQ_max_new[jc_KQ_0], KQ_acc[i_KQ_0/warp_size][jc_KQ_0]);
         }
