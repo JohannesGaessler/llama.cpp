@@ -61,8 +61,6 @@ for filename in glob("*.cu"):
     os.remove(filename)
 
 for head_size_kq in HEAD_SIZES_KQ:
-    if head_size_kq == 576:
-        continue
     head_size_v = head_size_kq if head_size_kq != 576 else 512
     with open(f"fattn-tile-instance-dkq{head_size_kq}-dv{head_size_v}.cu", "w") as f:
         f.write(SOURCE_FATTN_TILE.format(head_size_kq=head_size_kq, head_size_v=head_size_v))
