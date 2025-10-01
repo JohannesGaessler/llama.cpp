@@ -4,6 +4,8 @@
 // kq_stride == number of KQ rows to process per iteration
 // kq_nbatch == number of K columns to load in parallel for KQ calculation
 
+// TODO optimize kernel parameters for head sizes 40, 80, 96, 112
+
 static int fattn_tile_get_kq_stride_host(const int DV, const int ncols, const int cc, const int warp_size) {
     if (GGML_CUDA_CC_IS_AMD(cc)) {
         if (GGML_CUDA_CC_IS_RDNA(cc)) {
@@ -614,7 +616,7 @@ static __global__ void flash_attn_tile(
 
     // Skip unused kernel variants for faster compilation:
 #ifdef FP16_MMA_AVAILABLE
-    if (DV != 40 && !oob_check) {
+    if (DV != 40) {
         NO_DEVICE_CODE;
         return;
     }
