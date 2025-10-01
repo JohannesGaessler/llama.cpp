@@ -198,6 +198,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
     return BEST_FATTN_KERNEL_NONE;
 #endif// FLASH_ATTN_AVAILABLE
 
+    const ggml_tensor * KQV   = dst;
     const ggml_tensor * Q     = dst->src[0];
     const ggml_tensor * K     = dst->src[1];
     const ggml_tensor * V     = dst->src[2];
@@ -206,7 +207,10 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
     const int gqa_ratio = Q->ne[2] / K->ne[2];
     GGML_ASSERT(Q->ne[2] % K->ne[2] == 0);
 
-    const bool gqa_opt_applies = gqa_ratio % 2 == 0 && mask; // The effective batch size for the kernel can be increased by gqa_ratio.
+    float max_bias = 0.0f;
+    memcpy(&max_bias, (const float *) KQV->op_params + 1, sizeof(float));
+
+    const bool gqa_opt_applies = gqa_ratio % 2 == 0 && mask && max_bias == 0.0f; // The effective batch size for the kernel can be increased by gqa_ratio.
 
     const int cc = ggml_cuda_info().devices[device].cc;
 
