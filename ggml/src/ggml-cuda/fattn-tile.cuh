@@ -243,9 +243,10 @@ static constexpr __device__ int fattn_tile_get_occupancy_device(int DV, int ncol
 }
 
 // TODO: deduplicate with mma-f16
-template<int warp_size, int nwarps, int I, int J, int J_padding, bool oob_check>
+template<int warp_size, int nwarps, bool oob_check>
 static __device__ __forceinline__ void flash_attn_tile_load_tile(
-        const half2 * const __restrict__ KV, half2 * const __restrict__ tile_KV, const int stride_KV, const int i_sup) {
+        const half2 * const __restrict__ KV, half2 * const __restrict__ tile_KV, const int stride_KV,
+        const int I, const int J, const int J_padding, const int i_sup) {
     constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
     constexpr int cpy_ne = cpy_nb / 4;
 
@@ -285,9 +286,10 @@ static __device__ __forceinline__ void flash_attn_tile_load_tile(
     ggml_cuda_unroll<6>{}(load);
 }
 
-template<int warp_size, int nwarps, int I, int J, int J_padding, bool oob_check>
+template<int warp_size, int nwarps, bool oob_check>
 static __device__ __forceinline__ void flash_attn_tile_load_tile(
-        const half2 * const __restrict__ KV, float * const __restrict__ tile_KV, const int stride_KV, const int i_sup) {
+        const half2 * const __restrict__ KV, float * const __restrict__ tile_KV, const int stride_KV,
+        const int I, const int J, const int J_padding, const int i_sup) {
     constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
     constexpr int cpy_ne = cpy_nb / 4;
 
@@ -383,19 +385,22 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
 
     // KQ = K @ Q matrix multiplication:
 #pragma unroll
-    for (int k_KQ_0 = 0; k_KQ_0 < DKQ; k_KQ_0 += kq_nbatch) {
-        flash_attn_tile_load_tile<warp_size, nwarps, kq_stride, kq_nbatch, cpy_ne, oob_check>
-            (K_h2 + int64_t(k_VKQ_0)*stride_K2 + k_KQ_0/2, KV_tmp, stride_K2, k_sup);
+    for (int k0_start = 0; k0_start < DKQ; k0_start += kq_nbatch) {
+        const int k0_stop = k0_start + kq_nbatch < DKQ ? k0_start + kq_nbatch : DKQ;
+        const int k0_diff = k0_stop - k0_start;
+
+        flash_attn_tile_load_tile<warp_size, nwarps, oob_check>
+            (K_h2 + int64_t(k_VKQ_0)*stride_K2 + k0_start/2, KV_tmp, stride_K2, kq_stride, k0_diff, cpy_ne, k_sup);
         __syncthreads();
 
 #ifdef FAST_FP16_AVAILABLE
 #pragma unroll
-        for (int k_KQ_1 = 0; k_KQ_1 < kq_nbatch/2; k_KQ_1 += cpy_ne) {
+        for (int k_KQ_1 = 0; k_KQ_1 < k0_diff/2; k_KQ_1 += cpy_ne) {
             half2 K_k[kq_stride/warp_size][cpy_ne];
             half2 Q_k[cpw][cpy_ne];
 #else
 #pragma unroll
-        for (int k_KQ_1 = 0; k_KQ_1 < kq_nbatch; k_KQ_1 += cpy_ne) {
+        for (int k_KQ_1 = 0; k_KQ_1 < k0_diff; k_KQ_1 += cpy_ne) {
             float K_k[kq_stride/warp_size][cpy_ne];
             float Q_k[cpw][cpy_ne];
 #endif // FAST_FP16_AVAILABLE
@@ -405,9 +410,9 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
                 const int i_KQ = i_KQ_0 + threadIdx.x;
 
 #ifdef FAST_FP16_AVAILABLE
-                ggml_cuda_memcpy_1<cpy_nb>(&K_k[i_KQ_0/warp_size], &KV_tmp[i_KQ*(kq_nbatch/2 + cpy_ne) + k_KQ_1]);
+                ggml_cuda_memcpy_1<cpy_nb>(&K_k[i_KQ_0/warp_size], &KV_tmp[i_KQ*(k0_diff/2 + cpy_ne) + k_KQ_1]);
 #else
-                ggml_cuda_memcpy_1<cpy_nb>(&K_k[i_KQ_0/warp_size], &KV_tmp[i_KQ*(kq_nbatch   + cpy_ne) + k_KQ_1]);
+                ggml_cuda_memcpy_1<cpy_nb>(&K_k[i_KQ_0/warp_size], &KV_tmp[i_KQ*(k0_diff   + cpy_ne) + k_KQ_1]);
 #endif // FAST_FP16_AVAILABLE
             }
 #pragma unroll
@@ -415,9 +420,9 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
                 const int j_KQ = j_KQ_0 + threadIdx.y*cpw;
 
 #ifdef FAST_FP16_AVAILABLE
-                ggml_cuda_memcpy_1<cpy_nb>(&Q_k[j_KQ_0], &Q_tmp[j_KQ*(DKQ/2) + k_KQ_0/2 + k_KQ_1]);
+                ggml_cuda_memcpy_1<cpy_nb>(&Q_k[j_KQ_0], &Q_tmp[j_KQ*(DKQ/2) + k0_start/2 + k_KQ_1]);
 #else
-                ggml_cuda_memcpy_1<cpy_nb>(&Q_k[j_KQ_0], &Q_tmp[j_KQ* DKQ    + k_KQ_0   + k_KQ_1]);
+                ggml_cuda_memcpy_1<cpy_nb>(&Q_k[j_KQ_0], &Q_tmp[j_KQ* DKQ    + k0_start   + k_KQ_1]);
 #endif // FAST_FP16_AVAILABLE
             }
 
@@ -433,7 +438,7 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
             }
         }
 
-        if (k_KQ_0 + kq_nbatch < DKQ) {
+        if (k0_stop < DKQ) {
             __syncthreads(); // Sync not needed on last iteration.
         }
     }
@@ -516,8 +521,8 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
     static_assert(kq_stride % V_cols_per_iter == 0, "bad V_cols_per_iter");
 #pragma unroll
     for (int k0 = 0; k0 < kq_stride; k0 += V_cols_per_iter) {
-        flash_attn_tile_load_tile<warp_size, nwarps, V_cols_per_iter, DV, 0, oob_check>
-            (V_h2 + int64_t(k_VKQ_0 + k0)*stride_V2, KV_tmp, stride_V2, k_sup - k0);
+        flash_attn_tile_load_tile<warp_size, nwarps, oob_check>
+            (V_h2 + int64_t(k_VKQ_0 + k0)*stride_V2, KV_tmp, stride_V2, V_cols_per_iter, DV, 0, k_sup - k0);
         __syncthreads();
 
 #ifdef FAST_FP16_AVAILABLE
