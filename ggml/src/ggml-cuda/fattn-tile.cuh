@@ -227,11 +227,11 @@ static constexpr __device__ int fattn_tile_get_nthreads_device(int ncols) {
     GGML_UNUSED(ncols);
 }
 
-static constexpr __device__ int fattn_tile_get_occupancy_device(int ncols) {
+static constexpr __device__ int fattn_tile_get_occupancy_device(int DV, int ncols) {
 #ifdef RDNA
-    return 3;
+    return DV <= 256 ? 3 : 2;
 #else
-    return ncols <= 16 ? 3 : 2;
+    return DV <= 256 && ncols <= 16 ? 3 : 2;
 #endif // RDNA
     GGML_UNUSED(ncols);
 }
@@ -580,7 +580,7 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
 }
 
 template<int DKQ, int DV, int ncols1, int ncols2, bool use_logit_softcap> // D == head size
-__launch_bounds__(fattn_tile_get_nthreads_device(ncols1*ncols2), fattn_tile_get_occupancy_device(ncols1*ncols2))
+__launch_bounds__(fattn_tile_get_nthreads_device(ncols1*ncols2), fattn_tile_get_occupancy_device(DV, ncols1*ncols2))
 static __global__ void flash_attn_tile(
         const char * __restrict__ Q,
         const char * __restrict__ K,
