@@ -289,7 +289,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
     }
 
     // Use kernels specialized for small batch sizes if possible:
-    if (Q->ne[1] <= 8 && can_use_vector_kernel) {
+    if (Q->ne[1] <= 2 && can_use_vector_kernel) {
         return BEST_FATTN_KERNEL_VEC;
     }
 
