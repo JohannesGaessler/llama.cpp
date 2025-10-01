@@ -18,7 +18,7 @@ static int fattn_tile_get_kq_stride_host(const int DV, const int ncols, const in
                 case 256:
                     return ncols <= 16 ? 128 : 64;
                 case 512:
-                    return 64;
+                    return ncols <= 16 ? 64 : 128;
                 default:
                     GGML_ABORT("fatal error");
                     return -1;
@@ -36,7 +36,7 @@ static int fattn_tile_get_kq_stride_host(const int DV, const int ncols, const in
             case 256:
                 return 32;
             case 512:
-                return 64;
+                return ncols <= 16 ? 64 : 128;
             default:
                 GGML_ABORT("fatal error");
                 return -1;
@@ -92,7 +92,7 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int DV, int ncol
         case 256:
             return ncols <= 16 ? 128 : 64;
         case 512:
-            return 64;
+            return ncols <= 16 ? 64 : 128;
         default:
             return -1;
     }
@@ -109,7 +109,7 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int DV, int ncol
         case 256:
             return 32;
         case 512:
-            return 64;
+            return ncols <= 16 ? 64 : 128;
         default:
             return -1;
     }
