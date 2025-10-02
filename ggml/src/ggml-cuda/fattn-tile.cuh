@@ -735,18 +735,29 @@ static __global__ void flash_attn_tile(
 
     // Main loop over KV cache:
     const int k_VKQ_max = KV_max ? KV_max[sequence*gridDim.x + blockIdx.x] : ne11;
-    int k_VKQ_0 = blockIdx.y*kq_stride;
-    for (; k_VKQ_0 < k_VKQ_max - kq_stride; k_VKQ_0 += gridDim.y*kq_stride) {
-        constexpr bool oob_check = false;
-        flash_attn_tile_iter<warp_size, nwarps, ncols1, ncols2, DKQ, DV, kq_stride, kq_nbatch, use_logit_softcap, oob_check>
-            (Q_tmp, K_h2, V_h2, maskh, logit_softcap, ne11, slope, KQ, KV_tmp,
-             stride_K2, stride_V2, stride_mask, KQ_max, KQ_sum, VKQ, k_VKQ_0, k_VKQ_max);
-    }
-    if (k_VKQ_0 < k_VKQ_max) {
-        constexpr bool oob_check = true;
-        flash_attn_tile_iter<warp_size, nwarps, ncols1, ncols2, DKQ, DV, kq_stride, kq_nbatch, use_logit_softcap, oob_check>
-            (Q_tmp, K_h2, V_h2, maskh, logit_softcap, ne11, slope, KQ, KV_tmp,
-             stride_K2, stride_V2, stride_mask, KQ_max, KQ_sum, VKQ, k_VKQ_0, k_VKQ_max);
+    if (ncols2 == 1) {
+        // Branch with out-of-bounds checks.
+        int k_VKQ_0 = blockIdx.y*kq_stride;
+        for (; k_VKQ_0 < k_VKQ_max - kq_stride; k_VKQ_0 += gridDim.y*kq_stride) {
+            constexpr bool oob_check = false;
+            flash_attn_tile_iter<warp_size, nwarps, ncols1, ncols2, DKQ, DV, kq_stride, kq_nbatch, use_logit_softcap, oob_check>
+                (Q_tmp, K_h2, V_h2, maskh, logit_softcap, ne11, slope, KQ, KV_tmp,
+                stride_K2, stride_V2, stride_mask, KQ_max, KQ_sum, VKQ, k_VKQ_0, k_VKQ_max);
+        }
+        if (k_VKQ_0 < k_VKQ_max) {
+            constexpr bool oob_check = true;
+            flash_attn_tile_iter<warp_size, nwarps, ncols1, ncols2, DKQ, DV, kq_stride, kq_nbatch, use_logit_softcap, oob_check>
+                (Q_tmp, K_h2, V_h2, maskh, logit_softcap, ne11, slope, KQ, KV_tmp,
+                stride_K2, stride_V2, stride_mask, KQ_max, KQ_sum, VKQ, k_VKQ_0, k_VKQ_max);
+        }
+    } else {
+        // Branch without out-of-bounds checks.
+        for (int k_VKQ_0 = blockIdx.y*kq_stride; k_VKQ_0 < k_VKQ_max; k_VKQ_0 += gridDim.y*kq_stride) {
+            constexpr bool oob_check = false;
+            flash_attn_tile_iter<warp_size, nwarps, ncols1, ncols2, DKQ, DV, kq_stride, kq_nbatch, use_logit_softcap, oob_check>
+                (Q_tmp, K_h2, V_h2, maskh, logit_softcap, ne11, slope, KQ, KV_tmp,
+                stride_K2, stride_V2, stride_mask, KQ_max, KQ_sum, VKQ, k_VKQ_0, k_VKQ_max);
+        }
     }
 
 
