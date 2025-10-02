@@ -617,6 +617,7 @@ static __global__ void flash_attn_tile(
                             const int32_t nb31, const int32_t nb32, const int64_t nb33) {
 #ifdef FLASH_ATTN_AVAILABLE
 
+    // Skip unused kernel variants for faster compilation:
 #ifdef GGML_USE_WMMA_FATTN
     if (DV != 40) {
         NO_DEVICE_CODE;
@@ -624,7 +625,6 @@ static __global__ void flash_attn_tile(
     }
 #endif // GGML_USE_WMMA_FATTN
 
-    // Skip unused kernel variants for faster compilation:
     if (use_logit_softcap && !(DV == 128 || DV == 256)) {
         GGML_UNUSED_VARS(Q, K, V, mask, sinks, KV_max, dst, dst_meta, scale,
             max_bias, m0, m1, n_head_log2, logit_softcap,
@@ -961,10 +961,12 @@ static void launch_fattn_tile_switch_ncols2(ggml_backend_cuda_context & ctx, ggm
     float max_bias = 0.0f;
     memcpy(&max_bias, (const float *) KQV->op_params + 1, sizeof(float));
 
-    const bool use_gqa_opt = mask && max_bias == 0.0f;
-
     GGML_ASSERT(Q->ne[2] % K->ne[2] == 0);
     const int gqa_ratio = Q->ne[2] / K->ne[2];
+
+    const bool nvidia = GGML_CUDA_CC_IS_NVIDIA(ggml_cuda_info().devices[ggml_cuda_get_device()].cc);
+    const int gqa_limit = nvidia && gqa_ratio <= 4 ? 16 : INT_MAX;
+    const bool use_gqa_opt = mask && max_bias == 0.0f && Q->ne[1] <= gqa_limit && K->ne[1] % FATTN_KQ_STRIDE == 0;
 
     if (use_gqa_opt && gqa_ratio % 16 == 0) {
         launch_fattn_tile_switch_ncols1<DKQ, DV, 16, use_logit_softcap>(ctx, dst);
