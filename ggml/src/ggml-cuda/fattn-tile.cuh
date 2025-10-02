@@ -225,11 +225,15 @@ static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int DV, int ncol
 }
 
 static int fattn_tile_get_warp_size_host(const int physical_warp_size, const int DV, const int ncols, const int cc) {
-    return DV > 64 && fattn_tile_get_kq_stride_host(DV, ncols, cc) >= 64 ? physical_warp_size : 32;
+    // return DV > 64 && fattn_tile_get_kq_stride_host(DV, ncols, cc) >= 64 ? physical_warp_size : 32;
+    return 32;
+    GGML_UNUSED_VARS(physical_warp_size, DV, ncols, cc);
 }
 
 static constexpr int __device__ fattn_tile_get_warp_size_device(int DV, int ncols) {
-    return DV > 64 && fattn_tile_get_kq_stride_device(DV, ncols) >= 64 ? ggml_cuda_get_physical_warp_size() : 32;
+    // return DV > 64 && fattn_tile_get_kq_stride_device(DV, ncols) >= 64 ? ggml_cuda_get_physical_warp_size() : 32;
+    return 32;
+    GGML_UNUSED_VARS(DV, ncols);
 }
 
 static int fattn_tile_get_nthreads_host(const int physical_warp_size, const int DV, const int ncols, const int cc) {
