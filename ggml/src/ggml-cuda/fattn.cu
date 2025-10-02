@@ -217,7 +217,9 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
     float max_bias = 0.0f;
     memcpy(&max_bias, (const float *) KQV->op_params + 1, sizeof(float));
 
-    const bool gqa_opt_applies = gqa_ratio % 2 == 0 && mask && max_bias == 0.0f; // The effective batch size for the kernel can be increased by gqa_ratio.
+    // The effective batch size for the kernel can be increased by gqa_ratio.
+    // The kernel versions without this optimization are also used for ALiBi, if there is no mask, or if the KV cache is not padded,
+    const bool gqa_opt_applies = gqa_ratio % 2 == 0 && mask && max_bias == 0.0f && K->ne[1] % FATTN_KQ_STRIDE == 0;
 
     const int cc = ggml_cuda_info().devices[device].cc;
 
