@@ -890,14 +890,19 @@ static void launch_fattn_tile_switch_ncols1(ggml_backend_cuda_context & ctx, ggm
     }
 #endif // GGML_USE_HIP
 
-    if (Q->ne[1] > 16/ncols2) {
-        constexpr int cols_per_block = 32;
-        const int nwarps = fattn_tile_get_nthreads_host(cc, cols_per_block) / warp_size;
-        fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
-        const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc, warp_size);
-        launch_fattn<DV, cols_per_block/ncols2, ncols2>
-            (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
-        return;
+#ifndef GGML_USE_HIP
+    if constexpr (DV <= 256)
+#endif // GGML_USE_HIP
+    {
+        if (Q->ne[1] > 16/ncols2) {
+            constexpr int cols_per_block = 32;
+            const int nwarps = fattn_tile_get_nthreads_host(cc, cols_per_block) / warp_size;
+            fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
+            const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc, warp_size);
+            launch_fattn<DV, cols_per_block/ncols2, ncols2>
+                (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
+            return;
+        }
     }
 
     if (Q->ne[1] > 8/ncols2) {
