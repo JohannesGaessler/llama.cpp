@@ -619,7 +619,7 @@ static __global__ void flash_attn_tile(
 
     // Skip unused kernel variants for faster compilation:
 #ifdef GGML_USE_WMMA_FATTN
-    if (DV != 40) {
+    if (DV != 40 && DV != 512) {
         NO_DEVICE_CODE;
         return;
     }
