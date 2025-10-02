@@ -7,7 +7,7 @@
 
 // TODO optimize kernel parameters for head sizes 40, 80, 96, 112
 
-static int fattn_tile_get_kq_stride_host(const int DV, const int ncols, const int cc, const int warp_size) {
+static int fattn_tile_get_kq_stride_host(const int DV, const int ncols, const int cc) {
     if (GGML_CUDA_CC_IS_AMD(cc)) {
         if (GGML_CUDA_CC_IS_RDNA(cc)) {
             switch (DV) {
@@ -79,10 +79,10 @@ static int fattn_tile_get_kq_stride_host(const int DV, const int ncols, const in
             GGML_ABORT("fatal error");
             return -1;
     }
-    GGML_UNUSED(warp_size);
+    GGML_UNUSED_VARS(DV, ncols, cc);
 }
 
-static constexpr __device__ int fattn_tile_get_kq_stride_device(int DV, int ncols, int warp_size) {
+static constexpr __device__ int fattn_tile_get_kq_stride_device(int DV, int ncols) {
 #ifdef GGML_USE_HIP
 #ifdef RDNA
     switch (DV) {
@@ -153,10 +153,10 @@ static constexpr __device__ int fattn_tile_get_kq_stride_device(int DV, int ncol
     }
 #endif // FAST_FP16_AVAILABLE
 #endif // GGML_USE_HIP
-    GGML_UNUSED_VARS(ncols, warp_size);
+    GGML_UNUSED_VARS(DV, ncols);
 }
 
-static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int DV, int ncols, int warp_size) {
+static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int DV, int ncols) {
 #ifdef GGML_USE_HIP
     switch (DV) {
         case 40:
@@ -221,11 +221,24 @@ static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int DV, int ncol
     }
 #endif // FAST_FP16_AVAILABLE
 #endif // GGML_USE_HIP
-    GGML_UNUSED_VARS(ncols, warp_size);
+    GGML_UNUSED_VARS(DV, ncols);
 }
 
-static constexpr __host__ __device__ int fattn_tile_get_nthreads(int ncols) {
-    return ncols*WARP_SIZE < 256 ? ncols*WARP_SIZE : 256;
+static int fattn_tile_get_warp_size_host(const int physical_warp_size, const int DV, const int ncols, const int cc) {
+    return DV > 64 && fattn_tile_get_kq_stride_host(DV, ncols, cc) >= 64 ? physical_warp_size : 32;
+}
+
+static constexpr int __device__ fattn_tile_get_warp_size_device(int DV, int ncols) {
+    return DV > 64 && fattn_tile_get_kq_stride_device(DV, ncols) >= 64 ? ggml_cuda_get_physical_warp_size() : 32;
+}
+
+static int fattn_tile_get_nthreads_host(const int physical_warp_size, const int DV, const int ncols, const int cc) {
+    const int warp_size = fattn_tile_get_warp_size_host(physical_warp_size, DV, ncols, cc);
+    return ncols*warp_size < 256 ? ncols*warp_size : 256;
+}
+
+static constexpr int __device__ fattn_tile_get_nthreads_device(int DV, int ncols) {
+    return ncols*fattn_tile_get_warp_size_device(DV, ncols) < 256 ? ncols*fattn_tile_get_warp_size_device(DV, ncols) : 256;
 }
 
 static constexpr __device__ int fattn_tile_get_occupancy_device(int DV, int ncols) {
@@ -238,7 +251,7 @@ static constexpr __device__ int fattn_tile_get_occupancy_device(int DV, int ncol
 #else
     return DV <= 256 && ncols <= 16 ? 3 : 2;
 #endif // GGML_USE_HIP
-    GGML_UNUSED(ncols);
+    GGML_UNUSED_VARS(DV, ncols);
 }
 
 // TODO: deduplicate with mma-f16
@@ -275,13 +288,14 @@ static __device__ __forceinline__ void flash_attn_tile_load_tile(
             }
         }
     };
-    // 1: max 32*16=512 bytes, 256 half
-    // 2: max 16*16=256 bytes, 128 half
-    // 3: max  8*16=128 bytes,  64 half
-    // 4: max  4*16= 64 bytes,  32 half
-    // 5: max  2*16= 32 bytes,  16 half
-    // 6: max  1*16= 16 bytes,   8 half
-    ggml_cuda_unroll<6>{}(load);
+    // 1: max 64*16=512 bytes, 512 half
+    // 2: max 32*16=512 bytes, 256 half
+    // 3: max 16*16=256 bytes, 128 half
+    // 4: max  8*16=128 bytes,  64 half
+    // 5: max  4*16= 64 bytes,  32 half
+    // 6: max  2*16= 32 bytes,  16 half
+    // 7: max  1*16= 16 bytes,   8 half
+    ggml_cuda_unroll<7>{}(load);
 }
 
 template<int warp_size, int nwarps, int I, int J, int J_padding, bool oob_check>
@@ -358,7 +372,7 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
     constexpr int ncols = ncols1*ncols2;
     constexpr int cpw   = ncols/nwarps; // cols per warp
 
-    constexpr int DVp = (DV  + 2*warp_size - 1) & ~(2*warp_size - 1); // DV padded to multiple of 2*warp_size.
+    constexpr int DVp = (DV + 2*warp_size - 1) & ~(2*warp_size - 1); // DV padded to multiple of 2*warp_size.
 
     // softmax_iter_j == number of KQ columns for which to calculate softmax in parallel.
     // KQ is originally 2D but uses a Z-shaped memory pattern for larger reads/writes.
@@ -586,7 +600,7 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
 }
 
 template<int DKQ, int DV, int ncols1, int ncols2, bool use_logit_softcap> // D == head size
-__launch_bounds__(fattn_tile_get_nthreads(ncols1*ncols2), fattn_tile_get_occupancy_device(DV, ncols1*ncols2))
+__launch_bounds__(fattn_tile_get_nthreads_device(DV, ncols1*ncols2), fattn_tile_get_occupancy_device(DV, ncols1*ncols2))
 static __global__ void flash_attn_tile(
         const char * __restrict__ Q,
         const char * __restrict__ K,
@@ -634,11 +648,11 @@ static __global__ void flash_attn_tile(
     }
 
     constexpr int ncols     = ncols1*ncols2;
-    constexpr int warp_size = 32;
-    constexpr int nwarps    = fattn_tile_get_nthreads(ncols) / warp_size;
-    constexpr int kq_stride = fattn_tile_get_kq_stride_device(DV, ncols, warp_size);
+    constexpr int kq_stride = fattn_tile_get_kq_stride_device(DV, ncols);
+    constexpr int kq_nbatch = fattn_tile_get_kq_nbatch_device(DV, ncols);
+    constexpr int warp_size = fattn_tile_get_warp_size_device(DV, ncols);
+    constexpr int nwarps    = fattn_tile_get_nthreads_device(DV, ncols) / warp_size;
     static_assert(kq_stride % warp_size == 0, "kq_stride not divisable by warp_size.");
-    constexpr int kq_nbatch = fattn_tile_get_kq_nbatch_device(DV, ncols, warp_size);
 
     // In this kernel Q, K, V are matrices while i, j, k are matrix indices.
 
@@ -875,9 +889,9 @@ template <int DKQ, int DV, int ncols2, bool use_logit_softcap>
 static void launch_fattn_tile_switch_ncols1(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * Q = dst->src[0];
 
-    const int id        = ggml_cuda_get_device();
-    const int cc        = ggml_cuda_info().devices[id].cc;
-    const int warp_size = 32;
+    const int id                 = ggml_cuda_get_device();
+    const int cc                 = ggml_cuda_info().devices[id].cc;
+    const int physical_warp_size = ggml_cuda_info().devices[id].warp_size;
 
     constexpr size_t nbytes_shared = 0;
 
@@ -885,9 +899,10 @@ static void launch_fattn_tile_switch_ncols1(ggml_backend_cuda_context & ctx, ggm
     if constexpr (DV <= 128) {
         if (Q->ne[1] > 32/ncols2) {
             constexpr int cols_per_block = 64;
-            const int nwarps = fattn_tile_get_nthreads(cols_per_block) / warp_size;
+            const int warp_size = fattn_tile_get_warp_size_host(physical_warp_size, DV, cols_per_block, cc);
+            const int nwarps = fattn_tile_get_nthreads_host(physical_warp_size, DV, cols_per_block, cc) / warp_size;
             fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
-            const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc, warp_size);
+            const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc);
             launch_fattn<DV, cols_per_block/ncols2, ncols2>
                 (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
             return;
@@ -901,9 +916,10 @@ static void launch_fattn_tile_switch_ncols1(ggml_backend_cuda_context & ctx, ggm
     {
         if (Q->ne[1] > 16/ncols2) {
             constexpr int cols_per_block = 32;
-            const int nwarps = fattn_tile_get_nthreads(cols_per_block) / warp_size;
+            const int warp_size = fattn_tile_get_warp_size_host(physical_warp_size, DV, cols_per_block, cc);
+            const int nwarps = fattn_tile_get_nthreads_host(physical_warp_size, DV, cols_per_block, cc) / warp_size;
             fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
-            const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc, warp_size);
+            const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc);
             launch_fattn<DV, cols_per_block/ncols2, ncols2>
                 (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
             return;
@@ -912,9 +928,10 @@ static void launch_fattn_tile_switch_ncols1(ggml_backend_cuda_context & ctx, ggm
 
     if (Q->ne[1] > 8/ncols2) {
         constexpr int cols_per_block = 16;
-        const int nwarps = fattn_tile_get_nthreads(cols_per_block) / warp_size;
+        const int warp_size = fattn_tile_get_warp_size_host(physical_warp_size, DV, cols_per_block, cc);
+        const int nwarps = fattn_tile_get_nthreads_host(physical_warp_size, DV, cols_per_block, cc) / warp_size;
         fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
-        const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc, warp_size);
+        const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc);
         launch_fattn<DV, cols_per_block/ncols2, ncols2>
             (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
         return;
@@ -923,9 +940,10 @@ static void launch_fattn_tile_switch_ncols1(ggml_backend_cuda_context & ctx, ggm
     if constexpr (ncols2 <= 8) {
         if (Q->ne[1] > 4/ncols2) {
             constexpr int cols_per_block = 8;
-            const int nwarps = fattn_tile_get_nthreads(cols_per_block) / warp_size;
+            const int warp_size = fattn_tile_get_warp_size_host(physical_warp_size, DV, cols_per_block, cc);
+            const int nwarps = fattn_tile_get_nthreads_host(physical_warp_size, DV, cols_per_block, cc) / warp_size;
             fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
-            const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc, warp_size);
+            const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc);
             launch_fattn<DV, cols_per_block/ncols2, ncols2>
                 (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
             return;
@@ -935,9 +953,10 @@ static void launch_fattn_tile_switch_ncols1(ggml_backend_cuda_context & ctx, ggm
     if constexpr (ncols2 <= 4) {
         if (Q->ne[1] > 2/ncols2) {
             constexpr int cols_per_block = 4;
-            const int nwarps = fattn_tile_get_nthreads(cols_per_block) / warp_size;
+            const int warp_size = fattn_tile_get_warp_size_host(physical_warp_size, DV, cols_per_block, cc);
+            const int nwarps = fattn_tile_get_nthreads_host(physical_warp_size, DV, cols_per_block, cc) / warp_size;
             fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
-            const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc, warp_size);
+            const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc);
             launch_fattn<DV, cols_per_block/ncols2, ncols2>
                 (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
             return;
@@ -946,9 +965,10 @@ static void launch_fattn_tile_switch_ncols1(ggml_backend_cuda_context & ctx, ggm
 
     if constexpr (ncols2 <= 2) {
         constexpr int cols_per_block = 2;
-        const int nwarps = fattn_tile_get_nthreads(cols_per_block) / warp_size;
+        const int warp_size = fattn_tile_get_warp_size_host(physical_warp_size, DV, cols_per_block, cc);
+        const int nwarps = fattn_tile_get_nthreads_host(physical_warp_size, DV, cols_per_block, cc) / warp_size;
         fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
-        const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc, warp_size);
+        const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc);
         launch_fattn<DV, cols_per_block/ncols2, ncols2>
             (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
         return;
