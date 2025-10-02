@@ -231,9 +231,9 @@ static constexpr __host__ __device__ int fattn_tile_get_nthreads(int ncols) {
 static constexpr __device__ int fattn_tile_get_occupancy_device(int DV, int ncols) {
 #ifdef GGML_USE_HIP
 #ifdef RDNA
-    return DV <= 256 ? 3 : 2;
+    return 2;
 #else
-    return DV <= 256 ? (ncols <= 16 ? 3 : 2) : (ncols <= 16 ? 2 : 1);
+    return DV <= 256 ? 2 : 1;
 #endif // RDNA
 #else
     return DV <= 256 && ncols <= 16 ? 3 : 2;
