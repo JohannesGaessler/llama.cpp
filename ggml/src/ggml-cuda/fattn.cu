@@ -313,8 +313,14 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
     // If there are no tensor cores available, use the generic tile kernel:
     if (can_use_vector_kernel) {
         if (K->type == GGML_TYPE_F16 && V->type == GGML_TYPE_F16) {
-            if (!gqa_opt_applies && Q->ne[1] == 1) {
-                return BEST_FATTN_KERNEL_VEC;
+            if (Q->ne[1] == 1) {
+                if (!gqa_opt_applies) {
+                    return BEST_FATTN_KERNEL_VEC;
+                } else if (GGML_CUDA_CC_IS_NVIDIA(cc)) {
+                    if (Q->ne[3] == 1 && ((gqa_ratio == 2 && K->ne[1] <= 8192) || (gqa_ratio == 4 && K->ne[1] <= 4096))) {
+                        return BEST_FATTN_KERNEL_VEC;
+                    }
+                }
             }
         } else {
             if (Q->ne[1] <= 2) {
