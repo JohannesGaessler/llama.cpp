@@ -402,21 +402,128 @@ static int4 fattn_tile_get_config_host(const int cc, const int ncols) {
     return fattn_tile_config<DKQ, DV>::get_nvidia_fp32(ncols);
 }
 
-template<int DKQ, int DV>
-static constexpr __device__ int4 fattn_tile_get_config_device(int ncols) {
+static constexpr __device__ int4 fattn_tile_get_config_device(int DKQ, int DV, int ncols) {
+    if (DKQ == 40 && DV == 40) {
 #ifdef GGML_USE_HIP
 #ifdef RDNA
-    return fattn_tile_config<DKQ, DV>::get_amd_rdna(ncols);
+        return fattn_tile_config< 40, 40>::get_amd_rdna(ncols);
 #else
-    return fattn_tile_config<DKQ, DV>::get_amd(ncols);
+        return fattn_tile_config< 40, 40>::get_amd(ncols);
 #endif // RDNA
 #else
 #ifdef FAST_FP16_AVAILABLE
-    return fattn_tile_config<DKQ, DV>::get_nvidia_fp16(ncols);
+        return fattn_tile_config< 40, 40>::get_nvidia_fp16(ncols);
 #else
-    return fattn_tile_config<DKQ, DV>::get_nvidia_fp32(ncols);
+        return fattn_tile_config< 40, 40>::get_nvidia_fp32(ncols);
 #endif // FAST_FP16_AVAILABLE
 #endif // GGML_USE_HIP
+    }
+    if (DKQ == 64 && DV == 64) {
+#ifdef GGML_USE_HIP
+#ifdef RDNA
+        return fattn_tile_config< 64, 64>::get_amd_rdna(ncols);
+#else
+        return fattn_tile_config< 64, 64>::get_amd(ncols);
+#endif // RDNA
+#else
+#ifdef FAST_FP16_AVAILABLE
+        return fattn_tile_config< 64, 64>::get_nvidia_fp16(ncols);
+#else
+        return fattn_tile_config< 64, 64>::get_nvidia_fp32(ncols);
+#endif // FAST_FP16_AVAILABLE
+#endif // GGML_USE_HIP
+    }
+    if (DKQ == 80 && DV == 80) {
+#ifdef GGML_USE_HIP
+#ifdef RDNA
+        return fattn_tile_config< 80, 80>::get_amd_rdna(ncols);
+#else
+        return fattn_tile_config< 80, 80>::get_amd(ncols);
+#endif // RDNA
+#else
+#ifdef FAST_FP16_AVAILABLE
+        return fattn_tile_config< 80, 80>::get_nvidia_fp16(ncols);
+#else
+        return fattn_tile_config< 80, 80>::get_nvidia_fp32(ncols);
+#endif // FAST_FP16_AVAILABLE
+#endif // GGML_USE_HIP
+    }
+    if (DKQ == 96 && DV == 96) {
+#ifdef GGML_USE_HIP
+#ifdef RDNA
+        return fattn_tile_config< 96, 96>::get_amd_rdna(ncols);
+#else
+        return fattn_tile_config< 96, 96>::get_amd(ncols);
+#endif // RDNA
+#else
+#ifdef FAST_FP16_AVAILABLE
+        return fattn_tile_config< 96, 96>::get_nvidia_fp16(ncols);
+#else
+        return fattn_tile_config< 96, 96>::get_nvidia_fp32(ncols);
+#endif // FAST_FP16_AVAILABLE
+#endif // GGML_USE_HIP
+    }
+    if (DKQ == 112 && DV == 112) {
+#ifdef GGML_USE_HIP
+#ifdef RDNA
+        return fattn_tile_config<112, 112>::get_amd_rdna(ncols);
+#else
+        return fattn_tile_config<112, 112>::get_amd(ncols);
+#endif // RDNA
+#else
+#ifdef FAST_FP16_AVAILABLE
+        return fattn_tile_config<112, 112>::get_nvidia_fp16(ncols);
+#else
+        return fattn_tile_config<112, 112>::get_nvidia_fp32(ncols);
+#endif // FAST_FP16_AVAILABLE
+#endif // GGML_USE_HIP
+    }
+    if (DKQ == 128 && DV == 128) {
+#ifdef GGML_USE_HIP
+#ifdef RDNA
+        return fattn_tile_config<128, 128>::get_amd_rdna(ncols);
+#else
+        return fattn_tile_config<128, 128>::get_amd(ncols);
+#endif // RDNA
+#else
+#ifdef FAST_FP16_AVAILABLE
+        return fattn_tile_config<128, 128>::get_nvidia_fp16(ncols);
+#else
+        return fattn_tile_config<128, 128>::get_nvidia_fp32(ncols);
+#endif // FAST_FP16_AVAILABLE
+#endif // GGML_USE_HIP
+    }
+    if (DKQ == 256 && DV == 256) {
+#ifdef GGML_USE_HIP
+#ifdef RDNA
+        return fattn_tile_config<256, 256>::get_amd_rdna(ncols);
+#else
+        return fattn_tile_config<256, 256>::get_amd(ncols);
+#endif // RDNA
+#else
+#ifdef FAST_FP16_AVAILABLE
+        return fattn_tile_config<256, 256>::get_nvidia_fp16(ncols);
+#else
+        return fattn_tile_config<256, 256>::get_nvidia_fp32(ncols);
+#endif // FAST_FP16_AVAILABLE
+#endif // GGML_USE_HIP
+    }
+    if (DKQ == 576 && DV == 512) {
+#ifdef GGML_USE_HIP
+#ifdef RDNA
+        return fattn_tile_config<576, 512>::get_amd_rdna(ncols);
+#else
+        return fattn_tile_config<576, 512>::get_amd(ncols);
+#endif // RDNA
+#else
+#ifdef FAST_FP16_AVAILABLE
+        return fattn_tile_config<576, 512>::get_nvidia_fp16(ncols);
+#else
+        return fattn_tile_config<576, 512>::get_nvidia_fp32(ncols);
+#endif // FAST_FP16_AVAILABLE
+#endif // GGML_USE_HIP
+    }
+    return {-1, -1, -1, -1};
 }
 
 // TODO: deduplicate with mma-f16
@@ -783,7 +890,7 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
 }
 
 template<int DKQ, int DV, int ncols1, int ncols2, bool use_logit_softcap> // D == head size
-__launch_bounds__(fattn_tile_get_config_device<DKQ, DV>(ncols1*ncols2).x, fattn_tile_get_config_device<DKQ, DV>(ncols1*ncols2).y)
+__launch_bounds__(fattn_tile_get_config_device(DKQ, DV, ncols1*ncols2).x, fattn_tile_get_config_device(DKQ, DV, ncols1*ncols2).y)
 static __global__ void flash_attn_tile(
         const char * __restrict__ Q,
         const char * __restrict__ K,
@@ -832,9 +939,9 @@ static __global__ void flash_attn_tile(
 
     constexpr int ncols     = ncols1*ncols2;
     constexpr int warp_size = 32;
-    constexpr int nwarps    = fattn_tile_get_config_device<DKQ, DV>(ncols).x / warp_size;
-    constexpr int kq_stride = fattn_tile_get_config_device<DKQ, DV>(ncols).z;
-    constexpr int kq_nbatch = fattn_tile_get_config_device<DKQ, DV>(ncols).w;
+    constexpr int nwarps    = fattn_tile_get_config_device(DKQ, DV, ncols).x / warp_size;
+    constexpr int kq_stride = fattn_tile_get_config_device(DKQ, DV, ncols).z;
+    constexpr int kq_nbatch = fattn_tile_get_config_device(DKQ, DV, ncols).w;
 
     // In this kernel Q, K, V are matrices while i, j, k are matrix indices.
 
