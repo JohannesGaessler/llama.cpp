@@ -419,6 +419,16 @@ static constexpr __device__ int4 fattn_tile_get_config_device(int ncols) {
 #endif // GGML_USE_HIP
 }
 
+template<int DKQ, int DV>
+static constexpr __device__ int fattn_tile_get_nthreads_device(int ncols) {
+    return fattn_tile_get_config_device<DKQ, DV>(ncols).x;
+}
+
+template<int DKQ, int DV>
+static constexpr __device__ int fattn_tile_get_occupancy_device(int ncols) {
+    return fattn_tile_get_config_device<DKQ, DV>(ncols).y;
+}
+
 // TODO: deduplicate with mma-f16
 template<int warp_size, int nwarps, int I, int J, int J_padding, bool oob_check>
 static __device__ __forceinline__ void flash_attn_tile_load_tile(
@@ -783,7 +793,7 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
 }
 
 template<int DKQ, int DV, int ncols1, int ncols2, bool use_logit_softcap> // D == head size
-__launch_bounds__(fattn_tile_get_config_device<DKQ, DV>(ncols1*ncols2).x, fattn_tile_get_config_device<DKQ, DV>(ncols1*ncols2).y)
+__launch_bounds__(fattn_tile_get_nthreads_device<DKQ, DV>(ncols1*ncols2), fattn_tile_get_occupancy_device<DKQ, DV>(ncols1*ncols2))
 static __global__ void flash_attn_tile(
         const char * __restrict__ Q,
         const char * __restrict__ K,
