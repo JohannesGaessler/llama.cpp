@@ -7,265 +7,416 @@
 
 // TODO optimize kernel parameters for head sizes 40, 80, 96, 112
 
-static int fattn_tile_get_kq_stride_host(const int DV, const int ncols, const int cc) {
-    if (ncols <= 8) {
-        return 128;
+template <int DKQ, int DV>
+struct fattn_tile_config;
+
+template <>
+struct fattn_tile_config< 40,  40> {
+    static constexpr __host__ __device__ int4 get_nvidia_fp16(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32,  40};
+            case  4: return {128,  2,  32,  40};
+            case  8: return {256,  2,  32,  40};
+            case 16: return {256,  2,  32,  40};
+            case 32: return {256,  2,  32,  40};
+            default: return { -1, -1,  -1,  -1};
+        }
     }
+
+    static constexpr __host__ __device__ int4 get_nvidia_fp32(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32,  40};
+            case  4: return {128,  2,  32,  40};
+            case  8: return {256,  2,  32,  40};
+            case 16: return {256,  2,  32,  40};
+            case 32: return {256,  2,  32,  40};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+
+    static constexpr __host__ __device__ int4 get_amd(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32,  40};
+            case  4: return {128,  2,  32,  40};
+            case  8: return {256,  2,  32,  40};
+            case 16: return {256,  2,  32,  40};
+            case 32: return {256,  2,  32,  40};
+            case 64: return {256,  2,  32,  40};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+
+    static constexpr __host__ __device__ int4 get_amd_rdna(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32,  40};
+            case  4: return {128,  2,  32,  40};
+            case  8: return {256,  2,  32,  40};
+            case 16: return {256,  2,  32,  40};
+            case 32: return {256,  2,  32,  40};
+            case 64: return {256,  2,  32,  40};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+};
+
+template <>
+struct fattn_tile_config< 64,  64> {
+    static constexpr __host__ __device__ int4 get_nvidia_fp16(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32,  64};
+            case  4: return {128,  2,  32,  64};
+            case  8: return {256,  2,  32,  64};
+            case 16: return {256,  2,  32,  64};
+            case 32: return {256,  2,  32,  64};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+
+    static constexpr __host__ __device__ int4 get_nvidia_fp32(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32,  64};
+            case  4: return {128,  2,  32,  64};
+            case  8: return {256,  2,  32,  64};
+            case 16: return {256,  2,  32,  64};
+            case 32: return {256,  2,  32,  64};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+
+    static constexpr __host__ __device__ int4 get_amd(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32,  64};
+            case  4: return {128,  2,  32,  64};
+            case  8: return {256,  2,  32,  64};
+            case 16: return {256,  2,  32,  64};
+            case 32: return {256,  2,  32,  64};
+            case 64: return {256,  2,  32,  64};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+
+    static constexpr __host__ __device__ int4 get_amd_rdna(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32,  64};
+            case  4: return {128,  2,  32,  64};
+            case  8: return {256,  2,  32,  64};
+            case 16: return {256,  2,  32,  64};
+            case 32: return {256,  2,  32,  64};
+            case 64: return {256,  2,  32,  64};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+};
+
+template <>
+struct fattn_tile_config< 80,  80> {
+    static constexpr __host__ __device__ int4 get_nvidia_fp16(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32,  80};
+            case  4: return {128,  2,  32,  80};
+            case  8: return {256,  2,  32,  80};
+            case 16: return {256,  2,  32,  80};
+            case 32: return {256,  2,  32,  80};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+
+    static constexpr __host__ __device__ int4 get_nvidia_fp32(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32,  80};
+            case  4: return {128,  2,  32,  80};
+            case  8: return {256,  2,  32,  80};
+            case 16: return {256,  2,  32,  80};
+            case 32: return {256,  2,  32,  80};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+
+    static constexpr __host__ __device__ int4 get_amd(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32,  80};
+            case  4: return {128,  2,  32,  80};
+            case  8: return {256,  2,  32,  80};
+            case 16: return {256,  2,  32,  80};
+            case 32: return {256,  2,  32,  80};
+            case 64: return {256,  2,  32,  80};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+
+    static constexpr __host__ __device__ int4 get_amd_rdna(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32,  80};
+            case  4: return {128,  2,  32,  80};
+            case  8: return {256,  2,  32,  80};
+            case 16: return {256,  2,  32,  80};
+            case 32: return {256,  2,  32,  80};
+            case 64: return {256,  2,  32,  80};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+};
+
+template <>
+struct fattn_tile_config< 96,  96> {
+    static constexpr __host__ __device__ int4 get_nvidia_fp16(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32,  96};
+            case  4: return {128,  2,  32,  96};
+            case  8: return {256,  2,  32,  96};
+            case 16: return {256,  2,  32,  96};
+            case 32: return {256,  2,  32,  96};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+
+    static constexpr __host__ __device__ int4 get_nvidia_fp32(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32,  96};
+            case  4: return {128,  2,  32,  96};
+            case  8: return {256,  2,  32,  96};
+            case 16: return {256,  2,  32,  96};
+            case 32: return {256,  2,  32,  96};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+
+    static constexpr __host__ __device__ int4 get_amd(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32,  96};
+            case  4: return {128,  2,  32,  96};
+            case  8: return {256,  2,  32,  96};
+            case 16: return {256,  2,  32,  96};
+            case 32: return {256,  2,  32,  96};
+            case 64: return {256,  2,  32,  96};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+
+    static constexpr __host__ __device__ int4 get_amd_rdna(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32,  96};
+            case  4: return {128,  2,  32,  96};
+            case  8: return {256,  2,  32,  96};
+            case 16: return {256,  2,  32,  96};
+            case 32: return {256,  2,  32,  96};
+            case 64: return {256,  2,  32,  96};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+};
+
+template <>
+struct fattn_tile_config<112, 112> {
+    static constexpr __host__ __device__ int4 get_nvidia_fp16(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32, 112};
+            case  4: return {128,  2,  32, 112};
+            case  8: return {256,  2,  32, 112};
+            case 16: return {256,  2,  32, 112};
+            case 32: return {256,  2,  32, 112};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+
+    static constexpr __host__ __device__ int4 get_nvidia_fp32(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32, 112};
+            case  4: return {128,  2,  32, 112};
+            case  8: return {256,  2,  32, 112};
+            case 16: return {256,  2,  32, 112};
+            case 32: return {256,  2,  32, 112};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+
+    static constexpr __host__ __device__ int4 get_amd(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32, 112};
+            case  4: return {128,  2,  32, 112};
+            case  8: return {256,  2,  32, 112};
+            case 16: return {256,  2,  32, 112};
+            case 32: return {256,  2,  32, 112};
+            case 64: return {256,  2,  32, 112};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+
+    static constexpr __host__ __device__ int4 get_amd_rdna(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32, 112};
+            case  4: return {128,  2,  32, 112};
+            case  8: return {256,  2,  32, 112};
+            case 16: return {256,  2,  32, 112};
+            case 32: return {256,  2,  32, 112};
+            case 64: return {256,  2,  32, 112};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+};
+
+template <>
+struct fattn_tile_config<128, 128> {
+    static constexpr __host__ __device__ int4 get_nvidia_fp16(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32, 128};
+            case  4: return {128,  2,  32, 128};
+            case  8: return {256,  2,  32, 128};
+            case 16: return {256,  2,  32, 128};
+            case 32: return {256,  2,  32, 128};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+
+    static constexpr __host__ __device__ int4 get_nvidia_fp32(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32, 128};
+            case  4: return {128,  2,  32, 128};
+            case  8: return {256,  2,  32, 128};
+            case 16: return {256,  2,  32, 128};
+            case 32: return {256,  2,  32, 128};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+
+    static constexpr __host__ __device__ int4 get_amd(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32, 128};
+            case  4: return {128,  2,  32, 128};
+            case  8: return {256,  2,  32, 128};
+            case 16: return {256,  2,  32, 128};
+            case 32: return {256,  2,  32, 128};
+            case 64: return {256,  2,  32, 128};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+
+    static constexpr __host__ __device__ int4 get_amd_rdna(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32, 128};
+            case  4: return {128,  2,  32, 128};
+            case  8: return {256,  2,  32, 128};
+            case 16: return {256,  2,  32, 128};
+            case 32: return {256,  2,  32, 128};
+            case 64: return {256,  2,  32, 128};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+};
+
+template <>
+struct fattn_tile_config<256, 256> {
+    static constexpr __host__ __device__ int4 get_nvidia_fp16(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32,  64};
+            case  4: return {128,  2,  32,  64};
+            case  8: return {256,  2,  32,  64};
+            case 16: return {256,  2,  32,  64};
+            case 32: return {256,  2,  32,  64};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+
+    static constexpr __host__ __device__ int4 get_nvidia_fp32(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32,  64};
+            case  4: return {128,  2,  32,  64};
+            case  8: return {256,  2,  32,  64};
+            case 16: return {256,  2,  32,  64};
+            case 32: return {256,  2,  32,  64};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+
+    static constexpr __host__ __device__ int4 get_amd(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32,  64};
+            case  4: return {128,  2,  32,  64};
+            case  8: return {256,  2,  32,  64};
+            case 16: return {256,  2,  32,  64};
+            case 32: return {256,  2,  32,  64};
+            case 64: return {256,  2,  32,  64};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+
+    static constexpr __host__ __device__ int4 get_amd_rdna(int ncols) {
+        switch (ncols) {
+            case  2: return { 64,  2,  32,  64};
+            case  4: return {128,  2,  32,  64};
+            case  8: return {256,  2,  32,  64};
+            case 16: return {256,  2,  32,  64};
+            case 32: return {256,  2,  32,  64};
+            case 64: return {256,  2,  32,  64};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+};
+
+template <>
+struct fattn_tile_config<576, 512> {
+    static constexpr __host__ __device__ int4 get_nvidia_fp16(int ncols) {
+        switch (ncols) {
+            case 16: return {256,  2,  32,  64};
+            case 32: return {256,  2,  32,  64};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+
+    static constexpr __host__ __device__ int4 get_nvidia_fp32(int ncols) {
+        switch (ncols) {
+            case 16: return {256,  2,  32,  64};
+            case 32: return {256,  2,  32,  64};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+
+    static constexpr __host__ __device__ int4 get_amd(int ncols) {
+        switch (ncols) {
+            case 16: return {256,  2,  32,  64};
+            case 32: return {256,  2,  32,  64};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+
+    static constexpr __host__ __device__ int4 get_amd_rdna(int ncols) {
+        switch (ncols) {
+            case 16: return {256,  2,  32,  64};
+            case 32: return {256,  2,  32,  64};
+            default: return { -1, -1,  -1,  -1};
+        }
+    }
+};
+
+template<int DKQ, int DV>
+static int4 fattn_tile_get_config_host(const int cc, const int ncols) {
     if (GGML_CUDA_CC_IS_AMD(cc)) {
         if (GGML_CUDA_CC_IS_RDNA(cc)) {
-            switch (DV) {
-                case 40:
-                case 64:
-                    return 128;
-                case 80:
-                case 96:
-                case 112:
-                case 128:
-                case 256:
-                    return ncols <= 16 ? 128 : 64;
-                case 512:
-                    return ncols <= 16 ? 64 : 128;
-                default:
-                    GGML_ABORT("fatal error");
-                    return -1;
-            }
+            return fattn_tile_config<DKQ, DV>::get_amd_rdna(ncols);
         }
-        switch (DV) {
-            case 40:
-            case 64:
-                return ncols == 32 ? 128 : 64;
-            case 80:
-            case 96:
-            case 112:
-            case 128:
-                return ncols == 32 ? 64 : 32;
-            case 256:
-                return 32;
-            case 512:
-                return ncols <= 16 ? 64 : 128;
-            default:
-                GGML_ABORT("fatal error");
-                return -1;
-        }
+        return fattn_tile_config<DKQ, DV>::get_amd(ncols);
     }
     if (fast_fp16_available(cc)) {
-        switch (DV) {
-            case 40:
-            case 64:
-            case 80:
-            case 96:
-            case 112:
-            case 128:
-                return ncols <= 16 ? 128 : 64;
-            case 256:
-                return ncols <= 16 ? 64 : 32;
-            case 512:
-                return 32;
-            default:
-                GGML_ABORT("fatal error");
-                return -1;
-        }
+        return fattn_tile_config<DKQ, DV>::get_nvidia_fp16(ncols);
     }
-    switch (DV) {
-        case 40:
-        case 64:
-            return ncols <= 16 ? 128 : 64;
-        case 80:
-        case 96:
-        case 112:
-        case 128:
-            return ncols <= 16 ? 64 : 32;
-        case 256:
-        case 512:
-            return 32;
-        default:
-            GGML_ABORT("fatal error");
-            return -1;
-    }
-    GGML_UNUSED_VARS(DV, ncols, cc);
+    return fattn_tile_config<DKQ, DV>::get_nvidia_fp32(ncols);
 }
 
-static constexpr __device__ int fattn_tile_get_kq_stride_device(int DV, int ncols) {
-    if (ncols <= 8) {
-        return 128;
-    }
+template<int DKQ, int DV>
+static constexpr __device__ int4 fattn_tile_get_config_device(int ncols) {
 #ifdef GGML_USE_HIP
 #ifdef RDNA
-    switch (DV) {
-        case 40:
-        case 64:
-            return 128;
-        case 80:
-        case 96:
-        case 112:
-        case 128:
-        case 256:
-            return ncols <= 16 ? 128 : 64;
-        case 512:
-            return ncols <= 16 ? 64 : 128;
-        default:
-            return -1;
-    }
+    return fattn_tile_config<DKQ, DV>::get_amd_rdna(ncols);
 #else
-    switch (DV) {
-        case 40:
-        case 64:
-            return ncols == 32 ? 128 : 64;
-        case 80:
-        case 96:
-        case 112:
-        case 128:
-            return ncols == 32 ? 64 : 32;
-        case 256:
-            return 32;
-        case 512:
-            return ncols <= 16 ? 64 : 128;
-        default:
-            return -1;
-    }
+    return fattn_tile_config<DKQ, DV>::get_amd(ncols);
 #endif // RDNA
 #else
 #ifdef FAST_FP16_AVAILABLE
-    switch (DV) {
-        case 40:
-        case 64:
-        case 80:
-        case 96:
-        case 112:
-        case 128:
-            return ncols <= 16 ? 128 : 64;
-        case 256:
-            return ncols <= 16 ? 64 : 32;
-        case 512:
-            return 32;
-        default:
-            return -1;
-    }
+    return fattn_tile_config<DKQ, DV>::get_nvidia_fp16(ncols);
 #else
-    switch (DV) {
-        case 40:
-        case 64:
-            return ncols <= 16 ? 128 : 64;
-        case 80:
-        case 96:
-        case 112:
-        case 128:
-            return ncols <= 16 ? 64 : 32;
-        case 256:
-        case 512:
-            return 32;
-        default:
-            return -1;
-    }
+    return fattn_tile_config<DKQ, DV>::get_nvidia_fp32(ncols);
 #endif // FAST_FP16_AVAILABLE
 #endif // GGML_USE_HIP
-    GGML_UNUSED_VARS(DV, ncols);
-}
-
-static constexpr __device__ int fattn_tile_get_kq_nbatch_device(int DV, int ncols) {
-#ifdef GGML_USE_HIP
-    switch (DV) {
-        case 40:
-            return 40;
-        case 64:
-            return 64;
-        case 80:
-            return ncols <= 8 ? 40 : 80;
-        case 96:
-            return ncols <= 8 ? 48 : 96;
-        case 112:
-            return ncols <= 8 ? 56 : 112;
-        case 128:
-        case 256:
-            return ncols <= 8 ? 64 : 128;
-        case 512:
-            return 64;
-        default:
-            return -1;
-    }
-#else
-#ifdef FAST_FP16_AVAILABLE
-    switch (DV) {
-        case 40:
-            return 40;
-        case 64:
-            return 64;
-        case 80:
-            return 80;
-        case 96:
-            return 96;
-        case 112:
-            return 112;
-        case 128:
-        case 256:
-            return 128;
-        case 512:
-            return 64;
-        default:
-            return -1;
-    }
-#else
-    switch (DV) {
-        case 40:
-            return 40;
-        case 64:
-            return 64;
-        case 80:
-            return ncols <= 8 ? 40 : 80;
-        case 96:
-            return ncols <= 8 ? 48 : 96;
-        case 112:
-            return ncols <= 8 ? 56 : 112;
-        case 128:
-            return ncols <= 8 ? 64 : 128;
-        case 256:
-            return ncols == 16 ? 128 : 64;
-        case 512:
-            return 64;
-        default:
-            return -1;
-    }
-#endif // FAST_FP16_AVAILABLE
-#endif // GGML_USE_HIP
-    GGML_UNUSED_VARS(DV, ncols);
-}
-
-static int fattn_tile_get_warp_size_host(const int physical_warp_size, const int DV, const int ncols, const int cc) {
-    // return DV > 64 && fattn_tile_get_kq_stride_host(DV, ncols, cc) >= 64 ? physical_warp_size : 32;
-    return 32;
-    GGML_UNUSED_VARS(physical_warp_size, DV, ncols, cc);
-}
-
-static constexpr int __device__ fattn_tile_get_warp_size_device(int DV, int ncols) {
-    // return DV > 64 && fattn_tile_get_kq_stride_device(DV, ncols) >= 64 ? ggml_cuda_get_physical_warp_size() : 32;
-    return 32;
-    GGML_UNUSED_VARS(DV, ncols);
-}
-
-static int fattn_tile_get_nthreads_host(const int physical_warp_size, const int DV, const int ncols, const int cc) {
-    // const int warp_size = fattn_tile_get_warp_size_host(physical_warp_size, DV, ncols, cc);
-    // return ncols*warp_size < 256 ? ncols*warp_size : 256;
-    return 256;
-    GGML_UNUSED_VARS(physical_warp_size, DV, ncols, cc);
-}
-
-static constexpr int __device__ fattn_tile_get_nthreads_device(int DV, int ncols) {
-    // return ncols*fattn_tile_get_warp_size_device(DV, ncols) < 256 ? ncols*fattn_tile_get_warp_size_device(DV, ncols) : 256;
-    return 256;
-    GGML_UNUSED_VARS(DV, ncols);
-}
-
-static constexpr __device__ int fattn_tile_get_occupancy_device(int DV, int ncols) {
-#ifdef GGML_USE_HIP
-#ifdef RDNA
-    return 2;
-#else
-    return DV <= 256 ? 2 : 1;
-#endif // RDNA
-#else
-    return DV <= 256 && ncols <= 16 ? 3 : 2;
-#endif // GGML_USE_HIP
-    GGML_UNUSED_VARS(DV, ncols);
 }
 
 // TODO: deduplicate with mma-f16
@@ -632,7 +783,7 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
 }
 
 template<int DKQ, int DV, int ncols1, int ncols2, bool use_logit_softcap> // D == head size
-__launch_bounds__(fattn_tile_get_nthreads_device(DV, ncols1*ncols2), fattn_tile_get_occupancy_device(DV, ncols1*ncols2))
+__launch_bounds__(fattn_tile_get_config_device<DKQ, DV>(ncols1*ncols2).x, fattn_tile_get_config_device<DKQ, DV>(ncols1*ncols2).y)
 static __global__ void flash_attn_tile(
         const char * __restrict__ Q,
         const char * __restrict__ K,
@@ -680,10 +831,10 @@ static __global__ void flash_attn_tile(
     }
 
     constexpr int ncols     = ncols1*ncols2;
-    constexpr int kq_stride = fattn_tile_get_kq_stride_device(DV, ncols);
-    constexpr int kq_nbatch = fattn_tile_get_kq_nbatch_device(DV, ncols);
-    constexpr int warp_size = fattn_tile_get_warp_size_device(DV, ncols);
-    constexpr int nwarps    = fattn_tile_get_nthreads_device(DV, ncols) / warp_size;
+    constexpr int warp_size = 32;
+    constexpr int nwarps    = fattn_tile_get_config_device<DKQ, DV>(ncols).x / warp_size;
+    constexpr int kq_stride = fattn_tile_get_config_device<DKQ, DV>(ncols).z;
+    constexpr int kq_nbatch = fattn_tile_get_config_device<DKQ, DV>(ncols).w;
 
     // In this kernel Q, K, V are matrices while i, j, k are matrix indices.
 
@@ -986,9 +1137,9 @@ template <int DKQ, int DV, int ncols2, bool use_logit_softcap>
 static void launch_fattn_tile_switch_ncols1(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * Q = dst->src[0];
 
-    const int id                 = ggml_cuda_get_device();
-    const int cc                 = ggml_cuda_info().devices[id].cc;
-    const int physical_warp_size = ggml_cuda_info().devices[id].warp_size;
+    const int id        = ggml_cuda_get_device();
+    const int cc        = ggml_cuda_info().devices[id].cc;
+    const int warp_size = 32;
 
     constexpr size_t nbytes_shared = 0;
 
@@ -996,12 +1147,10 @@ static void launch_fattn_tile_switch_ncols1(ggml_backend_cuda_context & ctx, ggm
     if constexpr (DV <= 128) {
         if (Q->ne[1] > 32/ncols2) {
             constexpr int cols_per_block = 64;
-            const int warp_size = fattn_tile_get_warp_size_host(physical_warp_size, DV, cols_per_block, cc);
-            const int nwarps = fattn_tile_get_nthreads_host(physical_warp_size, DV, cols_per_block, cc) / warp_size;
+            const int4 config = fattn_tile_get_config_host<DKQ, DV>(cc, cols_per_block);
             fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
-            const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc);
             launch_fattn<DV, cols_per_block/ncols2, ncols2>
-                (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
+                (ctx, dst, fattn_kernel, config.x/warp_size, nbytes_shared, config.z, true, true, false, warp_size);
             return;
         }
     }
@@ -1013,36 +1162,30 @@ static void launch_fattn_tile_switch_ncols1(ggml_backend_cuda_context & ctx, ggm
     {
         if (Q->ne[1] > 16/ncols2) {
             constexpr int cols_per_block = 32;
-            const int warp_size = fattn_tile_get_warp_size_host(physical_warp_size, DV, cols_per_block, cc);
-            const int nwarps = fattn_tile_get_nthreads_host(physical_warp_size, DV, cols_per_block, cc) / warp_size;
+            const int4 config = fattn_tile_get_config_host<DKQ, DV>(cc, cols_per_block);
             fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
-            const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc);
             launch_fattn<DV, cols_per_block/ncols2, ncols2>
-                (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
+                (ctx, dst, fattn_kernel, config.x/warp_size, nbytes_shared, config.z, true, true, false, warp_size);
             return;
         }
     }
 
     if (Q->ne[1] > 8/ncols2) {
         constexpr int cols_per_block = 16;
-        const int warp_size = fattn_tile_get_warp_size_host(physical_warp_size, DV, cols_per_block, cc);
-        const int nwarps = fattn_tile_get_nthreads_host(physical_warp_size, DV, cols_per_block, cc) / warp_size;
+        const int4 config = fattn_tile_get_config_host<DKQ, DV>(cc, cols_per_block);
         fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
-        const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc);
         launch_fattn<DV, cols_per_block/ncols2, ncols2>
-            (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
+            (ctx, dst, fattn_kernel, config.x/warp_size, nbytes_shared, config.z, true, true, false, warp_size);
         return;
     }
 
     if constexpr (ncols2 <= 8) {
         if (Q->ne[1] > 4/ncols2) {
             constexpr int cols_per_block = 8;
-            const int warp_size = fattn_tile_get_warp_size_host(physical_warp_size, DV, cols_per_block, cc);
-            const int nwarps = fattn_tile_get_nthreads_host(physical_warp_size, DV, cols_per_block, cc) / warp_size;
+            const int4 config = fattn_tile_get_config_host<DKQ, DV>(cc, cols_per_block);
             fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
-            const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc);
             launch_fattn<DV, cols_per_block/ncols2, ncols2>
-                (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
+                (ctx, dst, fattn_kernel, config.x/warp_size, nbytes_shared, config.z, true, true, false, warp_size);
             return;
         }
     }
@@ -1050,24 +1193,20 @@ static void launch_fattn_tile_switch_ncols1(ggml_backend_cuda_context & ctx, ggm
     if constexpr (ncols2 <= 4) {
         if (Q->ne[1] > 2/ncols2) {
             constexpr int cols_per_block = 4;
-            const int warp_size = fattn_tile_get_warp_size_host(physical_warp_size, DV, cols_per_block, cc);
-            const int nwarps = fattn_tile_get_nthreads_host(physical_warp_size, DV, cols_per_block, cc) / warp_size;
+            const int4 config = fattn_tile_get_config_host<DKQ, DV>(cc, cols_per_block);
             fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
-            const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc);
             launch_fattn<DV, cols_per_block/ncols2, ncols2>
-                (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
+                (ctx, dst, fattn_kernel, config.x/warp_size, nbytes_shared, config.z, true, true, false, warp_size);
             return;
         }
     }
 
     if constexpr (ncols2 <= 2) {
         constexpr int cols_per_block = 2;
-        const int warp_size = fattn_tile_get_warp_size_host(physical_warp_size, DV, cols_per_block, cc);
-        const int nwarps = fattn_tile_get_nthreads_host(physical_warp_size, DV, cols_per_block, cc) / warp_size;
+        const int4 config = fattn_tile_get_config_host<DKQ, DV>(cc, cols_per_block);
         fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
-        const int kq_stride = fattn_tile_get_kq_stride_host(DV, cols_per_block, cc);
         launch_fattn<DV, cols_per_block/ncols2, ncols2>
-            (ctx, dst, fattn_kernel, nwarps, nbytes_shared, kq_stride, true, true, false, warp_size);
+            (ctx, dst, fattn_kernel, config.x/warp_size, nbytes_shared, config.z, true, true, false, warp_size);
         return;
     }
 
