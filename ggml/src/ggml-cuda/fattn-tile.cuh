@@ -9,11 +9,11 @@
 
 #define GGML_CUDA_FATTN_TILE_CONFIG_CASE(DKQ_, DV_, ncols_, nthreads, occupancy, nbatch_fa, nbatch_K) \
     if (DKQ == (DKQ_) && DV == (DV_) && ncols == (ncols_)) {                                          \
-        static_assert((nthreads)  <= 1024, "bad nthreads");                                           \
-        static_assert((occupancy) <=    4, "bad occupancy");                                          \
-        static_assert((nbatch_fa) <=  256, "bad nbatch_fa");                                          \
-        static_assert((nbatch_K)  <=  256, "bad nbatch_K");                                           \
-        return ((nthreads) << 0) | ((occupancy) << 11) | ((nbatch_fa) << 14) | ((nbatch_K) << 23);    \
+        static_assert((nthreads)  <= 512, "bad nthreads");                                            \
+        static_assert((occupancy) <=   8, "bad occupancy");                                           \
+        static_assert((nbatch_fa) <= 256, "bad nbatch_fa");                                           \
+        static_assert((nbatch_K)  <= 256, "bad nbatch_K");                                            \
+        return ((nthreads) << 0) | ((occupancy) << 10) | ((nbatch_fa) << 14) | ((nbatch_K) << 23);    \
     }                                                                                                 \
 
 static constexpr __host__ __device__ uint32_t ggml_cuda_fattn_tile_get_config_nvidia_fp16(const int DKQ, const int DV, const int ncols) {
@@ -220,19 +220,19 @@ static constexpr __device__ uint32_t ggml_cuda_fattn_tile_get_config(const int D
 }
 
 static __host__ int ggml_cuda_fattn_tile_get_nthreads(const int DKQ, const int DV, const int ncols, const int cc) {
-    return (ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols, cc) >> 0) & 0x000007FF;
+    return (ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols, cc) >> 0) & 0x000003FF;
 }
 
 static constexpr __device__ int ggml_cuda_fattn_tile_get_nthreads(const int DKQ, const int DV, const int ncols) {
-    return (ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols) >> 0) & 0x000007FF;
+    return (ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols) >> 0) & 0x000003FF;
 }
 
 static __host__ int ggml_cuda_fattn_tile_get_occupancy(const int DKQ, const int DV, const int ncols, const int cc) {
-    return (ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols, cc) >> 11) & 0x00000007;
+    return (ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols, cc) >> 10) & 0x0000000F;
 }
 
 static constexpr __device__ int ggml_cuda_fattn_tile_get_occupancy(const int DKQ, const int DV, const int ncols) {
-    return (ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols) >> 11) & 0x00000007;
+    return (ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols) >> 10) & 0x0000000F;
 }
 
 static __host__ int ggml_cuda_fattn_tile_get_nbatch_fa(const int DKQ, const int DV, const int ncols, const int cc) {
