@@ -539,7 +539,8 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
 
     // VKQ = V @ KQ matrix multiplication:
     static_assert(DV <= DKQ, "bad DV");
-    constexpr int V_cols_per_iter = kq_stride*kq_nbatch / DV; // Number of V columns that fit in SRAM for K.
+    static_assert(DV % kq_nbatch == 0 || (kq_nbatch % 3 == 0 && DV % (kq_nbatch*2/3) == 0), "bad kq_nbatch");
+    constexpr int V_cols_per_iter = (DV % kq_nbatch == 0 ? kq_nbatch : kq_nbatch*2/3) * kq_stride / DV; // Number of V columns that fit in SRAM for K.
     static_assert(kq_stride % V_cols_per_iter == 0, "bad V_cols_per_iter");
     static_assert(V_cols_per_iter % np == 0, "bad V_cols_per_iter");
 #pragma unroll
