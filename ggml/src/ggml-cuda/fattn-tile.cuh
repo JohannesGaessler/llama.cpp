@@ -403,14 +403,14 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
 
     constexpr int DVp = (DV + 2*warp_size - 1) & ~(2*warp_size - 1); // DV padded to multiple of 2*warp_size.
 
-    // softmax_iter_jc == number of KQ columns for which to calculate softmax in parallel.
-    // KQ is originally 2D but uses a Z-shaped 3D memory pattern for larger reads/writes.
+    // KQ_chunk_size == number of KQ values in j direction to store as one contiguous chunk in memory.
+    // KQ is originally 2D but uses a Z-shaped 3D memory pattern like KQ[ncols/KQ_chunk_size][DVp][KQ_chunk_size].
 #ifdef FAST_FP16_AVAILABLE
-    constexpr int softmax_iter_jc = cpw < 2*cpy_ne ? cpw : 2*cpy_ne;
+    constexpr int KQ_chunk_size = cpw < 2*cpy_ne ? cpw : 2*cpy_ne;
 #else
-    constexpr int softmax_iter_jc = cpw < 1*cpy_ne ? cpw : 1*cpy_ne;
+    constexpr int KQ_chunk_size = cpw < 1*cpy_ne ? cpw : 1*cpy_ne;
 #endif // FAST_FP16_AVAILABLE
-    static_assert(cpw % softmax_iter_jc == 0, "bad softmax_iter_jc");
+    static_assert(cpw % KQ_chunk_size == 0, "bad KQ_chunk_size");
     const int k_VKQ_sup = k_VKQ_max - k_VKQ_0; // k supremum, only smaller k values have valid KV data
 
     // Calculate KQ tile and keep track of new maximum KQ values:
@@ -517,40 +517,42 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
 
     // Calculate KQ softmax, write to shared KQ buffer, re-scale VKQ accumulators:
 #pragma unroll
-    for (int j0 = 0; j0 < cpw; j0 += softmax_iter_jc) {
+    for (int jc_KQ_0 = 0; jc_KQ_0 < cpw; jc_KQ_0 += KQ_chunk_size) {
 #ifdef FAST_FP16_AVAILABLE
-        half  tmp[nbatch_fa/(np*warp_size)][softmax_iter_jc];
+        half  tmp[nbatch_fa/(np*warp_size)][KQ_chunk_size];
 #else
-        float tmp[nbatch_fa/(np*warp_size)][softmax_iter_jc];
+        float tmp[nbatch_fa/(np*warp_size)][KQ_chunk_size];
 #endif // FAST_FP16_AVAILABLE
 
 #pragma unroll
-        for (int j1 = 0; j1 < softmax_iter_jc; ++j1) {
-            const float KQ_max_scale = expf(KQ_max[j0+j1] - KQ_max_new[j0+j1]);
-            KQ_max[j0+j1] = KQ_max_new[j0+j1];
+        for (int jc_KQ_1 = 0; jc_KQ_1 < KQ_chunk_size; ++jc_KQ_1) {
+            const int jc_KQ = jc_KQ_0 + jc_KQ_1;
+
+            const float KQ_max_scale = expf(KQ_max[jc_KQ] - KQ_max_new[jc_KQ]);
+            KQ_max[jc_KQ] = KQ_max_new[jc_KQ];
 
             float KQ_sum_add = 0.0f;
 #pragma unroll
             for (int i0 = 0; i0 < nbatch_fa; i0 += np*warp_size) {
-                const float val = expf(KQ_acc[i0/(np*warp_size)][j0+j1] - KQ_max[j0+j1]);
+                const float val = expf(KQ_acc[i0/(np*warp_size)][jc_KQ] - KQ_max[jc_KQ]);
                 if (!oob_check || i0 + (threadIdx.y % np)*warp_size + threadIdx.x < k_VKQ_sup) {
                     KQ_sum_add += val;
                 }
-                tmp[i0/(np*warp_size)][j1] = val;
+                tmp[i0/(np*warp_size)][jc_KQ_1] = val;
             }
-            KQ_sum[j0+j1] = KQ_sum[j0+j1]*KQ_max_scale + KQ_sum_add;
+            KQ_sum[jc_KQ] = KQ_sum[jc_KQ]*KQ_max_scale + KQ_sum_add;
 
 #ifdef FAST_FP16_AVAILABLE
             const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale, KQ_max_scale);
 #pragma unroll
             for (int i0 = 0; i0 < DVp/2; i0 += warp_size) {
-                VKQ[(j0+j1)*((DVp/2)/warp_size) + i0/warp_size] *= KQ_max_scale_h2;
+                VKQ[jc_KQ*((DVp/2)/warp_size) + i0/warp_size] *= KQ_max_scale_h2;
             }
 #else
 #pragma unroll
             for (int i0 = 0; i0 < DVp/2; i0 += warp_size) {
-                VKQ[(j0+j1)*((DVp/2)/warp_size) + i0/warp_size].x *= KQ_max_scale;
-                VKQ[(j0+j1)*((DVp/2)/warp_size) + i0/warp_size].y *= KQ_max_scale;
+                VKQ[jc_KQ*((DVp/2)/warp_size) + i0/warp_size].x *= KQ_max_scale;
+                VKQ[jc_KQ*((DVp/2)/warp_size) + i0/warp_size].y *= KQ_max_scale;
             }
 #endif // FAST_FP16_AVAILABLE
         }
@@ -560,7 +562,7 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
             const int i = i0 + (threadIdx.y % np)*warp_size + threadIdx.x;
 
             ggml_cuda_memcpy_1<sizeof(tmp[0])>(
-                KQ + (j0/softmax_iter_jc + (threadIdx.y / np)*(cpw/softmax_iter_jc))*(nbatch_fa*softmax_iter_jc) + i*softmax_iter_jc,
+                KQ + (jc_KQ_0/KQ_chunk_size + (threadIdx.y / np)*(cpw/KQ_chunk_size))*(nbatch_fa*KQ_chunk_size) + i*KQ_chunk_size,
                 tmp[i0/(np*warp_size)]);
         }
     }
@@ -568,18 +570,18 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
     // VKQ = V @ KQ matrix multiplication:
     static_assert(DV <= DKQ, "bad DV");
     static_assert(DV % nbatch_K == 0 || (nbatch_K % 3 == 0 && DV % (nbatch_K*2/3) == 0), "bad nbatch_K");
-    constexpr int V_cols_per_iter = (DV % nbatch_K == 0 ? nbatch_K : nbatch_K*2/3) * nbatch_fa / DV; // Number of V columns that fit in SRAM for K.
-    static_assert(nbatch_fa % V_cols_per_iter == 0, "bad V_cols_per_iter");
-    static_assert(V_cols_per_iter % np == 0, "bad V_cols_per_iter");
+    constexpr int nbatch_V = (DV % nbatch_K == 0 ? nbatch_K : nbatch_K*2/3) * nbatch_fa / DV; // Number of V columns that fit in SRAM for K.
+    static_assert(nbatch_fa % nbatch_V == 0, "bad nbatch_V");
+    static_assert(nbatch_V % np == 0, "bad nbatch_V");
 #pragma unroll
-    for (int k0 = 0; k0 < nbatch_fa; k0 += V_cols_per_iter) {
-        flash_attn_tile_load_tile<warp_size, nwarps, V_cols_per_iter, DV, 0, oob_check>
+    for (int k0 = 0; k0 < nbatch_fa; k0 += nbatch_V) {
+        flash_attn_tile_load_tile<warp_size, nwarps, nbatch_V, DV, 0, oob_check>
             (V_h2 + int64_t(k_VKQ_0 + k0)*stride_V2, KV_tmp, stride_V2, k_VKQ_sup - k0);
         __syncthreads();
 
 #ifdef FAST_FP16_AVAILABLE
 #pragma unroll
-        for (int k1 = 0; k1 < V_cols_per_iter; k1 += np) {
+        for (int k1 = 0; k1 < nbatch_V; k1 += np) {
             half2 V_k[(DVp/2)/warp_size];
             half2 KQ_k[cpw];
 
@@ -589,29 +591,29 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
                 ggml_cuda_memcpy_1<cpy_ne_D*4>(&V_k[i0/warp_size], &KV_tmp[(k1 + threadIdx.y % np)*(DV/2) + i0 + threadIdx.x*cpy_ne_D]);
             }
 #pragma unroll
-            for (int j0 = 0; j0 < cpw; j0 += softmax_iter_jc) {
-                const int j = j0/softmax_iter_jc + (threadIdx.y / np)*(cpw/softmax_iter_jc);
+            for (int jc_VKQ_0 = 0; jc_VKQ_0 < cpw; jc_VKQ_0 += KQ_chunk_size) {
+                const int jc_KQ = jc_VKQ_0/KQ_chunk_size + (threadIdx.y / np)*(cpw/KQ_chunk_size);
 
-                half tmp[softmax_iter_jc];
-                ggml_cuda_memcpy_1<softmax_iter_jc*sizeof(half)>(
-                    &tmp, KQ + j*(nbatch_fa*softmax_iter_jc) + (k0 + k1 + threadIdx.y % np)*softmax_iter_jc);
+                half tmp[KQ_chunk_size];
+                ggml_cuda_memcpy_1<KQ_chunk_size*sizeof(half)>(
+                    &tmp, KQ + jc_KQ*(nbatch_fa*KQ_chunk_size) + (k0 + k1 + threadIdx.y % np)*KQ_chunk_size);
 #pragma unroll
-                for (int j1 = 0; j1 < softmax_iter_jc; ++j1) {
-                    KQ_k[j0+j1] = __half2half2(tmp[j1]);
+                for (int jc_VKQ_1 = 0; jc_VKQ_1 < KQ_chunk_size; ++jc_VKQ_1) {
+                    KQ_k[jc_VKQ_0+jc_VKQ_1] = __half2half2(tmp[jc_VKQ_1]);
                 }
             }
 
 #pragma unroll
             for (int i0 = 0; i0 < DVp/2; i0 += warp_size) {
 #pragma unroll
-                for (int j0 = 0; j0 < cpw; ++j0) {
-                    VKQ[j0*((DVp/2)/warp_size) + i0/warp_size] += V_k[i0/warp_size]*KQ_k[j0];
+                for (int jc_VKQ_0 = 0; jc_VKQ_0 < cpw; ++jc_VKQ_0) {
+                    VKQ[jc_VKQ_0*((DVp/2)/warp_size) + i0/warp_size] += V_k[i0/warp_size]*KQ_k[jc_VKQ_0];
                 }
             }
         }
 #else
 #pragma unroll
-        for (int k1 = 0; k1 < V_cols_per_iter; k1 += np) {
+        for (int k1 = 0; k1 < nbatch_V; k1 += np) {
             float2 V_k[(DVp/2)/warp_size];
             float  KQ_k[cpw];
 
@@ -621,19 +623,19 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
                 ggml_cuda_memcpy_1<cpy_ne_D*4>(&V_k[i0/(2*warp_size)], &KV_tmp[(k1 + threadIdx.y % np)*DV + i0 + threadIdx.x*cpy_ne_D]);
             }
 #pragma unroll
-            for (int j0 = 0; j0 < cpw; j0 += softmax_iter_jc) {
-                const int j = j0/softmax_iter_jc + (threadIdx.y / np)*(cpw/softmax_iter_jc);
+            for (int jc_VKQ_0 = 0; jc_VKQ_0 < cpw; jc_VKQ_0 += KQ_chunk_size) {
+                const int jc_KQ = jc_VKQ_0/KQ_chunk_size + (threadIdx.y / np)*(cpw/KQ_chunk_size);
 
-                ggml_cuda_memcpy_1<softmax_iter_jc*sizeof(float)>(
-                    &KQ_k[j0], KQ + j*(nbatch_fa*softmax_iter_jc) + (k0 + k1 + threadIdx.y % np)*softmax_iter_jc);
+                ggml_cuda_memcpy_1<KQ_chunk_size*sizeof(float)>(
+                    &KQ_k[jc_VKQ_0], KQ + jc_KQ*(nbatch_fa*KQ_chunk_size) + (k0 + k1 + threadIdx.y % np)*KQ_chunk_size);
             }
 
 #pragma unroll
             for (int i0 = 0; i0 < DVp/2; i0 += warp_size) {
 #pragma unroll
-                for (int j0 = 0; j0 < cpw; ++j0) {
-                    VKQ[j0*((DVp/2)/warp_size) + i0/warp_size].x += V_k[i0/warp_size].x*KQ_k[j0];
-                    VKQ[j0*((DVp/2)/warp_size) + i0/warp_size].y += V_k[i0/warp_size].y*KQ_k[j0];
+                for (int jc_VKQ_0 = 0; jc_VKQ_0 < cpw; ++jc_VKQ_0) {
+                    VKQ[jc_VKQ_0*((DVp/2)/warp_size) + i0/warp_size].x += V_k[i0/warp_size].x*KQ_k[jc_VKQ_0];
+                    VKQ[jc_VKQ_0*((DVp/2)/warp_size) + i0/warp_size].y += V_k[i0/warp_size].y*KQ_k[jc_VKQ_0];
                 }
             }
         }
