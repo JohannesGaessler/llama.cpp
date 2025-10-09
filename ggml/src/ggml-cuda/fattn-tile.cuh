@@ -416,11 +416,13 @@ static __device__ __forceinline__ void flash_attn_tile_iter_KQ(
     __syncthreads();
 
 #ifdef FAST_FP16_AVAILABLE
+    static_assert((nbatch_K/2) % cpy_ne == 0, "bad nbatch_K");
 #pragma unroll
     for (int k_KQ_1 = 0; k_KQ_1 < nbatch_K/2; k_KQ_1 += cpy_ne) {
         half2 K_k[nbatch_fa/(np*warp_size)][cpy_ne];
         half2 Q_k[cpw][cpy_ne];
 #else
+    static_assert(nbatch_K % cpy_ne == 0, "bad nbatch_K");
 #pragma unroll
     for (int k_KQ_1 = 0; k_KQ_1 < nbatch_K; k_KQ_1 += cpy_ne) {
         float K_k[nbatch_fa/(np*warp_size)][cpy_ne];
@@ -1153,9 +1155,11 @@ static void launch_fattn_tile_switch_ncols2(ggml_backend_cuda_context & ctx, ggm
     const int gqa_limit = nvidia && gqa_ratio <= 4 ? 16 : INT_MAX;
     const bool use_gqa_opt = mask && max_bias == 0.0f && Q->ne[1] <= gqa_limit && K->ne[1] % FATTN_KQ_STRIDE == 0;
 
-    if (use_gqa_opt && gqa_ratio % 16 == 0) {
-        launch_fattn_tile_switch_ncols1<DKQ, DV, 16, use_logit_softcap>(ctx, dst);
-        return;
+    if constexpr (DV == 512) {
+        if (use_gqa_opt && gqa_ratio % 16 == 0) {
+            launch_fattn_tile_switch_ncols1<DKQ, DV, 16, use_logit_softcap>(ctx, dst);
+            return;
+        }
     }
 
     if constexpr (DV <= 256) {
