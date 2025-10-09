@@ -295,6 +295,11 @@ static __device__ __forceinline__ void flash_attn_tile_load_tile(
 
     auto load = [&] __device__ (const int n) {
         const int stride_j = warp_size >> n;
+
+        if (stride_j == 0) {
+            return;
+        }
+
         const int j0_start = stride_j == warp_size ? 0 : ((J/2)/cpy_ne) - ((J/2)/cpy_ne) % (2*stride_j);
         const int j0_stop  =                             ((J/2)/cpy_ne) - ((J/2)/cpy_ne) % (1*stride_j);
         const int stride_i = warp_size / stride_j;
@@ -339,6 +344,11 @@ static __device__ __forceinline__ void flash_attn_tile_load_tile(
 
     auto load = [&] __device__ (const int n) {
         const int stride_j = warp_size >> n;
+
+        if (stride_j == 0) {
+            return;
+        }
+
         const int j0_start = stride_j == warp_size ? 0 : (J/cpy_ne) - (J/cpy_ne) % (2*stride_j);
         const int j0_stop  =                             (J/cpy_ne) - (J/cpy_ne) % (1*stride_j);
         const int stride_i = warp_size / stride_j;
