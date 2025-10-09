@@ -2,11 +2,14 @@
 #include "fattn-common.cuh"
 #include "fattn-wmma-f16.cuh"
 
-// kq_stride == number of KQ rows to process per iteration
-// kq_nbatch == number of K columns to load in parallel for KQ calculation
+// nbatch_fa == number of KQ rows to process per iteration
+// nbatch_K == number of K columns to load in parallel for KQ calculation
 
+// TODO optimize kernel parameters for FP16 NVIDIA (P100)
 // TODO optimize kernel parameters for head sizes 40, 80, 96, 112
 
+// The ROCm compiler cannot handle templating in __launch_bounds__.
+// As a workaround, define a macro to package the kernel parameters as uint32_t:
 #define GGML_CUDA_FATTN_TILE_CONFIG_CASE(DKQ_, DV_, ncols_, nthreads, occupancy, nbatch_fa, nbatch_K) \
     if (DKQ == (DKQ_) && DV == (DV_) && ncols == (ncols_)) {                                          \
         static_assert((nthreads)          <= 512, "bad nthreads");                                    \
@@ -252,35 +255,35 @@ static constexpr __device__ uint32_t ggml_cuda_fattn_tile_get_config(const int D
 }
 
 static __host__ int ggml_cuda_fattn_tile_get_nthreads(const int DKQ, const int DV, const int ncols, const int cc) {
-    return (ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols, cc) >> 0) & 0x000003FF;
+    return (ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols, cc) >> 0) & ((1 << 10) - 1);
 }
 
 static constexpr __device__ int ggml_cuda_fattn_tile_get_nthreads(const int DKQ, const int DV, const int ncols) {
-    return (ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols) >> 0) & 0x000003FF;
+    return (ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols) >> 0) & ((1 << 10) - 1);
 }
 
 static __host__ int ggml_cuda_fattn_tile_get_occupancy(const int DKQ, const int DV, const int ncols, const int cc) {
-    return (ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols, cc) >> 10) & 0x0000000F;
+    return (ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols, cc) >> 10) & ((1 << 4) - 1);
 }
 
 static constexpr __device__ int ggml_cuda_fattn_tile_get_occupancy(const int DKQ, const int DV, const int ncols) {
-    return (ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols) >> 10) & 0x0000000F;
+    return (ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols) >> 10) & ((1 << 4) - 1);
 }
 
 static __host__ int ggml_cuda_fattn_tile_get_nbatch_fa(const int DKQ, const int DV, const int ncols, const int cc) {
-    return (ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols, cc) >> 14) & 0x000001FF;
+    return (ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols, cc) >> 14) & ((1 << 9) - 1);
 }
 
 static constexpr __device__ int ggml_cuda_fattn_tile_get_nbatch_fa(const int DKQ, const int DV, const int ncols) {
-    return (ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols) >> 14) & 0x000001FF;
+    return (ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols) >> 14) & ((1 << 9) - 1);
 }
 
 static __host__ int ggml_cuda_fattn_tile_get_nbatch_K(const int DKQ, const int DV, const int ncols, const int cc) {
-    return (ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols, cc) >> 23) & 0x000001FF;
+    return (ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols, cc) >> 23) & ((1 << 9) - 1);
 }
 
 static constexpr __device__ int ggml_cuda_fattn_tile_get_nbatch_K(const int DKQ, const int DV, const int ncols) {
-    return (ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols) >> 23) & 0x000001FF;
+    return (ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols) >> 23) & ((1 << 9) - 1);
 }
 
 // TODO: deduplicate with mma-f16
@@ -377,6 +380,7 @@ static __device__ __forceinline__ void flash_attn_tile_load_tile(
     ggml_cuda_unroll<5>{}(load);
 }
 
+// Function that performs a single iteration in for the KQ matrix multiplication:
 template <int warp_size, int nwarps, int ncols1, int ncols2, int DKQ, int nbatch_fa, int nbatch_K,
     bool use_logit_softcap, bool oob_check, typename T_vec_dot>
 static __device__ __forceinline__ void flash_attn_tile_iter_KQ(
@@ -449,6 +453,7 @@ static __device__ __forceinline__ void flash_attn_tile_iter_KQ(
     }
 }
 
+// Function that performs a single iteration of the main loop over up to nbatch_fa tokens.
 template <int warp_size, int nwarps, int ncols1, int ncols2, int DKQ, int DV, int nbatch_fa, int nbatch_K,
     bool use_logit_softcap, bool oob_check, typename T_vec_dot, typename T_KQ, typename T_acc>
 static __device__ __forceinline__ void flash_attn_tile_iter(
@@ -487,8 +492,6 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
 #endif // FAST_FP16_AVAILABLE
     static_assert(cpw % KQ_cs == 0, "bad KQ_cs");
     const int k_VKQ_sup = k_VKQ_max - k_VKQ_0; // k supremum, only smaller k values have valid KV data
-
-    // Calculate KQ tile and keep track of new maximum KQ values:
 
     float KQ_max_new[cpw];
 #pragma unroll
@@ -723,6 +726,8 @@ static __global__ void flash_attn_tile(
         return;
     }
 
+    static_assert(ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols1*ncols2) != 0, "kernel config not defined");
+
     constexpr int ncols     = ncols1*ncols2;
     constexpr int warp_size = 32;
     constexpr int nwarps    = ggml_cuda_fattn_tile_get_nthreads (DKQ, DV, ncols1*ncols2) / warp_size;
@@ -926,7 +931,7 @@ static __global__ void flash_attn_tile(
         }
     }
 
-    // Attention sink: adjust running max and sum once per head
+    // Attention sink: adjust KQ max and sum only for the first of all parallel blocks:
     if (sinks && blockIdx.y == 0) {
 #pragma unroll
         for (int jc0 = 0; jc0 < cpw; ++jc0) {
