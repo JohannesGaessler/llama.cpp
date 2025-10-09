@@ -333,6 +333,7 @@ static __device__ __forceinline__ void flash_attn_tile_load_tile(
     // 6: max  2*16= 32 bytes,  16 half
     // 7: max  1*16= 16 bytes,   8 half
     static_assert(J % 8 == 0, "bad J");
+    static_assert((J/2) % cpy_ne == 0, "bad J");
     ggml_cuda_unroll<7>{}(load);
 }
 
@@ -387,6 +388,7 @@ static __device__ __forceinline__ void flash_attn_tile_load_tile(
     // 4: max  4*16= 64 bytes,  16 float
     // 5: max  2*16= 32 bytes,   8 float
     static_assert(J % 8 == 0, "bad J");
+    static_assert(J % cpy_ne == 0, "bad J");
     ggml_cuda_unroll<5>{}(load);
 }
 
