@@ -802,7 +802,7 @@ static __global__ void flash_attn_tile(
         for (int i0 = 0; i0 < DKQp; i0 += np*warp_size*cpy_ne_D) {
             if (i0 + np*warp_size*cpy_ne_D <= DKQ || i0 + (threadIdx.y % np)*(warp_size*cpy_ne_D) + threadIdx.x*cpy_ne_D < DKQ) {
                 float tmp_f[cpy_ne_D] = {0.0f};
-                if (col_Q_0 + j < ne01) {
+                if (ncols1 == 1 || col_Q_0 + j < ne01) {
                     ggml_cuda_memcpy_1<sizeof(tmp_f)>
                         (tmp_f, &Q_f[c*(nb02/sizeof(float)) + j*(nb01/sizeof(float))
                                      + i0 + (threadIdx.y % np)*(warp_size*cpy_ne_D) + threadIdx.x*cpy_ne_D]);
@@ -838,11 +838,12 @@ static __global__ void flash_attn_tile(
     if (ncols2 == 1) {
         // Branch with out-of-bounds checks.
         int k_VKQ_0 = blockIdx.y*nbatch_fa;
-        for (; k_VKQ_0 < k_VKQ_max - nbatch_fa; k_VKQ_0 += gridDim.y*nbatch_fa) {
+        while (k_VKQ_0 < k_VKQ_max - nbatch_fa) {
             constexpr bool oob_check = false;
             flash_attn_tile_iter<warp_size, nwarps, ncols1, ncols2, DKQ, DV, nbatch_fa, nbatch_K, use_logit_softcap, oob_check>
                 (Q_tmp, K_h2, V_h2, maskh, logit_softcap, ne11, slope, KQ, KV_tmp,
                 stride_K2, stride_V2, stride_mask, KQ_max, KQ_sum, VKQ, k_VKQ_0, k_VKQ_max);
+            k_VKQ_0 += gridDim.y*nbatch_fa;
         }
         if (k_VKQ_0 < k_VKQ_max) {
             constexpr bool oob_check = true;
@@ -989,7 +990,7 @@ static __global__ void flash_attn_tile(
         const int j = jc / ncols2;
         const int c = jc % ncols2;
 
-        if (col_Q_0 + j >= ne01) {
+        if (ncols1 > 1 && col_Q_0 + j >= ne01) {
             return;
         }
 
