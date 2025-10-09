@@ -462,7 +462,6 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
         const half2 * const __restrict__ V_h2,
         const half  * const __restrict__ mask,
         const float logit_softcap,
-        const int ne11,
         const float slope,
         T_KQ      * const KQ,
         T_vec_dot * const KV_tmp,
@@ -527,7 +526,7 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
                 KQ_acc[(i_KQ_0/(np*warp_size))*cpw + jc0] = logit_softcap * tanhf(KQ_acc[(i_KQ_0/(np*warp_size))*cpw + jc0]);
             }
 
-            KQ_acc[(i_KQ_0/(np*warp_size))*cpw + jc0] += (ncols2 > 1 || mask) && (!oob_check || k_VKQ_0 + i_KQ < ne11) ?
+            KQ_acc[(i_KQ_0/(np*warp_size))*cpw + jc0] += (ncols2 > 1 || mask) && (!oob_check || i_KQ < k_VKQ_sup) ?
                 slope*__half2float(mask[j*stride_mask + k_VKQ_0 + i_KQ]) : 0.0f;
 
             KQ_max_new[jc0] = fmaxf(KQ_max_new[jc0], KQ_acc[(i_KQ_0/(np*warp_size))*cpw + jc0]);
@@ -841,14 +840,14 @@ static __global__ void flash_attn_tile(
         while (k_VKQ_0 < k_VKQ_max - nbatch_fa) {
             constexpr bool oob_check = false;
             flash_attn_tile_iter<warp_size, nwarps, ncols1, ncols2, DKQ, DV, nbatch_fa, nbatch_K, use_logit_softcap, oob_check>
-                (Q_tmp, K_h2, V_h2, maskh, logit_softcap, ne11, slope, KQ, KV_tmp,
+                (Q_tmp, K_h2, V_h2, maskh, logit_softcap, slope, KQ, KV_tmp,
                 stride_K2, stride_V2, stride_mask, KQ_max, KQ_sum, VKQ, k_VKQ_0, k_VKQ_max);
             k_VKQ_0 += gridDim.y*nbatch_fa;
         }
         if (k_VKQ_0 < k_VKQ_max) {
             constexpr bool oob_check = true;
             flash_attn_tile_iter<warp_size, nwarps, ncols1, ncols2, DKQ, DV, nbatch_fa, nbatch_K, use_logit_softcap, oob_check>
-                (Q_tmp, K_h2, V_h2, maskh, logit_softcap, ne11, slope, KQ, KV_tmp,
+                (Q_tmp, K_h2, V_h2, maskh, logit_softcap, slope, KQ, KV_tmp,
                 stride_K2, stride_V2, stride_mask, KQ_max, KQ_sum, VKQ, k_VKQ_0, k_VKQ_max);
         }
     } else {
@@ -856,7 +855,7 @@ static __global__ void flash_attn_tile(
         for (int k_VKQ_0 = blockIdx.y*nbatch_fa; k_VKQ_0 < k_VKQ_max; k_VKQ_0 += gridDim.y*nbatch_fa) {
             constexpr bool oob_check = false;
             flash_attn_tile_iter<warp_size, nwarps, ncols1, ncols2, DKQ, DV, nbatch_fa, nbatch_K, use_logit_softcap, oob_check>
-                (Q_tmp, K_h2, V_h2, maskh, logit_softcap, ne11, slope, KQ, KV_tmp,
+                (Q_tmp, K_h2, V_h2, maskh, logit_softcap, slope, KQ, KV_tmp,
                 stride_K2, stride_V2, stride_mask, KQ_max, KQ_sum, VKQ, k_VKQ_0, k_VKQ_max);
         }
     }
