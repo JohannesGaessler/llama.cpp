@@ -6091,9 +6091,15 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                 buf_map.emplace(idx, buf);
             }
         } else {
-            ggml_backend_buffer_t buf = ml.no_alloc ?
-                ggml_backend_buft_alloc_buffer(buft, /*size =*/ 0) : // dummy buffer
-                ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft); // real buffer
+            ggml_backend_buffer_t buf;
+            if (ml.no_alloc) {
+                buf = ggml_backend_buft_alloc_buffer(buft, /*size =*/ 0); // dummy buffer
+                for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != nullptr; t = ggml_get_next_tensor(ctx, t)) {
+                    t->buffer = buf; // set dummy buffer for weights so that the backend scheduler won't try to allocate them
+                }
+            } else {
+                buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft); // real buffer
+            }
             if (buf == nullptr) {
                 throw std::runtime_error(format("unable to allocate %s buffer", ggml_backend_buft_name(buft)));
             }

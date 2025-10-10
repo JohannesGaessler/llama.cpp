@@ -72,6 +72,10 @@ static std::map<ggml_backend_dev_t, llama_device_memory_data> llama_get_device_m
         ggml_backend_buffer_type_t          buft = buft_mb.first;
         const llama_memory_breakdown_data & mb   = buft_mb.second;
 
+        if (ggml_backend_buft_is_host(buft)) {
+            continue;
+        }
+
         ggml_backend_dev_t dev = ggml_backend_buft_get_device(buft);
         if (!dev) {
             continue;
