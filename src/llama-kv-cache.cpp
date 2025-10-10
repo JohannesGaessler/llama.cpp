@@ -171,9 +171,15 @@ llama_kv_cache::llama_kv_cache(
         auto * buft = it.first;
         auto * ctx  = it.second;
 
-        ggml_backend_buffer_t buf = model.hparams.no_alloc ?
-            ggml_backend_buft_alloc_buffer(buft, /*size =*/ 0) : // dummy buffer
-            ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft); // real buffer
+        ggml_backend_buffer_t buf;
+        if (model.hparams.no_alloc) {
+            buf = ggml_backend_buft_alloc_buffer(buft, /*size =*/ 0); // dummy buffer
+            for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != nullptr; t = ggml_get_next_tensor(ctx, t)) {
+                t->buffer = buf; // set dummy buffer for KV cache so that the backend scheduler won't try to allocate it
+            }
+        } else {
+            buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft); // real buffer
+        }
         if (!buf) {
             throw std::runtime_error("failed to allocate buffer for kv cache");
         }

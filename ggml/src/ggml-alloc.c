@@ -595,7 +595,9 @@ static bool ggml_gallocr_is_own(ggml_gallocr_t galloc, struct ggml_tensor * t) {
 }
 
 static bool ggml_gallocr_is_allocated(ggml_gallocr_t galloc, struct ggml_tensor * t) {
-    return t->data != NULL || ggml_gallocr_hash_get(galloc, t)->allocated;
+    return t->data != NULL // tensor data already set externally
+        || t->buffer // tensor on external buffer (but not yet allocated)
+        || ggml_gallocr_is_own(galloc, t); // tensor will be allocated by galloc
 }
 
 static void ggml_gallocr_allocate_node(ggml_gallocr_t galloc, struct ggml_tensor * node, int buffer_id) {

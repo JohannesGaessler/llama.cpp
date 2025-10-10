@@ -270,7 +270,7 @@ llama_context::llama_context(
         }
     }
 
-    if (!hparams.vocab_only && !hparams.no_alloc) {
+    if (!hparams.vocab_only) {
         llama_memory_context_ptr mctx;
         if (memory) {
             LLAMA_LOG_DEBUG("%s: reserving full memory module\n", __func__);
