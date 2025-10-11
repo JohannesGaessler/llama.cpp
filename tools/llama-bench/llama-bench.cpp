@@ -1060,7 +1060,7 @@ struct cmd_params_instance {
     bool               no_op_offload;
     bool               no_host;
 
-    llama_model_params to_llama_mparams() const {
+    llama_model_params to_llama_mparams() {
         llama_model_params mparams = llama_model_default_params();
 
         mparams.n_gpu_layers = n_gpu_layers;
@@ -2053,7 +2053,7 @@ int main(int argc, char ** argv) {
 
     int  params_idx   = 0;
     auto params_count = params_instances.size();
-    for (const auto & inst : params_instances) {
+    for (auto & inst : params_instances) {
         params_idx++;
         if (params.progress) {
             fprintf(stderr, "llama-bench: benchmark %d/%zu: starting\n", params_idx, params_count);

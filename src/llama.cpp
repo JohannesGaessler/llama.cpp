@@ -14,11 +14,14 @@
 #include "ggml-backend.h"
 
 #include <algorithm>
+#include <cinttypes>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <iomanip>
+#include <sstream>
 
 #if defined(_MSC_VER)
 #pragma warning(disable: 4244 4267) // possible loss of data
@@ -47,9 +50,22 @@ struct llama_device_memory_data {
     llama_memory_breakdown_data mb;
 };
 
-static std::map<ggml_backend_dev_t, llama_device_memory_data> llama_get_device_memory_data(
-        const char * path_model, const llama_model_params & mparams, const llama_context_params & cparams) {
-    llama_model_params mparams_copy = mparams;
+static std::vector<std::pair<ggml_backend_dev_t, llama_device_memory_data>> llama_get_device_memory_data(
+        const char * path_model, const llama_model_params * mparams, const llama_context_params * cparams, uint32_t & n_ctx_train) {
+    struct ggml_logger_state {
+        ggml_log_callback callback;
+        void * user_data;
+    };
+    ggml_logger_state original_logger;
+    llama_log_get(&original_logger.callback, &original_logger.user_data);
+    llama_log_set([](ggml_log_level level, const char * text, void * user_data) {
+        ggml_logger_state * original_logger = (ggml_logger_state *) user_data;
+        if (level >= GGML_LOG_LEVEL_WARN) {
+            original_logger->callback(level, text, original_logger->user_data);
+        }
+    }, &original_logger);
+
+    llama_model_params mparams_copy = *mparams;
     mparams_copy.no_alloc = true;
     mparams_copy.use_mmap = false;
 
@@ -58,15 +74,20 @@ static std::map<ggml_backend_dev_t, llama_device_memory_data> llama_get_device_m
         throw std::runtime_error("failed to load model");
     }
 
-    llama_context * ctx = llama_init_from_model(model, cparams);
+    llama_context * ctx = llama_init_from_model(model, *cparams);
     llama_memory_breakdown_print(ctx);
     if (ctx == nullptr) {
         llama_model_free(model);
         throw std::runtime_error("failed to create llama_context from model");
     }
 
+    std::vector<std::pair<ggml_backend_dev_t, llama_device_memory_data>> ret;
+    for (ggml_backend_dev_t dev : model->devices) {
+        llama_device_memory_data data; // FIXME
+        ret.push_back(std::make_pair(dev, data));
+    }
+
     std::map<ggml_backend_buffer_type_t, llama_memory_breakdown_data> memory_breakdown = ctx->memory_breakdown();
-    std::map<ggml_backend_dev_t,         llama_device_memory_data>    ret;
 
     for (const auto & buft_mb : memory_breakdown) {
         ggml_backend_buffer_type_t          buft = buft_mb.first;
@@ -80,38 +101,132 @@ static std::map<ggml_backend_dev_t, llama_device_memory_data> llama_get_device_m
         if (!dev) {
             continue;
         }
-        ret[dev].mb.model   += mb.model;
-        ret[dev].mb.context += mb.context;
-        ret[dev].mb.compute += mb.compute;
+        for (auto & dev_dmd : ret) {
+            if (dev_dmd.first == dev) {
+                dev_dmd.second.mb.model   += mb.model;
+                dev_dmd.second.mb.context += mb.context;
+                dev_dmd.second.mb.compute += mb.compute;
+            }
+        }
     }
     for (auto & dev_dmd : ret) {
         ggml_backend_dev_memory(dev_dmd.first, &dev_dmd.second.free, &dev_dmd.second.total);
     }
+
+    n_ctx_train = model->hparams.n_ctx_train;
+
     llama_free(ctx);
     llama_model_free(model);
+    llama_log_set(original_logger.callback, original_logger.user_data);
     return ret;
 }
 
 bool llama_fit_params_to_free_memory(const char * path_model, struct llama_model_params * mparams, struct llama_context_params * cparams) {
-    llama_model_params   mparams_cur = *mparams;
-    llama_context_params cparams_cur = *cparams;
-    std::map<ggml_backend_dev_t, llama_device_memory_data> device_memory_data = llama_get_device_memory_data(path_model, mparams_cur, cparams_cur);
+    constexpr size_t MiB = 1024*1024;
+    constexpr int64_t target_margin = 1024 * MiB;
+    constexpr uint32_t n_ctx_min = 4096;
 
-    fprintf(stderr, "%s: ===================================================\n", __func__);
-    fprintf(stderr, "%s: \n", __func__);
+    uint32_t n_ctx_train = 0;
+
+    std::vector<std::pair<ggml_backend_dev_t, llama_device_memory_data>> device_memory_data
+        = llama_get_device_memory_data(path_model, mparams, cparams, n_ctx_train);
+
+    size_t sum_total = 0;
+    size_t sum_free = 0;
+    llama_memory_breakdown_data sum_used_mb;
+    int64_t min_margin = INT64_MAX;
+
+    LLAMA_LOG_INFO("%s: memory breakdown with initial parameters [MiB]:\n", __func__);
     for (const auto & dev_dmd : device_memory_data) {
         ggml_backend_dev_t               dev = dev_dmd.first;
         const llama_device_memory_data & dmd = dev_dmd.second;
 
-        constexpr size_t MB = 1024*1024;
-        fprintf(stderr, "%s: name=%s free=%zu total=%zu model=%zu context=%zu compute=%zu\n",
-            __func__, ggml_backend_dev_name(dev), dmd.free/MB, dmd.total/MB, dmd.mb.model/MB, dmd.mb.context/MB, dmd.mb.compute/MB);
-    }
-    fprintf(stderr, "%s: \n", __func__);
-    fprintf(stderr, "%s: ===================================================\n", __func__);
+        sum_total           += dmd.total;
+        sum_free            += dmd.free;
+        sum_used_mb.model   += dmd.mb.model;
+        sum_used_mb.context += dmd.mb.context;
+        sum_used_mb.compute += dmd.mb.compute;
 
-    *mparams = mparams_cur;
-    *cparams = cparams_cur;
+        const int64_t free_after_alloc = int64_t(dmd.free) - int64_t(dmd.mb.model + dmd.mb.context + dmd.mb.compute);
+        min_margin = std::min(min_margin, free_after_alloc);
+
+        LLAMA_LOG_INFO("%s:   - %s: total=%zu free=%zu model=%zu context=%zu compute=%zu free_after_alloc=%" PRId64 "\n",
+            __func__, ggml_backend_dev_name(dev), dmd.total/MiB, dmd.free/MiB,
+            dmd.mb.model/MiB, dmd.mb.context/MiB, dmd.mb.compute/MiB, free_after_alloc/MiB);
+    }
+    const size_t sum_used = sum_used_mb.model + sum_used_mb.context + sum_used_mb.compute;
+    if (min_margin >= target_margin) {
+        LLAMA_LOG_INFO("%s: allocation projected to use a total of %zu MiB, "
+            "will leave at least %" PRId64 " >= %" PRId64 " MiB of free memory on all devices, no changes needed\n",
+            __func__, sum_used/MiB, min_margin/MiB, target_margin/MiB);
+        return true;
+    }
+
+    const int64_t sum_margin = int64_t(device_memory_data.size()) * target_margin;
+    int64_t global_deficit = (int64_t(sum_used) + sum_margin) - int64_t(sum_free);
+    if (global_deficit > 0) {
+        LLAMA_LOG_INFO("%s: allocation projected to use too much memory to fulfill margin of %" PRId64 " MiB on all devices, "
+            "need to reduce memory use by %" PRId64 " MiB\n",
+            __func__, target_margin/MiB, global_deficit/MiB);
+
+        if (cparams->n_ctx == 0) {
+            if (n_ctx_train > n_ctx_min) {
+                const size_t bytes_per_ctx = sum_used_mb.context / n_ctx_train;
+                const size_t ctx_reduction = std::min(
+                    (size_t(global_deficit) + bytes_per_ctx - 1) / bytes_per_ctx, size_t(n_ctx_train - n_ctx_min));
+                cparams->n_ctx = n_ctx_train - ctx_reduction;
+                const size_t deficit_reduction = ctx_reduction * bytes_per_ctx;
+                LLAMA_LOG_INFO("%s: context size reduced from %" PRIu32 " to %" PRIu32 " -> need %zu MiB less memory\n",
+                    __func__, n_ctx_train, cparams->n_ctx, deficit_reduction);
+                for (auto & dev_dmd : device_memory_data) {
+                    llama_device_memory_data & dmd = dev_dmd.second;
+                    dmd.mb.context -= deficit_reduction * sum_used_mb.context/dmd.mb.context;
+                }
+            } else {
+                LLAMA_LOG_INFO("%s: default model context size is %" PRIu32 " which is <= the min. context size of %" PRIu32 " -> no change\n",
+                    __func__, n_ctx_train, n_ctx_min);
+            }
+        } else {
+            LLAMA_LOG_INFO("%s: context size set by user to %" PRIu32 " -> no change\n", __func__, cparams->n_ctx);
+        }
+    }
+    if (device_memory_data.size() == 1) {
+        LLAMA_LOG_INFO("%s: only a single device -> no need to adjust tensor split\n", __func__);
+    } else {
+        bool any_tensor_split = false;
+        std::stringstream ss;
+        for (size_t i = 0; i < device_memory_data.size(); i++) {
+            if (mparams->tensor_split[i] != 0.0f) {
+                any_tensor_split = true;
+            }
+            if (i >= 1) {
+                ss << ", ";
+            }
+            ss << std::fixed << std::setprecision(2) << mparams->tensor_split[i];
+        }
+        if (any_tensor_split) {
+            const std::string str = ss.str();
+            LLAMA_LOG_INFO("%s: tensor split set by user to [%s] -> no change\n", __func__, str.c_str());
+        } else {
+            const double mean_total = double(sum_total) / double(device_memory_data.size());
+            const double global_used_per_free = double(sum_used_mb.model + sum_used_mb.context + sum_used_mb.compute)
+                / (double(sum_free) - double(device_memory_data.size()*target_margin));
+            std::stringstream ss;
+            for (size_t i = 0; i < device_memory_data.size(); i++) {
+                const llama_device_memory_data & dmd = device_memory_data[i].second;
+                const size_t used = dmd.mb.model + dmd.mb.context + dmd.mb.compute;
+                mparams->tensor_split[i] = (dmd.total / mean_total)
+                    * ((double(used)/(double(dmd.free) - double(target_margin))) / global_used_per_free);
+                if (i >= 1) {
+                    ss << ", ";
+                }
+                ss << std::fixed << std::setprecision(2) << mparams->tensor_split[i];
+            }
+            const std::string str = ss.str();
+            LLAMA_LOG_INFO("%s: tensor split set to [%s]\n", __func__, str.c_str());
+        }
+    }
+
     return true;
 }
 
