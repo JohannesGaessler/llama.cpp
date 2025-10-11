@@ -87,6 +87,8 @@ static std::map<ggml_backend_dev_t, llama_device_memory_data> llama_get_device_m
     for (auto & dev_dmd : ret) {
         ggml_backend_dev_memory(dev_dmd.first, &dev_dmd.second.free, &dev_dmd.second.total);
     }
+    llama_free(ctx);
+    llama_model_free(model);
     return ret;
 }
 
