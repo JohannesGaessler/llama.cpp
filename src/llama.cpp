@@ -247,34 +247,47 @@ bool llama_fit_params_to_free_memory(const char * path_model, struct llama_model
         return false;
     }
 
-    std::vector<size_t> size_1_layer;
-    {
-        llama_model_params mparams_1_layer = *mparams;
-        mparams_1_layer.n_gpu_layers = device_memory_data.size();
+    auto get_memory_for_const_layer = [&](const int layers_per_device) -> std::vector<size_t> {
+        llama_model_params mparams_copy = *mparams;
+        mparams_copy.n_gpu_layers = device_memory_data.size() * layers_per_device;
         if (device_memory_data.size() > 1) {
             for (size_t i = 0; i < device_memory_data.size(); i++) {
                 mparams->tensor_split[i] = 1.0f;
             }
         }
-        dmd_t dmd_1_layer = llama_get_device_memory_data(path_model, &mparams_1_layer, cparams, n_ctx_train, n_expert);
+        dmd_t dmd_1_layer = llama_get_device_memory_data(path_model, &mparams_copy, cparams, n_ctx_train, n_expert);
 
-        size_1_layer.reserve(device_memory_data.size());
+        std::vector<size_t> ret;
+        ret.reserve(device_memory_data.size());
         for (const auto & dmd : dmd_1_layer) {
             const llama_memory_breakdown_data & mb = dmd.second.mb;
-            size_1_layer.push_back(mb.model + mb.context + mb.compute);
+            ret.push_back(mb.model + mb.context + mb.compute);
         }
+        return ret;
+    };
+    const std::vector<size_t> size_1_layer  = get_memory_for_const_layer(1);
+    const std::vector<size_t> size_2_layers = get_memory_for_const_layer(2);
+
+    std::vector<size_t> size_base;
+    std::vector<size_t> size_per_layer;
+    size_base.reserve(size_1_layer.size());
+    size_per_layer.reserve(size_1_layer.size());
+    for (size_t i = 0; i < size_1_layer.size(); i++) {
+        const size_t per_layer = size_2_layers[i] - size_1_layer[i];
+        size_base.push_back(size_1_layer[i] - per_layer);
+        size_per_layer.push_back(per_layer);
     }
 
     mparams->n_gpu_layers = 0;
     std::vector<int32_t> ngl_per_device;
     ngl_per_device.reserve(device_memory_data.size());
     for (size_t i = 0; i < device_memory_data.size(); i++) {
-        const int32_t ngl = (device_memory_data[i].second.free - target_margin) / size_1_layer[i];
+        const int32_t ngl = (device_memory_data[i].second.free - target_margin - size_base[i]) / size_per_layer[i];
         mparams->n_gpu_layers += ngl;
         ngl_per_device.push_back(ngl);
     }
     if (device_memory_data.size() == 1) {
-        const size_t projected_use = size_1_layer[0]*mparams->n_gpu_layers;
+        const size_t projected_use = size_base[0] + size_per_layer[0]*mparams->n_gpu_layers;
         const size_t projected_margin = device_memory_data[0].second.free - projected_use;
         LLAMA_LOG_INFO("%s: set n_gpu_layers to %" PRId32 ", projected to use %zu MiB with %zu MiB free -> we're done \n",
             __func__, mparams->n_gpu_layers, projected_use/MiB, projected_margin/MiB);
