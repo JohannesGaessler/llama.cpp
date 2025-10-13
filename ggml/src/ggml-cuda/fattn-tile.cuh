@@ -885,27 +885,45 @@ static __global__ void flash_attn_tile(
         }
     }
 #pragma unroll
-        for (int i = 0; i < DVp/(2*warp_size); ++i) {
+    for (int i = 0; i < DVp/(2*warp_size); ++i) {
 #pragma unroll
-            for (int jc = 0; jc < cpw; ++jc) {
-                bool bad = false;
-                if (!isfinite(KQ_sum[jc]) || !isfinite(VKQ[jc*((DVp/2)/warp_size) + i].x) || !isfinite(VKQ[jc*((DVp/2)/warp_size) + i].y)) {
-                    printf("9000 [%d, %d, %d] [%d, %d]: KQ_sum=%f VKQ={%f, %f}\n",
-                        int(blockIdx.z), int(blockIdx.y), int(blockIdx.x), int(threadIdx.y), int(threadIdx.x),
-                        KQ_sum[jc],
-                        VKQ[jc*((DVp/2)/warp_size) + i].x, VKQ[jc*((DVp/2)/warp_size) + i].y);
-                    bad = true;
-                }
-                if (__syncthreads_or(bad)) {
-                    __trap();
-                    return;
-                }
+        for (int jc = 0; jc < cpw; ++jc) {
+            bool bad = false;
+            if (!isfinite(KQ_sum[jc]) || !isfinite(VKQ[jc*((DVp/2)/warp_size) + i].x) || !isfinite(VKQ[jc*((DVp/2)/warp_size) + i].y)) {
+                printf("9000 [%d, %d, %d] [%d, %d]: KQ_sum=%f VKQ={%f, %f}\n",
+                    int(blockIdx.z), int(blockIdx.y), int(blockIdx.x), int(threadIdx.y), int(threadIdx.x),
+                    KQ_sum[jc],
+                    VKQ[jc*((DVp/2)/warp_size) + i].x, VKQ[jc*((DVp/2)/warp_size) + i].y);
+                bad = true;
+            }
+            if (__syncthreads_or(bad)) {
+                __trap();
+                return;
             }
         }
+    }
 
 #pragma unroll
     for (int jc0 = 0; jc0 < cpw; ++jc0) {
         KQ_sum[jc0] = warp_reduce_sum<warp_size>(KQ_sum[jc0]);
+    }
+#pragma unroll
+    for (int i = 0; i < DVp/(2*warp_size); ++i) {
+#pragma unroll
+        for (int jc = 0; jc < cpw; ++jc) {
+            bool bad = false;
+            if (!isfinite(KQ_sum[jc]) || !isfinite(VKQ[jc*((DVp/2)/warp_size) + i].x) || !isfinite(VKQ[jc*((DVp/2)/warp_size) + i].y)) {
+                printf("9800 [%d, %d, %d] [%d, %d]: KQ_sum=%f VKQ={%f, %f}\n",
+                    int(blockIdx.z), int(blockIdx.y), int(blockIdx.x), int(threadIdx.y), int(threadIdx.x),
+                    KQ_sum[jc],
+                    VKQ[jc*((DVp/2)/warp_size) + i].x, VKQ[jc*((DVp/2)/warp_size) + i].y);
+                bad = true;
+            }
+            if (__syncthreads_or(bad)) {
+                __trap();
+                return;
+            }
+        }
     }
 
     if constexpr (np > 1) {
@@ -973,6 +991,24 @@ static __global__ void flash_attn_tile(
             KQ_sum[0] += KQ_sum_combine[threadIdx.y + ip];
         }
     }
+#pragma unroll
+    for (int i = 0; i < DVp/(2*warp_size); ++i) {
+#pragma unroll
+        for (int jc = 0; jc < cpw; ++jc) {
+            bool bad = false;
+            if (!isfinite(KQ_sum[jc]) || !isfinite(VKQ[jc*((DVp/2)/warp_size) + i].x) || !isfinite(VKQ[jc*((DVp/2)/warp_size) + i].y)) {
+                printf("9800 [%d, %d, %d] [%d, %d]: KQ_sum=%f VKQ={%f, %f}\n",
+                    int(blockIdx.z), int(blockIdx.y), int(blockIdx.x), int(threadIdx.y), int(threadIdx.x),
+                    KQ_sum[jc],
+                    VKQ[jc*((DVp/2)/warp_size) + i].x, VKQ[jc*((DVp/2)/warp_size) + i].y);
+                bad = true;
+            }
+            if (__syncthreads_or(bad)) {
+                __trap();
+                return;
+            }
+        }
+    }
 
     // Attention sink: adjust KQ max and sum only for the first of all parallel blocks:
     if (sinks && blockIdx.y == 0) {
@@ -1001,6 +1037,24 @@ static __global__ void flash_attn_tile(
                 VKQ[jc0*((DVp/2)/warp_size) + i0/warp_size].y *= KQ_max_scale;
             }
 #endif // FAST_FP16_AVAILABLE
+        }
+    }
+#pragma unroll
+    for (int i = 0; i < DVp/(2*warp_size); ++i) {
+#pragma unroll
+        for (int jc = 0; jc < cpw; ++jc) {
+            bool bad = false;
+            if (!isfinite(KQ_sum[jc]) || !isfinite(VKQ[jc*((DVp/2)/warp_size) + i].x) || !isfinite(VKQ[jc*((DVp/2)/warp_size) + i].y)) {
+                printf("9900 [%d, %d, %d] [%d, %d]: KQ_sum=%f VKQ={%f, %f}\n",
+                    int(blockIdx.z), int(blockIdx.y), int(blockIdx.x), int(threadIdx.y), int(threadIdx.x),
+                    KQ_sum[jc],
+                    VKQ[jc*((DVp/2)/warp_size) + i].x, VKQ[jc*((DVp/2)/warp_size) + i].y);
+                bad = true;
+            }
+            if (__syncthreads_or(bad)) {
+                __trap();
+                return;
+            }
         }
     }
 
@@ -1046,9 +1100,10 @@ static __global__ void flash_attn_tile(
                     VKQ[jc0*((DVp/2)/warp_size) + i0/(2*warp_size) + i1].y *= scale;
                     bool bad = false;
                     if (!isfinite(VKQ[jc0*((DVp/2)/warp_size) + i0/(2*warp_size) + i1].x) || !isfinite(VKQ[jc0*((DVp/2)/warp_size) + i0/(2*warp_size) + i1].y)) {
-                        printf("10000 [%d, %d, %d] [%d, %d]: VKQ={%f, %f}\n",
+                        printf("10000 [%d, %d, %d] [%d, %d]: VKQ={%f, %f} scale=%f\n",
                             int(blockIdx.z), int(blockIdx.y), int(blockIdx.x), int(threadIdx.y), int(threadIdx.x),
-                            VKQ[jc0*((DVp/2)/warp_size) + i0/(2*warp_size) + i1].x, VKQ[jc0*((DVp/2)/warp_size) + i0/(2*warp_size) + i1].y);
+                            VKQ[jc0*((DVp/2)/warp_size) + i0/(2*warp_size) + i1].x, VKQ[jc0*((DVp/2)/warp_size) + i0/(2*warp_size) + i1].y,
+                            scale);
                         bad = true;
                     }
                     if (__syncthreads_or(bad)) {
