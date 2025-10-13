@@ -908,9 +908,9 @@ static __global__ void flash_attn_tile(
         KQ_sum[jc0] = warp_reduce_sum<warp_size>(KQ_sum[jc0]);
         bool bad = false;
         if (!isfinite(KQ_sum[jc0]) || KQ_sum[jc0] == 0.0f) {
-            printf("9100 [%d, %d, %d] [%d, %d]: KQ_sum[%d]=%f\n",
+            printf("9100 [%d, %d, %d] [%d, %d]: KQ_sum[%d]=%f KQ_max[%d]=%f\n",
                 int(blockIdx.z), int(blockIdx.y), int(blockIdx.x), int(threadIdx.y), int(threadIdx.x),
-                jc0, KQ_sum[jc0]);
+                jc0, KQ_sum[jc0], jc0, KQ_max[jc0]);
             bad = true;
         }
         if (__syncthreads_or(bad)) {
@@ -1114,7 +1114,7 @@ static __global__ void flash_attn_tile(
                         printf("10000 [%d, %d, %d] [%d, %d]: VKQ={%f, %f} scale=%f KQ_sum=%f\n",
                             int(blockIdx.z), int(blockIdx.y), int(blockIdx.x), int(threadIdx.y), int(threadIdx.x),
                             VKQ[jc0*((DVp/2)/warp_size) + i0/(2*warp_size) + i1].x, VKQ[jc0*((DVp/2)/warp_size) + i0/(2*warp_size) + i1].y,
-                            scale, KQ_sum);
+                            scale, KQ_sum[jc0]);
                         bad = true;
                     }
                     if (__syncthreads_or(bad)) {
