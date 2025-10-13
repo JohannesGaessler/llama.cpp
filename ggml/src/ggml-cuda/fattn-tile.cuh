@@ -1100,10 +1100,10 @@ static __global__ void flash_attn_tile(
                     VKQ[jc0*((DVp/2)/warp_size) + i0/(2*warp_size) + i1].y *= scale;
                     bool bad = false;
                     if (!isfinite(VKQ[jc0*((DVp/2)/warp_size) + i0/(2*warp_size) + i1].x) || !isfinite(VKQ[jc0*((DVp/2)/warp_size) + i0/(2*warp_size) + i1].y)) {
-                        printf("10000 [%d, %d, %d] [%d, %d]: VKQ={%f, %f} scale=%f\n",
+                        printf("10000 [%d, %d, %d] [%d, %d]: VKQ={%f, %f} scale=%f KQ_sum=%f\n",
                             int(blockIdx.z), int(blockIdx.y), int(blockIdx.x), int(threadIdx.y), int(threadIdx.x),
                             VKQ[jc0*((DVp/2)/warp_size) + i0/(2*warp_size) + i1].x, VKQ[jc0*((DVp/2)/warp_size) + i0/(2*warp_size) + i1].y,
-                            scale);
+                            scale, KQ_sum);
                         bad = true;
                     }
                     if (__syncthreads_or(bad)) {
