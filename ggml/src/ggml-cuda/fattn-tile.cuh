@@ -892,10 +892,10 @@ static __global__ void flash_attn_tile(
         for (int jc = 0; jc < cpw; ++jc) {
             bool bad = false;
             if (!isfinite(KQ_sum[jc]) || !isfinite(VKQ[jc*((DVp/2)/warp_size) + i].x) || !isfinite(VKQ[jc*((DVp/2)/warp_size) + i].y)) {
-                printf("9000 [%d, %d, %d] [%d, %d]: KQ_sum=%f VKQ={%f, %f}\n",
+                printf("9000 [%d, %d, %d] [%d, %d]: VKQ={%f, %f} KQ_sum[%d]=%f KQ_max[%d]=%f\n",
                     int(blockIdx.z), int(blockIdx.y), int(blockIdx.x), int(threadIdx.y), int(threadIdx.x),
-                    KQ_sum[jc],
-                    VKQ[jc*((DVp/2)/warp_size) + i].x, VKQ[jc*((DVp/2)/warp_size) + i].y);
+                    VKQ[jc*((DVp/2)/warp_size) + i].x, VKQ[jc*((DVp/2)/warp_size) + i].y,
+                    jc, KQ_sum[jc], jc, KQ_max[jc]);
                 bad = true;
             }
             if (__syncthreads_or(bad)) {
