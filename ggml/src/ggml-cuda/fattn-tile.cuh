@@ -906,6 +906,17 @@ static __global__ void flash_attn_tile(
 #pragma unroll
     for (int jc0 = 0; jc0 < cpw; ++jc0) {
         KQ_sum[jc0] = warp_reduce_sum<warp_size>(KQ_sum[jc0]);
+        bool bad = false;
+        if (!isfinite(KQ_sum[jc0]) || KQ_sum[jc0] == 0.0f) {
+            printf("9100 [%d, %d, %d] [%d, %d]: KQ_sum[%d]=%f\n",
+                int(blockIdx.z), int(blockIdx.y), int(blockIdx.x), int(threadIdx.y), int(threadIdx.x),
+                jc0, KQ_sum[jc0]);
+            bad = true;
+        }
+        if (__syncthreads_or(bad)) {
+            __trap();
+            return;
+        }
     }
 #pragma unroll
     for (int i = 0; i < DVp/(2*warp_size); ++i) {
