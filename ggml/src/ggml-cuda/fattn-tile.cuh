@@ -884,6 +884,23 @@ static __global__ void flash_attn_tile(
                 stride_K2, stride_V2, stride_mask, KQ_max, KQ_sum, VKQ, k_VKQ_0, k_VKQ_max);
         }
     }
+#pragma unroll
+        for (int i = 0; i < DVp/(2*warp_size); ++i) {
+#pragma unroll
+            for (int jc = 0; jc < cpw; ++jc) {
+                bool bad = false;
+                if (!isfinite(VKQ[jc*((DVp/2)/warp_size) + i].x) || !isfinite(VKQ[jc*((DVp/2)/warp_size) + i].y)) {
+                    printf("9000 [%d, %d, %d] [%d, %d]: VKQ={%f, %f}\n",
+                        int(blockIdx.z), int(blockIdx.y), int(blockIdx.x), int(threadIdx.y), int(threadIdx.x),
+                        VKQ[jc*((DVp/2)/warp_size) + i].x, VKQ[jc*((DVp/2)/warp_size) + i].y);
+                    bad = true;
+                }
+                if (__syncthreads_or(bad)) {
+                    __trap();
+                    return;
+                }
+            }
+        }
 
 #pragma unroll
     for (int jc0 = 0; jc0 < cpw; ++jc0) {
@@ -1166,29 +1183,7 @@ static void launch_fattn_tile_switch_ncols2(ggml_backend_cuda_context & ctx, ggm
     const int gqa_limit = nvidia && gqa_ratio <= 4 ? 16 : INT_MAX;
     const bool use_gqa_opt = mask && max_bias == 0.0f && Q->ne[1] <= gqa_limit && K->ne[1] % FATTN_KQ_STRIDE == 0;
 
-    if constexpr (DV == 512) {
-        if (use_gqa_opt && gqa_ratio % 16 == 0) {
-            launch_fattn_tile_switch_ncols1<DKQ, DV, 16, use_logit_softcap>(ctx, dst);
-            return;
-        }
-    }
-
     if constexpr (DV <= 256) {
-        if (use_gqa_opt && gqa_ratio % 8 == 0) {
-            launch_fattn_tile_switch_ncols1<DKQ, DV, 8, use_logit_softcap>(ctx, dst);
-            return;
-        }
-
-        if (use_gqa_opt && gqa_ratio % 4 == 0) {
-            launch_fattn_tile_switch_ncols1<DKQ, DV, 4, use_logit_softcap>(ctx, dst);
-            return;
-        }
-
-        if (use_gqa_opt && gqa_ratio % 2 == 0) {
-            launch_fattn_tile_switch_ncols1<DKQ, DV, 2, use_logit_softcap>(ctx, dst);
-            return;
-        }
-
         launch_fattn_tile_switch_ncols1<DKQ, DV, 1, use_logit_softcap>(ctx, dst);
         return;
     }
