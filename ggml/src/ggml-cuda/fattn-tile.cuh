@@ -889,9 +889,10 @@ static __global__ void flash_attn_tile(
 #pragma unroll
             for (int jc = 0; jc < cpw; ++jc) {
                 bool bad = false;
-                if (!isfinite(VKQ[jc*((DVp/2)/warp_size) + i].x) || !isfinite(VKQ[jc*((DVp/2)/warp_size) + i].y)) {
-                    printf("9000 [%d, %d, %d] [%d, %d]: VKQ={%f, %f}\n",
+                if (!isfinite(KQ_sum[jc]) || !isfinite(VKQ[jc*((DVp/2)/warp_size) + i].x) || !isfinite(VKQ[jc*((DVp/2)/warp_size) + i].y)) {
+                    printf("9000 [%d, %d, %d] [%d, %d]: KQ_sum=%f VKQ={%f, %f}\n",
                         int(blockIdx.z), int(blockIdx.y), int(blockIdx.x), int(threadIdx.y), int(threadIdx.x),
+                        KQ_sum[jc],
                         VKQ[jc*((DVp/2)/warp_size) + i].x, VKQ[jc*((DVp/2)/warp_size) + i].y);
                     bad = true;
                 }
