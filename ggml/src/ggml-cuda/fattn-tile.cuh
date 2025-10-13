@@ -457,6 +457,17 @@ static __device__ __forceinline__ void flash_attn_tile_iter_KQ(
 #pragma unroll
                 for (int k = 0; k < cpy_ne; ++k) {
                     ggml_cuda_mad(KQ_acc[i_KQ_0/(np*warp_size)*cpw + jc0], K_k[i_KQ_0/(np*warp_size)][k], Q_k[jc0][k]);
+                    bool bad = false;
+                    if (!isfinite(KQ_acc[i_KQ_0/(np*warp_size)*cpw + jc0])) {
+                        printf("1000 [%d, %d, %d] [%d, %d]: KQ_acc=%f\n",
+                            int(blockIdx.z), int(blockIdx.y), int(blockIdx.x), int(threadIdx.y), int(threadIdx.x),
+                            KQ_acc[i_KQ_0/(np*warp_size)*cpw + jc0]);
+                        bad = true;
+                    }
+                    if (__syncthreads_or(bad)) {
+                        __trap();
+                        return;
+                    }
                 }
             }
         }
@@ -1015,6 +1026,17 @@ static __global__ void flash_attn_tile(
                 for (int i1 = 0; i1 < cpy_ne_D/2; ++i1) {
                     VKQ[jc0*((DVp/2)/warp_size) + i0/(2*warp_size) + i1].x *= scale;
                     VKQ[jc0*((DVp/2)/warp_size) + i0/(2*warp_size) + i1].y *= scale;
+                    bool bad = false;
+                    if (!isfinite(VKQ[jc0*((DVp/2)/warp_size) + i0/(2*warp_size) + i1].x) || !isfinite(VKQ[jc0*((DVp/2)/warp_size) + i0/(2*warp_size) + i1].y)) {
+                        printf("10000 [%d, %d, %d] [%d, %d]: VKQ={%f, %f}\n",
+                            int(blockIdx.z), int(blockIdx.y), int(blockIdx.x), int(threadIdx.y), int(threadIdx.x),
+                            VKQ[jc0*((DVp/2)/warp_size) + i0/(2*warp_size) + i1].x, VKQ[jc0*((DVp/2)/warp_size) + i0/(2*warp_size) + i1].y);
+                        bad = true;
+                    }
+                    if (__syncthreads_or(bad)) {
+                        __trap();
+                        return;
+                    }
                 }
                 ggml_cuda_memcpy_1<cpy_ne_D*4>(
                     &dst[j_dst_unrolled*DV + i0 + threadIdx.x*cpy_ne_D],
