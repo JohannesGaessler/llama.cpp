@@ -51,19 +51,25 @@ struct llama_device_memory_data {
 };
 
 static std::vector<std::pair<ggml_backend_dev_t, llama_device_memory_data>> llama_get_device_memory_data(
-        const char * path_model, const llama_model_params * mparams, const llama_context_params * cparams, uint32_t & n_ctx_train, uint32_t & n_expert) {
-    struct ggml_logger_state {
-        ggml_log_callback callback;
-        void * user_data;
+        const char * path_model, const llama_model_params * mparams, const llama_context_params * cparams,
+        uint32_t & n_ctx_train, uint32_t & n_expert, const ggml_log_level log_level) {
+    struct user_data_t {
+        struct {
+            ggml_log_callback callback;
+            void * user_data;
+        } original_logger;
+        ggml_log_level level;
     };
-    ggml_logger_state original_logger;
-    llama_log_get(&original_logger.callback, &original_logger.user_data);
+    user_data_t ud;
+    llama_log_get(&ud.original_logger.callback, &ud.original_logger.user_data);
+    ud.level = log_level;
+
     llama_log_set([](ggml_log_level level, const char * text, void * user_data) {
-        ggml_logger_state * original_logger = (ggml_logger_state *) user_data;
-        if (level >= GGML_LOG_LEVEL_WARN) {
-            original_logger->callback(level, text, original_logger->user_data);
+        const user_data_t * ud = (const user_data_t *) user_data;
+        if (level >= ud->level) {
+            ud->original_logger.callback(level, text, ud->original_logger.user_data);
         }
-    }, &original_logger);
+    }, &ud);
 
     llama_model_params mparams_copy = *mparams;
     mparams_copy.no_alloc = true;
@@ -118,13 +124,13 @@ static std::vector<std::pair<ggml_backend_dev_t, llama_device_memory_data>> llam
 
     llama_free(ctx);
     llama_model_free(model);
-    llama_log_set(original_logger.callback, original_logger.user_data);
+    llama_log_set(ud.original_logger.callback, ud.original_logger.user_data);
     return ret;
 }
 
 bool llama_fit_params_to_free_memory(
         const char * path_model, struct llama_model_params * mparams, struct llama_context_params * cparams,
-        float * tensor_split) {
+        float * tensor_split, ggml_log_level log_level) {
     constexpr int64_t MiB = 1024*1024;
     constexpr int64_t target_margin = 1024 * MiB;
     constexpr uint32_t n_ctx_min = 4096;
@@ -136,7 +142,7 @@ bool llama_fit_params_to_free_memory(
     uint32_t n_ctx_train = 0;
     uint32_t n_expert    = 0;
 
-    dmd_t device_memory_data = llama_get_device_memory_data(path_model, mparams, cparams, n_ctx_train, n_expert);
+    dmd_t device_memory_data = llama_get_device_memory_data(path_model, mparams, cparams, n_ctx_train, n_expert, log_level);
 
     size_t sum_total = 0;
     size_t sum_free = 0;
@@ -265,7 +271,7 @@ bool llama_fit_params_to_free_memory(
             }
         }
         mparams_copy.tensor_split = tensor_split;
-        dmd_t dmd_1_layer = llama_get_device_memory_data(path_model, &mparams_copy, cparams, n_ctx_train, n_expert);
+        dmd_t dmd_1_layer = llama_get_device_memory_data(path_model, &mparams_copy, cparams, n_ctx_train, n_expert, log_level);
 
         std::vector<size_t> ret;
         ret.reserve(device_memory_data.size());
