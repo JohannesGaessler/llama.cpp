@@ -2181,7 +2181,14 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
     max_n_tensors += n_layer*2; // duplicated rope freq tensors
     const size_t ctx_size = ggml_tensor_overhead()*max_n_tensors;
 
-    std::map<ggml_backend_buffer_type_t, ggml_context *> ctx_map;
+    // define a comparator for the buft -> ctx map to ensure that the order is well-defined
+    struct ggml_backend_buft_comparator {
+        bool operator()(const ggml_backend_buffer_type_t & lhs, const ggml_backend_buffer_type_t & rhs) const {
+            return ggml_backend_buft_name(lhs) < ggml_backend_buft_name(rhs);
+        }
+    };
+    std::map<ggml_backend_buffer_type_t, ggml_context *, ggml_backend_buft_comparator> ctx_map;
+
     auto ctx_for_buft = [&](ggml_backend_buffer_type_t buft) -> ggml_context * {
         auto it = ctx_map.find(buft);
         if (it == ctx_map.end()) {
@@ -2197,7 +2204,6 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
             }
 
             ctx_map[buft] = ctx;
-            pimpl->ctxs.emplace_back(ctx);
 
             return ctx;
         }
@@ -6114,6 +6120,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                 buf_map.emplace(idx, buf);
             }
         }
+        pimpl->ctxs.emplace_back(ctx);
 
         if (pimpl->bufs.empty()) {
             throw std::runtime_error("failed to allocate buffer");
