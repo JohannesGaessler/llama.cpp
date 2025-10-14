@@ -130,7 +130,7 @@ static std::vector<std::pair<ggml_backend_dev_t, llama_device_memory_data>> llam
 
 bool llama_fit_params_to_free_memory(
         const char * path_model, struct llama_model_params * mparams, struct llama_context_params * cparams,
-        float * tensor_split, ggml_log_level log_level) {
+        float * tensor_split, enum ggml_log_level log_level) {
     constexpr int64_t MiB = 1024*1024;
     constexpr int64_t target_margin = 1024 * MiB;
     constexpr uint32_t n_ctx_min = 4096;
