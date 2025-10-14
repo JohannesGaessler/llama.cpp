@@ -917,7 +917,7 @@ struct common_init_result common_init_from_params(common_params & params) {
     common_init_result iparams;
     auto mparams = common_model_params_to_llama(params);
     auto cparams = common_context_params_to_llama(params);
-    llama_fit_params_to_free_memory(params.model.path.c_str(), &mparams, &cparams);
+    llama_fit_params_to_free_memory(params.model.path.c_str(), &mparams, &cparams, mparams.tensor_split);
 
     llama_model * model = llama_model_load_from_file(params.model.path.c_str(), mparams);
     if (model == NULL) {
