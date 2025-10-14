@@ -456,7 +456,7 @@ extern "C" {
                         struct llama_model_params   * mparams,
                         struct llama_context_params * cparams,
                                               float * tensor_split,
-                                     ggml_log_level   log_level);
+                                enum ggml_log_level   log_level);
 
     LLAMA_API int64_t llama_time_us(void);
 
