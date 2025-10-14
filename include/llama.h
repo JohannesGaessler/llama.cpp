@@ -277,8 +277,7 @@ extern "C" {
         int32_t main_gpu;
 
         // proportion of the model (layers or rows) to offload to each GPU, size: llama_max_devices()
-        // read-only when creating a model, can be modified when fitting params to free memory
-        float * tensor_split;
+        const float * tensor_split;
 
         // Called with a progress value between 0.0 and 1.0. Pass NULL to disable.
         // If the provided progress_callback returns true, model loading continues.
