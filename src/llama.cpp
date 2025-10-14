@@ -122,7 +122,9 @@ static std::vector<std::pair<ggml_backend_dev_t, llama_device_memory_data>> llam
     return ret;
 }
 
-bool llama_fit_params_to_free_memory(const char * path_model, struct llama_model_params * mparams, struct llama_context_params * cparams) {
+bool llama_fit_params_to_free_memory(
+        const char * path_model, struct llama_model_params * mparams, struct llama_context_params * cparams,
+        float * tensor_split) {
     constexpr int64_t MiB = 1024*1024;
     constexpr int64_t target_margin = 1024 * MiB;
     constexpr uint32_t n_ctx_min = 4096;
@@ -201,33 +203,34 @@ bool llama_fit_params_to_free_memory(const char * path_model, struct llama_model
         return true;
     }
 
-    bool nonzero_tensor_split = false;
+    bool tensor_split_set_by_user = false;
     if (mparams->tensor_split) {
         for (size_t i = 0; i < device_memory_data.size(); i++) {
             if (mparams->tensor_split[i] != 0.0f) {
-                nonzero_tensor_split = true;
+                tensor_split_set_by_user = true;
                 break;
             }
         }
-        if (device_memory_data.size() > 1 && global_deficit <= 0 && !nonzero_tensor_split) {
-            const double mean_total = double(sum_total) / double(device_memory_data.size());
-            const double global_used_per_free = double(sum_used_mb.model + sum_used_mb.context + sum_used_mb.compute)
-                / (double(sum_free) - double(device_memory_data.size()*target_margin));
-            std::stringstream ss;
-            for (size_t i = 0; i < device_memory_data.size(); i++) {
-                const llama_device_memory_data & dmd = device_memory_data[i].second;
-                const size_t used = dmd.mb.model + dmd.mb.context + dmd.mb.compute;
-                mparams->tensor_split[i] = (dmd.total / mean_total)
-                    * ((double(used)/(double(dmd.free) - double(target_margin))) / global_used_per_free);
-                if (i >= 1) {
-                    ss << ", ";
-                }
-                ss << std::fixed << std::setprecision(2) << mparams->tensor_split[i];
+    }
+    if (!tensor_split_set_by_user && tensor_split && device_memory_data.size() > 1 && global_deficit <= 0) {
+        const double mean_total = double(sum_total) / double(device_memory_data.size());
+        const double global_used_per_free = double(sum_used_mb.model + sum_used_mb.context + sum_used_mb.compute)
+            / (double(sum_free) - double(device_memory_data.size()*target_margin));
+        std::stringstream ss;
+        for (size_t i = 0; i < device_memory_data.size(); i++) {
+            const llama_device_memory_data & dmd = device_memory_data[i].second;
+            const size_t used = dmd.mb.model + dmd.mb.context + dmd.mb.compute;
+            tensor_split[i] = (dmd.total / mean_total)
+                * ((double(used)/(double(dmd.free) - double(target_margin))) / global_used_per_free);
+            if (i >= 1) {
+                ss << ", ";
             }
-            const std::string str = ss.str();
-            LLAMA_LOG_INFO("%s: model fits across GPUs by setting tensor split to [%s] -> we're done\n", __func__, str.c_str());
-            return true;
+            ss << std::fixed << std::setprecision(2) << tensor_split[i];
         }
+        mparams->tensor_split = tensor_split;
+        const std::string str = ss.str();
+        LLAMA_LOG_INFO("%s: model fits across GPUs by setting tensor split to [%s] -> we're done\n", __func__, str.c_str());
+        return true;
     }
 
     if (mparams->n_gpu_layers != default_mparams.n_gpu_layers) {
@@ -238,9 +241,15 @@ bool llama_fit_params_to_free_memory(const char * path_model, struct llama_model
         LLAMA_LOG_INFO("%s: tensor_buft_overrides set by user -> no change to weight allocation\n", __func__);
         return false;
     }
-    if (device_memory_data.size() > 1 && (!mparams->tensor_split || nonzero_tensor_split)) {
-        LLAMA_LOG_INFO("%s: user did not set tensor_split to zeroed buffer for multiple devices -> no change to weight allocation\n", __func__);
-        return false;
+    if (device_memory_data.size() > 1) {
+        if (tensor_split_set_by_user) {
+            LLAMA_LOG_INFO("%s: tensor_split already set by user\n", __func__);
+            return false;
+        }
+        if (!tensor_split) {
+            LLAMA_LOG_INFO("%s: did not provide buffer to automatically set tensor_split\n", __func__);
+            return false;
+        }
     }
     if (device_memory_data.size() > 1 && mparams->split_mode == LLAMA_SPLIT_MODE_ROW) {
         LLAMA_LOG_INFO("%s: changing weight allocation for LLAMA_SPLIT_MODE_ROW not implemented -> abort\n", __func__);
@@ -252,9 +261,10 @@ bool llama_fit_params_to_free_memory(const char * path_model, struct llama_model
         mparams_copy.n_gpu_layers = device_memory_data.size() * layers_per_device;
         if (device_memory_data.size() > 1) {
             for (size_t i = 0; i < device_memory_data.size(); i++) {
-                mparams->tensor_split[i] = 1.0f;
+                tensor_split[i] = 1.0f;
             }
         }
+        mparams_copy.tensor_split = tensor_split;
         dmd_t dmd_1_layer = llama_get_device_memory_data(path_model, &mparams_copy, cparams, n_ctx_train, n_expert);
 
         std::vector<size_t> ret;
@@ -289,12 +299,17 @@ bool llama_fit_params_to_free_memory(const char * path_model, struct llama_model
     if (device_memory_data.size() == 1) {
         const size_t projected_use = size_base[0] + size_per_layer[0]*mparams->n_gpu_layers;
         const size_t projected_margin = device_memory_data[0].second.free - projected_use;
-        LLAMA_LOG_INFO("%s: set n_gpu_layers to %" PRId32 ", projected to use %zu MiB with %zu MiB free -> we're done \n",
+        LLAMA_LOG_INFO("%s: set n_gpu_layers to %" PRId32 ", projected to use %zu MiB with %zu MiB free\n",
             __func__, mparams->n_gpu_layers, projected_use/MiB, projected_margin/MiB);
         return true;
     }
-
-    GGML_ASSERT(false);
+    LLAMA_LOG_INFO("%s: set n_gpu_layers to %" PRId32 ", projected memory use:\n", __func__, mparams->n_gpu_layers);
+    for (size_t i = 0; i < device_memory_data.size(); i++) {
+        const size_t projected_use = size_base[i] + size_per_layer[i]*mparams->n_gpu_layers;
+        const size_t projected_margin = device_memory_data[i].second.free - projected_use;
+        LLAMA_LOG_INFO("%s:   - %s: %d layers, %zu MiB used, %zu MiB free\n",
+            __func__, ggml_backend_dev_name(device_memory_data[i].first), ngl_per_device[i], projected_use/MiB, projected_margin/MiB);
+    }
     return true;
 }
 

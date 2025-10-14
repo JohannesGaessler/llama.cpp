@@ -452,7 +452,11 @@ extern "C" {
     // Frees all allocated memory
     LLAMA_API void llama_free(struct llama_context * ctx);
 
-    LLAMA_API bool llama_fit_params_to_free_memory(const char * path_model, struct llama_model_params * mparams, struct llama_context_params * cparams);
+    LLAMA_API bool llama_fit_params_to_free_memory(
+                                       const char   * path_model,
+                        struct llama_model_params   * mparams,
+                        struct llama_context_params * cparams,
+                                              float * tensor_split);
 
     LLAMA_API int64_t llama_time_us(void);
 
