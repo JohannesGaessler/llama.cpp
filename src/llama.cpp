@@ -303,7 +303,7 @@ bool llama_fit_params_to_free_memory(
         ngl_per_device.push_back(ngl);
     }
     if (device_memory_data.size() == 1) {
-        const size_t projected_use = size_base[0] + size_per_layer[0]*mparams->n_gpu_layers;
+        const size_t projected_use = size_base[0] + size_per_layer[0]*ngl_per_device[0];
         const size_t projected_margin = device_memory_data[0].second.free - projected_use;
         LLAMA_LOG_INFO("%s: set n_gpu_layers to %" PRId32 ", projected to use %zu MiB with %zu MiB free\n",
             __func__, mparams->n_gpu_layers, projected_use/MiB, projected_margin/MiB);
@@ -311,7 +311,7 @@ bool llama_fit_params_to_free_memory(
     }
     LLAMA_LOG_INFO("%s: set n_gpu_layers to %" PRId32 ", projected memory use:\n", __func__, mparams->n_gpu_layers);
     for (size_t i = 0; i < device_memory_data.size(); i++) {
-        const size_t projected_use = size_base[i] + size_per_layer[i]*mparams->n_gpu_layers;
+        const size_t projected_use = size_base[i] + size_per_layer[i]*ngl_per_device[i];
         const size_t projected_margin = device_memory_data[i].second.free - projected_use;
         LLAMA_LOG_INFO("%s:   - %s: %d layers, %zu MiB used, %zu MiB free\n",
             __func__, ggml_backend_dev_name(device_memory_data[i].first), ngl_per_device[i], projected_use/MiB, projected_margin/MiB);
