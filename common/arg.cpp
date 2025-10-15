@@ -1434,7 +1434,7 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
         params.kv_overrides.back().key[0] = 0;
     }
 
-    if (!params.tensor_buft_overrides.empty()) {
+    while (params.tensor_buft_overrides.size() < 4096) {
         params.tensor_buft_overrides.push_back({nullptr, nullptr});
     }
 
