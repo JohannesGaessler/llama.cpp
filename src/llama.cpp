@@ -401,7 +401,8 @@ bool llama_params_fit_to_free_memory(
 
             const llama_memory_breakdown_data & mb_last = dmds_last.back().mb;
             const int64_t projected_use_last = int64_t(mb_last.model + mb_last.context + mb_last.compute)
-                - int64_t(ngl_per_device.back().part) * int64_t(spl_full.back().per_layer - spl_part.back().per_layer);
+                - int64_t(hp_ngl + 1 - ngl_per_device.back().full) * spl_full.back().per_layer
+                - int64_t(ngl_per_device.back().part) * (spl_full.back().per_layer - spl_part.back().per_layer);
             const int64_t projected_margin_last = int64_t(dmds_last.back().free) - projected_use_last;
 
             if (nd == 1) {
