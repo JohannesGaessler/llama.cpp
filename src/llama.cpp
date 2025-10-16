@@ -313,11 +313,11 @@ bool llama_fit_params_to_free_memory(
                 uint32_t part = 0;
                 uint32_t full = 0;
             };
-            auto distribute_layers = [&](std::vector<ngl> & ngl_per_device, const uint32_t global_ngl_full) -> bool {
+            auto distribute_layers = [&](std::vector<ngl> & ngl_per_device, const uint32_t global_ngl_part) -> bool {
                 ngl_per_device.clear();
                 ngl_per_device.resize(nd);
-                ngl_per_device.back().part = hp_ngl + 1 - global_ngl_full;
-                ngl_per_device.back().full = global_ngl_full;
+                ngl_per_device.back().part = 0;
+                ngl_per_device.back().full = hp_ngl + 1;
 
                 std::vector<int64_t> usable_memory;
                 usable_memory.reserve(nd);
@@ -327,6 +327,11 @@ bool llama_fit_params_to_free_memory(
                     usable_memory.push_back(um);
                 }
                 usable_memory.push_back(get_surplus(devs_dmds_last.back().second));
+
+                ngl_per_device.back().full -= global_ngl_part;
+                usable_memory.back() += spl_full.back().second*global_ngl_part;
+                ngl_per_device.back().part += global_ngl_part;
+                usable_memory.back() -= spl_part.back().second*global_ngl_part;
 
                 for (int id = nd - 1; id >= 1; id--) {
                     while (usable_memory[id] < 0 && ngl_per_device[id].part > 0) {
