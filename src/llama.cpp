@@ -406,11 +406,11 @@ bool llama_params_fit_to_free_memory(
             const int64_t projected_margin_last = int64_t(dmds_last.back().free) - projected_use_last;
 
             if (nd == 1) {
-                LLAMA_LOG_INFO("%s: set to use %u dense-only layers, %u full layers, %" PRId64 " MiB used, %" PRId64 " MiB free\n",
+                LLAMA_LOG_INFO("%s: set to use %u dense-only layers and %u full layers, %" PRId64 " MiB used, %" PRId64 " MiB free\n",
                     __func__, ngl_per_device.back().part, ngl_per_device.back().full, projected_use_last/MiB, projected_margin_last/MiB);
                 return true;
             }
-            LLAMA_LOG_INFO("%s: set to use %u dense-only, %u full GPU layers in total, projected memory use:\n",
+            LLAMA_LOG_INFO("%s: set to use %u dense-only and %u full GPU layers in total, projected memory use:\n",
                 __func__, global_ngl_part, global_ngl_full);
             for (size_t id = 0; id < nd - 1; id++) {
                 const int64_t projected_use = spl_full[id].base
