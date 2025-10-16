@@ -295,13 +295,6 @@ bool llama_fit_params_to_free_memory(
             global_deficit = int64_t(mb.model + mb.context + mb.compute) + target_margin - int64_t(dev_dmd.second.free);
         }
         if (global_deficit <= 0) {
-            for (int id = 0; id < nd - 1; id++) {
-                tensor_split[id] = 0.0f;
-            }
-            tensor_split[nd - 1] = 1.0f;
-            const dmd_t devs_dmds_last = llama_get_device_memory_data(path_model, mparams, cparams, hp_ngl, n_ctx_train, n_expert, log_level);
-            tensor_split[nd - 1] = 0.0f;
-
             const spl_t spl_part = get_sizes_per_layer(get_memory_for_const_layer(1), get_memory_for_const_layer(2));
 
             tensor_buft_overides[0] = {nullptr, nullptr};
@@ -309,65 +302,57 @@ bool llama_fit_params_to_free_memory(
 
             const spl_t spl_full = get_sizes_per_layer(get_memory_for_const_layer(1), get_memory_for_const_layer(2));
 
-            std::vector<int64_t> usable_memory;
-            usable_memory.reserve(devs_dmds.size());
-            for (int i = 0; i < nd - 1; i++) {
-                int64_t um = int64_t(devs_dmds_moe_all_cpu[i].second.free) - target_margin - int64_t(spl_full[i].first);
-                um = std::max(um, int64_t(0));
-                usable_memory.push_back(um);
+            for (int id = 0; id < nd - 1; id++) {
+                tensor_split[id] = 0.0f;
             }
-            usable_memory.push_back(get_surplus(devs_dmds_last.back().second));
+            tensor_split[nd - 1] = 1.0f;
+            const dmd_t devs_dmds_last = llama_get_device_memory_data(path_model, mparams, cparams, hp_ngl, n_ctx_train, n_expert, log_level);
+            tensor_split[nd - 1] = 0.0f;
 
-            auto find_slot = [&](const int id) -> int {
-                int is = id - 1;
-                for (; is >= 0; is--) {
-                    if (usable_memory[is] >= spl_part[is].second) {
-                        return is;
+            struct ngl {
+                uint32_t part = 0;
+                uint32_t full = 0;
+            };
+            auto distribute_layers = [&](std::vector<ngl> & ngl_per_device, const uint32_t global_ngl_full) -> bool {
+                ngl_per_device.clear();
+                ngl_per_device.resize(nd);
+                ngl_per_device.back().part = hp_ngl + 1 - global_ngl_full;
+                ngl_per_device.back().full = global_ngl_full;
+
+                std::vector<int64_t> usable_memory;
+                usable_memory.reserve(nd);
+                for (int i = 0; i < nd - 1; i++) {
+                    int64_t um = int64_t(devs_dmds_moe_all_cpu[i].second.free) - target_margin - int64_t(spl_full[i].first);
+                    um = std::max(um, int64_t(0));
+                    usable_memory.push_back(um);
+                }
+                usable_memory.push_back(get_surplus(devs_dmds_last.back().second));
+
+                for (int id = nd - 1; id >= 1; id--) {
+                    while (usable_memory[id] < 0 && ngl_per_device[id].part > 0) {
+                        ngl_per_device[id  ].part--;
+                        ngl_per_device[id-1].part++;
+                        usable_memory[id  ] += spl_part[id].second;
+                        usable_memory[id-1] -= spl_part[id].second;
+                    }
+                    while (usable_memory[id] < 0 && ngl_per_device[id].full > 0) {
+                        ngl_per_device[id  ].full--;
+                        ngl_per_device[id-1].full++;
+                        usable_memory[id  ] += spl_full[id].second;
+                        usable_memory[id-1] -= spl_full[id].second;
                     }
                 }
-                return is;
+
+                return usable_memory[0] > 0;
             };
 
-            std::vector<std::pair<int32_t, int32_t>> ngl_per_device_best;
+            std::vector<ngl> ngl_per_device;
             {
-                std::vector<std::pair<int32_t, int32_t>> ngl_per_device;
-                ngl_per_device.resize(nd);
-                ngl_per_device.back().first  = hp_ngl;
-                ngl_per_device.back().second = 1;
-
-                int id = nd - 1;
-                while (ngl_per_device[id].first > 0 && usable_memory[id] >= spl_full[id].second - spl_part[id].second) {
-                    ngl_per_device[id].first--;
-                    ngl_per_device[id].second++;
-                    usable_memory[id] += spl_part[id].second;
-                    usable_memory[id] -= spl_full[id].second;
-                }
-                ngl_per_device_best = ngl_per_device;
-
-                int is = find_slot(id);
-                while (id >= 0 && is >= 0) {
-                    if (ngl_per_device[id].first == 0) {
-                        id--;
-                        is = find_slot(id);
-                        continue;
-                    }
-                    if (usable_memory[id] >= 0) {
-                        ngl_per_device_best = ngl_per_device;
-                        ngl_per_device[id].first--;
-                        ngl_per_device[id].second++;
-                        usable_memory[id] += spl_part[id].second;
-                        usable_memory[id] -= spl_full[id].second;
-                    }
-                    while (is >= 0) {
-                        if (ngl_per_device[id].first == 0 || usable_memory[id] >= 0) {
-                            break;
-                        }
-                        ngl_per_device[id].first--;
-                        ngl_per_device[is].first++;
-                        usable_memory[id] += spl_part[id].second;
-                        usable_memory[is] -= spl_part[is].second;
-                        is = find_slot(id);
-                    }
+                uint32_t global_ngl_full = hp_ngl + 1;
+                bool model_fits = distribute_layers(ngl_per_device, global_ngl_full);
+                while (!model_fits && global_ngl_full > 1) {
+                    global_ngl_full--;
+                    model_fits = distribute_layers(ngl_per_device, global_ngl_full);
                 }
             }
 
@@ -379,22 +364,22 @@ bool llama_fit_params_to_free_memory(
                 return patterns[il].c_str();
             };
 
-            int il0 = 0;
+            uint32_t il0 = 0;
             int ngl_part = 0;
             int ngl_full = 0;
             llama_model_tensor_buft_override * tbo_cur = tensor_buft_overides;
             for (int id = 0; id < nd; id++) {
-                for (int il = il0; il < il0 + ngl_per_device_best[id].first; il++) {
+                for (uint32_t il = il0; il < il0 + ngl_per_device[id].part; il++) {
                     tbo_cur->pattern = get_moe_pattern(il);
                     tbo_cur->buft    = ggml_backend_cpu_buffer_type();
                     tbo_cur++;
                 }
-                const int ngl = ngl_per_device_best[id].first + ngl_per_device_best[id].second;
+                const int ngl = ngl_per_device[id].part + ngl_per_device[id].full;
                 tensor_split[id] = ngl;
                 il0 += ngl;
 
-                ngl_part += ngl_per_device_best[id].first;
-                ngl_full += ngl_per_device_best[id].second;
+                ngl_part += ngl_per_device[id].part;
+                ngl_full += ngl_per_device[id].full;
             }
             tbo_cur->pattern = nullptr;
             tbo_cur->buft    = nullptr;
@@ -402,22 +387,22 @@ bool llama_fit_params_to_free_memory(
 
             const llama_memory_breakdown_data & mb_last = devs_dmds_last.back().second.mb;
             const size_t projected_use_last = mb_last.model + mb_last.context + mb_last.compute
-                + (ngl_per_device_best.back().second - 1) * (spl_full.back().second - spl_part.back().second);
+                + (ngl_per_device.back().full - 1) * (spl_full.back().second - spl_part.back().second);
 
             if (nd == 1) {
                 const size_t projected_margin = devs_dmds[0].second.free - projected_use_last;
                 LLAMA_LOG_INFO("%s: set to use %d partial layers, %d full layers, %zu MiB used, %zu MiB free\n",
-                    __func__, ngl_per_device_best[0].first, ngl_per_device_best[0].second, projected_use_last/MiB, projected_margin/MiB);
+                    __func__, ngl_per_device[0].part, ngl_per_device[0].full, projected_use_last/MiB, projected_margin/MiB);
                 return true;
             }
             LLAMA_LOG_INFO("%s: set to use %d partial, %d full GPU layers in total, projected memory use:\n",
                 __func__, ngl_part, ngl_full);
             for (int id = 0; id < nd; id++) {
                 const size_t projected_use = id == nd - 1 ? projected_use_last :
-                    spl_full[id].first + ngl_per_device_best[id].first*spl_part[id].second + ngl_per_device_best[id].second*spl_full[id].second;
+                    spl_full[id].first + ngl_per_device[id].part*spl_part[id].second + ngl_per_device[id].full*spl_full[id].second;
                 const size_t projected_margin = devs_dmds[id].second.free - projected_use;
                 LLAMA_LOG_INFO("%s:   - %s: %d partial layers, %d full layers, %zu MiB used, %zu MiB free\n",
-                    __func__, ggml_backend_dev_name(devs_dmds[id].first), ngl_per_device_best[id].first, ngl_per_device_best[id].second,
+                    __func__, ggml_backend_dev_name(devs_dmds[id].first), ngl_per_device[id].part, ngl_per_device[id].full,
                     projected_use/MiB, projected_margin/MiB);
             }
             return true;
