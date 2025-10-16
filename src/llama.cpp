@@ -332,14 +332,14 @@ bool llama_fit_params_to_free_memory(
                     while (usable_memory[id] < 0 && ngl_per_device[id].part > 0) {
                         ngl_per_device[id  ].part--;
                         ngl_per_device[id-1].part++;
-                        usable_memory[id  ] += spl_part[id].second;
-                        usable_memory[id-1] -= spl_part[id].second;
+                        usable_memory[id  ] += spl_part[id  ].second;
+                        usable_memory[id-1] -= spl_part[id-1].second;
                     }
                     while (usable_memory[id] < 0 && ngl_per_device[id].full > 0) {
                         ngl_per_device[id  ].full--;
                         ngl_per_device[id-1].full++;
-                        usable_memory[id  ] += spl_full[id].second;
-                        usable_memory[id-1] -= spl_full[id].second;
+                        usable_memory[id  ] += spl_full[id  ].second;
+                        usable_memory[id-1] -= spl_full[id-1].second;
                     }
                 }
 
