@@ -394,6 +394,8 @@ bool llama_fit_params_to_free_memory(
                 ngl_part += ngl_per_device[id].first;
                 ngl_full += ngl_per_device[id].second;
             }
+            tbo_cur->pattern = nullptr;
+            tbo_cur->buft    = nullptr;
             mparams->tensor_buft_overrides = tensor_buft_overides;
 
             const llama_memory_breakdown_data & mb_last = devs_dmds_last.back().second.mb;
