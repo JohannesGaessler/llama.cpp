@@ -170,7 +170,7 @@ bool llama_params_fit_to_free_memory(
         if (nd > 1) {
             LLAMA_LOG_INFO("%s:   - %s (%s): total=%zu used=%" PRId64 " free=%" PRId64 "\n",
                 __func__, ggml_backend_dev_name(devs[id]), ggml_backend_dev_description(devs[id]),
-                dmd.total/MiB, sum_projected_used/MiB, sum_projected_free/MiB);
+                dmd.total/MiB, projected_used/MiB, projected_free/MiB);
         }
     }
     if (min_projected_free >= target_margin) {
