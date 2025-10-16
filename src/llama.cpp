@@ -322,7 +322,7 @@ bool llama_fit_params_to_free_memory(
                 std::vector<int64_t> usable_memory;
                 usable_memory.reserve(nd);
                 for (int i = 0; i < nd - 1; i++) {
-                    int64_t um = int64_t(devs_dmds_moe_all_cpu[i].second.free) - target_margin - int64_t(spl_full[i].first);
+                    int64_t um = int64_t(devs_dmds_last[i].second.free) - target_margin - int64_t(spl_full[i].first);
                     um = std::max(um, int64_t(0));
                     usable_memory.push_back(um);
                 }
@@ -396,7 +396,7 @@ bool llama_fit_params_to_free_memory(
                 - (hp_ngl - ngl_per_device.back().full) * (spl_full.back().second - spl_part.back().second);
 
             if (nd == 1) {
-                const size_t projected_margin = devs_dmds[0].second.free - projected_use_last;
+                const size_t projected_margin = devs_dmds_last[0].second.free - projected_use_last;
                 LLAMA_LOG_INFO("%s: set to use %d partial layers, %d full layers, %zu MiB used, %zu MiB free\n",
                     __func__, ngl_per_device[0].part, ngl_per_device[0].full, projected_use_last/MiB, projected_margin/MiB);
                 return true;
@@ -406,9 +406,9 @@ bool llama_fit_params_to_free_memory(
             for (int id = 0; id < nd; id++) {
                 const size_t projected_use = id == nd - 1 ? projected_use_last :
                     spl_full[id].first + ngl_per_device[id].part*spl_part[id].second + ngl_per_device[id].full*spl_full[id].second;
-                const size_t projected_margin = devs_dmds[id].second.free - projected_use;
+                const size_t projected_margin = devs_dmds_last[id].second.free - projected_use;
                 LLAMA_LOG_INFO("%s:   - %s: %d partial layers, %d full layers, %zu MiB used, %zu MiB free\n",
-                    __func__, ggml_backend_dev_name(devs_dmds[id].first), ngl_per_device[id].part, ngl_per_device[id].full,
+                    __func__, ggml_backend_dev_name(devs_dmds_last[id].first), ngl_per_device[id].part, ngl_per_device[id].full,
                     projected_use/MiB, projected_margin/MiB);
             }
             return true;
