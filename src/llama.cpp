@@ -52,7 +52,7 @@ struct llama_device_memory_data {
 
 static std::vector<std::pair<ggml_backend_dev_t, llama_device_memory_data>> llama_get_device_memory_data(
         const char * path_model, const llama_model_params * mparams, const llama_context_params * cparams,
-        int32_t & hp_ngl, uint32_t & n_ctx_train, uint32_t & n_expert, const ggml_log_level log_level) {
+        uint32_t & hp_ngl, uint32_t & n_ctx_train, uint32_t & n_expert, const ggml_log_level log_level) {
     struct user_data_t {
         struct {
             ggml_log_callback callback;
@@ -140,7 +140,7 @@ bool llama_fit_params_to_free_memory(
 
     const llama_model_params default_mparams = llama_model_default_params();
 
-    int32_t hp_ngl      = 0;
+    uint32_t hp_ngl      = 0;
     uint32_t n_ctx_train = 0;
     uint32_t n_expert    = 0;
 
@@ -354,11 +354,11 @@ bool llama_fit_params_to_free_memory(
 
             std::vector<ngl> ngl_per_device;
             {
-                uint32_t global_ngl_full = hp_ngl + 1;
-                bool model_fits = distribute_layers(ngl_per_device, global_ngl_full);
-                while (!model_fits && global_ngl_full > 1) {
-                    global_ngl_full--;
-                    model_fits = distribute_layers(ngl_per_device, global_ngl_full);
+                uint32_t global_ngl_part = 0;
+                bool model_fits = distribute_layers(ngl_per_device, global_ngl_part);
+                while (!model_fits && global_ngl_part <= hp_ngl) {
+                    global_ngl_part++;
+                    model_fits = distribute_layers(ngl_per_device, global_ngl_part);
                 }
             }
 
