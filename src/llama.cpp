@@ -335,7 +335,8 @@ bool llama_fit_params_to_free_memory(
                         usable_memory[id  ] += spl_part[id  ].second;
                         usable_memory[id-1] -= spl_part[id-1].second;
                     }
-                    while (usable_memory[id] < 0 && ngl_per_device[id].full > 0) {
+                    const uint32_t min_full_layers = id == nd - 1 ? 1 : 0;
+                    while (usable_memory[id] < 0 && ngl_per_device[id].full > min_full_layers) {
                         ngl_per_device[id  ].full--;
                         ngl_per_device[id-1].full++;
                         usable_memory[id  ] += spl_full[id  ].second;
