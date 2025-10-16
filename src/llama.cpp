@@ -393,7 +393,7 @@ bool llama_fit_params_to_free_memory(
 
             const llama_memory_breakdown_data & mb_last = devs_dmds_last.back().second.mb;
             const size_t projected_use_last = mb_last.model + mb_last.context + mb_last.compute
-                - (hp_ngl - ngl_per_device.back().full) * (spl_full.back().second - spl_part.back().second);
+                - (hp_ngl + 1 - ngl_per_device.back().full) * (spl_full.back().second - spl_part.back().second);
 
             if (nd == 1) {
                 const size_t projected_margin = devs_dmds_last[0].second.free - projected_use_last;
