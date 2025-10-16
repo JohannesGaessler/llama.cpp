@@ -405,21 +405,21 @@ bool llama_params_fit_to_free_memory(
             const int64_t projected_margin_last = int64_t(dmds_last.back().free) - projected_use_last;
 
             if (nd == 1) {
-                LLAMA_LOG_INFO("%s: set to use %d dense-only layers, %d full layers, %" PRId64 " MiB used, %" PRId64 " MiB free\n",
+                LLAMA_LOG_INFO("%s: set to use %u dense-only layers, %u full layers, %" PRId64 " MiB used, %" PRId64 " MiB free\n",
                     __func__, ngl_per_device.back().part, ngl_per_device.back().full, projected_use_last/MiB, projected_margin_last/MiB);
                 return true;
             }
-            LLAMA_LOG_INFO("%s: set to use %ud dense-only, %ud full GPU layers in total, projected memory use:\n",
+            LLAMA_LOG_INFO("%s: set to use %u dense-only, %u full GPU layers in total, projected memory use:\n",
                 __func__, global_ngl_part, global_ngl_full);
             for (size_t id = 0; id < nd - 1; id++) {
                 const int64_t projected_use = spl_full[id].base
                     + int64_t(ngl_per_device[id].part)*spl_part[id].per_layer + ngl_per_device[id].full*spl_full[id].per_layer;
                 const int64_t projected_margin = int64_t(dmds_last[id].free) - projected_use;
-                LLAMA_LOG_INFO("%s:   - %s (%s): %d dense-only layers, %d full layers, %zu MiB used, %zu MiB free\n",
+                LLAMA_LOG_INFO("%s:   - %s (%s): %u dense-only layers, %u full layers, %zu MiB used, %zu MiB free\n",
                     __func__, ggml_backend_dev_name(devs[id]), ggml_backend_dev_description(devs[id]),
                     ngl_per_device[id].part, ngl_per_device[id].full, projected_use/MiB, projected_margin/MiB);
             }
-            LLAMA_LOG_INFO("%s:   - %s (%s): %d dense-only layers, %d full layers, %zu MiB used, %zu MiB free\n",
+            LLAMA_LOG_INFO("%s:   - %s (%s): %u dense-only layers, %u full layers, %zu MiB used, %zu MiB free\n",
                 __func__, ggml_backend_dev_name(devs.back()), ggml_backend_dev_description(devs.back()),
                 ngl_per_device.back().part, ngl_per_device.back().full, projected_use_last/MiB, projected_margin_last/MiB);
             return true;
