@@ -366,7 +366,7 @@ bool llama_params_fit(
                 usable_memory.back() -= spl_part.back().per_layer*global_ngl_part;
 
                 // iterate over devices from front to back and move layers to other devices until memory requirements are met:
-                for (size_t id = nd - 1; id >= 1; id--) {
+                for (int id = nd - 1; id >= 0; id--) {
                     // try moving full layers first, fill remaining memory with dense-only layers:
                     {
                         uint32_t ngl_move = usable_memory[id] / spl_full[id].per_layer;
