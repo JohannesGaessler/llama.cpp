@@ -1435,7 +1435,7 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
         params.kv_overrides.back().key[0] = 0;
     }
 
-    // pad tensor_buft_overrides for llama_params_fit_to_memory:
+    // pad tensor_buft_overrides for llama_params_fit:
     const size_t ntbo = llama_max_tensor_buft_overrides();
     while (params.tensor_buft_overrides.size() < ntbo) {
         params.tensor_buft_overrides.push_back({nullptr, nullptr});
@@ -2966,7 +2966,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
     ).set_env("LLAMA_ARG_MAIN_GPU"));
     add_opt(common_arg(
         { "-fit", "--fit" }, "[on|off]",
-        string_format("whether to fit unset arguments to free memory ('on' or 'off', default: '%s')", params.fit_params ? "on" : "off"),
+        string_format("whether to adjust unset arguments to fit in device memory ('on' or 'off', default: '%s')", params.fit_params ? "on" : "off"),
         [](common_params & params, const std::string & value) {
             if (is_truthy(value)) {
                 params.fit_params = true;

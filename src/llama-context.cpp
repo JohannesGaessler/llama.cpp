@@ -404,6 +404,22 @@ llama_context::llama_context(
 }
 
 llama_context::~llama_context() {
+    if (!model.hparams.no_alloc) {
+        for (size_t i = 0; i < backend_ptrs.size(); ++i) {
+            ggml_backend_t             backend = backend_ptrs[i];
+            ggml_backend_buffer_type_t buft    = backend_buft[i];
+
+            const size_t size_exp = backend_buf_exp_size[i];
+            const size_t size_act = ggml_backend_sched_get_buffer_size(sched.get(), backend);
+            if (size_exp == size_act) {
+                LLAMA_LOG_DEBUG("%s: %10s compute buffer size is %8.4f MiB, matches expectation of %8.4f MiB\n",
+                    __func__, ggml_backend_buft_name(buft), size_act / (1024.0*1024.0), size_exp / (1024.0*1024.0));
+            } else {
+                LLAMA_LOG_WARN("%s: %10s compute buffer size of %8.4f MiB, does not match expectation of %8.4f MiB\n",
+                    __func__, ggml_backend_buft_name(buft), size_act / (1024.0*1024.0), size_exp / (1024.0*1024.0));
+            }
+        }
+    }
     ggml_opt_free(opt_ctx);
 }
 
@@ -2040,12 +2056,12 @@ void llama_context::perf_reset() {
 
 std::map<ggml_backend_buffer_type_t, llama_memory_breakdown_data> llama_context::memory_breakdown() const {
     std::map<ggml_backend_buffer_type_t, llama_memory_breakdown_data> ret;
-    for (const auto & buft_size : model.memory_breakdown()) {
-        ret[buft_size.first].model += buft_size.second;
+    for (const auto & [buft, size] : model.memory_breakdown()) {
+        ret[buft].model += size;
     }
     if (memory) {
-        for (const auto & buft_size : memory->memory_breakdown()) {
-            ret[buft_size.first].context += buft_size.second;
+        for (const auto & [buft, size] : memory->memory_breakdown()) {
+            ret[buft].context += size;
         }
     }
     if (model.hparams.no_alloc) {
