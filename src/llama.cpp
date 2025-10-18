@@ -188,9 +188,9 @@ bool llama_params_fit(
         sum_projected_ctx  += dmd.mb.context;
 
         if (nd > 1) {
-            LLAMA_LOG_INFO("%s:   - %s: total=%6" PRId64 " used=%6" PRId64 " %s=%6" PRId64 "\n",
-                __func__, dev_names[id].c_str(), dmd.total/MiB, projected_used/MiB,
-                projected_free >= 0 ? "surplus" : "deficit", std::abs(projected_free)/MiB);
+            LLAMA_LOG_INFO("%s:   - %s: %6" PRId64 " total, %6" PRId64 " used, %6" PRId64 " %s\n",
+                __func__, dev_names[id].c_str(), dmd.total/MiB, projected_used/MiB, std::abs(projected_free)/MiB,
+                projected_free >= 0 ? "surplus" : "deficit");
         }
     }
     LLAMA_LOG_INFO("%s: projected to use %" PRId64 " MiB of device memory vs. a total of %" PRId64 " MiB\n",
