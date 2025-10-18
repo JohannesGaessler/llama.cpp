@@ -340,8 +340,9 @@ bool llama_params_fit(
             //   - global_ngl_part: total number of sense-only layers
             auto distribute_layers = [&](std::vector<ngl> & ngl_per_device, const uint32_t global_ngl_part) -> bool {
                 // reset result to initial state, initially put entire model on the last device
-                ngl_per_device.clear();
-                ngl_per_device.resize(nd);
+                for (size_t id = 0; id < nd - 1; id++) {
+                    ngl_per_device[id] = {0, 0};
+                }
                 ngl_per_device.back().part = 0;
                 ngl_per_device.back().full = hp_ngl + 1;
 
@@ -366,33 +367,34 @@ bool llama_params_fit(
 
                 // iterate over devices from front to back and move layers to other devices until memory requirements are met:
                 for (size_t id = nd - 1; id >= 1; id--) {
-                    // try moving dense-only layers first:
-                    while (usable_memory[id] < 0 && ngl_per_device[id].part > 0) {
-                        ngl_per_device[id  ].part--;
-                        ngl_per_device[id-1].part++;
-                        usable_memory[id  ] += spl_part[id  ].per_layer;
-                        usable_memory[id-1] -= spl_part[id-1].per_layer;
+                    // try moving full layers first, fill remaining memory with dense-only layers:
+                    {
+                        uint32_t ngl_move = usable_memory[id] / spl_full[id].per_layer;
+                        ngl_move = std::min(ngl_move, ngl_per_device.back().full - 1);
+
+                        ngl_per_device.back().full -= ngl_move;
+                        ngl_per_device[id].full    += ngl_move;
+                        usable_memory.back()       += ngl_move * spl_full.back().per_layer;
+                        usable_memory[id]          -= ngl_move * spl_full[id].per_layer;
                     }
+                    {
+                        uint32_t ngl_move = usable_memory[id] / spl_part[id].per_layer;
+                        ngl_move = std::min(ngl_move, ngl_per_device.back().part);
 
-                    // the non-repeating tensors on the last device are a "layer" that cannot be moved:
-                    const uint32_t min_full_layers = id == nd - 1 ? 1 : 0;
-
-                    // if moving dense-only layers is insufficient, move full layers as well
-                    while (usable_memory[id] < 0 && ngl_per_device[id].full > min_full_layers) {
-                        ngl_per_device[id  ].full--;
-                        ngl_per_device[id-1].full++;
-                        usable_memory[id  ] += spl_full[id  ].per_layer;
-                        usable_memory[id-1] -= spl_full[id-1].per_layer;
+                        ngl_per_device.back().part -= ngl_move;
+                        ngl_per_device[id].part    += ngl_move;
+                        usable_memory.back()       += ngl_move * spl_part.back().per_layer;
+                        usable_memory[id]          -= ngl_move * spl_part[id].per_layer;
                     }
                 }
 
-                // the memory deficit has been completely shifted to the first device,
-                //     therefore it's the only one that needs to be checked:
-                return usable_memory[0] > 0;
+                // by design all but the last device have only been filled up to their margin,
+                //     therefore only the last device needs to be checked
+                return usable_memory.back() > 0;
             };
 
             // iteratively increase the number of partial layers until the memory consumption is low enough
-            std::vector<ngl> ngl_per_device;
+            std::vector<ngl> ngl_per_device(nd);
             for (uint32_t global_ngl_part = 0; global_ngl_part < hp_ngl; global_ngl_part++) {
                 if (distribute_layers(ngl_per_device, global_ngl_part)) {
                     break;
