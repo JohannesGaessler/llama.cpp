@@ -188,7 +188,7 @@ bool llama_params_fit(
         sum_projected_ctx  += dmd.mb.context;
 
         if (nd > 1) {
-            LLAMA_LOG_INFO("%s:   - %s: total=%zu used=%" PRId64 " %s=%" PRId64 "\n",
+            LLAMA_LOG_INFO("%s:   - %s: total=%5" PRId64 " used=%5" PRId64 " %s=%5" PRId64 "\n",
                 __func__, dev_names[id].c_str(), dmd.total/MiB, projected_used/MiB,
                 projected_free >= 0 ? "surplus" : "deficit", std::abs(projected_free)/MiB);
         }
@@ -489,10 +489,10 @@ bool llama_params_fit(
                 const int64_t projected_use = spl_full[id].base
                     + int64_t(ngl_per_device[id].part)*spl_part[id].per_layer + int64_t(ngl_per_device[id].full)*spl_full[id].per_layer;
                 const int64_t projected_margin = dmds_last[id].free - projected_use;
-                LLAMA_LOG_INFO("%s:   - %s: %u dense-only layers, %u full layers, %zu MiB used, %zu MiB free\n",
+                LLAMA_LOG_INFO("%s:   - %s: %2" PRIu32 " dense-only layers, %2" PRIu32 " full layers, %5" PRId64 " MiB used, %5" PRId64 " MiB free\n",
                     __func__, dev_names[id].c_str(), ngl_per_device[id].part, ngl_per_device[id].full, projected_use/MiB, projected_margin/MiB);
             }
-            LLAMA_LOG_INFO("%s:   - %s: %u dense-only layers, %u full layers, %zu MiB used, %zu MiB free\n",
+            LLAMA_LOG_INFO("%s:   - %s: %2" PRIu32 " dense-only layers, %2" PRIu32 " full layers, %5" PRId64 " MiB used, %5" PRId64 " MiB free\n",
                 __func__, dev_names.back().c_str(), ngl_per_device.back().part, ngl_per_device.back().full, projected_use_last/MiB, projected_margin_last/MiB);
             return sufficient_tbo;
         }
@@ -526,7 +526,7 @@ bool llama_params_fit(
     for (size_t id = 0; id < nd; id++) {
         const int64_t projected_use = ms[id].base + int64_t(ngl_per_device[id])*ms[id].per_layer;
         const int64_t projected_margin = dmds_full[id].free - projected_use;
-        LLAMA_LOG_INFO("%s:   - %s: %" PRIu32 " layers, %zu MiB used, %zu MiB free\n",
+        LLAMA_LOG_INFO("%s:   - %s: %2" PRIu32 " layers, %5" PRId64 " MiB used, %5" PRId64 " MiB free\n",
             __func__, dev_names[id].c_str(), ngl_per_device[id], projected_use/MiB, projected_margin/MiB);
     }
     return true;
