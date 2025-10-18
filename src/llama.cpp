@@ -367,19 +367,24 @@ bool llama_params_fit(
 
                 // iterate over devices from front to back and move layers to other devices until memory requirements are met:
                 for (int id = nd - 1; id >= 0; id--) {
-                    // try moving full layers first, fill remaining memory with dense-only layers:
-                    {
+                    // try moving full layers first, fill remaining memory with dense-only layers
+                    // stop moving layers from last device once margin is met since first device will be used for prompt processing
+                    if (usable_memory.back() < 0) {
                         uint32_t ngl_move = usable_memory[id] / spl_full[id].per_layer;
                         ngl_move = std::min(ngl_move, ngl_per_device.back().full - 1);
+                        ngl_move = std::min(ngl_move,
+                            uint32_t((-usable_memory.back() + spl_full.back().per_layer - 1) / spl_full.back().per_layer));
 
                         ngl_per_device.back().full -= ngl_move;
                         ngl_per_device[id].full    += ngl_move;
                         usable_memory.back()       += ngl_move * spl_full.back().per_layer;
                         usable_memory[id]          -= ngl_move * spl_full[id].per_layer;
                     }
-                    {
+                    if (usable_memory.back() < 0) {
                         uint32_t ngl_move = usable_memory[id] / spl_part[id].per_layer;
                         ngl_move = std::min(ngl_move, ngl_per_device.back().part);
+                        ngl_move = std::min(ngl_move,
+                            uint32_t((-usable_memory.back() + spl_part.back().per_layer - 1) / spl_part.back().per_layer));
 
                         ngl_per_device.back().part -= ngl_move;
                         ngl_per_device[id].part    += ngl_move;
@@ -390,7 +395,7 @@ bool llama_params_fit(
 
                 // by design all but the last device have only been filled up to their margin,
                 //     therefore only the last device needs to be checked
-                return usable_memory.back() > 0;
+                return usable_memory.back() >= 0;
             };
 
             // iteratively increase the number of partial layers until the memory consumption is low enough
