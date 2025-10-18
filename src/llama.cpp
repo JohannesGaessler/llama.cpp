@@ -149,6 +149,24 @@ bool llama_params_fit(
         return true;
     }
 
+    std::vector<std::string> dev_names;
+    {
+        dev_names.reserve(nd);
+        size_t max_length = 0;
+        for (ggml_backend_dev_t dev : devs) {
+            std::string name = ggml_backend_dev_name(dev);
+            name += "(";
+            name += ggml_backend_dev_description(dev);
+            name += ")";
+            dev_names.push_back(name);
+            max_length = std::max(max_length, name.length());
+        }
+        for (std::string & dn : dev_names) {
+            dn.insert(0, max_length - dn.length(), ' ');
+        }
+    }
+
+    int64_t sum_total          = 0;
     int64_t sum_projected_free = 0;
     int64_t min_projected_free = INT64_MAX;
     int64_t sum_projected_used = 0;
@@ -163,27 +181,28 @@ bool llama_params_fit(
         const int64_t projected_used = dmd.mb.model + dmd.mb.context + dmd.mb.compute;
         const int64_t projected_free = dmd.free - projected_used;
 
+        sum_total          += dmd.total;
         sum_projected_used += projected_used;
         sum_projected_free += projected_free;
         min_projected_free  = std::min(min_projected_free, projected_free);
         sum_projected_ctx  += dmd.mb.context;
 
         if (nd > 1) {
-            LLAMA_LOG_INFO("%s:   - %s (%s): total=%zu used=%" PRId64 " %s=%" PRId64 "\n",
-                __func__, ggml_backend_dev_name(devs[id]), ggml_backend_dev_description(devs[id]),
-                dmd.total/MiB, projected_used/MiB, projected_free >= 0 ? "surplus" : "deficit", std::abs(projected_free)/MiB);
+            LLAMA_LOG_INFO("%s:   - %s: total=%zu used=%" PRId64 " %s=%" PRId64 "\n",
+                __func__, dev_names[id].c_str(), dmd.total/MiB, projected_used/MiB,
+                projected_free >= 0 ? "surplus" : "deficit", std::abs(projected_free)/MiB);
         }
     }
+    LLAMA_LOG_INFO("%s: projected to use %" PRId64 " MiB of device memory vs. a total of %" PRId64 " MiB\n",
+        __func__, sum_projected_used/MiB, sum_total/MiB);
     if (min_projected_free >= margin) {
         if (nd == 1) {
-            LLAMA_LOG_INFO("%s: allocation projected to use a total of %" PRId64 " MiB, "
-                "will leave %" PRId64 " >= %" PRId64 " MiB of free device memory, no changes needed\n",
-                __func__, sum_projected_used/MiB, min_projected_free/MiB, margin/MiB);
+            LLAMA_LOG_INFO("%s: will leave %" PRId64 " >= %" PRId64 " MiB of free device memory, no changes needed\n",
+                __func__, min_projected_free/MiB, margin/MiB);
             return true;
         }
-        LLAMA_LOG_INFO("%s: allocation projected to use a total of %" PRId64 " MiB, "
-            "will leave at least %" PRId64 " >= %" PRId64 " MiB of free memory on all devices, no changes needed\n",
-            __func__, sum_projected_used/MiB, min_projected_free/MiB, margin/MiB);
+        LLAMA_LOG_INFO("%s: will leave at least %" PRId64 " >= %" PRId64 " MiB of free memory on all devices, no changes needed\n",
+            __func__, min_projected_free/MiB, margin/MiB);
         return true;
     }
 
@@ -193,12 +212,10 @@ bool llama_params_fit(
         int64_t global_surplus = sum_projected_free - int64_t(nd)*margin;
         if (global_surplus < 0) {
             if (nd == 1) {
-                LLAMA_LOG_INFO("%s: allocation projected to use too much device memory to fulfill margin of %" PRId64 " MiB, "
-                    "need to reduce memory use by %" PRId64 " MiB\n",
+                LLAMA_LOG_INFO("%s: cannot fulfill margin of %" PRId64 " MiB, need to reduce device memory by %" PRId64 " MiB\n",
                     __func__, margin/MiB, -global_surplus/MiB);
             } else {
-                LLAMA_LOG_INFO("%s: allocation projected to use too much memory to fulfill margin of %" PRId64 " MiB on all devices, "
-                    "need to reduce memory use by %" PRId64 " MiB\n",
+                LLAMA_LOG_INFO("%s: cannot fulfill margin of %" PRId64 " MiB on all devices, need to use %" PRId64 " MiB less in total\n",
                     __func__, margin/MiB, -global_surplus/MiB);
             }
 
@@ -472,13 +489,11 @@ bool llama_params_fit(
                 const int64_t projected_use = spl_full[id].base
                     + int64_t(ngl_per_device[id].part)*spl_part[id].per_layer + int64_t(ngl_per_device[id].full)*spl_full[id].per_layer;
                 const int64_t projected_margin = dmds_last[id].free - projected_use;
-                LLAMA_LOG_INFO("%s:   - %s (%s): %u dense-only layers, %u full layers, %zu MiB used, %zu MiB free\n",
-                    __func__, ggml_backend_dev_name(devs[id]), ggml_backend_dev_description(devs[id]),
-                    ngl_per_device[id].part, ngl_per_device[id].full, projected_use/MiB, projected_margin/MiB);
+                LLAMA_LOG_INFO("%s:   - %s: %u dense-only layers, %u full layers, %zu MiB used, %zu MiB free\n",
+                    __func__, dev_names[id].c_str(), ngl_per_device[id].part, ngl_per_device[id].full, projected_use/MiB, projected_margin/MiB);
             }
-            LLAMA_LOG_INFO("%s:   - %s (%s): %u dense-only layers, %u full layers, %zu MiB used, %zu MiB free\n",
-                __func__, ggml_backend_dev_name(devs.back()), ggml_backend_dev_description(devs.back()),
-                ngl_per_device.back().part, ngl_per_device.back().full, projected_use_last/MiB, projected_margin_last/MiB);
+            LLAMA_LOG_INFO("%s:   - %s: %u dense-only layers, %u full layers, %zu MiB used, %zu MiB free\n",
+                __func__, dev_names.back().c_str(), ngl_per_device.back().part, ngl_per_device.back().full, projected_use_last/MiB, projected_margin_last/MiB);
             return sufficient_tbo;
         }
 
@@ -503,17 +518,16 @@ bool llama_params_fit(
     if (nd == 1) {
         const int64_t projected_use = ms[0].base + int64_t(ngl_per_device[0])*ms[0].per_layer;
         const int64_t projected_margin = dmds_full[0].free - projected_use;
-        LLAMA_LOG_INFO("%s: set n_gpu_layers to %" PRId32 ", projected to use %" PRId64 " MiB with %" PRId64 " MiB free\n",
+        LLAMA_LOG_INFO("%s: set n_gpu_layers to %" PRIu32 ", projected to use %" PRId64 " MiB with %" PRId64 " MiB free\n",
             __func__, mparams->n_gpu_layers, projected_use/MiB, projected_margin/MiB);
         return true;
     }
-    LLAMA_LOG_INFO("%s: set n_gpu_layers to %" PRId32 ", projected memory use:\n", __func__, mparams->n_gpu_layers);
+    LLAMA_LOG_INFO("%s: set n_gpu_layers to %" PRIu32 ", projected memory use:\n", __func__, mparams->n_gpu_layers);
     for (size_t id = 0; id < nd; id++) {
         const int64_t projected_use = ms[id].base + int64_t(ngl_per_device[id])*ms[id].per_layer;
         const int64_t projected_margin = dmds_full[id].free - projected_use;
-        LLAMA_LOG_INFO("%s:   - %s (%s): %d layers, %zu MiB used, %zu MiB free\n",
-            __func__, ggml_backend_dev_name(devs[id]), ggml_backend_dev_description(devs[id]),
-            ngl_per_device[id], projected_use/MiB, projected_margin/MiB);
+        LLAMA_LOG_INFO("%s:   - %s: %" PRIu32 " layers, %zu MiB used, %zu MiB free\n",
+            __func__, dev_names[id].c_str(), ngl_per_device[id], projected_use/MiB, projected_margin/MiB);
     }
     return true;
 }
