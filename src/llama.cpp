@@ -162,7 +162,7 @@ bool llama_params_fit(
             max_length = std::max(max_length, name.length());
         }
         for (std::string & dn : dev_names) {
-            dn.insert(0, max_length - dn.length(), ' ');
+            dn.insert(dn.end(), max_length - dn.length(), ' ');
         }
     }
 
