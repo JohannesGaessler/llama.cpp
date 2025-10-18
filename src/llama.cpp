@@ -365,32 +365,40 @@ bool llama_params_fit(
                 ngl_per_device.back().part += global_ngl_part;
                 usable_memory.back() -= spl_part.back().per_layer*global_ngl_part;
 
-                // iterate over devices from front to back and move layers to other devices until memory requirements are met:
-                for (int id = nd - 1; id >= 0; id--) {
-                    // try moving full layers first, fill remaining memory with dense-only layers
-                    // stop moving layers from last device once margin is met since first device will be used for prompt processing
-                    if (usable_memory.back() < 0) {
-                        uint32_t ngl_move = usable_memory[id] / spl_full[id].per_layer;
-                        ngl_move = std::min(ngl_move, ngl_per_device.back().full - 1);
+                // for a single device checking the usable memory is always sufficient:
+                if (nd == 1) {
+                    return usable_memory.back() >= 0;
+                }
+
+                // iterate over devices from front to back and move layers to other devices until memory requirements are met
+                // move full layers first, then dense-only layers
+                for (int id = nd - 1; id >= 0 && usable_memory.back() < 0; id--) {
+                    uint32_t ngl_move = ngl_per_device.back().full - 1;
+                    ngl_move = std::min(ngl_move, uint32_t( usable_memory[id] / spl_full[id].per_layer));
+
+                    // round up the number of layers only if there are insuffient dense-only layers to cover the deficit:
+                    if (-usable_memory.back() < int64_t(ngl_per_device.back().part)*spl_part.back().per_layer) {
                         ngl_move = std::min(ngl_move,
                             uint32_t((-usable_memory.back() + spl_full.back().per_layer - 1) / spl_full.back().per_layer));
-
-                        ngl_per_device.back().full -= ngl_move;
-                        ngl_per_device[id].full    += ngl_move;
-                        usable_memory.back()       += ngl_move * spl_full.back().per_layer;
-                        usable_memory[id]          -= ngl_move * spl_full[id].per_layer;
+                    } else {
+                        ngl_move = std::min(ngl_move, uint32_t(-usable_memory.back() / spl_full.back().per_layer));
                     }
-                    if (usable_memory.back() < 0) {
-                        uint32_t ngl_move = usable_memory[id] / spl_part[id].per_layer;
-                        ngl_move = std::min(ngl_move, ngl_per_device.back().part);
-                        ngl_move = std::min(ngl_move,
-                            uint32_t((-usable_memory.back() + spl_part.back().per_layer - 1) / spl_part.back().per_layer));
 
-                        ngl_per_device.back().part -= ngl_move;
-                        ngl_per_device[id].part    += ngl_move;
-                        usable_memory.back()       += ngl_move * spl_part.back().per_layer;
-                        usable_memory[id]          -= ngl_move * spl_part[id].per_layer;
-                    }
+                    ngl_per_device.back().full -= ngl_move;
+                    ngl_per_device[id].full    += ngl_move;
+                    usable_memory.back()       += ngl_move * spl_full.back().per_layer;
+                    usable_memory[id]          -= ngl_move * spl_full[id].per_layer;
+                }
+                for (int id = nd - 1; id >= 0 && usable_memory.back() < 0; id--) {
+                    uint32_t ngl_move = ngl_per_device.back().part;
+                    ngl_move = std::min(ngl_move, uint32_t(usable_memory[id] / spl_part[id].per_layer));
+                    ngl_move = std::min(ngl_move,
+                        uint32_t((-usable_memory.back() + spl_part.back().per_layer - 1) / spl_part.back().per_layer));
+
+                    ngl_per_device.back().part -= ngl_move;
+                    ngl_per_device[id].part    += ngl_move;
+                    usable_memory.back()       += ngl_move * spl_part.back().per_layer;
+                    usable_memory[id]          -= ngl_move * spl_part[id].per_layer;
                 }
 
                 // by design all but the last device have only been filled up to their margin,
