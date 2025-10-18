@@ -155,7 +155,7 @@ bool llama_params_fit(
         size_t max_length = 0;
         for (ggml_backend_dev_t dev : devs) {
             std::string name = ggml_backend_dev_name(dev);
-            name += "(";
+            name += " (";
             name += ggml_backend_dev_description(dev);
             name += ")";
             dev_names.push_back(name);
