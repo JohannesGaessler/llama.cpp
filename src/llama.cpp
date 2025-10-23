@@ -119,6 +119,8 @@ static std::vector<llama_device_memory_data> llama_get_device_memory_data(
     hp_n_ctx_train = model->hparams.n_ctx_train;
     hp_n_expert    = model->hparams.n_expert;
 
+    llama_memory_breakdown_print(ctx); // goes to debug log
+
     llama_free(ctx);
     llama_model_free(model);
     llama_log_set(ud.original_logger.callback, ud.original_logger.user_data);
