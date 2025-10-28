@@ -86,6 +86,7 @@ namespace ggml_cuda_mma {
                 return 4 * (threadIdx.x / 32) + 8 * (l / 4) + (l % 4);
             } else {
                 static_assert(I == -1 && J == -1, "template specialization not implemented");
+                return -1;
             }
         }
 
@@ -102,6 +103,28 @@ namespace ggml_cuda_mma {
                 return threadIdx.x % 32;
             } else {
                 static_assert(I == -1 && J == -1, "template specialization not implemented");
+                return -1;
+            }
+        }
+#elif __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
+        static constexpr int ne = I * J / 32;
+        T x[ne] = {0};
+
+        static __device__ __forceinline__ int get_i(const int l) {
+            if constexpr (I == 32 && J == 8) {
+                return (((threadIdx.x % 16) / 4) * 8) | ((threadIdx.x / 16) * 4) | (l & 2) | (threadIdx.x % 2);
+            } else {
+                static_assert(I == -1 && J == -1, "template specialization not implemented");
+                return -1;
+            }
+        }
+
+        static __device__ __forceinline__ int get_j(const int l) {
+            if constexpr (I == 32 && J == 8) {
+                return (threadIdx.x & 2) | (l & (4 + 1));
+            } else {
+                static_assert(I == -1 && J == -1, "template specialization not implemented");
+                return -1;
             }
         }
 #else
@@ -117,6 +140,7 @@ namespace ggml_cuda_mma {
                 return ((l / 2) % 2) * 8 + threadIdx.x / 4;
             } else {
                 static_assert(I == -1 && J == -1, "template specialization not implemented");
+                return -1;
             }
         }
 
@@ -131,6 +155,7 @@ namespace ggml_cuda_mma {
                 return 8 * (l / 4) + 2 * (threadIdx.x % 4) + l % 2;
             } else {
                 static_assert(I == -1 && J == -1, "template specialization not implemented");
+                return -1;
             }
         }
 #endif // defined(GGML_USE_HIP)
@@ -140,6 +165,31 @@ namespace ggml_cuda_mma {
     struct tile<I_, J_, half2> {
         static constexpr int I  = I_;
         static constexpr int J  = J_;
+
+#if __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
+        static constexpr int ne = I == 8 && J == 8 ? I * J / (WARP_SIZE/4) : I * J / WARP_SIZE;
+        half2 x[ne] = {{0.0f, 0.0f}};
+
+        static __device__ __forceinline__ int get_i(const int l) {
+            if constexpr (I == 8 && J == 8) {
+                return ((threadIdx.x / 16) * 4) | (threadIdx.x % 4);
+            } else if constexpr (I == 32 && J == 8) {
+                return (((threadIdx.x % 16) / 4) * 8) | ((threadIdx.x / 16) * 4) | (threadIdx.x % 4);
+            } else {
+                static_assert(I == -1 && J == -1, "template specialization not implemented");
+                return -1;
+            }
+        }
+
+        static __device__ __forceinline__ int get_j(const int l) {
+            if constexpr ((I == 8 || I == 32) && J == 8) {
+                return l;
+            } else {
+                static_assert(I == -1 && J == -1, "template specialization not implemented");
+                return -1;
+            }
+        }
+#else
         static constexpr int ne = I * J / WARP_SIZE;
         half2 x[ne] = {{0.0f, 0.0f}};
 
@@ -152,6 +202,7 @@ namespace ggml_cuda_mma {
                 return (l % 2) * 8 + threadIdx.x / 4;
             } else {
                 static_assert(I == -1 && J == -1, "template specialization not implemented");
+                return -1;
             }
         }
 
@@ -164,8 +215,10 @@ namespace ggml_cuda_mma {
                 return (l / 2) * 4 + threadIdx.x % 4;
             } else {
                 static_assert(I == -1 && J == -1, "template specialization not implemented");
+                return -1;
             }
         }
+#endif // __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
     };
 
     template <int I_, int J_>
@@ -184,6 +237,7 @@ namespace ggml_cuda_mma {
                 return (l % 2) * 8 + threadIdx.x / 4;
             } else {
                 static_assert(I == -1 && J == -1, "template specialization not implemented");
+                return -1;
             }
         }
 
@@ -196,6 +250,7 @@ namespace ggml_cuda_mma {
                 return (l / 2) * 4 + threadIdx.x % 4;
             } else {
                 static_assert(I == -1 && J == -1, "template specialization not implemented");
+                return -1;
             }
         }
     };
@@ -280,6 +335,18 @@ namespace ggml_cuda_mma {
 #else
         load_generic(t, xs0, stride);
 #endif // TURING_MMA_AVAILABLE
+    }
+
+    template <typename T>
+    static __device__ __forceinline__ void load_ldmatrix(
+            tile<32, 8, T> & t, const T * __restrict__ xs0, const int stride) {
+#if __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
+        load_generic(t, xs0, stride);
+#else
+        tile<16, 8, T> * t16 = (tile<16, 8, T> *) t;
+        load_ldmatrix(t16[0], xs0 +  0*stride, stride);
+        load_ldmatrix(t16[1], xs0 + 16*stride, stride);
+#endif // __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
     }
 
     template <typename T>
@@ -545,5 +612,33 @@ namespace ggml_cuda_mma {
         GGML_UNUSED_VARS(D, A, B);
         NO_DEVICE_CODE;
 #endif // AMD_MFMA_AVAILABLE
+    }
+
+    static __device__ __forceinline__ void mma(
+            tile<32, 8, float> & D, const tile<32, 8, half2> & A, const tile<8, 8, half2> & B) {
+#if __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
+        const int * Axi = (const int *) A.x;
+        const int * Bxi = (const int *) B.x;
+        int       * Dxi = (int       *) D.x;
+        asm("mma.sync.aligned.m8n8k4.row.col.f32.f16.f16.f32 "
+            "{%0, %1, %2, %3, %4, %5, %6, %7}, {%8, %9}, {%10, %11}, {%0, %1, %2, %3, %4, %5, %6, %7};"
+            : "+r"(Dxi[0]), "+r"(Dxi[1]), "+r"(Dxi[2]), "+r"(Dxi[3]), "+r"(Dxi[4]), "+r"(Dxi[5]), "+r"(Dxi[6]), "+r"(Dxi[7])
+            : "r"(Axi[0]), "r"(Axi[1]), "r"(Bxi[0]), "r"(Bxi[1]));
+        asm("mma.sync.aligned.m8n8k4.row.col.f32.f16.f16.f32 "
+            "{%0, %1, %2, %3, %4, %5, %6, %7}, {%8, %9}, {%10, %11}, {%0, %1, %2, %3, %4, %5, %6, %7};"
+            : "+r"(Dxi[0]), "+r"(Dxi[1]), "+r"(Dxi[2]), "+r"(Dxi[3]), "+r"(Dxi[4]), "+r"(Dxi[5]), "+r"(Dxi[6]), "+r"(Dxi[7])
+            : "r"(Axi[2]), "r"(Axi[3]), "r"(Bxi[2]), "r"(Bxi[3]));
+        asm("mma.sync.aligned.m8n8k4.row.col.f32.f16.f16.f32 "
+            "{%0, %1, %2, %3, %4, %5, %6, %7}, {%8, %9}, {%10, %11}, {%0, %1, %2, %3, %4, %5, %6, %7};"
+            : "+r"(Dxi[0]), "+r"(Dxi[1]), "+r"(Dxi[2]), "+r"(Dxi[3]), "+r"(Dxi[4]), "+r"(Dxi[5]), "+r"(Dxi[6]), "+r"(Dxi[7])
+            : "r"(Axi[4]), "r"(Axi[5]), "r"(Bxi[4]), "r"(Bxi[5]));
+        asm("mma.sync.aligned.m8n8k4.row.col.f32.f16.f16.f32 "
+            "{%0, %1, %2, %3, %4, %5, %6, %7}, {%8, %9}, {%10, %11}, {%0, %1, %2, %3, %4, %5, %6, %7};"
+            : "+r"(Dxi[0]), "+r"(Dxi[1]), "+r"(Dxi[2]), "+r"(Dxi[3]), "+r"(Dxi[4]), "+r"(Dxi[5]), "+r"(Dxi[6]), "+r"(Dxi[7])
+            : "r"(Axi[6]), "r"(Axi[7]), "r"(Bxi[6]), "r"(Bxi[7]));
+#else
+        GGML_UNUSED_VARS(D, A, B);
+        NO_DEVICE_CODE;
+#endif // __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
     }
 }

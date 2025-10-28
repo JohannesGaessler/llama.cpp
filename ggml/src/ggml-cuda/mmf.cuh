@@ -27,10 +27,16 @@ static __global__ void mul_mat_f(
         const int stride_col_id, const int stride_row_id,
         const int channel_ratio, const int stride_channel_x, const int stride_channel_y, const int stride_channel_dst,
         const int sample_ratio, const int stride_sample_x, const int stride_sample_y, const int stride_sample_dst) {
-#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
+#if __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
+    typedef tile<32, 8, T>     tile_A;
+    typedef tile< 8, 8, T>     tile_B;
+    typedef tile<32, 8, float> tile_C;
+#else
     typedef tile<16, 8, T>     tile_A;
     typedef tile< 8, 8, T>     tile_B;
     typedef tile<16, 8, float> tile_C;
+#endif // __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
 
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
     constexpr int tile_k_padded = warp_size + 4;
@@ -244,7 +250,7 @@ static __global__ void mul_mat_f_ids(
         const int channel_ratio, const int stride_channel_x, const int stride_channel_y, const int stride_channel_dst,
         const int sample_ratio, const int stride_sample_x, const int stride_sample_y, const int stride_sample_dst,
         const uint3 sis1_fd, const uint3 nch_fd) {
-#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && false
     typedef tile<16, 8, T>     tile_A;
     typedef tile< 8, 8, T>     tile_B;
     typedef tile<16, 8, float> tile_C;
@@ -533,7 +539,7 @@ void mul_mat_f_cuda(
         const int64_t stride_channel_x, const int64_t stride_channel_y, const int64_t stride_channel_dst, const int64_t nsamples_x,
         const int64_t nsamples_dst, const int64_t stride_sample_x, const int64_t stride_sample_y, const int64_t stride_sample_dst,
         cudaStream_t stream, const mmf_ids_data * ids_data) {
-    typedef tile<16, 8, T>     tile_A;
+    typedef tile<32, 8, T>     tile_A;
     typedef tile< 8, 8, T>     tile_B;
 
     GGML_ASSERT(ncols_x      % 2 == 0);
@@ -748,14 +754,10 @@ static void mul_mat_f_switch_cols_per_block(
 
 #if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
 #define DECL_MMF_CASE_EXTERN(ncols_dst) \
-    extern DECL_MMF_CASE_HELPER(float, ncols_dst) \
     extern DECL_MMF_CASE_HELPER(half2, ncols_dst) \
-    extern DECL_MMF_CASE_HELPER(nv_bfloat162, ncols_dst)
 
 #define DECL_MMF_CASE(ncols_dst) \
-    DECL_MMF_CASE_HELPER(float, ncols_dst) \
     DECL_MMF_CASE_HELPER(half2, ncols_dst) \
-    DECL_MMF_CASE_HELPER(nv_bfloat162, ncols_dst)
 
 DECL_MMF_CASE_EXTERN(1);
 DECL_MMF_CASE_EXTERN(2);
