@@ -181,7 +181,7 @@ bool llama_params_fit(
     for (size_t id = 0; id < nd; id++) {
         const llama_device_memory_data & dmd = dmds_full[id];
 
-        const int64_t projected_used = dmd.mb.model + dmd.mb.context + dmd.mb.compute;
+        const int64_t projected_used = dmd.mb.total();
         const int64_t projected_free = dmd.free - projected_used;
 
         sum_total          += dmd.total;
@@ -211,6 +211,7 @@ bool llama_params_fit(
 
     // step 2: try reducing memory use by reducing the context size
 
+    int64_t global_memory_reduction_vs_full = 0;
     {
         int64_t global_surplus = sum_projected_free - int64_t(nd)*margin;
         if (global_surplus < 0) {
@@ -230,6 +231,7 @@ bool llama_params_fit(
                     cparams->n_ctx = hp_nct - ctx_reduction;
                     const int64_t memory_reduction = ctx_reduction * bytes_per_ctx;
                     global_surplus += memory_reduction;
+                    global_memory_reduction_vs_full += memory_reduction;
                     LLAMA_LOG_INFO("%s: context size reduced from %" PRIu32 " to %" PRIu32 " -> need %" PRId64 " MiB less memory\n",
                         __func__, hp_nct, cparams->n_ctx, memory_reduction/MiB);
                 } else {
@@ -267,6 +269,11 @@ bool llama_params_fit(
             LLAMA_LOG_INFO("%s: changing weight allocation for LLAMA_SPLIT_MODE_ROW not implemented, abort\n", __func__);
             return false;
         }
+        if (hp_ngl < 3*nd) {
+            LLAMA_LOG_INFO("%s: model has only %" PRIu32 " layers but need at least %zu to fit memory for %zu devices, abort\n",
+                __func__, hp_ngl, 3*nd, nd);
+            return false;
+        }
     }
     if (hp_nex > 0 && !tensor_buft_overrides) {
         LLAMA_LOG_INFO("%s: did not provide buffer to set tensor_buft_overrides for MoE model, abort\n", __func__);
@@ -295,7 +302,7 @@ bool llama_params_fit(
         std::vector<int64_t> ret;
         ret.reserve(nd);
         for (const llama_device_memory_data & dmd : dmd_nl) {
-            ret.push_back(dmd.mb.model + dmd.mb.context + dmd.mb.compute);
+            ret.push_back(dmd.mb.total());
         }
         return ret;
     };
@@ -316,6 +323,15 @@ bool llama_params_fit(
     };
 
     if (hp_nex > 0) {
+        // utility function that returns a static C string matching the MoE tensors for a specific layer:
+        auto get_moe_pattern = [&](const size_t il) -> const char * {
+            static std::vector<std::string> patterns;
+            while (patterns.size() <= il) {
+                patterns.push_back("blk\\." + std::to_string(patterns.size()) + "\\.ffn_(up|down|gate)_(ch|)exps");
+            }
+            return patterns[il].c_str();
+        };
+
         const static std::string pattern_moe_all = "blk\\.\\d+\\.ffn_(up|down|gate)_(ch|)exps"; // matches all MoE tensors
         ggml_backend_buffer_type_t cpu_buft = ggml_backend_cpu_buffer_type();
         tensor_buft_overrides[0] = {pattern_moe_all.c_str(), cpu_buft};
@@ -327,10 +343,45 @@ bool llama_params_fit(
         int64_t global_surplus = 0;
         for (const llama_device_memory_data & dmd : dmds_cpu_moe) {
             global_surplus += dmd.free;
-            global_surplus -= int64_t(dmd.mb.model + dmd.mb.context + dmd.mb.compute) + margin;
+            global_surplus -= int64_t(dmd.mb.total()) + margin;
         }
         if (global_surplus > 0) {
             LLAMA_LOG_INFO("%s: with only dense weights in device memory there is a total surplus of %" PRId64 " MiB\n", __func__, global_surplus/MiB);
+
+            // step 3a: for MoE models and a single device, if at least the dense tensors can be fit, simply interpolate:
+            if (nd == 1) {
+                const int64_t projected_full = int64_t(dmds_full[0].mb.total()) - global_memory_reduction_vs_full;
+                const int64_t diff_total = projected_full - int64_t(dmds_cpu_moe[0].mb.total());
+                const int64_t diff_per_layer = diff_total / int64_t(hp_ngl);
+                const uint32_t layers_full = global_surplus / diff_per_layer + 1;
+                const uint32_t layers_part = hp_ngl + 1 - layers_full;
+
+                bool sufficient_tbo = true;
+                {
+                    const size_t ntbo = llama_max_tensor_buft_overrides();
+                    size_t itbo = 0;
+                    for (uint32_t il = 0; il < layers_part; il++) {
+                        if (itbo + 1 >= ntbo) {
+                            LLAMA_LOG_INFO("%s: llama_params_fit_n_tensor_buft_overrides() == %zu is insufficient for model\n", __func__, ntbo);
+                            sufficient_tbo = false;
+                            break;
+                        }
+                        tensor_buft_overrides[itbo].pattern = get_moe_pattern(il);
+                        tensor_buft_overrides[itbo].buft    = cpu_buft;
+                        itbo++;
+                    }
+                    tensor_buft_overrides[itbo].pattern = nullptr;
+                    tensor_buft_overrides[itbo].buft    = nullptr;
+                    itbo++;
+                    mparams->tensor_buft_overrides = tensor_buft_overrides;
+                }
+
+                const int64_t projected_use = projected_full - layers_part*diff_per_layer;
+                const int64_t projected_margin = dmds_full[0].free - projected_use;
+                LLAMA_LOG_INFO("%s: set to use %u dense-only layers and %u full layers, %" PRId64 " MiB used, %" PRId64 " MiB free\n",
+                    __func__, layers_part, layers_full, projected_use/MiB, projected_margin/MiB);
+                return sufficient_tbo;
+            }
 
             // step 3: for MoE models, if at least the dense tensors can be fit, try fitting as many full layers as possible
 
@@ -470,15 +521,6 @@ bool llama_params_fit(
                 }
             }
 
-            // utility function that returns a static C string matching the MoE tensors for a specific layer:
-            auto get_moe_pattern = [&](const size_t il) -> const char * {
-                static std::vector<std::string> patterns;
-                while (patterns.size() <= il) {
-                    patterns.push_back("blk\\." + std::to_string(patterns.size()) + "\\.ffn_(up|down|gate)_(ch|)exps");
-                }
-                return patterns[il].c_str();
-            };
-
             // iterate over devices, add 1 TBO per dense-only layer, track total number of layers
             uint32_t global_ngl_part = 0;
             uint32_t global_ngl_full = 0;
@@ -511,16 +553,6 @@ bool llama_params_fit(
                 mparams->tensor_buft_overrides = tensor_buft_overrides;
             }
 
-            if (nd == 1) {
-                const size_t id = 0;
-                const int64_t projected_use = mem_full_scaling[id]
-                    + (int64_t(ngl_per_device[id].full) - int64_t(nl_scaling[id]))*spl_full[id].per_layer
-                    + (int64_t(ngl_per_device[id].part) - 0)                      *spl_part[id].per_layer;
-                const int64_t projected_margin = dmds_full[id].free - projected_use;
-                LLAMA_LOG_INFO("%s: set to use %u dense-only layers and %u full layers, %" PRId64 " MiB used, %" PRId64 " MiB free\n",
-                    __func__, ngl_per_device.back().part, ngl_per_device.back().full, projected_use/MiB, projected_margin/MiB);
-                return sufficient_tbo;
-            }
             LLAMA_LOG_INFO("%s: set to use %u dense-only and %u full GPU layers in total, projected memory use:\n",
                 __func__, global_ngl_part, global_ngl_full);
             for (size_t id = 0; id < nd; id++) {
