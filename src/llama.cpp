@@ -14,6 +14,7 @@
 #include "ggml-backend.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cinttypes>
 #include <cstddef>
 #include <cstdint>
@@ -325,6 +326,11 @@ bool llama_params_fit(
 
         LLAMA_LOG_DEBUG("%s: getting device memory data with all MoE tensors moved to system memory:\n", __func__);
         const dmds_t dmds_cpu_moe = llama_get_device_memory_data(path_model, mparams, cparams, devs, hp_ngl, hp_nct, hp_nex, log_level);
+
+        // reset
+        tensor_buft_overrides[0] = {nullptr, nullptr};
+        mparams->tensor_buft_overrides = tensor_buft_overrides;
+
         int64_t global_surplus = 0;
         for (const llama_device_memory_data & dmd : dmds_cpu_moe) {
             global_surplus += dmd.free;
@@ -392,13 +398,6 @@ bool llama_params_fit(
             std::vector<int64_t> spl_full; // size per device and per full layer
             std::vector<int64_t> mem_full_nl0; // keep track of memory use for as many as nl_scaling full layers
             {
-                LLAMA_LOG_DEBUG("%s: getting device memory data for ~%" PRIu32 " layers/device + all MoE tensors in system memory:\n", __func__, nl0[0]);
-                auto mem_part_nl0 = get_memory_for_layers(nl0);
-
-                // for mem_part_nl0 all MoE tensors were still on CPU, reset the TBOs so that all tensors are on the devices again
-                tensor_buft_overrides[0] = {nullptr, nullptr};
-                mparams->tensor_buft_overrides = tensor_buft_overrides;
-
                 LLAMA_LOG_DEBUG("%s: getting device memory data for ~%" PRIu32 " layers/device + all tensors in device memory:\n", __func__, nl0[0]);
                 mem_full_nl0 = get_memory_for_layers(nl0);
                 LLAMA_LOG_DEBUG("%s: getting device memory data for ~%" PRIu32 " layers/device + all tensors in device memory:\n", __func__, nl1[0]);
@@ -411,9 +410,27 @@ bool llama_params_fit(
                 }
                 spl_full.push_back((mem_full_nl1.back() - mem_full_nl0.back()) / int64_t(nd - 1));
 
+                ggml_backend_buffer_type_t cpu_buft = ggml_backend_cpu_buffer_type();
+                size_t il = nl0[0] - 1;
+                tensor_buft_overrides[0] = {get_moe_pattern(il), cpu_buft};
+                il++;
+                for (size_t id = 1; id < nd; id++) {
+                    tensor_buft_overrides[id] = {get_moe_pattern(il), cpu_buft};
+                    il += nl0[id];
+                }
+                tensor_buft_overrides[nd] = {nullptr, nullptr};
+                mparams->tensor_buft_overrides = tensor_buft_overrides;
+
+                LLAMA_LOG_DEBUG("%s: getting device memory data for ~%" PRIu32 " layers/device + all MoE tensors in system memory:\n", __func__, nl0[0]);
+                auto mem_part_nl0 = get_memory_for_layers(nl0);
+
+                // reset
+                tensor_buft_overrides[0] = {nullptr, nullptr};
+                mparams->tensor_buft_overrides = tensor_buft_overrides;
+
                 spl_part.reserve(nd);
                 for (size_t id = 0; id < nd; id++) {
-                    const int64_t diff_per_layer = (mem_full_nl0[id] - mem_part_nl0[id]) / int64_t(nl0[id]);
+                    const int64_t diff_per_layer = mem_full_nl0[id] - mem_part_nl0[id];
                     spl_part.push_back(spl_full[id] - diff_per_layer);
                 }
             }
@@ -448,6 +465,7 @@ bool llama_params_fit(
                     ngl_per_device.back().full += ngl;
                     usable_memory.back()       -= ngl*spl_full.back();
                 }
+                assert(ngl_per_device.back().full == hp_ngl + 1);
 
                 // convert some layers on the last device from full layers to dense-only layers
                 ngl_per_device.back().full -= global_ngl_part;
