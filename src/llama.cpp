@@ -317,17 +317,6 @@ bool llama_params_fit(
             return patterns[il].c_str();
         };
 
-        // utility function that returns how memory use scales with the number of GPU layers per device
-        auto get_memory_scaling = [&](const std::vector<int64_t> & mem0, const std::vector<int64_t> & mem1) -> std::vector<int64_t> {
-            std::vector<int64_t> ret;
-            ret.reserve(nd);
-            for (size_t id = 0; id < nd - 1; id++) {
-                ret.push_back(mem0[id] - mem1[id]);
-            }
-            ret.push_back((mem1.back() - mem0.back()) / int64_t(nd - 1));
-            return ret;
-        };
-
         const static std::string pattern_moe_all = "blk\\.\\d+\\.ffn_(up|down|gate)_(ch|)exps"; // matches all MoE tensors
         ggml_backend_buffer_type_t cpu_buft = ggml_backend_cpu_buffer_type();
         tensor_buft_overrides[0] = {pattern_moe_all.c_str(), cpu_buft};
@@ -400,33 +389,36 @@ bool llama_params_fit(
             }
 
             std::vector<int64_t> spl_part; // size per device and per partial (Moe only) layer
-            {
-                LLAMA_LOG_DEBUG("%s: getting device memory data for ~%" PRIu32 " layers/device + all MoE tensors in system memory:\n", __func__, nl0[0]);
-                auto tmp0 = get_memory_for_layers(nl0);
-                LLAMA_LOG_DEBUG("%s: getting device memory data for ~%" PRIu32 " layers/device + all MoE tensors in system memory:\n", __func__, nl1[0]);
-                auto tmp1 = get_memory_for_layers(nl1);
-                spl_part = get_memory_scaling(tmp0, tmp1);
-            }
-            for (size_t id = 0; id < nd; id++) {
-                LLAMA_LOG_DEBUG("%s: spl_part[%zu]=%" PRId64 " MiB\n", __func__, id, spl_part[id]/MiB);
-            }
-
-            // for spl_part all MoE tensors were still on CPU, reset the TBOs so that all tensors are on the devices again
-            tensor_buft_overrides[0] = {nullptr, nullptr};
-            mparams->tensor_buft_overrides = tensor_buft_overrides;
-
             std::vector<int64_t> spl_full; // size per device and per full layer
             std::vector<int64_t> mem_full_nl0; // keep track of memory use for as many as nl_scaling full layers
             {
+                LLAMA_LOG_DEBUG("%s: getting device memory data for ~%" PRIu32 " layers/device + all MoE tensors in system memory:\n", __func__, nl0[0]);
+                auto mem_part_nl0 = get_memory_for_layers(nl0);
+
+                // for mem_part_nl0 all MoE tensors were still on CPU, reset the TBOs so that all tensors are on the devices again
+                tensor_buft_overrides[0] = {nullptr, nullptr};
+                mparams->tensor_buft_overrides = tensor_buft_overrides;
+
                 LLAMA_LOG_DEBUG("%s: getting device memory data for ~%" PRIu32 " layers/device + all tensors in device memory:\n", __func__, nl0[0]);
                 mem_full_nl0 = get_memory_for_layers(nl0);
                 LLAMA_LOG_DEBUG("%s: getting device memory data for ~%" PRIu32 " layers/device + all tensors in device memory:\n", __func__, nl1[0]);
-                auto tmp1 = get_memory_for_layers(nl1);
+                auto mem_full_nl1 = get_memory_for_layers(nl1);
                 LLAMA_LOG_DEBUG("%s: getting device memory data for 1 layer/dev + all tensors in device memory:\n", __func__);
-                spl_full = get_memory_scaling(mem_full_nl0, tmp1);
+
+                spl_full.reserve(nd);
+                for (size_t id = 0; id < nd - 1; id++) {
+                    spl_full.push_back(mem_full_nl0[id] - mem_full_nl1[id]);
+                }
+                spl_full.push_back((mem_full_nl1.back() - mem_full_nl0.back()) / int64_t(nd - 1));
+
+                spl_part.reserve(nd);
+                for (size_t id = 0; id < nd; id++) {
+                    const int64_t diff_per_layer = (spl_full[id] - spl_part[id]) / int64_t(nl0[id]);
+                    spl_part.push_back(spl_full[id] - diff_per_layer);
+                }
             }
             for (size_t id = 0; id < nd; id++) {
-                LLAMA_LOG_DEBUG("%s: spl_full[%zu]=%" PRId64 " MiB\n", __func__, id, spl_full[id]/MiB);
+                LLAMA_LOG_DEBUG("%s: id=%zu, spl_full=%" PRId64 " MiB, spl_part=%" PRId64 " MiB\n", __func__, id, spl_full[id]/MiB, spl_part[id]/MiB);
             }
 
             struct ngl {
