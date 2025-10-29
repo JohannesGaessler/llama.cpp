@@ -413,7 +413,7 @@ bool llama_params_fit(
 
                 spl_part.reserve(nd);
                 for (size_t id = 0; id < nd; id++) {
-                    const int64_t diff_per_layer = (spl_full[id] - spl_part[id]) / int64_t(nl0[id]);
+                    const int64_t diff_per_layer = (mem_full_nl0[id] - mem_part_nl0[id]) / int64_t(nl0[id]);
                     spl_part.push_back(spl_full[id] - diff_per_layer);
                 }
             }
