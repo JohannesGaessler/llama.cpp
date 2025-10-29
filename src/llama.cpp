@@ -130,7 +130,7 @@ static std::vector<llama_device_memory_data> llama_get_device_memory_data(
 
 bool llama_params_fit(
         const char * path_model, struct llama_model_params * mparams, struct llama_context_params * cparams,
-        float * tensor_split, struct llama_model_tensor_buft_override * tensor_buft_overides,
+        float * tensor_split, struct llama_model_tensor_buft_override * tensor_buft_overrides,
         size_t margin_s, uint32_t n_ctx_min, enum ggml_log_level log_level) {
     constexpr int64_t MiB = 1024*1024;
     const int64_t margin = margin_s; // this function uses int64_t rather than size_t for memory sizes to more conveniently handle deficits
@@ -268,7 +268,7 @@ bool llama_params_fit(
             return false;
         }
     }
-    if (hp_nex > 0 && !tensor_buft_overides) {
+    if (hp_nex > 0 && !tensor_buft_overrides) {
         LLAMA_LOG_INFO("%s: did not provide buffer to set tensor_buft_overrides for MoE model, abort\n", __func__);
         return false;
     }
@@ -277,13 +277,16 @@ bool llama_params_fit(
         return false;
     }
 
-    // utility function that returns the memory use per device for a constant number of layers per device
-    auto get_memory_for_const_layer = [&](const int layers_per_device) -> std::vector<int64_t> {
+    // utility function that returns the memory use per device for given numbers of layers per device
+    auto get_memory_for_layers = [&](const std::vector<uint32_t> & layers_per_device) -> std::vector<int64_t> {
         llama_model_params mparams_copy = *mparams;
-        mparams_copy.n_gpu_layers = nd * layers_per_device;
+        mparams_copy.n_gpu_layers = 0;
+        for (const uint32_t & ngl : layers_per_device) {
+            mparams_copy.n_gpu_layers += ngl;
+        }
         if (nd > 1) {
             for (size_t id = 0; id < nd; id++) {
-                tensor_split[id] = 1.0f;
+                tensor_split[id] = layers_per_device[id];
             }
         }
         mparams_copy.tensor_split = tensor_split;
@@ -303,10 +306,10 @@ bool llama_params_fit(
     };
 
     // utility function that returns how memory use scales with the number of GPU layers per device
-    auto get_memory_scaling = [&](const std::vector<int64_t> & mem_1l, const std::vector<int64_t> & mem_nl, const uint32_t n) -> std::vector<memory_scaling> {
+    auto get_memory_scaling = [&](const std::vector<int64_t> & mem_1l, const std::vector<int64_t> & mem_nl, const std::vector<uint32_t> & n) -> std::vector<memory_scaling> {
         std::vector<memory_scaling> ret(nd);
         for (size_t id = 0; id < nd; id++) {
-            ret[id].per_layer = (mem_nl[id] - mem_1l[id]) / int64_t(n - 1);
+            ret[id].per_layer = (mem_nl[id] - mem_1l[id]) / int64_t(n[id] - 1);
             ret[id].base      =  mem_1l[id] - ret[id].per_layer;
         }
         return ret;
@@ -315,11 +318,11 @@ bool llama_params_fit(
     if (hp_nex > 0) {
         const static std::string pattern_moe_all = "blk\\.\\d+\\.ffn_(up|down|gate)_(ch|)exps"; // matches all MoE tensors
         ggml_backend_buffer_type_t cpu_buft = ggml_backend_cpu_buffer_type();
-        tensor_buft_overides[0] = {pattern_moe_all.c_str(), cpu_buft};
-        tensor_buft_overides[1] = {nullptr, nullptr};
-        mparams->tensor_buft_overrides = tensor_buft_overides;
+        tensor_buft_overrides[0] = {pattern_moe_all.c_str(), cpu_buft};
+        tensor_buft_overrides[1] = {nullptr, nullptr};
+        mparams->tensor_buft_overrides = tensor_buft_overrides;
 
-        LLAMA_LOG_DEBUG("%s: getting device memory data for all MoE tensors in system memory:\n", __func__);
+        LLAMA_LOG_DEBUG("%s: getting device memory data with all MoE tensors moved to system memory:\n", __func__);
         const dmds_t dmds_cpu_moe = llama_get_device_memory_data(path_model, mparams, cparams, devs, hp_ngl, hp_nct, hp_nex, log_level);
         int64_t global_surplus = 0;
         for (const llama_device_memory_data & dmd : dmds_cpu_moe) {
@@ -331,13 +334,22 @@ bool llama_params_fit(
 
             // step 3: for MoE models, if at least the dense tensors can be fit, try fitting as many full layers as possible
 
-            const uint32_t nl_scaling = hp_ngl / nd;
-            std::vector<memory_scaling> spl_part; // size per device and per partial == Moe only layer
+            std::vector<uint32_t> nl_scaling;
             {
-                LLAMA_LOG_DEBUG("%s: getting device memory data for 1 layer + all MoE tensors in system memory:\n", __func__);
-                auto tmp1 = get_memory_for_const_layer(1);
-                LLAMA_LOG_DEBUG("%s: getting device memory data for %" PRIu32 " layers + all MoE tensors in system memory:\n", __func__, nl_scaling);
-                auto tmpn = get_memory_for_const_layer(nl_scaling);
+                nl_scaling.reserve(nd);
+                const uint32_t ngl_per_dev = hp_ngl / nd;
+                for (size_t id = 0; id < nd - 1; id++) {
+                    nl_scaling.push_back(ngl_per_dev);
+                }
+                nl_scaling.push_back(hp_ngl + 1 - (nd - 1)*ngl_per_dev);
+            }
+
+            std::vector<memory_scaling> spl_part; // size per device and per partial (Moe only) layer
+            {
+                LLAMA_LOG_DEBUG("%s: getting device memory data for 1 layer/device + all MoE tensors in system memory:\n", __func__);
+                auto tmp1 = get_memory_for_layers(std::vector<uint32_t>(nd, 1));
+                LLAMA_LOG_DEBUG("%s: getting device memory data for ~%" PRIu32 " layers/device + all MoE tensors in system memory:\n", __func__, nl_scaling[0]);
+                auto tmpn = get_memory_for_layers(nl_scaling);
                 spl_part = get_memory_scaling(tmp1, tmpn, nl_scaling);
             }
             for (size_t id = 0; id < nd; id++) {
@@ -346,31 +358,22 @@ bool llama_params_fit(
             }
 
             // for spl_part all MoE tensors were still on CPU, reset the TBOs so that all tensors are on the devices again
-            tensor_buft_overides[0] = {nullptr, nullptr};
-            mparams->tensor_buft_overrides = tensor_buft_overides;
+            tensor_buft_overrides[0] = {nullptr, nullptr};
+            mparams->tensor_buft_overrides = tensor_buft_overrides;
 
             std::vector<memory_scaling> spl_full; // size per device and per full layer
+            std::vector<int64_t> mem_full_scaling(nd); // keep track of memory use for as many as nl_scaling full layers
             {
-                LLAMA_LOG_DEBUG("%s: getting device memory data for 1 layer + all tensors in device memory:\n", __func__);
-                auto tmp1 = get_memory_for_const_layer(1);
-                LLAMA_LOG_DEBUG("%s: getting device memory data for %" PRIu32 " layers + all tensors in device memory:\n", __func__, nl_scaling);
-                auto tmpn = get_memory_for_const_layer(nl_scaling);
-                spl_full = get_memory_scaling(tmp1, tmpn, nl_scaling);
+                LLAMA_LOG_DEBUG("%s: getting device memory data for 1 layer/dev + all tensors in device memory:\n", __func__);
+                auto tmp1 = get_memory_for_layers(std::vector<uint32_t>(nd, 1));
+                LLAMA_LOG_DEBUG("%s: getting device memory data for %" PRIu32 " layers/device + all tensors in device memory:\n", __func__, nl_scaling[0]);
+                mem_full_scaling = get_memory_for_layers(nl_scaling);
+                spl_full = get_memory_scaling(tmp1, mem_full_scaling, nl_scaling);
             }
             for (size_t id = 0; id < nd; id++) {
                 LLAMA_LOG_DEBUG("%s: spl_full[%zu]: base=%" PRId64 " MiB, per_layer=%" PRId64 " MiB\n",
                     __func__, id, spl_full[id].base/MiB, spl_full[id].per_layer/MiB);
             }
-
-            // the non-repeating tensors (e.g. output matrix) are difficult to quantify,
-            //     get memory use with all tensors on the last device and use that as the starting point for the last device only
-            for (size_t id = 0; id < nd - 1; id++) {
-                tensor_split[id] = 0.0f;
-            }
-            tensor_split[nd - 1] = 1.0f;
-            LLAMA_LOG_DEBUG("%s: getting device memory data with entire model on last device:\n", __func__);
-            const dmds_t dmds_last = llama_get_device_memory_data(path_model, mparams, cparams, devs, hp_ngl, hp_nct, hp_nex, log_level);
-            tensor_split[nd - 1] = 0.0f;
 
             struct ngl {
                 uint32_t part = 0;
@@ -385,22 +388,19 @@ bool llama_params_fit(
             //   - ngl_per_device: resulting distribution of dense-only/full layers across devices
             //   - global_ngl_part: total number of sense-only layers
             auto distribute_layers = [&](std::vector<ngl> & ngl_per_device, std::vector<int64_t> & usable_memory, const uint32_t global_ngl_part) -> bool {
-                // reset result to initial state, initially put entire model on the last device
-                for (size_t id = 0; id < nd - 1; id++) {
-                    ngl_per_device[id] = {0, 0};
+                // reset result to initial state, initially reconstruct state for as many as nl_scaling full layers per device
+                for (size_t id = 0; id < nd; id++) {
+                    ngl_per_device[id] = {0, nl_scaling[id]};
+                    usable_memory[id]  = dmds_full[id].free - mem_full_scaling[id] - margin;
                 }
-                ngl_per_device.back().part = 0;
-                ngl_per_device.back().full = hp_ngl + 1;
 
-                // usable_memory: free memory above margin that can be used for further allocations
+                // put all layers on last device
                 for (size_t id = 0; id < nd - 1; id++) {
-                    int64_t um = dmds_last[id].free - margin - spl_full[id].base;
-                    um = std::max(um, int64_t(0));
-                    usable_memory[id] = um;
-                }
-                {
-                    const llama_memory_breakdown_data & mb = dmds_last.back().mb;
-                    usable_memory.back() = dmds_last.back().free - int64_t(mb.model + mb.context + mb.context) - margin;
+                    const uint32_t ngl = ngl_per_device[id].full;
+                    ngl_per_device[id].full     = 0;
+                    usable_memory[id]          += ngl*spl_full[id].per_layer;
+                    ngl_per_device.back().full += ngl;
+                    usable_memory.back()       -= ngl*spl_full.back().per_layer;
                 }
 
                 // convert some layers on the last device from full layers to dense-only layers
@@ -445,7 +445,7 @@ bool llama_params_fit(
                     usable_memory[id]          -= ngl_move * spl_part[id].per_layer;
                 }
 
-                // by design all but the last device have only been filled up to their margin,
+                // by design all but the last device have been filled up to their margin,
                 //     therefore only the last device needs to be checked
                 return usable_memory.back() >= 0;
             };
@@ -453,7 +453,7 @@ bool llama_params_fit(
             // iteratively increase the number of partial layers until the memory consumption is low enough
             std::vector<ngl> ngl_per_device(nd);
             {
-                std::vector<int64_t> usable_memory(nd);
+                std::vector<int64_t> usable_memory(nd); // free memory above margin that can be used for further allocations
                 for (uint32_t global_ngl_part = 0; global_ngl_part < hp_ngl; global_ngl_part++) {
                     const bool success = distribute_layers(ngl_per_device, usable_memory, global_ngl_part);
                     std::string ngl_per_device_str = std::string(ngl_per_device[0]);
@@ -494,8 +494,8 @@ bool llama_params_fit(
                             sufficient_tbo = false;
                             break;
                         }
-                        tensor_buft_overides[itbo].pattern = get_moe_pattern(il);
-                        tensor_buft_overides[itbo].buft    = cpu_buft;
+                        tensor_buft_overrides[itbo].pattern = get_moe_pattern(il);
+                        tensor_buft_overrides[itbo].buft    = cpu_buft;
                         itbo++;
                     }
                     const uint32_t ngl = ngl_per_device[id].part + ngl_per_device[id].full;
@@ -505,34 +505,32 @@ bool llama_params_fit(
                     global_ngl_part += ngl_per_device[id].part;
                     global_ngl_full += ngl_per_device[id].full;
                 }
-                tensor_buft_overides[itbo].pattern = nullptr;
-                tensor_buft_overides[itbo].buft    = nullptr;
+                tensor_buft_overrides[itbo].pattern = nullptr;
+                tensor_buft_overrides[itbo].buft    = nullptr;
                 itbo++;
-                mparams->tensor_buft_overrides = tensor_buft_overides;
+                mparams->tensor_buft_overrides = tensor_buft_overrides;
             }
 
-            const llama_memory_breakdown_data & mb_last = dmds_last.back().mb;
-            const int64_t projected_use_last = int64_t(mb_last.model + mb_last.context + mb_last.compute)
-                - int64_t(hp_ngl + 1 - ngl_per_device.back().full) * spl_full.back().per_layer
-                + int64_t(ngl_per_device.back().part) * spl_part.back().per_layer;
-            const int64_t projected_margin_last = dmds_last.back().free - projected_use_last;
-
             if (nd == 1) {
+                const size_t id = 0;
+                const int64_t projected_use = mem_full_scaling[id]
+                    + (int64_t(ngl_per_device[id].full) - int64_t(nl_scaling[id]))*spl_full[id].per_layer
+                    + (int64_t(ngl_per_device[id].part) - 0)                      *spl_part[id].per_layer;
+                const int64_t projected_margin = dmds_full[id].free - projected_use;
                 LLAMA_LOG_INFO("%s: set to use %u dense-only layers and %u full layers, %" PRId64 " MiB used, %" PRId64 " MiB free\n",
-                    __func__, ngl_per_device.back().part, ngl_per_device.back().full, projected_use_last/MiB, projected_margin_last/MiB);
+                    __func__, ngl_per_device.back().part, ngl_per_device.back().full, projected_use/MiB, projected_margin/MiB);
                 return sufficient_tbo;
             }
             LLAMA_LOG_INFO("%s: set to use %u dense-only and %u full GPU layers in total, projected memory use:\n",
                 __func__, global_ngl_part, global_ngl_full);
-            for (size_t id = 0; id < nd - 1; id++) {
-                const int64_t projected_use = spl_full[id].base
-                    + int64_t(ngl_per_device[id].part)*spl_part[id].per_layer + int64_t(ngl_per_device[id].full)*spl_full[id].per_layer;
-                const int64_t projected_margin = dmds_last[id].free - projected_use;
+            for (size_t id = 0; id < nd; id++) {
+                const int64_t projected_use = mem_full_scaling[id]
+                    + (int64_t(ngl_per_device[id].full) - int64_t(nl_scaling[id]))*spl_full[id].per_layer
+                    + (int64_t(ngl_per_device[id].part) - 0)                      *spl_part[id].per_layer;
+                const int64_t projected_margin = dmds_full[id].free - projected_use;
                 LLAMA_LOG_INFO("%s:   - %s: %2" PRIu32 " dense-only layers, %2" PRIu32 " full layers, %6" PRId64 " MiB used, %6" PRId64 " MiB free\n",
                     __func__, dev_names[id].c_str(), ngl_per_device[id].part, ngl_per_device[id].full, projected_use/MiB, projected_margin/MiB);
             }
-            LLAMA_LOG_INFO("%s:   - %s: %2" PRIu32 " dense-only layers, %2" PRIu32 " full layers, %6" PRId64 " MiB used, %6" PRId64 " MiB free\n",
-                __func__, dev_names.back().c_str(), ngl_per_device.back().part, ngl_per_device.back().full, projected_use_last/MiB, projected_margin_last/MiB);
             return sufficient_tbo;
         }
 
@@ -542,13 +540,21 @@ bool llama_params_fit(
     // step 4: if the model only has dense tensors or there is insufficient memory to fit all dense tensors,
     //     all layers are the same so simply determine how many layers will fit per device
 
-    const uint32_t nl_scaling = hp_ngl / nd;
     std::vector<memory_scaling> ms;
     {
+        std::vector<uint32_t> nl_scaling;
+        {
+            nl_scaling.reserve(nd);
+            const uint32_t ngl_per_dev = hp_ngl / nd;
+            for (size_t id = 0; id < nd - 1; id++) {
+                nl_scaling.push_back(ngl_per_dev);
+            }
+            nl_scaling.push_back(hp_ngl + 1 - (nd - 1)*ngl_per_dev);
+        }
         LLAMA_LOG_DEBUG("%s: getting device memory data for 1 full layer:\n", __func__);
-        auto tmp1 = get_memory_for_const_layer(1);
-        LLAMA_LOG_DEBUG("%s: getting device memory data for %" PRIu32 " full layers:\n", __func__, nl_scaling);
-        auto tmpn = get_memory_for_const_layer(nl_scaling);
+        auto tmp1 = get_memory_for_layers(std::vector<uint32_t>(nd, 1));
+        LLAMA_LOG_DEBUG("%s: getting device memory data for ~%" PRIu32 " full layers/device:\n", __func__, nl_scaling[0]);
+        auto tmpn = get_memory_for_layers(nl_scaling);
         ms = get_memory_scaling(tmp1, tmpn, nl_scaling);
     }
 
