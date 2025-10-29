@@ -322,7 +322,7 @@ bool llama_params_fit(
             std::vector<int64_t> ret;
             ret.reserve(nd);
             for (size_t id = 0; id < nd - 1; id++) {
-                ret[id] = mem0[id] - mem1[id];
+                ret.push_back(mem0[id] - mem1[id]);
             }
             ret.push_back((mem1.back() - mem0.back()) / int64_t(nd - 1));
             return ret;
