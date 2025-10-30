@@ -50,7 +50,8 @@ struct llama_device_memory_data {
 
 static std::vector<llama_device_memory_data> llama_get_device_memory_data(
         const char * path_model, const llama_model_params * mparams, const llama_context_params * cparams,
-        std::vector<ggml_backend_dev_t> & devs, uint32_t & hp_ngl, uint32_t & hp_n_ctx_train, uint32_t & hp_n_expert, const ggml_log_level log_level) {
+        std::vector<ggml_backend_dev_t> & devs, uint32_t & hp_ngl, uint32_t & hp_n_ctx_train, uint32_t & hp_n_expert,
+        uint32_t & hp_n_layers_dense_lead,  const ggml_log_level log_level) {
     struct user_data_t {
         struct {
             ggml_log_callback callback;
@@ -115,10 +116,11 @@ static std::vector<llama_device_memory_data> llama_get_device_memory_data(
         ret[i].total = total;
     }
 
-    devs           = model->devices;
-    hp_ngl         = model->hparams.n_layer;
-    hp_n_ctx_train = model->hparams.n_ctx_train;
-    hp_n_expert    = model->hparams.n_expert;
+    devs                   = model->devices;
+    hp_ngl                 = model->hparams.n_layer;
+    hp_n_ctx_train         = model->hparams.n_ctx_train;
+    hp_n_expert            = model->hparams.n_expert;
+    hp_n_layers_dense_lead = model->hparams.n_layer_dense_lead;
 
     llama_memory_breakdown_print(ctx); // goes to debug log
 
@@ -139,14 +141,15 @@ bool llama_params_fit(
     const llama_model_params default_mparams = llama_model_default_params();
 
     std::vector<ggml_backend_dev_t> devs;
-    uint32_t hp_ngl = 0; // hparams.n_gpu_layers
-    uint32_t hp_nct = 0; // hparams.n_ctx_train
-    uint32_t hp_nex = 0; // hparams.n_expert
+    uint32_t hp_ngl  = 0; // hparams.n_gpu_layers
+    uint32_t hp_nct  = 0; // hparams.n_ctx_train
+    uint32_t hp_nex  = 0; // hparams.n_expert
+    uint32_t hp_nldl = 0; // hparams.n_layers_dense_lead
 
     // step 1: get data for default parameters and check whether any changes are necessary in the first place
 
     LLAMA_LOG_DEBUG("%s: getting device memory data for initial parameters:\n", __func__);
-    const dmds_t dmds_full = llama_get_device_memory_data(path_model, mparams, cparams, devs, hp_ngl, hp_nct, hp_nex, log_level);
+    const dmds_t dmds_full = llama_get_device_memory_data(path_model, mparams, cparams, devs, hp_ngl, hp_nct, hp_nex, hp_nldl, log_level);
     const size_t nd = devs.size(); // number of devices
     if (nd == 0) {
         LLAMA_LOG_INFO("%s: no devices with dedicated memory found\n", __func__);
@@ -299,7 +302,7 @@ bool llama_params_fit(
         }
         mparams_copy.tensor_split = tensor_split;
         const dmds_t dmd_nl = llama_get_device_memory_data(
-            path_model, &mparams_copy, cparams, devs, hp_ngl, hp_nct, hp_nex, log_level);
+            path_model, &mparams_copy, cparams, devs, hp_ngl, hp_nct, hp_nex, hp_nldl, log_level);
         std::vector<int64_t> ret;
         ret.reserve(nd);
         for (const llama_device_memory_data & dmd : dmd_nl) {
@@ -325,7 +328,8 @@ bool llama_params_fit(
         mparams->tensor_buft_overrides = tensor_buft_overrides;
 
         LLAMA_LOG_DEBUG("%s: getting device memory data with all MoE tensors moved to system memory:\n", __func__);
-        const dmds_t dmds_cpu_moe = llama_get_device_memory_data(path_model, mparams, cparams, devs, hp_ngl, hp_nct, hp_nex, log_level);
+        const dmds_t dmds_cpu_moe = llama_get_device_memory_data(
+            path_model, mparams, cparams, devs, hp_ngl, hp_nct, hp_nex, hp_nldl, log_level);
 
         // reset
         tensor_buft_overrides[0] = {nullptr, nullptr};
@@ -401,6 +405,15 @@ bool llama_params_fit(
             {
                 LLAMA_LOG_DEBUG("%s: getting device memory data for ~%" PRIu32 " layers/device + all tensors in device memory:\n", __func__, nl0[0]);
                 mem_full_nl0 = get_memory_for_layers(nl0);
+                if (hp_nldl > 0) {
+                    for (size_t id = 0; id < nd; id++) {
+                        if (nl0[id] < hp_nldl + 2) {
+                            LLAMA_LOG_INFO("%s: model only has %" PRIu32 " layers vs. %" PRIu32 " dense lead layers, too few for fit, abort\n",
+                                __func__, hp_ngl, hp_nldl);
+                            return false;
+                        }
+                    }
+                }
                 LLAMA_LOG_DEBUG("%s: getting device memory data for ~%" PRIu32 " layers/device + all tensors in device memory:\n", __func__, nl1[0]);
                 auto mem_full_nl1 = get_memory_for_layers(nl1);
 
@@ -413,6 +426,12 @@ bool llama_params_fit(
                 ggml_backend_buffer_type_t cpu_buft = ggml_backend_cpu_buffer_type();
                 size_t il = 0;
                 for (size_t id = 0; id < nd; id++) {
+                    if (il < hp_nldl) {
+                        il += hp_nldl;
+                        tensor_buft_overrides[id] = {get_moe_pattern(il), cpu_buft};
+                        il += nl0[id] - hp_nldl;
+                        continue;
+                    }
                     tensor_buft_overrides[id] = {get_moe_pattern(il), cpu_buft};
                     il += nl0[id];
                 }
@@ -430,6 +449,13 @@ bool llama_params_fit(
 
                 il = 0;
                 for (size_t id = 0; id < nd; id++) {
+                    if (il < hp_nldl) {
+                        il += hp_nldl;
+                        tensor_buft_overrides[2*id+0] = {get_moe_pattern(il + 0), cpu_buft};
+                        tensor_buft_overrides[2*id+1] = {get_moe_pattern(il + 1), cpu_buft};
+                        il += nl0[id] - hp_nldl;
+                        continue;
+                    }
                     tensor_buft_overrides[2*id+0] = {get_moe_pattern(il + 0), cpu_buft};
                     tensor_buft_overrides[2*id+1] = {get_moe_pattern(il + 1), cpu_buft};
                     il += nl0[id];
