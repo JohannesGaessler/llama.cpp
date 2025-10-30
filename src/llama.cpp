@@ -394,12 +394,13 @@ bool llama_params_fit(
                 nl1.push_back(nl0.back() + nd-1);
             }
 
-            std::vector<int64_t> spl_part; // size per device and per partial (Moe only) layer
             std::vector<int64_t> spl_full; // size per device and per full layer
-            std::vector<int64_t> mem_nl0_part_1; // keep track of memory use for one configuration
+            std::vector<int64_t> spl_part_1; // size per device for the first partial (Moe only) layer
+            std::vector<int64_t> spl_part_n; // size per device and per partial (Moe only) layer beyond the first
+            std::vector<int64_t> mem_full_nl0; // keep track of memory use for one configuration
             {
                 LLAMA_LOG_DEBUG("%s: getting device memory data for ~%" PRIu32 " layers/device + all tensors in device memory:\n", __func__, nl0[0]);
-                auto mem_full_nl0 = get_memory_for_layers(nl0);
+                mem_full_nl0 = get_memory_for_layers(nl0);
                 LLAMA_LOG_DEBUG("%s: getting device memory data for ~%" PRIu32 " layers/device + all tensors in device memory:\n", __func__, nl1[0]);
                 auto mem_full_nl1 = get_memory_for_layers(nl1);
 
@@ -419,7 +420,13 @@ bool llama_params_fit(
                 mparams->tensor_buft_overrides = tensor_buft_overrides;
 
                 LLAMA_LOG_DEBUG("%s: getting device memory data for ~%" PRIu32 " layers/device + 1 MoE tensor/device in system memory:\n", __func__, nl0[0]);
-                mem_nl0_part_1 = get_memory_for_layers(nl0);
+                auto mem_nl0_part_1 = get_memory_for_layers(nl0);
+
+                spl_part_1.reserve(nd);
+                for (size_t id = 0; id < nd; id++) {
+                    const int64_t diff_per_layer = mem_full_nl0[id] - mem_nl0_part_1[id];
+                    spl_part_1.push_back(spl_full[id] - diff_per_layer);
+                }
 
                 il = 0;
                 for (size_t id = 0; id < nd; id++) {
@@ -437,14 +444,15 @@ bool llama_params_fit(
                 tensor_buft_overrides[0] = {nullptr, nullptr};
                 mparams->tensor_buft_overrides = tensor_buft_overrides;
 
-                spl_part.reserve(nd);
+                spl_part_n.reserve(nd);
                 for (size_t id = 0; id < nd; id++) {
                     const int64_t diff_per_layer = mem_nl0_part_1[id] - mem_nl0_part_2[id];
-                    spl_part.push_back(spl_full[id] - diff_per_layer);
+                    spl_part_n.push_back(spl_full[id] - diff_per_layer);
                 }
             }
             for (size_t id = 0; id < nd; id++) {
-                LLAMA_LOG_DEBUG("%s: id=%zu, spl_full=%" PRId64 " MiB, spl_part=%" PRId64 " MiB\n", __func__, id, spl_full[id]/MiB, spl_part[id]/MiB);
+                LLAMA_LOG_DEBUG("%s: id=%zu, spl_full=%" PRId64 " MiB, spl_part_1=%" PRId64 " MiB, spl_part_n=%" PRId64 " MiB\n",
+                    __func__, id, spl_full[id]/MiB, spl_part_1[id]/MiB, spl_part_n[id]/MiB);
             }
 
             struct ngl {
@@ -463,7 +471,7 @@ bool llama_params_fit(
                 // reset result to initial state, initially reconstruct state for as many as nl_scaling full layers per device
                 for (size_t id = 0; id < nd; id++) {
                     ngl_per_device[id] = {1, nl0[id] - 1};
-                    usable_memory[id]  = dmds_full[id].free - mem_nl0_part_1[id] - margin;
+                    usable_memory[id]  = dmds_full[id].free - mem_full_nl0[id] - margin;
                 }
 
                 // put all layers on last device
@@ -474,26 +482,15 @@ bool llama_params_fit(
                     ngl_per_device.back().full += ngl;
                     usable_memory.back()       -= ngl*spl_full.back();
                 }
-                for (size_t id = 0; id < nd - 1; id++) {
-                    const uint32_t ngl = ngl_per_device[id].part;
-                    ngl_per_device[id].part     = 0;
-                    usable_memory[id]          += ngl*spl_part[id];
-                    ngl_per_device.back().part += ngl;
-                    usable_memory.back()       -= ngl*spl_part.back();
-                }
                 assert(ngl_per_device.back().full + ngl_per_device.back().part == hp_ngl + 1);
 
-                // convert some layers on the last device to match global_ngl_part
-                if (global_ngl_part >= nd) {
-                    ngl_per_device.back().full -= global_ngl_part;
-                    usable_memory.back() += spl_full.back()*global_ngl_part;
-                    ngl_per_device.back().part += global_ngl_part;
-                    usable_memory.back() -= spl_part.back()*global_ngl_part;
-                } else {
-                    ngl_per_device.back().full += (nd - global_ngl_part);
-                    usable_memory.back() -= spl_full.back()*(nd - global_ngl_part);
-                    ngl_per_device.back().part -= nd - global_ngl_part;
-                    usable_memory.back() += spl_part.back()*(nd - global_ngl_part);
+                // convert some full layers on the last device to partial layers
+                ngl_per_device.back().full -= global_ngl_part;
+                usable_memory.back() += spl_full.back()*global_ngl_part;
+                ngl_per_device.back().part += global_ngl_part;
+                if (global_ngl_part >= 1) {
+                    usable_memory.back() -= spl_part_1.back();
+                    usable_memory.back() -= spl_part_n.back()*(global_ngl_part - 1);
                 }
 
                 // for a single device checking the usable memory is always sufficient:
@@ -503,33 +500,47 @@ bool llama_params_fit(
 
                 // iterate over devices from front to back and move layers to other devices until memory requirements are met
                 // move full layers first, then dense-only layers
-                for (int id = nd - 1; id >= 0 && usable_memory.back() < 0; id--) {
+                for (int id = nd - 1; id >= 0 && usable_memory.back() < 0 && ngl_per_device.back().full > 0; id--) {
                     uint32_t ngl_move = ngl_per_device.back().full - 1;
                     ngl_move = std::min(ngl_move, uint32_t( usable_memory[id] / spl_full[id]));
 
                     // round up the number of layers only if there are insuffient dense-only layers to cover the deficit:
-                    if (-usable_memory.back() < int64_t(ngl_per_device.back().part)*spl_part.back()) {
-                        ngl_move = std::min(ngl_move,
-                            uint32_t((-usable_memory.back() + spl_full.back() - 1) / spl_full.back()));
+                    if (ngl_per_device.back().part > 0 &&
+                            -usable_memory.back() < spl_part_1.back() + int64_t(ngl_per_device.back().part - 1)*spl_part_n.back()) {
+                        ngl_move = std::min(ngl_move, uint32_t((-usable_memory.back() + spl_full.back() - 1) / spl_full.back()));
                     } else {
                         ngl_move = std::min(ngl_move, uint32_t(-usable_memory.back() / spl_full.back()));
                     }
 
                     ngl_per_device.back().full -= ngl_move;
                     ngl_per_device[id].full    += ngl_move;
-                    usable_memory.back()       += ngl_move * spl_full.back();
                     usable_memory[id]          -= ngl_move * spl_full[id];
+                    usable_memory.back()       += ngl_move * spl_full.back();
                 }
-                for (int id = nd - 1; id >= 0 && usable_memory.back() < 0; id--) {
+                for (int id = nd - 1; id >= 0 && usable_memory.back() < 0 && ngl_per_device.back().part > 0; id--) {
+                    if (usable_memory[id] < spl_part_1[id]) {
+                        continue;
+                    }
+
+                    ngl_per_device.back().part -= 1;
+                    ngl_per_device[id].part    += 1;
+                    usable_memory[id]          -= spl_part_1[id];
+                    usable_memory.back()       += ngl_per_device.back().part == 1 ? spl_part_1.back() : spl_part_n.back();
+
                     uint32_t ngl_move = ngl_per_device.back().part;
-                    ngl_move = std::min(ngl_move, uint32_t(usable_memory[id] / spl_part[id]));
+                    ngl_move = std::min(ngl_move, uint32_t(usable_memory[id] / spl_part_n[id]));
                     ngl_move = std::min(ngl_move,
-                        uint32_t((-usable_memory.back() + spl_part.back() - 1) / spl_part.back()));
+                        uint32_t((-usable_memory.back() + spl_part_n.back() - 1) / spl_part_n.back()));
+
+                    if (ngl_move == 0) {
+                        continue;
+                    }
 
                     ngl_per_device.back().part -= ngl_move;
                     ngl_per_device[id].part    += ngl_move;
-                    usable_memory.back()       += ngl_move * spl_part.back();
-                    usable_memory[id]          -= ngl_move * spl_part[id];
+                    usable_memory[id]          -= ngl_move * spl_part_n[id];
+                    usable_memory.back()       += ngl_move == ngl_per_device.back().part ?
+                        (ngl_move - 1) * spl_part_n.back() + spl_part_1.back() : ngl_move * spl_part_n.back();
                 }
 
                 // by design all but the last device have been filled up to their margin,
@@ -592,9 +603,10 @@ bool llama_params_fit(
             LLAMA_LOG_INFO("%s: set to use %u dense-only and %u full GPU layers in total, projected memory use:\n",
                 __func__, global_ngl_part, global_ngl_full);
             for (size_t id = 0; id < nd; id++) {
-                const int64_t projected_use = mem_nl0_part_1[id]
-                    + (int64_t(ngl_per_device[id].full) - int64_t(nl0[id]) + 1)*spl_full[id]
-                    + (int64_t(ngl_per_device[id].part)                    - 1)*spl_part[id];
+                int64_t projected_use = mem_full_nl0[id] + (int64_t(ngl_per_device[id].full) - int64_t(nl0[id]))*spl_full[id];
+                if (ngl_per_device[id].part > 0) {
+                    projected_use += spl_part_1[id] + (ngl_per_device[id].part - 1)*spl_part_n[id];
+                }
                 const int64_t projected_margin = dmds_full[id].free - projected_use;
                 LLAMA_LOG_INFO("%s:   - %s: %2" PRIu32 " dense-only layers, %2" PRIu32 " full layers, %6" PRId64 " MiB used, %6" PRId64 " MiB free\n",
                     __func__, dev_names[id].c_str(), ngl_per_device[id].part, ngl_per_device[id].full, projected_use/MiB, projected_margin/MiB);
