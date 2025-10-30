@@ -564,7 +564,8 @@ void mul_mat_f_cuda(
     const int64_t channel_ratio = nchannels_dst / nchannels_x;
     const int64_t sample_ratio  = nsamples_dst  / nsamples_x;
 
-    const int device = ggml_cuda_get_device();
+    const int device    = ggml_cuda_get_device();
+    const int cc        = ggml_cuda_info().devices[device].cc;
     const int warp_size = ggml_cuda_info().devices[device].warp_size;
 
     int64_t nwarps_best     = 1;
