@@ -603,7 +603,9 @@ bool llama_params_fit(
                 size_t       itbo = 0;
                 uint32_t     il0  = 0;
                 for (size_t id = 0; id < nd && itbo + 1 < ntbo; id++) {
-                    for (uint32_t il = il0; il < il0 + ngl_per_device[id].part; il++) {
+                    const uint32_t il0_loop = std::max(il0, hp_nldl);
+                    assert(il0_loop <= ngl_per_device[id].full);
+                    for (uint32_t il = il0_loop; il < il0_loop + ngl_per_device[id].part; il++) {
                         if (itbo + 1 >= ntbo) {
                             LLAMA_LOG_INFO("%s: llama_params_fit_n_tensor_buft_overrides() == %zu is insufficient for model\n", __func__, ntbo);
                             sufficient_tbo = false;
