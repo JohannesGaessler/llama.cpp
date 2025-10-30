@@ -470,7 +470,7 @@ bool llama_params_fit(
             auto distribute_layers = [&](std::vector<ngl> & ngl_per_device, std::vector<int64_t> & usable_memory, const uint32_t global_ngl_part) -> bool {
                 // reset result to initial state, initially reconstruct state for as many as nl_scaling full layers per device
                 for (size_t id = 0; id < nd; id++) {
-                    ngl_per_device[id] = {1, nl0[id] - 1};
+                    ngl_per_device[id] = {0, nl0[id]};
                     usable_memory[id]  = dmds_full[id].free - mem_full_nl0[id] - margin;
                 }
 
