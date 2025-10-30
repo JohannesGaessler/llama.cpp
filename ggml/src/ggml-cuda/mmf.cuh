@@ -552,7 +552,7 @@ void mul_mat_f_cuda(
         const int64_t stride_channel_x, const int64_t stride_channel_y, const int64_t stride_channel_dst, const int64_t nsamples_x,
         const int64_t nsamples_dst, const int64_t stride_sample_x, const int64_t stride_sample_y, const int64_t stride_sample_dst,
         cudaStream_t stream, const mmf_ids_data * ids_data) {
-    typedef tile<32, 8, T>     tile_A_16;
+    typedef tile<16, 8, T>     tile_A_16;
     typedef tile<32, 8, T>     tile_A_32;
     typedef tile< 8, 8, T>     tile_B;
 
