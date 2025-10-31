@@ -445,15 +445,11 @@ bool llama_params_fit(
                 assert(std::all_of(spl_full.begin(), spl_full.end(), [](int64_t i){ return i >= 0; }));
 
                 ggml_backend_buffer_type_t cpu_buft = ggml_backend_cpu_buffer_type();
-                size_t il = 0;
+                size_t il0 = 0;
                 for (size_t id = 0; id < nd; id++) {
-                    if (id == 0) {
-                        tensor_buft_overrides[id] = {get_moe_pattern(hp_nldl + il), cpu_buft};
-                        il += nl0[id];
-                        continue;
-                    }
-                    tensor_buft_overrides[id] = {get_moe_pattern(il), cpu_buft};
-                    il += nl0[id];
+                    const size_t offset = id < nd - 1 ? 1 : 2;
+                    tensor_buft_overrides[id] = {get_moe_pattern(il0 + nl0[id] - offset), cpu_buft};
+                    il0 += nl0[id];
                 }
                 tensor_buft_overrides[nd] = {nullptr, nullptr};
                 mparams->tensor_buft_overrides = tensor_buft_overrides;
@@ -468,17 +464,12 @@ bool llama_params_fit(
                 }
                 assert(std::all_of(spl_part_1.begin(), spl_part_1.end(), [](int64_t i){ return i >= 0; }));
 
-                il = 0;
+                il0 = 0;
                 for (size_t id = 0; id < nd; id++) {
-                    if (id == 0) {
-                        tensor_buft_overrides[2*id+0] = {get_moe_pattern(hp_nldl + il + 0), cpu_buft};
-                        tensor_buft_overrides[2*id+1] = {get_moe_pattern(hp_nldl + il + 1), cpu_buft};
-                        il += nl0[id];
-                        continue;
-                    }
-                    tensor_buft_overrides[2*id+0] = {get_moe_pattern(il + 0), cpu_buft};
-                    tensor_buft_overrides[2*id+1] = {get_moe_pattern(il + 1), cpu_buft};
-                    il += nl0[id];
+                    const size_t offset = id < nd - 1 ? 1 : 2;
+                    tensor_buft_overrides[2*id+0] = {get_moe_pattern(il0 + nl0[id] - offset - 1), cpu_buft};
+                    tensor_buft_overrides[2*id+1] = {get_moe_pattern(il0 + nl0[id] - offset - 0), cpu_buft};
+                    il0 += nl0[id];
                 }
                 tensor_buft_overrides[2*nd] = {nullptr, nullptr};
                 mparams->tensor_buft_overrides = tensor_buft_overrides;
@@ -645,7 +636,8 @@ bool llama_params_fit(
                 size_t       itbo = 0;
                 uint32_t     il0  = 0;
                 for (size_t id = 0; id < nd && itbo + 1 < ntbo; id++) {
-                    const uint32_t il0_loop = id == 0 ? il0 + hp_nldl : il0;
+                    // on last device one of the "full layers" are the non-repeating layers
+                    const uint32_t il0_loop = id < nd - 1 ? il0 + ngl_per_device[id].full : il0 + ngl_per_device[id].full - 1;
                     for (uint32_t il = il0_loop; il < il0_loop + ngl_per_device[id].part; il++) {
                         if (itbo + 1 >= ntbo) {
                             LLAMA_LOG_INFO("%s: llama_params_fit_n_tensor_buft_overrides() == %zu is insufficient for model\n", __func__, ntbo);
