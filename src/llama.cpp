@@ -438,16 +438,23 @@ bool llama_params_fit(
             {
                 std::vector<bool> done(nd-1, false);
                 std::vector<int64_t> mem;
-                while (!std::all_of(done.begin(), done.end(), [](bool b){ return b; })) {
+                while (ngl_per_device.back().full > 0 && !std::all_of(done.begin(), done.end(), [](bool b){ return b; })) {
+                    std::vector<bool> moved(nd-1, false);
                     for (size_t id = 0; id < nd - 1; id++) {
                         if (done[id]) {
                             continue;
                         }
-                        ngl_per_device[id].full++;
-                        ngl_per_device.back().full--;
+                        if (ngl_per_device.back().full > 0) {
+                            ngl_per_device[id].full++;
+                            ngl_per_device.back().full--;
+                            moved[id] = true;
+                        }
                     }
                     get_memory_for_layers_moe(ngl_per_device, mem);
                     for (size_t id = 0; id < nd - 1; id++) {
+                        if (!moved[id]) {
+                            continue;
+                        }
                         const int64_t target = dmds_full[id].free - margin;
                         if (mem[id] >= target) {
                             done[id] = true;
@@ -462,8 +469,8 @@ bool llama_params_fit(
             {
                 std::vector<bool> done(nd-1, false);
                 std::vector<int64_t> mem;
-                while (!std::all_of(done.begin(), done.end(), [](bool b){ return b; })) {
-                    for (size_t id = 0; id < nd - 1; id++) {
+                while (ngl_per_device.back().full > 0 && !std::all_of(done.begin(), done.end(), [](bool b){ return b; })) {
+                    for (size_t id = 0; ngl_per_device.back().full > 0 && id < nd - 1; id++) {
                         if (done[id]) {
                             continue;
                         }
