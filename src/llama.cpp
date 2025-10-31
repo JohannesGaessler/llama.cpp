@@ -502,7 +502,7 @@ bool llama_params_fit(
             if (hp_nldl > 0) {
                 const int64_t usable_memory_nldl = dmds_full[0].free
                     - (mem_base[0] - int64_t(ngl_full_base[0] - ngl_full_min[0])*spl_full[0]) - margin;
-                LLAMA_LOG_DEBUG("%s: initial usable memory on device 0 with all nldl: % " PRId64 " MiB\n", __func__, usable_memory_nldl);
+                LLAMA_LOG_DEBUG("%s: initial usable memory on device 0 with all nldl: % " PRId64 " MiB\n", __func__, usable_memory_nldl/MiB);
                 if (usable_memory_nldl < 0) {
                     uint32_t nldl_unassigned = hp_nldl;
                     for (size_t id = 0; id < nd - 1; id++) {
