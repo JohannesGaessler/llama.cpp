@@ -295,6 +295,7 @@ bool llama_params_fit(
         for (const uint32_t & ngl : layers_per_device) {
             mparams_copy.n_gpu_layers += ngl;
         }
+        assert(mparams_copy.n_gpu_layers == hp_ngl + 1);
         if (nd > 1) {
             for (size_t id = 0; id < nd; id++) {
                 tensor_split[id] = layers_per_device[id];
