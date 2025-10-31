@@ -55,7 +55,7 @@ static __device__ __forceinline__ int ggml_cuda_movmatrix(const int x) {
     const int ret_low  = (__shfl_sync(0xFFFFFFFF, x, src_laneid_low,  WARP_SIZE) >> shift_low)  & 0x0000FFFF;
     const int ret_high = (__shfl_sync(0xFFFFFFFF, x, src_laneid_high, WARP_SIZE) << shift_high) & 0xFFFF0000;
 
-    return ret_low | ret_high;
+    return ret_low + ret_high;
 }
 
 #endif // CUDART_VERSION >= 11080
@@ -131,9 +131,9 @@ namespace ggml_cuda_mma {
         static __device__ __forceinline__ int get_i(const int l) {
             if constexpr (I == 32 && J == 8) {
 #ifdef GGML_CUDA_MMA_NO_VOLTA_PERM
-                return (((threadIdx.x % 16) / 4) * 8) | ((threadIdx.x / 16) * 4) | (l & 2) | (threadIdx.x % 2);
+                return ((threadIdx.x % 16) / 4) * 8 + (threadIdx.x / 16) * 4 + (l & 2) + threadIdx.x % 2;
 #else
-                return (l & 2) | (threadIdx.x & ~2);
+                return (l & 2) + (threadIdx.x & ~2);
 #endif // GGML_CUDA_MMA_NO_VOLTA_PERM
             } else {
                 NO_DEVICE_CODE;
@@ -143,7 +143,7 @@ namespace ggml_cuda_mma {
 
         static __device__ __forceinline__ int get_j(const int l) {
             if constexpr (I == 32 && J == 8) {
-                return (threadIdx.x & 2) | (l & (4 + 1));
+                return (threadIdx.x & 2) + (l & (4 + 1));
             } else {
                 NO_DEVICE_CODE;
                 return -1;
@@ -168,9 +168,9 @@ namespace ggml_cuda_mma {
             } else if constexpr (I == 8 && J == 8) {
                 return threadIdx.x / 4;
             } else if constexpr (I == 16 && J == 8) {
-                return ((l / 2) * 8) | (threadIdx.x / 4);
+                return (l / 2) * 8 + threadIdx.x / 4;
             } else if constexpr (I == 16 && J == 16) {
-                return (((l / 2) % 2) * 8) | (threadIdx.x / 4);
+                return ((l / 2) % 2) * 8 + threadIdx.x / 4;
             } else if constexpr (I == 32 && J == 8) {
                 return tile<16, 8, T>::get_i(l); // Memory layout simply repeated with same pattern in i direction.
             } else {
@@ -183,11 +183,11 @@ namespace ggml_cuda_mma {
             if constexpr (I == 8 && J == 4) {
                 return threadIdx.x % 4;
             } else if constexpr (I == 8 && J == 8) {
-                return (l * 4) | (threadIdx.x % 4);
+                return l * 4 + threadIdx.x % 4;
             } else if constexpr (I == 16 && J == 8) {
-                return ((threadIdx.x % 4) * 2) | (l % 2);
+                return (threadIdx.x % 4) * 2 + l % 2;
             } else if constexpr (I == 16 && J == 16) {
-                return ((l / 4) * 8) | ((threadIdx.x % 4) * 2) | (l % 2);
+                return (l / 4) * 8 + (threadIdx.x % 4) * 2 + l % 2;
             } else if constexpr (I == 32 && J == 8) {
                 return tile<16, 8, T>::get_j(l); // Memory layout simply repeated with same pattern in i direction.
             } else {
@@ -215,10 +215,10 @@ namespace ggml_cuda_mma {
 
         static __device__ __forceinline__ int get_i(const int l) {
             if constexpr (I == 8 && J == 8) {
-                return ((threadIdx.x / 16) * 4) | (threadIdx.x % 4);
+                return (threadIdx.x / 16) * 4 + threadIdx.x % 4;
             } else if constexpr (I == 32 && J == 8) {
 #ifdef GGML_CUDA_MMA_NO_VOLTA_PERM
-                return (((threadIdx.x % 16) / 4) * 8) | ((threadIdx.x / 16) * 4) | (threadIdx.x % 4);
+                return ((threadIdx.x % 16) / 4) * 8 + (threadIdx.x / 16) * 4 + threadIdx.x % 4;
 #else
                 return threadIdx.x;
 #endif // GGML_CUDA_MMA_NO_VOLTA_PERM
@@ -229,8 +229,10 @@ namespace ggml_cuda_mma {
         }
 
         static __device__ __forceinline__ int get_j(const int l) {
-            if constexpr ((I == 8 || I == 32) && J == 8) {
+            if constexpr (I == 8 && J == 8) {
                 return l;
+            } else if constexpr (I == 32 && J == 8) {
+                return tile<8, 8, half2>::get_j(l); // Same layout in j direction, but for I == 8 all threads use the same 8x8 tile.
             } else {
                 NO_DEVICE_CODE;
                 return -1;
@@ -253,11 +255,11 @@ namespace ggml_cuda_mma {
             if constexpr (I == 8 && J == 8) {
                 return threadIdx.x / 4;
             } else if constexpr (I == 16 && J == 4) {
-                return (l * 8) | (threadIdx.x / 4);
+                return l * 8 + threadIdx.x / 4;
             } else if constexpr (I == 16 && J == 8) {
-                return ((l % 2) * 8) | (threadIdx.x / 4);
+                return (l % 2) * 8 + threadIdx.x / 4;
             } else if constexpr (I == 32 && J == 8) {
-                return ((l / 4) * 16) | ((l % 2) * 8) | (threadIdx.x / 4);
+                return (l / 4) * 16 + (l % 2) * 8 + threadIdx.x / 4;
             } else {
                 NO_DEVICE_CODE;
                 return -1;
@@ -266,13 +268,13 @@ namespace ggml_cuda_mma {
 
         static __device__ __forceinline__ int get_j(const int l) {
             if constexpr (I == 8 && J == 8) {
-                return (l * 4) | (threadIdx.x % 4);
+                return l * 4 + threadIdx.x % 4;
             } else if constexpr (I == 16 && J == 4) {
                 return threadIdx.x % 4;
             } else if constexpr (I == 16 && J == 8) {
-                return ((l / 2) * 4) | (threadIdx.x % 4);
+                return (l / 2) * 4 + threadIdx.x % 4;
             } else if constexpr (I == 32 && J == 8) {
-                return ((l & 2) * 2) | (threadIdx.x % 4);
+                return (l & 2) * 2 + threadIdx.x % 4;
             } else {
                 NO_DEVICE_CODE;
                 return -1;
@@ -299,9 +301,9 @@ namespace ggml_cuda_mma {
             if constexpr (I == 8 && J == 8) {
                 return threadIdx.x / 4;
             } else if constexpr (I == 16 && J == 4) {
-                return (l * 8) | (threadIdx.x / 4);
+                return l * 8 + threadIdx.x / 4;
             } else if constexpr (I == 16 && J == 8) {
-                return ((l % 2) * 8) | (threadIdx.x / 4);
+                return (l % 2) * 8 + threadIdx.x / 4;
             } else {
                 NO_DEVICE_CODE;
                 return -1;
@@ -310,11 +312,11 @@ namespace ggml_cuda_mma {
 
         static __device__ __forceinline__ int get_j(const int l) {
             if constexpr (I == 8 && J == 8) {
-                return (l * 4) | (threadIdx.x % 4);
+                return l * 4 + threadIdx.x % 4;
             } else if constexpr (I == 16 && J == 4) {
                 return threadIdx.x % 4;
             } else if constexpr (I == 16 && J == 8) {
-                return ((l / 2) * 4) | (threadIdx.x % 4);
+                return (l / 2) * 4 + threadIdx.x % 4;
             } else {
                 NO_DEVICE_CODE;
                 return -1;
