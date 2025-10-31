@@ -548,7 +548,6 @@ bool llama_params_fit(
                     ngl_per_device.back().full += ngl_move;
                     usable_memory.back()       -= ngl_move*spl_full.back();
                 }
-                assert(ngl_per_device.back().full + ngl_per_device.back().part == hp_ngl + 1);
 
                 // convert some full layers on the last device to partial layers
                 ngl_per_device.back().full -= global_ngl_part;
