@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <numeric>
 
 #if defined(_MSC_VER)
 #pragma warning(disable: 4244 4267) // possible loss of data
@@ -200,6 +201,8 @@ bool llama_params_fit(
                 projected_free >= 0 ? "surplus" : "deficit");
         }
     }
+    assert(sum_total >= 0 && sum_projected_used >= 0 && sum_projected_ctx >= 0);
+    assert(sum_projected_used >= sum_projected_ctx);
     LLAMA_LOG_INFO("%s: projected to use %" PRId64 " MiB of device memory vs. a total of %" PRId64 " MiB\n",
         __func__, sum_projected_used/MiB, sum_total/MiB);
     if (min_projected_free >= margin) {
@@ -295,7 +298,7 @@ bool llama_params_fit(
         for (const uint32_t & ngl : layers_per_device) {
             mparams_copy.n_gpu_layers += ngl;
         }
-        assert(mparams_copy.n_gpu_layers == hp_ngl + 1);
+        assert(uint32_t(mparams_copy.n_gpu_layers) == hp_ngl + 1);
         if (nd > 1) {
             for (size_t id = 0; id < nd; id++) {
                 tensor_split[id] = layers_per_device[id];
@@ -341,11 +344,11 @@ bool llama_params_fit(
             global_surplus += dmd.free;
             global_surplus -= int64_t(dmd.mb.total()) + margin;
         }
-        if (global_surplus > 0) {
+        if (global_surplus >= 0) {
             LLAMA_LOG_INFO("%s: with only dense weights in device memory there is a total surplus of %" PRId64 " MiB\n", __func__, global_surplus/MiB);
 
             // step 3a: for MoE models and a single device, if at least the dense tensors can be fit, simply interpolate:
-            if (nd == 1) {
+            if (nd == 1) { // TODO nldl
                 const int64_t projected_full = int64_t(dmds_full[0].mb.total()) - global_memory_reduction_vs_full;
                 const int64_t diff_total = projected_full - int64_t(dmds_cpu_moe[0].mb.total());
                 const int64_t diff_per_layer = diff_total / int64_t(hp_ngl);
@@ -391,12 +394,14 @@ bool llama_params_fit(
                     nl0.push_back(ngl_per_dev);
                 }
                 nl0.push_back(hp_ngl + 1 - (nd - 1)*ngl_per_dev);
+                assert(std::reduce(nl0.begin(), nl0.end()) == hp_ngl + 1);
 
                 nl1.reserve(nd);
                 for (size_t id = 0; id < nd - 1; id++) {
                     nl1.push_back(nl0[id] - 1);
                 }
                 nl1.push_back(nl0.back() + nd-1);
+                assert(std::reduce(nl1.begin(), nl1.end()) == hp_ngl + 1);
             }
 
             struct ngl {
@@ -441,6 +446,7 @@ bool llama_params_fit(
                     spl_full.push_back(mem_base[id] - mem_full_nl1[id]);
                 }
                 spl_full.push_back((mem_full_nl1.back() - mem_base.back()) / int64_t(nd - 1));
+                assert(std::all_of(spl_full.begin(), spl_full.end(), [](int64_t i){ return i >= 0; }));
 
                 ggml_backend_buffer_type_t cpu_buft = ggml_backend_cpu_buffer_type();
                 size_t il = 0;
@@ -462,9 +468,10 @@ bool llama_params_fit(
 
                 spl_part_1.reserve(nd);
                 for (size_t id = 0; id < nd; id++) {
-                    const int64_t diff_per_layer = mem_base[id] - mem_nl0_part_1[id];
-                    spl_part_1.push_back(spl_full[id] - diff_per_layer);
+                    const int64_t diff_first_converted_layer = mem_base[id] - mem_nl0_part_1[id];
+                    spl_part_1.push_back(spl_full[id] - diff_first_converted_layer);
                 }
+                assert(std::all_of(spl_part_1.begin(), spl_part_1.end(), [](int64_t i){ return i >= 0; }));
 
                 il = 0;
                 for (size_t id = 0; id < nd; id++) {
@@ -491,9 +498,10 @@ bool llama_params_fit(
 
                 spl_part_n.reserve(nd);
                 for (size_t id = 0; id < nd; id++) {
-                    const int64_t diff_per_layer = mem_nl0_part_1[id] - mem_nl0_part_2[id];
-                    spl_part_n.push_back(spl_full[id] - diff_per_layer);
+                    const int64_t diff_per_extra_converted_layer = mem_nl0_part_1[id] - mem_nl0_part_2[id];
+                    spl_part_n.push_back(spl_full[id] - diff_per_extra_converted_layer);
                 }
+                assert(std::all_of(spl_part_n.begin(), spl_part_n.end(), [](int64_t i){ return i >= 0; }));
             }
             for (size_t id = 0; id < nd; id++) {
                 LLAMA_LOG_DEBUG("%s: id=%zu, spl_full=%" PRId64 " MiB, spl_part_1=%" PRId64 " MiB, spl_part_n=%" PRId64 " MiB\n",
