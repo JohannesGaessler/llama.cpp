@@ -423,14 +423,10 @@ bool llama_params_fit(
             std::vector<uint32_t> ngl_full_min;
             {
                 LLAMA_LOG_DEBUG("%s: getting device memory data for ~%" PRIu32 " layers/device + all tensors in device memory:\n", __func__, nl0[0]);
-                if (hp_nldl > 0) {
-                    for (size_t id = 0; id < nd; id++) {
-                        if (nl0[id] < hp_nldl + 2) {
-                            LLAMA_LOG_INFO("%s: model only has %" PRIu32 " layers vs. %" PRIu32 " dense lead layers, too few for fit, abort\n",
-                                __func__, hp_ngl, hp_nldl);
-                            return false;
-                        }
-                    }
+                if (hp_nldl > 0 && nl0[0] < hp_nldl + 2) {
+                    LLAMA_LOG_INFO("%s: model only has %" PRIu32 " layers vs. %" PRIu32 " dense lead layers, too few for fit, abort\n",
+                        __func__, hp_ngl, hp_nldl);
+                    return false;
                 }
                 mem_base = get_memory_for_layers(nl0);
                 ngl_full_base = nl0;
@@ -451,10 +447,9 @@ bool llama_params_fit(
                 ggml_backend_buffer_type_t cpu_buft = ggml_backend_cpu_buffer_type();
                 size_t il = 0;
                 for (size_t id = 0; id < nd; id++) {
-                    if (il < hp_nldl) {
-                        il += hp_nldl;
-                        tensor_buft_overrides[id] = {get_moe_pattern(il), cpu_buft};
-                        il += nl0[id] - hp_nldl;
+                    if (id == 0) {
+                        tensor_buft_overrides[id] = {get_moe_pattern(hp_nldl + il), cpu_buft};
+                        il += nl0[id];
                         continue;
                     }
                     tensor_buft_overrides[id] = {get_moe_pattern(il), cpu_buft};
@@ -475,11 +470,10 @@ bool llama_params_fit(
 
                 il = 0;
                 for (size_t id = 0; id < nd; id++) {
-                    if (il < hp_nldl) {
-                        il += hp_nldl;
-                        tensor_buft_overrides[2*id+0] = {get_moe_pattern(il + 0), cpu_buft};
-                        tensor_buft_overrides[2*id+1] = {get_moe_pattern(il + 1), cpu_buft};
-                        il += nl0[id] - hp_nldl;
+                    if (id == 0) {
+                        tensor_buft_overrides[2*id+0] = {get_moe_pattern(hp_nldl + il + 0), cpu_buft};
+                        tensor_buft_overrides[2*id+1] = {get_moe_pattern(hp_nldl + il + 1), cpu_buft};
+                        il += nl0[id];
                         continue;
                     }
                     tensor_buft_overrides[2*id+0] = {get_moe_pattern(il + 0), cpu_buft};
@@ -651,7 +645,8 @@ bool llama_params_fit(
                 size_t       itbo = 0;
                 uint32_t     il0  = 0;
                 for (size_t id = 0; id < nd && itbo + 1 < ntbo; id++) {
-                    for (uint32_t il = il0 + ngl_per_device[id].full; il < il0 + ngl_per_device[id].full + ngl_per_device[id].part; il++) {
+                    const uint32_t il0_loop = id == 0 ? il0 + hp_nldl : il0;
+                    for (uint32_t il = il0_loop; il < il0_loop + ngl_per_device[id].part; il++) {
                         if (itbo + 1 >= ntbo) {
                             LLAMA_LOG_INFO("%s: llama_params_fit_n_tensor_buft_overrides() == %zu is insufficient for model\n", __func__, ntbo);
                             sufficient_tbo = false;
