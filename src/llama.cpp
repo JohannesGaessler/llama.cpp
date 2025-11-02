@@ -471,12 +471,11 @@ static void llama_params_fit_impl(
 
                     mem = get_memory_for_layers_moe(func_name, ngl_per_device);
 
-                    // if the allocation completely fixes the memory use on the last device the step size may still be too high
+                    // if the allocation fits the last device the step size may still be too high and waste VRAM capacity
                     if (mem.back() < targets.back()) {
-                        if (mem[id] <= targets[id]) {
-                            return; // memory targets on all devices met
+                        if (step_size == 1 && mem[id] <= targets[id]) {
+                            return; // memory targets on all devices met and we cannot be more efficient with a smaller step size
                         }
-                        // target device doesn't have enough memory, reduce step size and try fitting the layers somewhere else
                         ngl_per_device = ngl_per_device_prev;
                         step_size /= 2;
                         std::fill(device_is_full.begin(), device_is_full.end(), false);
