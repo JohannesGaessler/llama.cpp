@@ -444,11 +444,14 @@ static void llama_params_fit_impl(
             ngl_per_device.back().full = hp_ngl + 1 - 1; // 1 "layer for non-repeating tensors"
             const int64_t target_back = dmds_full.back().free - margin;
             for (uint32_t step_size = 64; step_size > 0; step_size /= 2) {
-                std::vector<bool> device_is_full(nd-1, false);
-                while (ngl_per_device.back().full >= step_size + 1 &&
+                if (step_size > 1 && ngl_per_device.back().full - 1 < step_size * (nd - 1)) {
+                    continue; // skip step sizes with insufficient remaining layers on last device
+                }
+                std::vector<bool> device_is_full(nd - 1, false);
+                while (ngl_per_device.back().full - 1 >= step_size &&
                        !std::all_of(device_is_full.begin(), device_is_full.end(), [](bool b){ return b; })) {
-                    std::vector<bool> moved(nd-1, false);
-                    for (size_t id = 0; id < nd - 1 && ngl_per_device.back().full >= step_size + 1; id++) {
+                    std::vector<bool> moved(nd - 1, false);
+                    for (size_t id = 0; id < nd - 1 && ngl_per_device.back().full - 1 >= step_size; id++) {
                         if (device_is_full[id]) {
                             continue;
                         }
