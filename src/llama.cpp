@@ -491,6 +491,10 @@ static void llama_params_fit_impl(
                         if (step_size < initial_step_size) {
                             device_is_full[id] = true;
                         }
+                        if (std::all_of(device_is_full.begin(), device_is_full.end(), [](bool b){ return b; })) {
+                            step_size /= 2;
+                            std::fill(device_is_full.begin(), device_is_full.end(), false);
+                        }
                         continue;
                     }
 
