@@ -486,16 +486,17 @@ static void llama_params_fit_impl(
                         std::fill(device_is_full.begin(), device_is_full.end(), false);
                         continue;
                     }
-                    if (mem[id] > targets[id]) {
-                        device_is_full[id] = true;
-                        if (convert) {
-                            ngl_per_device[id].part -= step_size;
-                        } else {
-                            ngl_per_device[id].full -= step_size;
-                        }
-                        ngl_per_device.back().full += step_size;
+                    if (mem[id] < targets[id]) {
                         continue;
                     }
+
+                    device_is_full[id] = true;
+                    if (convert) {
+                        ngl_per_device[id].part -= step_size;
+                    } else {
+                        ngl_per_device[id].full -= step_size;
+                    }
+                    ngl_per_device.back().full += step_size;
                     if (std::all_of(device_is_full.begin(), device_is_full.end(), [](bool b){ return b; })) {
                         step_size /= 2;
                         std::fill(device_is_full.begin(), device_is_full.end(), false);
