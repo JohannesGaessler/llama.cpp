@@ -443,19 +443,18 @@ static void llama_params_fit_impl(
             ngl_per_device.back().part = 1; // memory on first device can increase if last device has a partial layer, so start with it
             ngl_per_device.back().full = hp_ngl + 1 - 1; // 1 "layer for non-repeating tensors"
             const int64_t target_back = dmds_full.back().free - margin;
-            {
+            for (uint32_t step_size = 64; step_size > 0; step_size /= 2) {
                 std::vector<bool> device_is_full(nd-1, false);
-                while (ngl_per_device.back().full > 1 && !std::all_of(device_is_full.begin(), device_is_full.end(), [](bool b){ return b; })) {
+                while (ngl_per_device.back().full >= step_size + 1 &&
+                       !std::all_of(device_is_full.begin(), device_is_full.end(), [](bool b){ return b; })) {
                     std::vector<bool> moved(nd-1, false);
-                    for (size_t id = 0; id < nd - 1; id++) {
+                    for (size_t id = 0; id < nd - 1 && ngl_per_device.back().full >= step_size + 1; id++) {
                         if (device_is_full[id]) {
                             continue;
                         }
-                        if (ngl_per_device.back().full > 1) {
-                            ngl_per_device[id].full++;
-                            ngl_per_device.back().full--;
-                            moved[id] = true;
-                        }
+                        ngl_per_device[id].full    += step_size;
+                        ngl_per_device.back().full -= step_size;
+                        moved[id] = true;
                     }
                     const std::vector<int64_t> mem = get_memory_for_layers_moe(__func__, ngl_per_device);
                     for (size_t id = 0; id < nd - 1; id++) {
@@ -467,8 +466,8 @@ static void llama_params_fit_impl(
                             device_is_full[id] = true;
                         }
                         if (mem[id] > target) {
-                            ngl_per_device[id].full--;
-                            ngl_per_device.back().full++;
+                            ngl_per_device[id].full    -= step_size;
+                            ngl_per_device.back().full += step_size;
                         }
                     }
                 }
