@@ -502,12 +502,12 @@ static void llama_params_fit_impl(
 
             {
                 std::vector<ngl_t> ngl_per_device_high = ngl_per_device;
-                std::vector<int64_t> mem_high = get_memory_for_layers_moe(__func__, ngl_per_device);
+                std::vector<int64_t> mem_high = get_memory_for_layers_moe(__func__, ngl_per_device_high);
 
                 std::vector<ngl_t> ngl_per_device_low = ngl_per_device;
                 ngl_per_device_low.back().part += ngl_per_device.back().full - 1;
                 ngl_per_device_low.back().full = 1;
-                std::vector<int64_t> mem_low = get_memory_for_layers_moe(__func__, ngl_per_device);
+                std::vector<int64_t> mem_low = get_memory_for_layers_moe(__func__, ngl_per_device_low);
 
                 const int64_t diff = mem_high.back() - mem_low.back();
                 const int64_t diff_per_full = diff /
