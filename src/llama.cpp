@@ -448,7 +448,7 @@ static void llama_params_fit_impl(
                 targets.push_back(dmds_full[id].free - margin);
             }
 
-            auto distribute_layers = [&](const uint32_t & initial_step_size, const bool convert) {
+            auto distribute_layers = [&](const char * func_name, const uint32_t & initial_step_size, const bool convert) {
                 for (uint32_t step_size = initial_step_size; step_size > 0;) {
                     std::vector<bool> device_is_full(nd - 1, false);
                     for (size_t id = 0; id < nd - 1 && step_size > 0; id++) {
@@ -463,9 +463,9 @@ static void llama_params_fit_impl(
                         }
                         ngl_per_device.back().full -= step_size;
 
-                        const std::vector<int64_t> mem = get_memory_for_layers_moe(__func__, ngl_per_device);
+                        const std::vector<int64_t> mem_test = get_memory_for_layers_moe(func_name, ngl_per_device);
 
-                        if (mem.back() < targets.back()) {
+                        if (mem_test.back() < targets.back()) {
                             if (convert) {
                                 ngl_per_device[id].part -= step_size;
                             } else {
@@ -476,7 +476,7 @@ static void llama_params_fit_impl(
                             std::fill(device_is_full.begin(), device_is_full.end(), false);
                             continue;
                         }
-                        if (mem[id] > targets[id]) {
+                        if (mem_test[id] > targets[id]) {
                             device_is_full[id] = true;
                             if (convert) {
                                 ngl_per_device[id].part -= step_size;
@@ -495,9 +495,9 @@ static void llama_params_fit_impl(
             };
 
             assert(ngl_per_device.back().full >= 1);
-            distribute_layers((ngl_per_device.back().full - 1) / (nd - 1), /*convert =*/ false);
+            distribute_layers(__func__, (ngl_per_device.back().full - 1) / (nd - 1), /*convert =*/ false);
             assert(ngl_per_device.back().full >= 1);
-            distribute_layers((ngl_per_device.back().full - 1) / (nd - 1), /*convert =*/ true);
+            distribute_layers(__func__, (ngl_per_device.back().full - 1) / (nd - 1), /*convert =*/ true);
             assert(ngl_per_device.back().full >= 1);
 
             {
