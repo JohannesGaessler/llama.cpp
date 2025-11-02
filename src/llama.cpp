@@ -490,7 +490,7 @@ static void llama_params_fit_impl(
                         ngl_per_device[id].part++;
                         ngl_per_device.back().full--;
 
-                        const std::vector<int64_t> mem = get_memory_for_layers_moe(__func__, ngl_per_device);
+                        mem = get_memory_for_layers_moe(__func__, ngl_per_device);
 
                         const int64_t target = dmds_full[id].free - margin;
                         if (mem[id] <= target && mem.back() <= target_back) {
