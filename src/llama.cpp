@@ -442,82 +442,78 @@ static void llama_params_fit_impl(
             std::vector<ngl_t> ngl_per_device(nd);
             ngl_per_device.back().part = 1; // memory on first device can increase if last device has a partial layer, so start with it
             ngl_per_device.back().full = hp_ngl + 1 - 1; // 1 "layer for non-repeating tensors"
-            const int64_t target_back = dmds_full.back().free - margin;
-            for (uint32_t step_size = 64; step_size > 0; step_size /= 2) {
-                if (step_size > 1 && ngl_per_device.back().full - 1 < step_size * (nd - 1)) {
-                    continue; // skip step sizes with insufficient remaining layers on last device
-                }
-                std::vector<bool> device_is_full(nd - 1, false);
-                while (ngl_per_device.back().full - 1 >= step_size &&
-                       !std::all_of(device_is_full.begin(), device_is_full.end(), [](bool b){ return b; })) {
-                    std::vector<bool> moved(nd - 1, false);
-                    for (size_t id = 0; id < nd - 1 && ngl_per_device.back().full - 1 >= step_size; id++) {
-                        if (device_is_full[id]) {
-                            continue;
+            std::vector<int64_t> targets;
+            targets.reserve(nd);
+            for (size_t id = 0; id < nd; id++) {
+                targets.push_back(dmds_full[id].free - margin);
+            }
+
+            auto distribute_layers = [&](const uint32_t & initial_step_size, const bool convert) {
+                for (uint32_t step_size = initial_step_size; step_size > 0;) {
+                    std::vector<bool> device_is_full(nd - 1, false);
+                    for (size_t id = 0; id < nd - 1 && step_size > 0; id++) {
+                        if (ngl_per_device.back().full - 1 < step_size) {
+                            step_size /= 2;
+                            std::fill(device_is_full.begin(), device_is_full.end(), false);
                         }
-                        ngl_per_device[id].full    += step_size;
+                        if (convert) {
+                            ngl_per_device[id].part += step_size;
+                        } else {
+                            ngl_per_device[id].full += step_size;
+                        }
                         ngl_per_device.back().full -= step_size;
-                        moved[id] = true;
-                    }
-                    const std::vector<int64_t> mem = get_memory_for_layers_moe(__func__, ngl_per_device);
-                    for (size_t id = 0; id < nd - 1; id++) {
-                        if (!moved[id]) {
+
+                        const std::vector<int64_t> mem = get_memory_for_layers_moe(__func__, ngl_per_device);
+
+                        if (mem.back() < targets.back()) {
+                            if (convert) {
+                                ngl_per_device[id].part -= step_size;
+                            } else {
+                                ngl_per_device[id].full -= step_size;
+                            }
+                            ngl_per_device.back().full += step_size;
+                            step_size /= 2;
+                            std::fill(device_is_full.begin(), device_is_full.end(), false);
                             continue;
                         }
-                        const int64_t target = dmds_full[id].free - margin;
-                        if (mem[id] >= target) {
+                        if (mem[id] > targets[id]) {
                             device_is_full[id] = true;
-                        }
-                        if (mem[id] > target) {
                             ngl_per_device[id].full    -= step_size;
                             ngl_per_device.back().full += step_size;
-                        }
-                    }
-                }
-            }
-
-            // iteratively convert individual full layers from the last device to partial layers on other devices until
-            //   - the last device runs out of full layers OR
-            //   - the last device has met its memory target OR
-            //   - all other devices are full
-            {
-                std::vector<bool> device_is_full(nd-1, false);
-                std::vector<int64_t> mem = get_memory_for_layers_moe(__func__, ngl_per_device);
-                while (ngl_per_device.back().full > 1 && mem.back() > target_back &&
-                       !std::all_of(device_is_full.begin(), device_is_full.end(), [](bool b){ return b; })) {
-                    for (size_t id = 0; ngl_per_device.back().full > 1 && mem.back() > target_back && id < nd - 1; id++) {
-                        if (device_is_full[id]) {
                             continue;
                         }
-                        ngl_per_device[id].part++;
-                        ngl_per_device.back().full--;
-
-                        mem = get_memory_for_layers_moe(__func__, ngl_per_device);
-
-                        const int64_t target = dmds_full[id].free - margin;
-                        if (mem[id] <= target && mem.back() <= target_back) {
-                            break;
-                        }
-                        if (mem[id] >= target) {
-                            device_is_full[id] = true;
-                        }
-                        if (mem[id] > target) {
-                            ngl_per_device[id].part--;
-                            ngl_per_device.back().full++;
-                        }
+                    }
+                    if (std::all_of(device_is_full.begin(), device_is_full.end(), [](bool b){ return b; })) {
+                        step_size /= 2;
+                        std::fill(device_is_full.begin(), device_is_full.end(), false);
                     }
                 }
-            }
+            };
 
-            // finally, convert individual full layers from the last device to partial layers on the same device until
-            //   - the last device runs out of full layers to convert OR
-            //   - the last device has met its memory target
-            std::vector<int64_t> mem = get_memory_for_layers_moe(__func__, ngl_per_device);
-            while (ngl_per_device.back().full > 1 && mem.back() > target_back) {
-                ngl_per_device.back().part++;
-                ngl_per_device.back().full--;
-                mem = get_memory_for_layers_moe(__func__, ngl_per_device);
+            assert(ngl_per_device.back().full >= 1);
+            distribute_layers((ngl_per_device.back().full - 1) / (nd - 1), /*convert =*/ false);
+            assert(ngl_per_device.back().full >= 1);
+            distribute_layers((ngl_per_device.back().full - 1) / (nd - 1), /*convert =*/ true);
+            assert(ngl_per_device.back().full >= 1);
+
+            {
+                std::vector<ngl_t> ngl_per_device_high = ngl_per_device;
+                std::vector<int64_t> mem_high = get_memory_for_layers_moe(__func__, ngl_per_device);
+
+                std::vector<ngl_t> ngl_per_device_low = ngl_per_device;
+                ngl_per_device_low.back().part += ngl_per_device.back().full - 1;
+                ngl_per_device_low.back().full = 1;
+                std::vector<int64_t> mem_low = get_memory_for_layers_moe(__func__, ngl_per_device);
+
+                const int64_t diff = mem_high.back() - mem_low.back();
+                const int64_t diff_per_full = diff /
+                    (int64_t(ngl_per_device_high.back().full) - int64_t(ngl_per_device_low.back().full));
+
+                const uint32_t ngl_full = 1 + (targets.back() - mem_low.back()) / diff_per_full;
+                ngl_per_device.back().part = ngl_per_device.back().part + ngl_per_device.back().full - ngl_full;
+                ngl_per_device.back().full = ngl_full;
             }
+            std::vector<int64_t> mem = get_memory_for_layers_moe(__func__, ngl_per_device);
 
             set_tensor_buft_overrides(ngl_per_device);
             uint32_t global_ngl_part = 0;
