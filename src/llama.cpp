@@ -447,45 +447,54 @@ static void llama_params_fit_impl(
             for (size_t id = 0; id < nd; id++) {
                 targets.push_back(dmds_full[id].free - margin);
             }
+            std::vector<int64_t> mem;
 
             auto distribute_layers = [&](const char * func_name, const uint32_t & initial_step_size, const bool convert) {
-                for (uint32_t step_size = initial_step_size; step_size > 0;) {
-                    std::vector<bool> device_is_full(nd - 1, false);
-                    for (size_t id = 0; id < nd - 1 && step_size > 0; id++) {
-                        if (ngl_per_device.back().full - 1 < step_size) {
-                            step_size /= 2;
-                            std::fill(device_is_full.begin(), device_is_full.end(), false);
+                uint32_t step_size = initial_step_size;
+                std::vector<bool> device_is_full(nd - 1, false);
+
+                for (size_t id = 0; step_size > 0; id = (id + 1) % (nd - 1)) {
+                    if (device_is_full[id]) {
+                        continue;
+                    }
+                    if (ngl_per_device.back().full - 1 < step_size) {
+                        step_size /= 2;
+                        std::fill(device_is_full.begin(), device_is_full.end(), false);
+                        continue;
+                    }
+
+                    if (convert) {
+                        ngl_per_device[id].part += step_size;
+                    } else {
+                        ngl_per_device[id].full += step_size;
+                    }
+                    ngl_per_device.back().full -= step_size;
+
+                    mem = get_memory_for_layers_moe(func_name, ngl_per_device);
+
+                    if (mem.back() < targets.back()) {
+                        if (mem[id] <= targets[id]) {
+                            return;
                         }
                         if (convert) {
-                            ngl_per_device[id].part += step_size;
+                            ngl_per_device[id].part -= step_size;
                         } else {
-                            ngl_per_device[id].full += step_size;
+                            ngl_per_device[id].full -= step_size;
                         }
-                        ngl_per_device.back().full -= step_size;
-
-                        const std::vector<int64_t> mem_test = get_memory_for_layers_moe(func_name, ngl_per_device);
-
-                        if (mem_test.back() < targets.back()) {
-                            if (convert) {
-                                ngl_per_device[id].part -= step_size;
-                            } else {
-                                ngl_per_device[id].full -= step_size;
-                            }
-                            ngl_per_device.back().full += step_size;
-                            step_size /= 2;
-                            std::fill(device_is_full.begin(), device_is_full.end(), false);
-                            continue;
+                        ngl_per_device.back().full += step_size;
+                        step_size /= 2;
+                        std::fill(device_is_full.begin(), device_is_full.end(), false);
+                        continue;
+                    }
+                    if (mem[id] > targets[id]) {
+                        device_is_full[id] = true;
+                        if (convert) {
+                            ngl_per_device[id].part -= step_size;
+                        } else {
+                            ngl_per_device[id].full -= step_size;
                         }
-                        if (mem_test[id] > targets[id]) {
-                            device_is_full[id] = true;
-                            if (convert) {
-                                ngl_per_device[id].part -= step_size;
-                            } else {
-                                ngl_per_device[id].full -= step_size;
-                            }
-                            ngl_per_device.back().full += step_size;
-                            continue;
-                        }
+                        ngl_per_device.back().full += step_size;
+                        continue;
                     }
                     if (std::all_of(device_is_full.begin(), device_is_full.end(), [](bool b){ return b; })) {
                         step_size /= 2;
@@ -500,7 +509,7 @@ static void llama_params_fit_impl(
             distribute_layers(__func__, (ngl_per_device.back().full - 1) / (nd - 1), /*convert =*/ true);
             assert(ngl_per_device.back().full >= 1);
 
-            {
+            if (mem.back() > targets.back()) {
                 std::vector<ngl_t> ngl_per_device_high = ngl_per_device;
                 std::vector<int64_t> mem_high = get_memory_for_layers_moe(__func__, ngl_per_device_high);
 
@@ -516,8 +525,8 @@ static void llama_params_fit_impl(
                 const uint32_t ngl_full = 1 + (targets.back() - mem_low.back()) / diff_per_full;
                 ngl_per_device.back().part = ngl_per_device.back().part + ngl_per_device.back().full - ngl_full;
                 ngl_per_device.back().full = ngl_full;
+                mem = get_memory_for_layers_moe(__func__, ngl_per_device);
             }
-            std::vector<int64_t> mem = get_memory_for_layers_moe(__func__, ngl_per_device);
 
             set_tensor_buft_overrides(ngl_per_device);
             uint32_t global_ngl_part = 0;
