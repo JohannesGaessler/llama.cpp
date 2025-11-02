@@ -478,7 +478,11 @@ static void llama_params_fit_impl(
                         }
                         if (mem[id] > targets[id]) {
                             device_is_full[id] = true;
-                            ngl_per_device[id].full    -= step_size;
+                            if (convert) {
+                                ngl_per_device[id].part -= step_size;
+                            } else {
+                                ngl_per_device[id].full -= step_size;
+                            }
                             ngl_per_device.back().full += step_size;
                             continue;
                         }
