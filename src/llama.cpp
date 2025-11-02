@@ -461,6 +461,7 @@ static void llama_params_fit_impl(
                         continue;
                     }
 
+                    const std::vector<ngl_t> ngl_per_device_prev = ngl_per_device;
                     if (convert) {
                         ngl_per_device[id].part += step_size;
                     } else {
@@ -476,12 +477,7 @@ static void llama_params_fit_impl(
                             return; // memory targets on all devices met
                         }
                         // target device doesn't have enough memory, reduce step size and try fitting the layers somewhere else
-                        if (convert) {
-                            ngl_per_device[id].part -= step_size;
-                        } else {
-                            ngl_per_device[id].full -= step_size;
-                        }
-                        ngl_per_device.back().full += step_size;
+                        ngl_per_device = ngl_per_device_prev;
                         step_size /= 2;
                         std::fill(device_is_full.begin(), device_is_full.end(), false);
                         continue;
@@ -502,12 +498,7 @@ static void llama_params_fit_impl(
 
                     // target device is full, revert changes
                     device_is_full[id] = true;
-                    if (convert) {
-                        ngl_per_device[id].part -= step_size;
-                    } else {
-                        ngl_per_device[id].full -= step_size;
-                    }
-                    ngl_per_device.back().full += step_size;
+                    ngl_per_device = ngl_per_device_prev;
                     if (std::all_of(device_is_full.begin(), device_is_full.end(), [](bool b){ return b; })) {
                         step_size /= 2;
                         std::fill(device_is_full.begin(), device_is_full.end(), false);
