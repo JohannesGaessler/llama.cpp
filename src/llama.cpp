@@ -421,6 +421,7 @@ static void llama_params_fit_impl(
                 }
                 const auto mem = get_memory_for_layers(total_ngl_per_device);
 
+                LLAMA_LOG_DEBUG("%s: memory for test allocation by device:\n", func_name);
                 for (size_t id = 0; id < nd; id++) {
                     LLAMA_LOG_DEBUG("%s: id=%zu, ngl_full=%" PRIu32 ", ngl_part=%" PRIu32 ", mem=%" PRId64 " MiB\n",
                     func_name, id, ngl_per_device[id].full, ngl_per_device[id].part, mem[id]/MiB);
@@ -487,6 +488,9 @@ static void llama_params_fit_impl(
                         continue;
                     }
                     if (mem[id] < targets[id]) {
+                        if (step_size < initial_step_size) {
+                            device_is_full[id] = true;
+                        }
                         continue;
                     }
 
@@ -505,9 +509,21 @@ static void llama_params_fit_impl(
             };
 
             assert(ngl_per_device.back().full >= 1);
-            distribute_layers(__func__, (ngl_per_device.back().full - 1) / (nd - 1), /*convert =*/ false);
+            {
+                uint32_t initial_step_size = 1;
+                while (initial_step_size < std::min((ngl_per_device.back().full - 1) / uint32_t(nd - 1), uint32_t(4))) {
+                    initial_step_size *= 2;
+                }
+                distribute_layers(__func__, initial_step_size, /*convert =*/ false);
+            }
             assert(ngl_per_device.back().full >= 1);
-            distribute_layers(__func__, (ngl_per_device.back().full - 1) / (nd - 1), /*convert =*/ true);
+            {
+                uint32_t initial_step_size = 1;
+                while (initial_step_size < std::min((ngl_per_device.back().full - 1) / uint32_t(nd - 1), uint32_t(4))) {
+                    initial_step_size *= 2;
+                }
+                distribute_layers(__func__, initial_step_size, /*convert =*/ true);
+            }
             assert(ngl_per_device.back().full >= 1);
 
             if (mem.back() > targets.back()) {
