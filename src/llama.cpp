@@ -435,11 +435,6 @@ static void llama_params_fit_impl(
                 return mem;
             };
 
-            // start with all layers on last device and iteratively move layers to other devices until
-            //   - the last device runs out of full layers OR
-            //   - all other devices are full
-            // the layers are moved in parallel and we cannot easily roll back individual transfers
-            //     (but because there isn't enough memory to fit all layers anyways so there will be some deficit remaining on the last device)
             std::vector<ngl_t> ngl_per_device(nd);
             ngl_per_device.back().part = 1; // memory on first device can increase if last device has a partial layer, so start with it
             ngl_per_device.back().full = hp_ngl + 1 - 1; // 1 "layer for non-repeating tensors"
@@ -450,6 +445,8 @@ static void llama_params_fit_impl(
             }
             std::vector<int64_t> mem;
 
+            // utility function that iteratively tries moving layers from the last device to other devices
+            // initially use a larger step size in order to do fewer test allocations
             auto distribute_layers = [&](const char * func_name, const uint32_t & initial_step_size, const bool convert) {
                 uint32_t step_size = initial_step_size;
                 std::vector<bool> device_is_full(nd - 1, false);
@@ -473,10 +470,12 @@ static void llama_params_fit_impl(
 
                     mem = get_memory_for_layers_moe(func_name, ngl_per_device);
 
+                    // if the allocation completely fixes the memory use on the last device the step size may still be too high
                     if (mem.back() < targets.back()) {
                         if (mem[id] <= targets[id]) {
-                            return;
+                            return; // memory targets on all devices met
                         }
+                        // target device doesn't have enough memory, reduce step size and try fitting the layers somewhere else
                         if (convert) {
                             ngl_per_device[id].part -= step_size;
                         } else {
@@ -487,17 +486,21 @@ static void llama_params_fit_impl(
                         std::fill(device_is_full.begin(), device_is_full.end(), false);
                         continue;
                     }
+
+                    // check if test allocation is ok
                     if (mem[id] < targets[id]) {
+                        // if we already halved the step size once we know that another increment would fail
                         if (step_size < initial_step_size) {
                             device_is_full[id] = true;
-                        }
-                        if (std::all_of(device_is_full.begin(), device_is_full.end(), [](bool b){ return b; })) {
-                            step_size /= 2;
-                            std::fill(device_is_full.begin(), device_is_full.end(), false);
+                            if (std::all_of(device_is_full.begin(), device_is_full.end(), [](bool b){ return b; })) {
+                                step_size /= 2;
+                                std::fill(device_is_full.begin(), device_is_full.end(), false);
+                            }
                         }
                         continue;
                     }
 
+                    // target device is full, revert changes
                     device_is_full[id] = true;
                     if (convert) {
                         ngl_per_device[id].part -= step_size;
