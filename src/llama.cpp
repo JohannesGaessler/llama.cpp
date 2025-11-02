@@ -411,7 +411,7 @@ static void llama_params_fit_impl(
             };
 
             // utility function that returns the projected memory use for a given layer assignment
-            auto get_memory_for_layers_moe = [&](const std::vector<ngl_t> & ngl_per_device) -> std::vector<int64_t> {
+            auto get_memory_for_layers_moe = [&](const char * func_name, const std::vector<ngl_t> & ngl_per_device) -> std::vector<int64_t> {
                 set_tensor_buft_overrides(ngl_per_device);
 
                 std::vector<uint32_t> total_ngl_per_device;
@@ -420,6 +420,11 @@ static void llama_params_fit_impl(
                     total_ngl_per_device.push_back(ngl.full + ngl.part);
                 }
                 const auto mem = get_memory_for_layers(total_ngl_per_device);
+
+                for (size_t id = 0; id < nd; id++) {
+                    LLAMA_LOG_DEBUG("%s: id=%zu, ngl_full=%" PRIu32 ", ngl_part=%" PRIu32 ", mem=%" PRId64 " MiB\n",
+                    func_name, id, ngl_per_device[id].full, ngl_per_device[id].part, mem[id]/MiB);
+                }
 
                 // reset
                 tensor_buft_overrides[0].pattern = nullptr;
@@ -451,7 +456,7 @@ static void llama_params_fit_impl(
                             moved[id] = true;
                         }
                     }
-                    const std::vector<int64_t> mem = get_memory_for_layers_moe(ngl_per_device);
+                    const std::vector<int64_t> mem = get_memory_for_layers_moe(__func__, ngl_per_device);
                     for (size_t id = 0; id < nd - 1; id++) {
                         if (!moved[id]) {
                             continue;
@@ -483,7 +488,7 @@ static void llama_params_fit_impl(
                         ngl_per_device[id].part++;
                         ngl_per_device.back().full--;
 
-                        const std::vector<int64_t> mem = get_memory_for_layers_moe(ngl_per_device);
+                        const std::vector<int64_t> mem = get_memory_for_layers_moe(__func__, ngl_per_device);
 
                         const int64_t target = dmds_full[id].free - margin;
                         if (mem[id] <= target && mem.back() <= target_back) {
@@ -503,11 +508,11 @@ static void llama_params_fit_impl(
             // finally, convert individual full layers from the last device to partial layers on the same device until
             //   - the last device runs out of full layers to convert OR
             //   - the last device has met its memory target
-            std::vector<int64_t> mem = get_memory_for_layers_moe(ngl_per_device);
+            std::vector<int64_t> mem = get_memory_for_layers_moe(__func__, ngl_per_device);
             while (ngl_per_device.back().full > 1 && mem.back() > target_back) {
                 ngl_per_device.back().part++;
                 ngl_per_device.back().full--;
-                mem = get_memory_for_layers_moe(ngl_per_device);
+                mem = get_memory_for_layers_moe(__func__, ngl_per_device);
             }
 
             set_tensor_buft_overrides(ngl_per_device);
