@@ -440,7 +440,8 @@ static void llama_params_fit_impl(
             // the layers are moved in parallel and we cannot easily roll back individual transfers
             //     (but because there isn't enough memory to fit all layers anyways so there will be some deficit remaining on the last device)
             std::vector<ngl_t> ngl_per_device(nd);
-            ngl_per_device.back().full = hp_ngl + 1;
+            ngl_per_device.back().part = 1; // memory on first device can increase if last device has a partial layer, so start with it
+            ngl_per_device.back().full = hp_ngl + 1 - 1; // 1 "layer for non-repeating tensors"
             const int64_t target_back = dmds_full.back().free - margin;
             {
                 std::vector<bool> device_is_full(nd-1, false);
