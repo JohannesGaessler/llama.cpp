@@ -504,8 +504,8 @@ static void llama_params_fit_impl(
             for (size_t id = 0; id < nd; id++) {
                 const int64_t projected_margin = dmds_full[id].free - mem[id];
                 const ngl_t & n = ngl_per_device[id];
-                const uint32_t n_layer   = n.il_stop - n.il_part_start;
-                const uint32_t n_partial = n.il_stop - n.il_full_start;
+                const uint32_t n_layer   = n.il_stop - n.il_full_start;
+                const uint32_t n_partial = n.il_stop - n.il_part_start;
                 LLAMA_LOG_INFO(
                     "%s:   - %s: %2" PRIu32 " layers (%2" PRIu32 " partial), %6" PRId64 " MiB used, %6" PRId64 " MiB free\n",
                     __func__, dev_names[id].c_str(), n_layer, n_partial, mem[id]/MiB, projected_margin/MiB);
