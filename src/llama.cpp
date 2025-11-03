@@ -326,14 +326,14 @@ static void llama_params_fit_impl(
                 case LAYER_FRACTION_UP: {
                     static std::vector<std::string> patterns;
                     while (patterns.size() <= il) {
-                        patterns.push_back("blk\\." + std::to_string(patterns.size()) + "\\.ffn_(down|gate).*");
+                        patterns.push_back("blk\\." + std::to_string(patterns.size()) + "\\.ffn_down.*");
                     }
                     return patterns[il].c_str();
                 }
                 case LAYER_FRACTION_GATE: {
                     static std::vector<std::string> patterns;
                     while (patterns.size() <= il) {
-                        patterns.push_back("blk\\." + std::to_string(patterns.size()) + "\\.ffn_down.*");
+                        patterns.push_back("blk\\." + std::to_string(patterns.size()) + "\\.ffn_(up|down).*");
                     }
                     return patterns[il].c_str();
                 }
@@ -480,7 +480,7 @@ static void llama_params_fit_impl(
                         continue;
                     }
                     ngl_per_device_test[id].il_part_start--;
-                    for (layer_fraction_t lf : {LAYER_FRACTION_UP, LAYER_FRACTION_GATE}) {
+                    for (layer_fraction_t lf : {LAYER_FRACTION_GATE, LAYER_FRACTION_UP}) {
                         ngl_per_device_test[id].overflow_type = lf;
                         mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
                         if (mem_test[id] <= targets[id]) {
@@ -512,7 +512,7 @@ static void llama_params_fit_impl(
                     return;
                 }
                 ngl_per_device_test[id].il_part_start--;
-                for (layer_fraction_t lf : {LAYER_FRACTION_UP, LAYER_FRACTION_GATE}) {
+                for (layer_fraction_t lf : {LAYER_FRACTION_GATE, LAYER_FRACTION_UP}) {
                     ngl_per_device_test[id].overflow_type = lf;
                     mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
                     if (mem_test[id] <= targets[id]) {
