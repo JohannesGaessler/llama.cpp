@@ -464,11 +464,12 @@ static void llama_params_fit_impl(
                             ngl_per_device_test[jd].il_part_start += step_size;
                             ngl_per_device_test[jd].il_full_start += step_size;
 
-                            mem = get_memory_for_layers_moe(func_name, ngl_per_device_test);
-                            if (mem[id] <= targets[id]) {
+                            std::vector<int64_t> mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
+                            if (mem_test[id] <= targets[id]) {
                                 ngl_per_device = ngl_per_device_test;
+                                mem            = mem_test;
                             }
-                            if (step_size < initial_step_size || mem[id] >= targets[id]) {
+                            if (step_size < initial_step_size || mem_test[id] >= targets[id]) {
                                 break;
                             }
                         }
@@ -482,11 +483,12 @@ static void llama_params_fit_impl(
                     while (true) {
                         ngl_per_device_test[id].il_part_start += step_size;
 
-                        mem = get_memory_for_layers_moe(func_name, ngl_per_device_test);
-                        if (mem[id] <= targets[id]) {
+                        std::vector<int64_t> mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
+                        if (mem_test[id] <= targets[id]) {
                             ngl_per_device = ngl_per_device_test;
+                            mem            = mem_test;
                         }
-                        if (step_size < initial_step_size || mem[id] >= targets[id]) {
+                        if (step_size < initial_step_size || mem_test[id] >= targets[id]) {
                             break;
                         }
                     }
@@ -502,11 +504,11 @@ static void llama_params_fit_impl(
             for (size_t id = 0; id < nd; id++) {
                 const int64_t projected_margin = dmds_full[id].free - mem[id];
                 const ngl_t & n = ngl_per_device[id];
+                const uint32_t n_layer   = n.il_stop - n.il_part_start;
+                const uint32_t n_partial = n.il_stop - n.il_full_start;
                 LLAMA_LOG_INFO(
-                    "%s:   - %s: layers %2" PRIu32 "-%2" PRIu32 " (%2" PRIu32 "/%2" PRIu32 " partial), "
-                    "%6" PRId64 " MiB used, %6" PRId64 " MiB free\n",
-                    __func__, dev_names[id].c_str(), n.il_full_start, n.il_stop, n.il_stop - n.il_part_start,
-                    n.il_stop - n.il_full_start, mem[id]/MiB, projected_margin/MiB);
+                    "%s:   - %s: %2" PRIu32 " layers (%2" PRIu32 " partial), %6" PRId64 " MiB used, %6" PRId64 " MiB free\n",
+                    __func__, dev_names[id].c_str(), n_layer, n_partial, mem[id]/MiB, projected_margin/MiB);
             }
             return;
         }
