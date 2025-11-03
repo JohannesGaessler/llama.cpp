@@ -326,14 +326,14 @@ static void llama_params_fit_impl(
                 case LAYER_FRACTION_UP: {
                     static std::vector<std::string> patterns;
                     while (patterns.size() <= il) {
-                        patterns.push_back("blk\\." + std::to_string(patterns.size()) + "\\.ffn_down.*");
+                        patterns.push_back("blk\\." + std::to_string(patterns.size()) + "\\.ffn_(gate|down).*");
                     }
                     return patterns[il].c_str();
                 }
                 case LAYER_FRACTION_GATE: {
                     static std::vector<std::string> patterns;
                     while (patterns.size() <= il) {
-                        patterns.push_back("blk\\." + std::to_string(patterns.size()) + "\\.ffn_(up|down).*");
+                        patterns.push_back("blk\\." + std::to_string(patterns.size()) + "\\.ffn_down.*");
                     }
                     return patterns[il].c_str();
                 }
@@ -476,7 +476,7 @@ static void llama_params_fit_impl(
                             }
                         }
                     }
-                    if (mem_test[id] <= targets[id] || ngl_per_device.back().il_full_start == ngl_per_device.back().il_stop) {
+                    if (mem_test[id] == targets[id] || ngl_per_device.back().il_full_start == ngl_per_device.back().il_stop) {
                         continue;
                     }
                     ngl_per_device_test[id].il_part_start--;
@@ -486,6 +486,7 @@ static void llama_params_fit_impl(
                         if (mem_test[id] <= targets[id]) {
                             ngl_per_device = ngl_per_device_test;
                             mem            = mem_test;
+                            break;
                         }
                     }
                 }
@@ -508,7 +509,7 @@ static void llama_params_fit_impl(
                         }
                     }
                 }
-                if (mem_test[id] <= targets[id] || ngl_per_device.back().il_full_start == ngl_per_device.back().il_stop) {
+                if (mem_test[id] == targets[id] || ngl_per_device.back().il_full_start == ngl_per_device.back().il_stop) {
                     return;
                 }
                 ngl_per_device_test[id].il_part_start--;
@@ -518,6 +519,7 @@ static void llama_params_fit_impl(
                     if (mem_test[id] <= targets[id]) {
                         ngl_per_device = ngl_per_device_test;
                         mem            = mem_test;
+                        break;
                     }
                 }
             };
