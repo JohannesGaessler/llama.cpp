@@ -284,10 +284,7 @@ static void llama_params_fit_impl(
         LAYER_FRACTION_NONE  = 0,
         LAYER_FRACTION_UP    = 1,
         LAYER_FRACTION_GATE  = 2,
-
         LAYER_FRACTION_MOE   = 3,
-
-        LAYER_FRACTION_COUNT = 4,
     };
     struct ngl_t {
         uint32_t         il_full_start  = 0;
@@ -398,8 +395,9 @@ static void llama_params_fit_impl(
                             throw std::runtime_error("llama_params_fit_n_tensor_buft_overrides() == "
                                 + std::to_string(ntbo) + " is insufficient for model\n");
                         }
-                        tensor_buft_overrides[itbo].pattern = get_overflow_pattern(il, ngl_per_device[id].overflow_type);
-                        tensor_buft_overrides[itbo].buft    = overflow_bufts[id];
+                        tensor_buft_overrides[itbo].pattern = get_overflow_pattern(il,
+                            il == ngl_per_device[id].il_part_start ? ngl_per_device[id].overflow_type : LAYER_FRACTION_MOE);
+                        tensor_buft_overrides[itbo].buft = overflow_bufts[id];
                         itbo++;
                     }
                 }
@@ -514,16 +512,16 @@ static void llama_params_fit_impl(
                     }
                 }
 
-                // ngl_per_device_test[id].il_part_start--;
-                // for (layer_fraction_t lf : {LAYER_FRACTION_GATE, LAYER_FRACTION_UP}) {
-                //     ngl_per_device_test[id].overflow_type = lf;
-                //     mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
-                //     if (mem_test[id] <= targets[id]) {
-                //         ngl_per_device = ngl_per_device_test;
-                //         mem            = mem_test;
-                //         break;
-                //     }
-                // }
+                std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
+                for (layer_fraction_t lf : {LAYER_FRACTION_GATE, LAYER_FRACTION_UP}) {
+                    ngl_per_device_test[id].overflow_type = lf;
+                    std::vector<int64_t> mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
+                    if (mem_test[id] <= targets[id]) {
+                        ngl_per_device = ngl_per_device_test;
+                        mem            = mem_test;
+                        break;
+                    }
+                }
             };
 
             distribute_layers(__func__, /*initial_step_size =*/ 4);
