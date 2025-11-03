@@ -474,6 +474,15 @@ static void llama_params_fit_impl(
                             }
                         }
                     }
+                    std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
+                    for (layer_fraction_t lf : {LAYER_FRACTION_UP, LAYER_FRACTION_GATE}) {
+                        ngl_per_device_test[id].overflow_type = lf;
+                        std::vector<int64_t> mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
+                        if (mem_test[id] <= targets[id]) {
+                            ngl_per_device = ngl_per_device_test;
+                            mem            = mem_test;
+                        }
+                    }
                 }
                 for (uint32_t step_size = initial_step_size; step_size > 0; step_size /= 2) {
                     if (ngl_per_device[id].il_full_start + step_size > ngl_per_device[id].il_stop) {
@@ -491,6 +500,15 @@ static void llama_params_fit_impl(
                         if (step_size < initial_step_size || mem_test[id] >= targets[id]) {
                             break;
                         }
+                    }
+                }
+                std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
+                for (layer_fraction_t lf : {LAYER_FRACTION_UP, LAYER_FRACTION_GATE}) {
+                    ngl_per_device_test[id].overflow_type = lf;
+                    std::vector<int64_t> mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
+                    if (mem_test[id] <= targets[id]) {
+                        ngl_per_device = ngl_per_device_test;
+                        mem            = mem_test;
                     }
                 }
             };
