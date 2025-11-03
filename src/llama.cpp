@@ -495,16 +495,15 @@ static void llama_params_fit_impl(
                         }
                     }
                 }
-                std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
-                std::vector<int64_t> mem_test;
                 for (uint32_t step_size = initial_step_size; step_size > 0; step_size /= 2) {
                     if (ngl_per_device[id].il_full_start + step_size > ngl_per_device[id].il_stop) {
                         continue;
                     }
+                    std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
                     while (true) {
                         ngl_per_device_test[id].il_part_start += step_size;
 
-                        mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
+                        std::vector<int64_t> mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
                         if (mem_test[id] <= targets[id]) {
                             ngl_per_device = ngl_per_device_test;
                             mem            = mem_test;
@@ -514,19 +513,17 @@ static void llama_params_fit_impl(
                         }
                     }
                 }
-                if (id == nd - 1 || mem_test[id] == targets[id] || ngl_per_device.back().il_full_start == ngl_per_device.back().il_stop) {
-                    return;
-                }
-                ngl_per_device_test[id].il_part_start--;
-                for (layer_fraction_t lf : {LAYER_FRACTION_GATE, LAYER_FRACTION_UP}) {
-                    ngl_per_device_test[id].overflow_type = lf;
-                    mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
-                    if (mem_test[id] <= targets[id]) {
-                        ngl_per_device = ngl_per_device_test;
-                        mem            = mem_test;
-                        break;
-                    }
-                }
+
+                // ngl_per_device_test[id].il_part_start--;
+                // for (layer_fraction_t lf : {LAYER_FRACTION_GATE, LAYER_FRACTION_UP}) {
+                //     ngl_per_device_test[id].overflow_type = lf;
+                //     mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
+                //     if (mem_test[id] <= targets[id]) {
+                //         ngl_per_device = ngl_per_device_test;
+                //         mem            = mem_test;
+                //         break;
+                //     }
+                // }
             };
 
             distribute_layers(__func__, /*initial_step_size =*/ 4);
