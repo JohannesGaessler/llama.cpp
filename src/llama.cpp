@@ -447,13 +447,11 @@ static void llama_params_fit_impl(
             auto distribute_layers = [&](const char * func_name, const uint32_t & initial_step_size) {
                 size_t id = 0;
                 for (; id < nd - 1; id++) {
-                    std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
-                    std::vector<int64_t> mem_test;
                     for (uint32_t step_size = initial_step_size; step_size > 0; step_size /= 2) {
-                        ngl_per_device_test = ngl_per_device;
                         if (ngl_per_device.back().il_full_start + step_size > ngl_per_device.back().il_stop) {
                             continue;
                         }
+                        std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
                         while (true) {
                             ngl_per_device_test[id].il_part_start += step_size;
                             ngl_per_device_test[id].il_stop       += step_size;
@@ -466,7 +464,7 @@ static void llama_params_fit_impl(
                             ngl_per_device_test[jd].il_part_start += step_size;
                             ngl_per_device_test[jd].il_full_start += step_size;
 
-                            mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
+                            std::vector<int64_t> mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
                             if (mem_test[id] <= targets[id]) {
                                 ngl_per_device = ngl_per_device_test;
                                 mem            = mem_test;
@@ -476,13 +474,20 @@ static void llama_params_fit_impl(
                             }
                         }
                     }
-                    if (mem_test[id] == targets[id] || ngl_per_device.back().il_full_start == ngl_per_device.back().il_stop) {
-                        continue;
+
+                    std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
+                    ngl_per_device_test[id].il_stop++;
+                    size_t jd = id + 1;
+                    for (; jd < nd - 1; jd++) {
+                        ngl_per_device_test[jd].il_part_start++;
+                        ngl_per_device_test[jd].il_full_start++;
+                        ngl_per_device_test[jd].il_stop++;
                     }
-                    ngl_per_device_test[id].il_part_start--;
+                    ngl_per_device_test[jd].il_part_start++;
+                    ngl_per_device_test[jd].il_full_start++;
                     for (layer_fraction_t lf : {LAYER_FRACTION_GATE, LAYER_FRACTION_UP}) {
                         ngl_per_device_test[id].overflow_type = lf;
-                        mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
+                        std::vector<int64_t> mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
                         if (mem_test[id] <= targets[id]) {
                             ngl_per_device = ngl_per_device_test;
                             mem            = mem_test;
