@@ -419,8 +419,8 @@ static void llama_params_fit_impl(
                 for (size_t id = 0; id < nd; id++) {
                     const ngl_t & n = ngl_per_device[id];
                     LLAMA_LOG_DEBUG(
-                        "%s: id=%zu, il_full_start=%" PRIu32 ", il_part_start=%" PRIu32 ", "
-                        "il_stop=%" PRIu32 ", overflow_type=%d, mem=%" PRId64 " MiB\n",
+                        "%s: id=%zu, il_full_start=%2" PRIu32 ", il_part_start=%2" PRIu32 ", "
+                        "il_stop=%2" PRIu32 ", overflow_type=%d, mem=%" PRId64 " MiB\n",
                         func_name, id, n.il_full_start, n.il_part_start, n.il_stop, int(n.overflow_type), mem[id]/MiB);
                 }
 
