@@ -420,7 +420,7 @@ static void llama_params_fit_impl(
                     const ngl_t & n = ngl_per_device[id];
                     LLAMA_LOG_DEBUG(
                         "%s: id=%zu, il_full_start=%2" PRIu32 ", il_part_start=%2" PRIu32 ", "
-                        "il_stop=%2" PRIu32 ", overflow_type=%d, mem=%" PRId64 " MiB\n",
+                        "il_stop=%2" PRIu32 ", overflow_type=%d, mem=%6" PRId64 " MiB\n",
                         func_name, id, n.il_full_start, n.il_part_start, n.il_stop, int(n.overflow_type), mem[id]/MiB);
                 }
 
@@ -509,7 +509,7 @@ static void llama_params_fit_impl(
                         }
                     }
                 }
-                if (mem_test[id] == targets[id] || ngl_per_device.back().il_full_start == ngl_per_device.back().il_stop) {
+                if (id == nd - 1 || mem_test[id] == targets[id] || ngl_per_device.back().il_full_start == ngl_per_device.back().il_stop) {
                     return;
                 }
                 ngl_per_device_test[id].il_part_start--;
