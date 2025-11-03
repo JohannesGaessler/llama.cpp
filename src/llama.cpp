@@ -475,7 +475,7 @@ static void llama_params_fit_impl(
                             }
                         }
                     }
-                    if (ngl_per_device.back().il_full_start == ngl_per_device.back().il_stop) {
+                    if (mem[id] <= targets[id] || ngl_per_device.back().il_full_start == ngl_per_device.back().il_stop) {
                         continue;
                     }
                     ngl_per_device_test[id].il_part_start--;
@@ -506,7 +506,7 @@ static void llama_params_fit_impl(
                         }
                     }
                 }
-                if (ngl_per_device.back().il_full_start == ngl_per_device.back().il_stop) {
+                if (mem[id] <= targets[id] || ngl_per_device.back().il_full_start == ngl_per_device.back().il_stop) {
                     return;
                 }
                 ngl_per_device_test[id].il_part_start--;
