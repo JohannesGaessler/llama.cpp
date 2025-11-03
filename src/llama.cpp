@@ -448,6 +448,7 @@ static void llama_params_fit_impl(
                 size_t id = 0;
                 for (; id < nd - 1; id++) {
                     std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
+                    std::vector<int64_t> mem_test;
                     for (uint32_t step_size = initial_step_size; step_size > 0; step_size /= 2) {
                         ngl_per_device_test = ngl_per_device;
                         if (ngl_per_device.back().il_full_start + step_size > ngl_per_device.back().il_stop) {
@@ -465,7 +466,7 @@ static void llama_params_fit_impl(
                             ngl_per_device_test[jd].il_part_start += step_size;
                             ngl_per_device_test[jd].il_full_start += step_size;
 
-                            std::vector<int64_t> mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
+                            mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
                             if (mem_test[id] <= targets[id]) {
                                 ngl_per_device = ngl_per_device_test;
                                 mem            = mem_test;
@@ -475,13 +476,13 @@ static void llama_params_fit_impl(
                             }
                         }
                     }
-                    if (mem[id] <= targets[id] || ngl_per_device.back().il_full_start == ngl_per_device.back().il_stop) {
+                    if (mem_test[id] <= targets[id] || ngl_per_device.back().il_full_start == ngl_per_device.back().il_stop) {
                         continue;
                     }
                     ngl_per_device_test[id].il_part_start--;
                     for (layer_fraction_t lf : {LAYER_FRACTION_UP, LAYER_FRACTION_GATE}) {
                         ngl_per_device_test[id].overflow_type = lf;
-                        std::vector<int64_t> mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
+                        mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
                         if (mem_test[id] <= targets[id]) {
                             ngl_per_device = ngl_per_device_test;
                             mem            = mem_test;
@@ -489,6 +490,7 @@ static void llama_params_fit_impl(
                     }
                 }
                 std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
+                std::vector<int64_t> mem_test;
                 for (uint32_t step_size = initial_step_size; step_size > 0; step_size /= 2) {
                     if (ngl_per_device[id].il_full_start + step_size > ngl_per_device[id].il_stop) {
                         continue;
@@ -496,7 +498,7 @@ static void llama_params_fit_impl(
                     while (true) {
                         ngl_per_device_test[id].il_part_start += step_size;
 
-                        std::vector<int64_t> mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
+                        mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
                         if (mem_test[id] <= targets[id]) {
                             ngl_per_device = ngl_per_device_test;
                             mem            = mem_test;
@@ -506,13 +508,13 @@ static void llama_params_fit_impl(
                         }
                     }
                 }
-                if (mem[id] <= targets[id] || ngl_per_device.back().il_full_start == ngl_per_device.back().il_stop) {
+                if (mem_test[id] <= targets[id] || ngl_per_device.back().il_full_start == ngl_per_device.back().il_stop) {
                     return;
                 }
                 ngl_per_device_test[id].il_part_start--;
                 for (layer_fraction_t lf : {LAYER_FRACTION_UP, LAYER_FRACTION_GATE}) {
                     ngl_per_device_test[id].overflow_type = lf;
-                    std::vector<int64_t> mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
+                    mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
                     if (mem_test[id] <= targets[id]) {
                         ngl_per_device = ngl_per_device_test;
                         mem            = mem_test;
