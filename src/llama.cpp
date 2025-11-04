@@ -218,7 +218,6 @@ static void llama_params_fit_impl(
 
     // step 2: try reducing memory use by reducing the context size
 
-    int64_t global_memory_reduction_vs_full = 0;
     {
         int64_t global_surplus = sum_projected_free - int64_t(nd)*margin;
         if (global_surplus < 0) {
@@ -234,7 +233,6 @@ static void llama_params_fit_impl(
                     cparams->n_ctx = hp_nct - ctx_reduction;
                     const int64_t memory_reduction = ctx_reduction * bytes_per_ctx;
                     global_surplus += memory_reduction;
-                    global_memory_reduction_vs_full += memory_reduction;
                     LLAMA_LOG_INFO("%s: context size reduced from %" PRIu32 " to %" PRIu32 " -> need %" PRId64 " MiB less memory in total\n",
                         __func__, hp_nct, cparams->n_ctx, memory_reduction/MiB);
                 } else {
@@ -441,7 +439,15 @@ static void llama_params_fit_impl(
         }
     }
 
+    std::vector<int64_t> targets; // maximum acceptable memory use per device
+    targets.reserve(nd);
+    for (size_t id = 0; id < nd; id++) {
+        targets.push_back(dmds_full[id].free - margin);
+    }
+
+    std::vector<int64_t> mem;
     std::vector<ngl_t> ngl_per_device(nd);
+    ngl_per_device.back().overflow_type = LAYER_FRACTION_MOE;
     if (hp_nex > 0) {
         if (global_surplus_cpu_moe >= 0) {
             LLAMA_LOG_INFO("%s: with only dense weights in device memory there is a total surplus of %" PRId64 " MiB\n",
@@ -452,13 +458,6 @@ static void llama_params_fit_impl(
                 __func__, -global_surplus_cpu_moe/MiB);
         }
     }
-    ngl_per_device.back().overflow_type = LAYER_FRACTION_MOE;
-    std::vector<int64_t> targets; // maximum acceptable memory use per device
-    targets.reserve(nd);
-    for (size_t id = 0; id < nd; id++) {
-        targets.push_back(dmds_full[id].free - margin);
-    }
-    std::vector<int64_t> mem;
 
     // utility function that iteratively tries moving layers from the last device to other devices
     //     initially use a larger step size in order to do fewer test allocations
