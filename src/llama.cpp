@@ -293,21 +293,32 @@ static void llama_params_fit_impl(
         layer_fraction_t overflow_type  = LAYER_FRACTION_NONE;
     };
 
+    auto set_ngl_tensor_split = [&](const std::vector<ngl_t> & layers_per_device, llama_model_params & mparams) {
+        mparams.n_gpu_layers = 0;
+        for (size_t id = 0; id < nd; id++) {
+            assert(layers_per_device[id].il_stop >= layers_per_device[id].il_full_start);
+            const uint32_t n_layer = layers_per_device[id].il_stop - layers_per_device[id].il_full_start;
+            mparams.n_gpu_layers += n_layer;
+            if (nd > 1) {
+                tensor_split[id] = layers_per_device[id].il_stop - layers_per_device[id].il_full_start;
+            }
+        }
+        if (hp_nex > 0 && nd > 1) {
+            tensor_split[nd - 1] += 1; // non-repeating tensors
+        }
+        mparams.tensor_split = tensor_split;
+    };
+
     // utility function that returns the memory use per device for given numbers of layers per device
     auto get_memory_for_layers = [&](const std::vector<ngl_t> & layers_per_device) -> std::vector<int64_t> {
         assert(layers_per_device[0].il_full_start == 0);
-        assert(layers_per_device.back().il_stop   == hp_ngl);
+        assert(layers_per_device.back().il_stop   <= hp_ngl);
         llama_model_params mparams_copy = *mparams;
-        if (nd > 1) {
-            for (size_t id = 0; id < nd; id++) {
-                assert(layers_per_device[id].il_stop >= layers_per_device[id].il_full_start);
-                tensor_split[id] = layers_per_device[id].il_stop - layers_per_device[id].il_full_start;
-            }
-            tensor_split[nd - 1] += 1; // non-repeating tensors
-        }
-        mparams_copy.tensor_split = tensor_split;
+        set_ngl_tensor_split(layers_per_device, mparams_copy);
+
         const dmds_t dmd_nl = llama_get_device_memory_data(
             path_model, &mparams_copy, cparams, devs, hp_ngl, hp_nct, hp_nex, hp_nldl, log_level);
+
         std::vector<int64_t> ret;
         ret.reserve(nd);
         for (const llama_device_memory_data & dmd : dmd_nl) {
@@ -560,6 +571,7 @@ static void llama_params_fit_impl(
             };
 
             distribute_layers(__func__, /*initial_step_size =*/ 4);
+            set_ngl_tensor_split(ngl_per_device, *mparams);
             set_tensor_buft_overrides(ngl_per_device);
         }
     }
