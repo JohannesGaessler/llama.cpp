@@ -280,19 +280,28 @@ static void llama_params_fit_impl(
         throw std::runtime_error("model_params::tensor_buft_overrides already set by user, abort");
     }
 
+    // step 3: iteratively fill the devices front to back with model layers
+    //   - for a dense model simply fill full layers, giving each device a contiguous slice of the model
+    //   - for a MoE model, first fill the back with dense-only layers, then convert those to layers in the front
+    //   - to reduce wasted VRAM, the memory from each device can "overflow" to the next device (or RAM for the last one)
+
     enum layer_fraction_t {
-        LAYER_FRACTION_NONE  = 0,
-        LAYER_FRACTION_UP    = 1,
-        LAYER_FRACTION_GATE  = 2,
-        LAYER_FRACTION_MOE   = 3,
+        LAYER_FRACTION_NONE  = 0, // nothing
+        LAYER_FRACTION_ATTN  = 1, // attention
+        LAYER_FRACTION_UP    = 2, // attention + up
+        LAYER_FRACTION_GATE  = 3, // attention + up + gate
+        LAYER_FRACTION_MOE   = 4, // everything but sparse MoE weights
     };
     struct ngl_t {
-        uint32_t         il_full_start  = 0;
-        uint32_t         il_part_start  = 0;
-        uint32_t         il_stop        = 0;
-        layer_fraction_t overflow_type  = LAYER_FRACTION_NONE;
+        uint32_t il_full_start = 0; // layer index for device at which the full layers start
+        uint32_t il_part_start = 0; // layer index at which the full layers stop and the partial layers start
+        uint32_t il_stop       = 0; // layer index at which the layers stop
+
+        // the first partial layer can have varying parts overflow, all further layers are LAYER_FRACTION_MOE:
+        layer_fraction_t overflow_type = LAYER_FRACTION_NONE;
     };
 
+    // utility function to set n_gpu_layers and tensor_split
     auto set_ngl_tensor_split = [&](const std::vector<ngl_t> & layers_per_device, llama_model_params & mparams) {
         mparams.n_gpu_layers = 0;
         for (size_t id = 0; id < nd; id++) {
@@ -327,260 +336,253 @@ static void llama_params_fit_impl(
         return ret;
     };
 
-    {
-        // utility function that returns a static C string matching the MoE tensors for a specific layer:
-        auto get_overflow_pattern = [&](const size_t il, const layer_fraction_t lf) -> const char * {
-            switch (lf) {
-                case LAYER_FRACTION_UP: {
-                    static std::vector<std::string> patterns;
-                    while (patterns.size() <= il) {
-                        patterns.push_back("blk\\." + std::to_string(patterns.size()) + "\\.ffn_(gate|down).*");
-                    }
-                    return patterns[il].c_str();
+    // utility function that returns a static C string matching the tensors for a specific layer index and layer fraction:
+    auto get_overflow_pattern = [&](const size_t il, const layer_fraction_t lf) -> const char * {
+        switch (lf) {
+            case LAYER_FRACTION_UP: {
+                static std::vector<std::string> patterns;
+                while (patterns.size() <= il) {
+                    patterns.push_back("blk\\." + std::to_string(patterns.size()) + "\\.ffn_(gate|down).*");
                 }
-                case LAYER_FRACTION_GATE: {
-                    static std::vector<std::string> patterns;
-                    while (patterns.size() <= il) {
-                        patterns.push_back("blk\\." + std::to_string(patterns.size()) + "\\.ffn_down.*");
-                    }
-                    return patterns[il].c_str();
-                }
-                case LAYER_FRACTION_MOE: {
-                    static std::vector<std::string> patterns;
-                    while (patterns.size() <= il) {
-                        patterns.push_back("blk\\." + std::to_string(patterns.size()) + "\\.ffn_(up|down|gate)_(ch|)exps");
-                    }
-                    return patterns[il].c_str();
-                }
-                default:
-                    GGML_ABORT("fatal error");
-                    return nullptr;
+                return patterns[il].c_str();
             }
-        };
+            case LAYER_FRACTION_GATE: {
+                static std::vector<std::string> patterns;
+                while (patterns.size() <= il) {
+                    patterns.push_back("blk\\." + std::to_string(patterns.size()) + "\\.ffn_down.*");
+                }
+                return patterns[il].c_str();
+            }
+            case LAYER_FRACTION_MOE: {
+                static std::vector<std::string> patterns;
+                while (patterns.size() <= il) {
+                    patterns.push_back("blk\\." + std::to_string(patterns.size()) + "\\.ffn_(up|down|gate)_(ch|)exps");
+                }
+                return patterns[il].c_str();
+            }
+            default:
+                GGML_ABORT("fatal error");
+                return nullptr;
+        }
+    };
 
-        int64_t global_surplus_cpu_moe = 0;
-        if (hp_nex > 0) {
-            const static std::string pattern_moe_all = "blk\\.\\d+\\.ffn_(up|down|gate)_(ch|)exps"; // matches all MoE tensors
-            ggml_backend_buffer_type_t cpu_buft = ggml_backend_cpu_buffer_type();
-            tensor_buft_overrides[0] = {pattern_moe_all.c_str(), cpu_buft};
-            tensor_buft_overrides[1] = {nullptr, nullptr};
-            mparams->tensor_buft_overrides = tensor_buft_overrides;
+    int64_t global_surplus_cpu_moe = 0;
+    if (hp_nex > 0) {
+        const static std::string pattern_moe_all = "blk\\.\\d+\\.ffn_(up|down|gate)_(ch|)exps"; // matches all MoE tensors
+        ggml_backend_buffer_type_t cpu_buft = ggml_backend_cpu_buffer_type();
+        tensor_buft_overrides[0] = {pattern_moe_all.c_str(), cpu_buft};
+        tensor_buft_overrides[1] = {nullptr, nullptr};
+        mparams->tensor_buft_overrides = tensor_buft_overrides;
 
-            LLAMA_LOG_DEBUG("%s: getting device memory data with all MoE tensors moved to system memory:\n", __func__);
-            const dmds_t dmds_cpu_moe = llama_get_device_memory_data(
-                path_model, mparams, cparams, devs, hp_ngl, hp_nct, hp_nex, hp_nldl, log_level);
+        LLAMA_LOG_DEBUG("%s: getting device memory data with all MoE tensors moved to system memory:\n", __func__);
+        const dmds_t dmds_cpu_moe = llama_get_device_memory_data(
+            path_model, mparams, cparams, devs, hp_ngl, hp_nct, hp_nex, hp_nldl, log_level);
 
-            // reset
-            tensor_buft_overrides[0] = {nullptr, nullptr};
-            mparams->tensor_buft_overrides = tensor_buft_overrides;
+        // reset
+        tensor_buft_overrides[0] = {nullptr, nullptr};
+        mparams->tensor_buft_overrides = tensor_buft_overrides;
 
-            for (const llama_device_memory_data & dmd : dmds_cpu_moe) {
-                global_surplus_cpu_moe += dmd.free;
-                global_surplus_cpu_moe -= int64_t(dmd.mb.total()) + margin;
+        for (const llama_device_memory_data & dmd : dmds_cpu_moe) {
+            global_surplus_cpu_moe += dmd.free;
+            global_surplus_cpu_moe -= int64_t(dmd.mb.total()) + margin;
+        }
+    }
+
+    std::vector<ggml_backend_buffer_type_t> overflow_bufts;
+    overflow_bufts.reserve(nd);
+    for (size_t id = 1; id < nd; ++id) {
+        overflow_bufts.push_back(ggml_backend_dev_buffer_type(devs[id]));
+    }
+    overflow_bufts.push_back(ggml_backend_cpu_buffer_type());
+
+    const size_t ntbo = llama_max_tensor_buft_overrides();
+
+    // utility function that sets tensor buft overrides to produce a given layer distribution
+    auto set_tensor_buft_overrides = [&](const std::vector<ngl_t> & ngl_per_device) {
+        size_t itbo = 0;
+        for (size_t id = 0; id < nd; id++) {
+            // on last device one of the "full layers" are the non-repeating layers
+            for (uint32_t il = ngl_per_device[id].il_part_start; il < ngl_per_device[id].il_stop; il++) {
+                if (itbo + 1 >= ntbo) {
+                    tensor_buft_overrides[itbo].pattern = nullptr;
+                    tensor_buft_overrides[itbo].buft    = nullptr;
+                    itbo++;
+                    mparams->tensor_buft_overrides = tensor_buft_overrides;
+                    throw std::runtime_error("llama_params_fit_n_tensor_buft_overrides() == "
+                        + std::to_string(ntbo) + " is insufficient for model\n");
+                }
+                tensor_buft_overrides[itbo].pattern = get_overflow_pattern(il,
+                    il == ngl_per_device[id].il_part_start ? ngl_per_device[id].overflow_type : LAYER_FRACTION_MOE);
+                tensor_buft_overrides[itbo].buft = overflow_bufts[id];
+                itbo++;
             }
         }
-        {
+        tensor_buft_overrides[itbo].pattern = nullptr;
+        tensor_buft_overrides[itbo].buft    = nullptr;
+        itbo++;
+        mparams->tensor_buft_overrides = tensor_buft_overrides;
+    };
 
-            // step 3b: for MoE models and multiple devices, if at least the dense tensors can be fit,
-            //     try fitting as many full layers as possible by iteratively adjusting layers per device
+    // utility function that returns the projected memory use for a given layer assignment
+    auto get_memory_for_layers_moe = [&](const char * func_name, const std::vector<ngl_t> & ngl_per_device) -> std::vector<int64_t> {
+        set_tensor_buft_overrides(ngl_per_device);
 
-            std::vector<ggml_backend_buffer_type_t> overflow_bufts;
-            overflow_bufts.reserve(nd);
-            for (size_t id = 1; id < nd; ++id) {
-                overflow_bufts.push_back(ggml_backend_dev_buffer_type(devs[id]));
-            }
-            overflow_bufts.push_back(ggml_backend_cpu_buffer_type());
+        const auto mem = get_memory_for_layers(ngl_per_device);
 
-            const size_t ntbo = llama_max_tensor_buft_overrides();
+        LLAMA_LOG_DEBUG("%s: memory for test allocation by device:\n", func_name);
+        for (size_t id = 0; id < nd; id++) {
+            const ngl_t & n = ngl_per_device[id];
+            LLAMA_LOG_DEBUG(
+                "%s: id=%zu, il_full_start=%2" PRIu32 ", il_part_start=%2" PRIu32 ", "
+                "il_stop=%2" PRIu32 ", overflow_type=%d, mem=%6" PRId64 " MiB\n",
+                func_name, id, n.il_full_start, n.il_part_start, n.il_stop, int(n.overflow_type), mem[id]/MiB);
+        }
 
-            // utility function that sets tensor buft overrides to produce a given layer distribution
-            auto set_tensor_buft_overrides = [&](const std::vector<ngl_t> & ngl_per_device) {
-                size_t itbo = 0;
-                for (size_t id = 0; id < nd; id++) {
-                    // on last device one of the "full layers" are the non-repeating layers
-                    for (uint32_t il = ngl_per_device[id].il_part_start; il < ngl_per_device[id].il_stop; il++) {
-                        if (itbo + 1 >= ntbo) {
-                            tensor_buft_overrides[itbo].pattern = nullptr;
-                            tensor_buft_overrides[itbo].buft    = nullptr;
-                            itbo++;
-                            mparams->tensor_buft_overrides = tensor_buft_overrides;
-                            throw std::runtime_error("llama_params_fit_n_tensor_buft_overrides() == "
-                                + std::to_string(ntbo) + " is insufficient for model\n");
-                        }
-                        tensor_buft_overrides[itbo].pattern = get_overflow_pattern(il,
-                            il == ngl_per_device[id].il_part_start ? ngl_per_device[id].overflow_type : LAYER_FRACTION_MOE);
-                        tensor_buft_overrides[itbo].buft = overflow_bufts[id];
-                        itbo++;
-                    }
+        // reset
+        tensor_buft_overrides[0].pattern = nullptr;
+        tensor_buft_overrides[0].buft    = nullptr;
+        mparams->tensor_buft_overrides   = tensor_buft_overrides;
+
+        return mem;
+    };
+
+    std::vector<ngl_t> ngl_per_device(nd);
+    if (hp_nex > 0) {
+        if (global_surplus_cpu_moe >= 0) {
+            LLAMA_LOG_INFO("%s: with only dense weights in device memory there is a total surplus of %" PRId64 " MiB\n",
+                __func__, global_surplus_cpu_moe/MiB);
+            ngl_per_device.back().il_stop = hp_ngl;
+        } else {
+            LLAMA_LOG_INFO("%s: with only dense weights in device memory there is still a total deficit of %" PRId64 " MiB\n",
+                __func__, -global_surplus_cpu_moe/MiB);
+        }
+    }
+    ngl_per_device.back().overflow_type = LAYER_FRACTION_MOE;
+    std::vector<int64_t> targets; // maximum acceptable memory use per device
+    targets.reserve(nd);
+    for (size_t id = 0; id < nd; id++) {
+        targets.push_back(dmds_full[id].free - margin);
+    }
+    std::vector<int64_t> mem;
+
+    // utility function that iteratively tries moving layers from the last device to other devices
+    //     initially use a larger step size in order to do fewer test allocations
+    auto distribute_layers = [&](const char * func_name, const uint32_t & initial_step_size) {
+        LLAMA_LOG_INFO("%s: distributing layers across devices with overflow to next device/system memory:\n", func_name);
+        size_t id = 0;
+        const size_t id_stop = hp_nex == 0 ? nd         : nd - 1;
+        const size_t il_stop = hp_nex == 0 ? hp_ngl + 1 : ngl_per_device.back().il_stop;
+        for (; id < id_stop; id++) {
+            for (uint32_t step_size = initial_step_size; step_size > 0; step_size /= 2) {
+                if (ngl_per_device.back().il_full_start + step_size > il_stop) {
+                    continue;
                 }
-                tensor_buft_overrides[itbo].pattern = nullptr;
-                tensor_buft_overrides[itbo].buft    = nullptr;
-                itbo++;
-                mparams->tensor_buft_overrides = tensor_buft_overrides;
-            };
-
-            // utility function that returns the projected memory use for a given layer assignment
-            auto get_memory_for_layers_moe = [&](const char * func_name, const std::vector<ngl_t> & ngl_per_device) -> std::vector<int64_t> {
-                set_tensor_buft_overrides(ngl_per_device);
-
-                const auto mem = get_memory_for_layers(ngl_per_device);
-
-                LLAMA_LOG_DEBUG("%s: memory for test allocation by device:\n", func_name);
-                for (size_t id = 0; id < nd; id++) {
-                    const ngl_t & n = ngl_per_device[id];
-                    LLAMA_LOG_DEBUG(
-                        "%s: id=%zu, il_full_start=%2" PRIu32 ", il_part_start=%2" PRIu32 ", "
-                        "il_stop=%2" PRIu32 ", overflow_type=%d, mem=%6" PRId64 " MiB\n",
-                        func_name, id, n.il_full_start, n.il_part_start, n.il_stop, int(n.overflow_type), mem[id]/MiB);
-                }
-
-                // reset
-                tensor_buft_overrides[0].pattern = nullptr;
-                tensor_buft_overrides[0].buft    = nullptr;
-                mparams->tensor_buft_overrides   = tensor_buft_overrides;
-
-                return mem;
-            };
-
-            std::vector<ngl_t> ngl_per_device(nd);
-            if (hp_nex > 0) {
-                if (global_surplus_cpu_moe >= 0) {
-                    LLAMA_LOG_INFO("%s: with only dense weights in device memory there is a total surplus of %" PRId64 " MiB\n",
-                        __func__, global_surplus_cpu_moe/MiB);
-                    ngl_per_device.back().il_stop = hp_ngl;
-                } else {
-                    LLAMA_LOG_INFO("%s: with only dense weights in device memory there is still a total deficit of %" PRId64 " MiB\n",
-                        __func__, -global_surplus_cpu_moe/MiB);
-                }
-            }
-            ngl_per_device.back().overflow_type = LAYER_FRACTION_MOE;
-            std::vector<int64_t> targets;
-            targets.reserve(nd);
-            for (size_t id = 0; id < nd; id++) {
-                targets.push_back(dmds_full[id].free - margin);
-            }
-            std::vector<int64_t> mem;
-
-            // utility function that iteratively tries moving layers from the last device to other devices
-            // initially use a larger step size in order to do fewer test allocations
-            auto distribute_layers = [&](const char * func_name, const uint32_t & initial_step_size) {
-                LLAMA_LOG_INFO("%s: distributing layers across devices with overflow to next device/system memory:\n", func_name);
-                size_t id = 0;
-                const size_t id_stop = hp_nex == 0 ? nd         : nd - 1;
-                const size_t il_stop = hp_nex == 0 ? hp_ngl + 1 : ngl_per_device.back().il_stop;
-                for (; id < id_stop; id++) {
-                    for (uint32_t step_size = initial_step_size; step_size > 0; step_size /= 2) {
-                        if (ngl_per_device.back().il_full_start + step_size > il_stop) {
-                            continue;
-                        }
-                        std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
-                        while (true) {
-                            ngl_per_device_test[id].il_part_start += step_size;
-                            ngl_per_device_test[id].il_stop       += step_size;
-                            size_t jd = id + 1;
-                            for (; jd < id_stop; jd++) {
-                                ngl_per_device_test[jd].il_part_start += step_size;
-                                ngl_per_device_test[jd].il_full_start += step_size;
-                                ngl_per_device_test[jd].il_stop       += step_size;
-                            }
-                            if (jd < nd) {
-                                ngl_per_device_test[jd].il_part_start += step_size;
-                                ngl_per_device_test[jd].il_full_start += step_size;
-                            }
-
-                            std::vector<int64_t> mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
-                            if (mem_test[id] <= targets[id]) {
-                                ngl_per_device = ngl_per_device_test;
-                                mem            = mem_test;
-                            }
-                            if (step_size < initial_step_size || mem_test[id] >= targets[id]) {
-                                break;
-                            }
-                        }
-                    }
-
-                    std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
-                    ngl_per_device_test[id].il_stop++;
+                std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
+                while (true) {
+                    ngl_per_device_test[id].il_part_start += step_size;
+                    ngl_per_device_test[id].il_stop       += step_size;
                     size_t jd = id + 1;
                     for (; jd < id_stop; jd++) {
-                        ngl_per_device_test[jd].il_part_start++;
-                        ngl_per_device_test[jd].il_full_start++;
-                        ngl_per_device_test[jd].il_stop++;
+                        ngl_per_device_test[jd].il_part_start += step_size;
+                        ngl_per_device_test[jd].il_full_start += step_size;
+                        ngl_per_device_test[jd].il_stop       += step_size;
                     }
                     if (jd < nd) {
-                        ngl_per_device_test[jd].il_part_start++;
-                        ngl_per_device_test[jd].il_full_start++;
-                    }
-                    for (layer_fraction_t lf : {LAYER_FRACTION_GATE, LAYER_FRACTION_UP}) {
-                        ngl_per_device_test[id].overflow_type = lf;
-                        std::vector<int64_t> mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
-                        if (mem_test[id] <= targets[id]) {
-                            ngl_per_device = ngl_per_device_test;
-                            mem            = mem_test;
-                            break;
-                        }
+                        ngl_per_device_test[jd].il_part_start += step_size;
+                        ngl_per_device_test[jd].il_full_start += step_size;
                     }
 
-                    const int64_t projected_margin = dmds_full[id].free - mem[id];
-                    const uint32_t n_layer   = ngl_per_device[id].il_stop - ngl_per_device[id].il_full_start;
-                    const uint32_t n_partial = ngl_per_device[id].il_stop - ngl_per_device[id].il_part_start;
-                    LLAMA_LOG_INFO(
-                        "%s:   - %s: %2" PRIu32 " layers (%2" PRIu32 " overflowing), %6" PRId64 " MiB used, %6" PRId64 " MiB free\n",
-                        func_name, dev_names[id].c_str(), n_layer, n_partial, mem[id]/MiB, projected_margin/MiB);
-                }
-
-                if (id >= nd) {
-                    return;
-                }
-
-                for (uint32_t step_size = initial_step_size; step_size > 0; step_size /= 2) {
-                    if (ngl_per_device[id].il_full_start + step_size > il_stop) {
-                        continue;
-                    }
-                    std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
-                    while (true) {
-                        ngl_per_device_test[id].il_part_start += step_size;
-
-                        std::vector<int64_t> mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
-                        if (mem_test[id] <= targets[id]) {
-                            ngl_per_device = ngl_per_device_test;
-                            mem            = mem_test;
-                        }
-                        if (step_size < initial_step_size || mem_test[id] >= targets[id]) {
-                            break;
-                        }
-                    }
-                }
-
-                std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
-                for (layer_fraction_t lf : {LAYER_FRACTION_GATE, LAYER_FRACTION_UP}) {
-                    ngl_per_device_test[id].overflow_type = lf;
                     std::vector<int64_t> mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
                     if (mem_test[id] <= targets[id]) {
                         ngl_per_device = ngl_per_device_test;
                         mem            = mem_test;
+                    }
+                    if (step_size < initial_step_size || mem_test[id] >= targets[id]) {
                         break;
                     }
                 }
-
-                const int64_t projected_margin = dmds_full[id].free - mem[id];
-                const uint32_t n_layer   = ngl_per_device[id].il_stop - ngl_per_device[id].il_full_start;
-                const uint32_t n_partial = ngl_per_device[id].il_stop - ngl_per_device[id].il_part_start;
-                LLAMA_LOG_INFO(
-                    "%s:   - %s: %2" PRIu32 " layers (%2" PRIu32 " overflowing), %6" PRId64 " MiB used, %6" PRId64 " MiB free\n",
-                    func_name, dev_names[id].c_str(), n_layer, n_partial, mem[id]/MiB, projected_margin/MiB);
-            };
-
-            const uint32_t initial_step_size_max = hp_ngl / (2 * nd);
-            uint32_t initial_step_size = 1;
-            while (2*initial_step_size < initial_step_size_max) {
-                initial_step_size *= 2;
             }
-            distribute_layers(__func__, initial_step_size);
-            set_ngl_tensor_split(ngl_per_device, *mparams);
-            set_tensor_buft_overrides(ngl_per_device);
+
+            std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
+            ngl_per_device_test[id].il_stop++;
+            size_t jd = id + 1;
+            for (; jd < id_stop; jd++) {
+                ngl_per_device_test[jd].il_part_start++;
+                ngl_per_device_test[jd].il_full_start++;
+                ngl_per_device_test[jd].il_stop++;
+            }
+            if (jd < nd) {
+                ngl_per_device_test[jd].il_part_start++;
+                ngl_per_device_test[jd].il_full_start++;
+            }
+            for (layer_fraction_t lf : {LAYER_FRACTION_GATE, LAYER_FRACTION_UP}) {
+                ngl_per_device_test[id].overflow_type = lf;
+                std::vector<int64_t> mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
+                if (mem_test[id] <= targets[id]) {
+                    ngl_per_device = ngl_per_device_test;
+                    mem            = mem_test;
+                    break;
+                }
+            }
+
+            const int64_t projected_margin = dmds_full[id].free - mem[id];
+            const uint32_t n_layer   = ngl_per_device[id].il_stop - ngl_per_device[id].il_full_start;
+            const uint32_t n_partial = ngl_per_device[id].il_stop - ngl_per_device[id].il_part_start;
+            LLAMA_LOG_INFO(
+                "%s:   - %s: %2" PRIu32 " layers (%2" PRIu32 " overflowing), %6" PRId64 " MiB used, %6" PRId64 " MiB free\n",
+                func_name, dev_names[id].c_str(), n_layer, n_partial, mem[id]/MiB, projected_margin/MiB);
         }
+
+        if (id >= nd) {
+            return;
+        }
+
+        for (uint32_t step_size = initial_step_size; step_size > 0; step_size /= 2) {
+            if (ngl_per_device[id].il_full_start + step_size > il_stop) {
+                continue;
+            }
+            std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
+            while (true) {
+                ngl_per_device_test[id].il_part_start += step_size;
+
+                std::vector<int64_t> mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
+                if (mem_test[id] <= targets[id]) {
+                    ngl_per_device = ngl_per_device_test;
+                    mem            = mem_test;
+                }
+                if (step_size < initial_step_size || mem_test[id] >= targets[id]) {
+                    break;
+                }
+            }
+        }
+
+        std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
+        for (layer_fraction_t lf : {LAYER_FRACTION_GATE, LAYER_FRACTION_UP}) {
+            ngl_per_device_test[id].overflow_type = lf;
+            std::vector<int64_t> mem_test = get_memory_for_layers_moe(func_name, ngl_per_device_test);
+            if (mem_test[id] <= targets[id]) {
+                ngl_per_device = ngl_per_device_test;
+                mem            = mem_test;
+                break;
+            }
+        }
+
+        const int64_t projected_margin = dmds_full[id].free - mem[id];
+        const uint32_t n_layer   = ngl_per_device[id].il_stop - ngl_per_device[id].il_full_start;
+        const uint32_t n_partial = ngl_per_device[id].il_stop - ngl_per_device[id].il_part_start;
+        LLAMA_LOG_INFO(
+            "%s:   - %s: %2" PRIu32 " layers (%2" PRIu32 " overflowing), %6" PRId64 " MiB used, %6" PRId64 " MiB free\n",
+            func_name, dev_names[id].c_str(), n_layer, n_partial, mem[id]/MiB, projected_margin/MiB);
+    };
+
+    const uint32_t initial_step_size_max = hp_ngl / (2 * nd);
+    uint32_t initial_step_size = 1;
+    while (2*initial_step_size < initial_step_size_max) {
+        initial_step_size *= 2;
     }
+    distribute_layers(__func__, initial_step_size);
+    set_ngl_tensor_split(ngl_per_device, *mparams);
+    set_tensor_buft_overrides(ngl_per_device);
 }
 
 bool llama_params_fit(
