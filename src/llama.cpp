@@ -571,7 +571,12 @@ static void llama_params_fit_impl(
                     func_name, dev_names[id].c_str(), n_layer, n_partial, mem[id]/MiB, projected_margin/MiB);
             };
 
-            distribute_layers(__func__, /*initial_step_size =*/ 4);
+            const uint32_t initial_step_size_max = hp_ngl / (2 * nd);
+            uint32_t initial_step_size = 1;
+            while (2*initial_step_size < initial_step_size_max) {
+                initial_step_size *= 2;
+            }
+            distribute_layers(__func__, initial_step_size);
             set_ngl_tensor_split(ngl_per_device, *mparams);
             set_tensor_buft_overrides(ngl_per_device);
         }
