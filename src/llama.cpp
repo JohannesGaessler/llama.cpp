@@ -466,10 +466,11 @@ static void llama_params_fit_impl(
             auto distribute_layers = [&](const char * func_name, const uint32_t & initial_step_size) {
                 LLAMA_LOG_INFO("%s: distributing layers across devices with overflow to next device/system memory:\n", func_name);
                 size_t id = 0;
-                const size_t id_stop = hp_nex == 0 ? nd : nd - 1;
+                const size_t id_stop = hp_nex == 0 ? nd         : nd - 1;
+                const size_t il_stop = hp_nex == 0 ? hp_ngl + 1 : ngl_per_device.back().il_stop;
                 for (; id < id_stop; id++) {
                     for (uint32_t step_size = initial_step_size; step_size > 0; step_size /= 2) {
-                        if (ngl_per_device.back().il_full_start + step_size > ngl_per_device.back().il_stop) {
+                        if (ngl_per_device.back().il_full_start + step_size > il_stop) {
                             continue;
                         }
                         std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
@@ -533,7 +534,7 @@ static void llama_params_fit_impl(
                 }
 
                 for (uint32_t step_size = initial_step_size; step_size > 0; step_size /= 2) {
-                    if (ngl_per_device[id].il_full_start + step_size > ngl_per_device[id].il_stop) {
+                    if (ngl_per_device[id].il_full_start + step_size > il_stop) {
                         continue;
                     }
                     std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
