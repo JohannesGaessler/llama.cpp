@@ -273,8 +273,8 @@ static void llama_params_fit_impl(
                 + std::to_string(2*nd) + " to fit memory for " + std::to_string(nd) + " devices, abort");
         }
     }
-    if (hp_nex > 0 && !tensor_buft_overrides) {
-        throw std::runtime_error("did not provide buffer to set tensor_buft_overrides for MoE model, abort");
+    if (!tensor_buft_overrides) {
+        throw std::runtime_error("did not provide buffer to set tensor_buft_overrides, abort");
     }
     if (mparams->tensor_buft_overrides && (mparams->tensor_buft_overrides->pattern || mparams->tensor_buft_overrides->buft)) {
         throw std::runtime_error("model_params::tensor_buft_overrides already set by user, abort");
@@ -296,6 +296,13 @@ static void llama_params_fit_impl(
     // utility function that returns a static C string matching the tensors for a specific layer index and layer fraction:
     auto get_overflow_pattern = [&](const size_t il, const layer_fraction_t lf) -> const char * {
         switch (lf) {
+            case LAYER_FRACTION_ATTN: {
+                static std::vector<std::string> patterns;
+                while (patterns.size() <= il) {
+                    patterns.push_back("blk\\." + std::to_string(patterns.size()) + "\\.ffn_(up|gate|down).*");
+                }
+                return patterns[il].c_str();
+            }
             case LAYER_FRACTION_UP: {
                 static std::vector<std::string> patterns;
                 while (patterns.size() <= il) {
