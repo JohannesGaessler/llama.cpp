@@ -345,7 +345,7 @@ static void llama_params_fit_impl(
     auto set_ngl_tensor_split_tbo = [&](const std::vector<ngl_t> & ngl_per_device, llama_model_params & mparams) {
         mparams.n_gpu_layers = 0;
         for (size_t id = 0; id < nd; id++) {
-            assert(layers_per_device[id].il_stop >= layers_per_device[id].il_full_start);
+            assert(ngl_per_device[id].il_stop >= ngl_per_device[id].il_full_start);
             const uint32_t n_layer = ngl_per_device[id].il_stop - ngl_per_device[id].il_full_start;
             mparams.n_gpu_layers += n_layer;
             if (nd > 1) {
@@ -387,8 +387,8 @@ static void llama_params_fit_impl(
 
     // utility function that returns the memory use per device for given numbers of layers per device
     auto get_memory_for_layers = [&](const char * func_name, const std::vector<ngl_t> & ngl_per_device) -> std::vector<int64_t> {
-        assert(layers_per_device[0].il_full_start == 0);
-        assert(layers_per_device.back().il_stop   <= hp_ngl);
+        assert(ngl_per_device[0].il_full_start == 0);
+        assert(ngl_per_device.back().il_stop   <= hp_ngl);
         llama_model_params mparams_copy = *mparams;
         set_ngl_tensor_split_tbo(ngl_per_device, mparams_copy);
 
