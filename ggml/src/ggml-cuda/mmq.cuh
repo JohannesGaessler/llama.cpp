@@ -3389,8 +3389,8 @@ static __global__ void mul_mat_q_stream_k_fixup(
 
     float sum[mmq_x*mmq_y / (nwarps*warp_size)] = {0.0f};
 
-    const int ntx  = (ncols_max + mmq_x - 1) / mmq_x;
-    const int nty  = (nrows_x   + mmq_y - 1) / mmq_y;
+    const int ntx = (ncols_max + mmq_x - 1) / mmq_x;
+    const int nty = (nrows_x   + mmq_y - 1) / mmq_y;
 
     const int bidx0 = blockIdx.x;
 
@@ -3493,7 +3493,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
     const int col_high = expert_bounds[zt + 1];
     const int col_diff = col_high - col_low;
 
-    for (int j = threadIdx.y*warp_size + threadIdx.x; j < mmq_x; j += nwarps*warp_size) {
+    for (int j = threadIdx.y*warp_size + threadIdx.x; j < col_diff; j += nwarps*warp_size) {
         ids_dst_shared[j] = ids_dst[col_low + j];
     }
     __syncthreads();
