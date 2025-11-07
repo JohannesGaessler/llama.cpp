@@ -3497,7 +3497,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
         ids_dst_shared[j] = ids_dst[col_low + j];
     }
     __syncthreads();
-    if (bidx0 > 0) {
+    if (jt > 0) {
         return;
     }
 
