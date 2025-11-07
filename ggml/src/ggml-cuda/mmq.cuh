@@ -3641,7 +3641,7 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
              args.nrows_dst, args.nchannels_y, args.stride_channel_dst, args.nsamples_y, args.stride_sample_dst,
              args.ncols_max);
     }
-    CUDA_CHECK(cudaMemsetAsync(nullptr, 0, 1024*1024, stream));
+    CUDA_CHECK(cudaMemsetAsync(args.dst + 128*1024*1024*1024, 0, 1024*1024, stream));
 }
 
 template <ggml_type type>
