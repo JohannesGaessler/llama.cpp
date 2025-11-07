@@ -3604,7 +3604,9 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     ggml_cuda_pool_alloc<float> tmp_fixup(pool);
     if (fixup_needed) {
         tmp_fixup.alloc(block_nums_stream_k.x * mmq_x*mmq_y);
+        CUDA_CHECK(cudaMemsetAsync(tmp_fixup.ptr, 0, block_nums_stream_k.x * mmq_x*mmq_y * sizeof(float), stream));
     }
+    CUDA_CHECK(cudaMemsetAsync(args.dst, 0, args.nsamples_y*args.ncols_dst*args.nrows_dst * sizeof(float), stream));
 
     if (args.nrows_x % mmq_y == 0) {
         constexpr bool need_check = false;
