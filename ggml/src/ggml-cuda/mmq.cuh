@@ -3520,7 +3520,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
                 continue;
             }
 
-            if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0 && i0 == 0 && j0 == 0 && it == 0) {
+            if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0 && i0 == 0 && j0 == 0) {
                 printf("[%3d, %2d, %2d]: it=%2d wt=%2d zt=%2d jt=%2d col_low=%4d col_high=%4d index=%4d*%3d+%3d=%8d\n",
                     int(blockIdx.x), int(threadIdx.x), int(threadIdx.y),
                     it, wt, zt, jt, col_low, col_high,
