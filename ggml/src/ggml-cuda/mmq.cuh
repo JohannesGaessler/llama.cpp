@@ -3521,7 +3521,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
             }
 
             if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
-                printf("[%3d, %2d, %2d]: it=%2d wt=%2d zt=%2d jt=%2d index = %4d * %3d + %3d = %8d\n",
+                printf("[%3d, %2d, %2d]: it=%2d wt=%2d zt=%2d jt=%2d index=%4d*%3d+%3d=%8d\n",
                     int(blockIdx.x), int(threadIdx.x), int(threadIdx.y),
                     it, wt, zt, jt,
                     ids_dst_shared[j], stride_col_dst, i, ids_dst_shared[j]*stride_col_dst + i);
@@ -3641,8 +3641,10 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
              args.nrows_dst, args.nchannels_y, args.stride_channel_dst, args.nsamples_y, args.stride_sample_dst,
              args.ncols_max);
     }
-    CUDA_CHECK(cudaStreamSynchronize(stream));
-    GGML_ASSERT(false);
+    if (args.ids_dst) {
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+        GGML_ASSERT(false);
+    }
 }
 
 template <ggml_type type>
