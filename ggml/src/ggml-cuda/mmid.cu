@@ -94,6 +94,10 @@ static __global__ void mm_ids_helper(
     }
     nex_prev = warp_reduce_sum<warp_size>(nex_prev);
 
+#ifndef GGML_USE_HIP
+    __syncwarp();
+#endif // GGML_USE_HIP
+
     for (int itc = threadIdx.x; itc < it_compact; itc += warp_size) {
         const mm_ids_helper_store store_it = store[itc];
         const int it       = store_it.it();
