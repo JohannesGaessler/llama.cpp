@@ -3389,8 +3389,8 @@ static __global__ void mul_mat_q_stream_k_fixup(
 
     float sum[mmq_x*mmq_y / (nwarps*warp_size)] = {0.0f};
 
-    const int ntx  = (ncols_max + mmq_x - 1) / mmq_x;
-    const int nty  = (nrows_x   + mmq_y - 1) / mmq_y;
+    const int ntx = (ncols_max + mmq_x - 1) / mmq_x;
+    const int nty = (nrows_x   + mmq_y - 1) / mmq_y;
 
     const int bidx0 = blockIdx.x;
 
@@ -3502,7 +3502,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
     dst += offset_dst;
 
     const int i_max = nrows_x  - it*mmq_y - 1;
-    const int j_max = col_diff - jt*mmq_x - 1;
+    const int j_max = col_diff            - 1;
 
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
