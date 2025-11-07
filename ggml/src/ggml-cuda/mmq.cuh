@@ -3509,7 +3509,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
         const int j = j0 + threadIdx.y;
 
         if (j > j_max) {
-            return;
+            break;
         }
 
 #pragma unroll
@@ -3520,8 +3520,17 @@ static __global__ void mul_mat_q_stream_k_fixup(
                 continue;
             }
 
+            if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
+                printf("[%3d, %2d, %2d]: index = %3d * %3d + %3d = %8d\n",
+                    int(blockIdx.x), int(threadIdx.x), int(threadIdx.y),
+                    ids_dst_shared[j], stride_col_dst, i, ids_dst_shared[j]*stride_col_dst + i);
+            }
             dst[ids_dst_shared[j]*stride_col_dst + i] += sum[(j0/nwarps) * (mmq_y/warp_size) + i0/warp_size];
         }
+    }
+    __syncthreads();
+    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
+        __trap();
     }
 }
 
