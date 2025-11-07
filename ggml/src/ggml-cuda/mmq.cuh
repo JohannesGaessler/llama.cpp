@@ -3530,9 +3530,6 @@ static __global__ void mul_mat_q_stream_k_fixup(
         }
     }
     __syncthreads();
-    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
-        __trap();
-    }
 }
 
 struct mmq_args {
@@ -3644,6 +3641,7 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
              args.nrows_dst, args.nchannels_y, args.stride_channel_dst, args.nsamples_y, args.stride_sample_dst,
              args.ncols_max);
     }
+    CUDA_CHECK(cudaMemset(nullptr, 0, 1024*1024, stream));
 }
 
 template <ggml_type type>
