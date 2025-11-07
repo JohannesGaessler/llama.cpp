@@ -3521,8 +3521,9 @@ static __global__ void mul_mat_q_stream_k_fixup(
             }
 
             if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
-                printf("[%3d, %2d, %2d]: index = %3d * %3d + %3d = %8d\n",
+                printf("[%3d, %2d, %2d]: it=%2d wt=%2d zt=%2d jt=%2d index = %3d * %3d + %3d = %8d\n",
                     int(blockIdx.x), int(threadIdx.x), int(threadIdx.y),
+                    it, wt, zt, jt,
                     ids_dst_shared[j], stride_col_dst, i, ids_dst_shared[j]*stride_col_dst + i);
             }
             dst[ids_dst_shared[j]*stride_col_dst + i] += sum[(j0/nwarps) * (mmq_y/warp_size) + i0/warp_size];
