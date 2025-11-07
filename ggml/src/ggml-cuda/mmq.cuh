@@ -3389,8 +3389,8 @@ static __global__ void mul_mat_q_stream_k_fixup(
 
     float sum[mmq_x*mmq_y / (nwarps*warp_size)] = {0.0f};
 
-    const int ntx  = (ncols_max + mmq_x - 1) / mmq_x;
-    const int nty  = (nrows_x   + mmq_y - 1) / mmq_y;
+    const int ntx = (ncols_max + mmq_x - 1) / mmq_x;
+    const int nty = (nrows_x   + mmq_y - 1) / mmq_y;
 
     const int bidx0 = blockIdx.x;
 
@@ -3401,10 +3401,28 @@ static __global__ void mul_mat_q_stream_k_fixup(
     kbc0      -= (kbc0      % blocks_per_ne00) % blocks_per_iter;
     kbc0_stop -= (kbc0_stop % blocks_per_ne00) % blocks_per_iter;
 
+    int tmp = kbc0;
+    const int it = tmp / (nsamples_y*nchannels_y*ntx*blocks_per_ne00);
+    tmp -= it * (nsamples_y*nchannels_y*ntx*blocks_per_ne00);
+    const int wt = tmp / (nchannels_y*ntx*blocks_per_ne00);
+    tmp -= wt * (nchannels_y*ntx*blocks_per_ne00);
+    const int zt = tmp / (ntx*blocks_per_ne00);
+    tmp -= zt * (ntx*blocks_per_ne00);
+    const int jt = tmp / blocks_per_ne00;
+
+    int col_low  = 0;
+    int col_high = ncols_dst;
+    if (ids_dst) {
+        col_low  = expert_bounds[zt + 0];
+        col_high = expert_bounds[zt + 1];
+    }
+    const int col_diff = col_high - col_low;
+
     const bool did_not_have_any_data   = kbc0 == kbc0_stop;
     const bool wrote_beginning_of_tile = kbc0 % blocks_per_ne00 == 0;
     const bool did_not_write_last      = kbc0/blocks_per_ne00 == kbc0_stop/blocks_per_ne00 && kbc0_stop % blocks_per_ne00 != 0;
-    if (did_not_have_any_data || wrote_beginning_of_tile || did_not_write_last) {
+    const bool tile_skipped            = jt*mmq_x >= col_diff; // Should only happen for mul_mat_id.
+    if (did_not_have_any_data || wrote_beginning_of_tile || did_not_write_last || tile_skipped) {
         return;
     }
 
@@ -3450,15 +3468,6 @@ static __global__ void mul_mat_q_stream_k_fixup(
         return;
     }
 
-    int tmp = kbc0;
-    const int it = tmp / (nsamples_y*nchannels_y*ntx*blocks_per_ne00);
-    tmp -= it * (nsamples_y*nchannels_y*ntx*blocks_per_ne00);
-    const int wt = tmp / (nchannels_y*ntx*blocks_per_ne00);
-    tmp -= wt * (nchannels_y*ntx*blocks_per_ne00);
-    const int zt = tmp / (ntx*blocks_per_ne00);
-    tmp -= zt * (ntx*blocks_per_ne00);
-    const int jt = tmp / blocks_per_ne00;
-
     if (!ids_dst) {
         const int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*mmq_x*stride_col_dst + it*mmq_y;
         dst += offset_dst;
@@ -3489,9 +3498,6 @@ static __global__ void mul_mat_q_stream_k_fixup(
     }
 
     __shared__ int ids_dst_shared[mmq_x];
-    const int col_low  = expert_bounds[zt + 0];
-    const int col_high = expert_bounds[zt + 1];
-    const int col_diff = col_high - col_low;
 
     for (int j = threadIdx.y*warp_size + threadIdx.x; j < mmq_x; j += nwarps*warp_size) {
         ids_dst_shared[j] = ids_dst[col_low + j];
