@@ -3590,7 +3590,7 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
         return;
     }
 
-    const dim3 block_nums_stream_k(nsm, 1, 1);
+    const dim3 block_nums_stream_k(ntx == 4 && nty == 4 && ntzw == 40 ? ntx*nty*ntzw : nsm, 1, 1);
     const bool fixup_needed = ntx*nty*ntzw % nsm != 0;
 
     ggml_cuda_pool & pool = ctx.pool(id);
