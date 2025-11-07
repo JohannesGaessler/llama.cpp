@@ -3286,7 +3286,7 @@ static __global__ void mul_mat_q(
                     break;
                 }
 
-                ids_dst_shared[j] = ids_dst[col_low + jt*mmq_x + j];
+                ids_dst_shared[j] = j < col_high ? ids_dst[col_low + jt*mmq_x + j] : 0;
             }
             __syncthreads();
         }
