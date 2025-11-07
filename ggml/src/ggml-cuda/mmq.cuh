@@ -3493,7 +3493,10 @@ static __global__ void mul_mat_q_stream_k_fixup(
     const int col_high = expert_bounds[zt + 1];
     const int col_diff = col_high - col_low;
 
-    for (int j = threadIdx.y*warp_size + threadIdx.x; j < col_diff; j += nwarps*warp_size) {
+    const int i_sup =     nrows_x  - it*mmq_y;
+    const int j_sup = min(col_diff - jt*mmq_x, mmq_x);
+
+    for (int j = threadIdx.y*warp_size + threadIdx.x; j < j_sup; j += nwarps*warp_size) {
         ids_dst_shared[j] = ids_dst[col_low + j];
     }
     __syncthreads();
@@ -3501,14 +3504,11 @@ static __global__ void mul_mat_q_stream_k_fixup(
     const int offset_dst = it*mmq_y;
     dst += offset_dst;
 
-    const int i_max = nrows_x  - it*mmq_y - 1;
-    const int j_max = col_diff - jt*mmq_x - 1;
-
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
         const int j = j0 + threadIdx.y;
 
-        if (j > j_max) {
+        if (j >= j_sup) {
             return;
         }
 
@@ -3516,7 +3516,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
         for (int i0 = 0; i0 < mmq_y; i0 += warp_size) {
             const int i = i0 + threadIdx.x;
 
-            if (need_check && i > i_max) {
+            if (need_check && i >= i_sup) {
                 continue;
             }
 
