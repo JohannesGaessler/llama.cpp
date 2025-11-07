@@ -3408,6 +3408,25 @@ static __global__ void mul_mat_q_stream_k_fixup(
         return;
     }
 
+    if (ids_dst) {
+        int tmp = kbc0;
+        const int it = tmp / (nsamples_y*nchannels_y*ntx*blocks_per_ne00);
+        tmp -= it * (nsamples_y*nchannels_y*ntx*blocks_per_ne00);
+        const int wt = tmp / (nchannels_y*ntx*blocks_per_ne00);
+        tmp -= wt * (nchannels_y*ntx*blocks_per_ne00);
+        const int zt = tmp / (ntx*blocks_per_ne00);
+        tmp -= zt * (ntx*blocks_per_ne00);
+        const int jt = tmp / blocks_per_ne00;
+
+        const int col_low  = expert_bounds[zt + 0];
+        const int col_high = expert_bounds[zt + 1];
+        const int col_diff = col_high - col_low;
+
+        if (jt*mmq_x >= col_diff) {
+            return;
+        }
+    }
+
     bool any_fixup = false;
 
     // Iterate over previous blocks and sum up partial sums written to fixup buffer.
@@ -3417,27 +3436,6 @@ static __global__ void mul_mat_q_stream_k_fixup(
     while(true) {
         int64_t kbc = bidx*nsamples_y*nchannels_y*ntx*nty*blocks_per_ne00 / gridDim.x;
         kbc -= (kbc % blocks_per_ne00) % blocks_per_iter;
-
-        if (ids_dst) {
-            int tmp = kbc;
-            const int it = tmp / (nsamples_y*nchannels_y*ntx*blocks_per_ne00);
-            tmp -= it * (nsamples_y*nchannels_y*ntx*blocks_per_ne00);
-            const int wt = tmp / (nchannels_y*ntx*blocks_per_ne00);
-            tmp -= wt * (nchannels_y*ntx*blocks_per_ne00);
-            const int zt = tmp / (ntx*blocks_per_ne00);
-            tmp -= zt * (ntx*blocks_per_ne00);
-            const int jt = tmp / blocks_per_ne00;
-
-            const int col_low  = expert_bounds[zt + 0];
-            const int col_high = expert_bounds[zt + 1];
-            const int col_diff = col_high - col_low;
-
-            if (jt*mmq_x >= col_diff) {
-                bidx--;
-                kbc_stop = kbc;
-                continue;
-            }
-        }
 
         if (kbc == kbc_stop) { // Did not have any data.
             bidx--;
