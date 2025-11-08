@@ -461,21 +461,44 @@ static void llama_params_fit_impl(
 
     // utility function that iteratively tries moving layers from the last device to other devices
     //     initially use a larger step size in order to do fewer test allocations
-    auto distribute_layers = [&](const char * func_name, const uint32_t & initial_step_size) {
+    auto distribute_layers = [&](const char * func_name) {
         LLAMA_LOG_INFO("%s: distributing layers across devices with overflow to next device/system memory:\n", func_name);
         size_t id = 0;
 
         // dense: iterate over all devices, fill front to back with full layers
         // MoE: iterate over all but the last device, convert dense-only layers from last device to full layers
-        const size_t id_stop = hp_nex == 0 ? nd         : nd - 1;
-        const size_t il_stop = hp_nex == 0 ? hp_ngl + 1 : ngl_per_device.back().il_stop;
+        const size_t id_stop = hp_nex == 0 ? nd : nd - 1;
         for (; id < id_stop; id++) {
-            for (uint32_t step_size = initial_step_size; step_size > 0; step_size /= 2) {
-                if (ngl_per_device.back().il_full_start + step_size > il_stop) {
-                    continue;
+            std::vector<ngl_t> ngl_per_device_high = ngl_per_device;
+            {
+                const uint32_t step_size = ngl_per_device.back().il_stop - ngl_per_device.back().il_full_start;
+                ngl_per_device_high[id].il_part_start += step_size;
+                ngl_per_device_high[id].il_stop       += step_size;
+                size_t jd = id + 1;
+                for (; jd < id_stop; jd++) {
+                    ngl_per_device_high[jd].il_part_start += step_size;
+                    ngl_per_device_high[jd].il_full_start += step_size;
+                    ngl_per_device_high[jd].il_stop       += step_size;
                 }
-                std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
-                while (true) {
+                if (jd < nd) {
+                    ngl_per_device_high[jd].il_part_start += step_size;
+                    ngl_per_device_high[jd].il_full_start += step_size;
+                }
+            }
+            std::vector<int64_t> mem_high = get_memory_for_layers(func_name, ngl_per_device_high);
+            mem = get_memory_for_layers(func_name, ngl_per_device);
+
+            if (mem_high[id] < targets[id]) {
+                ngl_per_device = ngl_per_device_high;
+            } else if (mem[id] < targets[id]) {
+                assert(ngl_per_device_high[id].il_stop > ngl_per_device[id].il_stop);
+                uint32_t delta = ngl_per_device_high[id].il_stop - ngl_per_device[id].il_stop;
+                while (delta > 1) {
+                    uint32_t step_size = int64_t(delta) * (targets[id] - mem[id]) / (mem_high[id] - mem[id]);
+                    step_size = std::max(step_size, uint32_t(1));
+                    step_size = std::min(step_size, delta - 1);
+
+                    std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
                     ngl_per_device_test[id].il_part_start += step_size;
                     ngl_per_device_test[id].il_stop       += step_size;
                     size_t jd = id + 1;
@@ -488,19 +511,16 @@ static void llama_params_fit_impl(
                         ngl_per_device_test[jd].il_part_start += step_size;
                         ngl_per_device_test[jd].il_full_start += step_size;
                     }
+                    const std::vector<int64_t> mem_test = get_memory_for_layers(func_name, ngl_per_device_test);
 
-                    std::vector<int64_t> mem_test = get_memory_for_layers(func_name, ngl_per_device_test);
-
-                    // keep test values as new baseline if they still fit on device:
                     if (mem_test[id] <= targets[id]) {
-                        ngl_per_device = ngl_per_device_test;
-                        mem            = mem_test;
+                        ngl_per_device      = ngl_per_device_test;
+                        mem                 = mem_test;
+                    } else {
+                        ngl_per_device_high = ngl_per_device_test;
+                        mem_high            = mem_test;
                     }
-                    // if the step size has already been halved we already know another step will fail,
-                    //     or stop if we exceed the memory target
-                    if (step_size < initial_step_size || mem_test[id] >= targets[id]) {
-                        break;
-                    }
+                    delta = ngl_per_device_high[id].il_stop - ngl_per_device[id].il_stop;
                 }
             }
 
@@ -539,39 +559,45 @@ static void llama_params_fit_impl(
             return; // we already processed all devices
         }
 
-        for (uint32_t step_size = initial_step_size; step_size > 0; step_size /= 2) {
-            if (ngl_per_device[id].il_full_start + step_size > il_stop) {
-                continue;
-            }
+        if (mem.empty()) {
+            mem = get_memory_for_layers(func_name, ngl_per_device);
+        }
+
+        std::vector<ngl_t> ngl_per_device_high = ngl_per_device;
+        ngl_per_device_high[id].il_part_start = ngl_per_device_high[id].il_stop;
+        std::vector<int64_t> mem_high = get_memory_for_layers(func_name, ngl_per_device_high);
+        uint32_t delta = ngl_per_device_high[id].il_part_start - ngl_per_device[id].il_part_start;
+        while (delta > 1) {
+            uint32_t step_size = int64_t(delta) * (targets[id] - mem[id]) / (mem_high[id] - mem[id]);
+            step_size = std::max(step_size, uint32_t(1));
+            step_size = std::min(step_size, delta - 1);
+
             std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
-            while (true) {
-                ngl_per_device_test[id].il_part_start += step_size;
+            ngl_per_device_test[id].il_part_start += step_size;
+            const std::vector<int64_t> mem_test = get_memory_for_layers(func_name, ngl_per_device_test);
 
+            if (mem_test[id] <= targets[id]) {
+                ngl_per_device      = ngl_per_device_test;
+                mem                 = mem_test;
+            } else {
+                ngl_per_device_high = ngl_per_device_test;
+                mem_high            = mem_test;
+            }
+            delta = ngl_per_device_high[id].il_part_start - ngl_per_device[id].il_part_start;
+        }
+
+        if (ngl_per_device[id].il_stop > ngl_per_device[id].il_part_start) {
+            // try to fit at least part of one more layer
+            std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
+            ngl_per_device_test[id].il_part_start++;
+            for (layer_fraction_t lf : {LAYER_FRACTION_GATE, LAYER_FRACTION_UP}) {
+                ngl_per_device_test[id].overflow_type = lf;
                 std::vector<int64_t> mem_test = get_memory_for_layers(func_name, ngl_per_device_test);
-
-                // keep test values as new baseline if they still fit on device:
                 if (mem_test[id] <= targets[id]) {
                     ngl_per_device = ngl_per_device_test;
                     mem            = mem_test;
-                }
-
-                // if the step size has already been halved we already know another step will fail,
-                //     or stop if we exceed the memory target
-                if (step_size < initial_step_size || mem_test[id] >= targets[id]) {
                     break;
                 }
-            }
-        }
-
-        // try to fit at least part of one more layer
-        std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
-        for (layer_fraction_t lf : {LAYER_FRACTION_GATE, LAYER_FRACTION_UP, LAYER_FRACTION_ATTN}) {
-            ngl_per_device_test[id].overflow_type = lf;
-            std::vector<int64_t> mem_test = get_memory_for_layers(func_name, ngl_per_device_test);
-            if (mem_test[id] <= targets[id]) {
-                ngl_per_device = ngl_per_device_test;
-                mem            = mem_test;
-                break;
             }
         }
 
@@ -588,7 +614,7 @@ static void llama_params_fit_impl(
     while (2*initial_step_size < initial_step_size_max) {
         initial_step_size *= 2;
     }
-    distribute_layers(__func__, initial_step_size);
+    distribute_layers(__func__);
     set_ngl_tensor_split_tbo(ngl_per_device, *mparams);
 }
 
