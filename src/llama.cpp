@@ -470,7 +470,9 @@ static void llama_params_fit_impl(
         for (; id < id_stop; id++) {
             std::vector<ngl_t> ngl_per_device_high = ngl_per_device;
             {
-                const uint32_t step_size = ngl_per_device.back().il_stop - ngl_per_device.back().il_full_start;
+                const uint32_t step_size = hp_nex == 0 ?
+                    (id == 0 ? hp_ngl : hp_ngl - ngl_per_device[id-1].il_stop) :
+                    ngl_per_device.back().il_stop - ngl_per_device.back().il_full_start;
                 ngl_per_device_high[id].il_part_start += step_size;
                 ngl_per_device_high[id].il_stop       += step_size;
                 size_t jd = id + 1;
