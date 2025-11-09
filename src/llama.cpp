@@ -592,6 +592,8 @@ static void llama_params_fit_impl(
                 ngl_per_device_test[jd].il_full_start = std::min(hp_ngl, ngl_per_device_test[jd].il_full_start + 1);
                 ngl_per_device_test[jd].il_stop       = std::min(hp_ngl, ngl_per_device_test[jd].il_stop       + 1);
             }
+            ngl_per_device_test[id_stop].il_part_start = std::min(hp_ngl, ngl_per_device_test[id_stop].il_part_start + 1);
+            ngl_per_device_test[id_stop].il_full_start = std::min(hp_ngl, ngl_per_device_test[id_stop].il_full_start + 1);
             for (layer_fraction_t lf : {LAYER_FRACTION_ATTN, LAYER_FRACTION_UP, LAYER_FRACTION_GATE}) {
                 ngl_per_device_test[id].overflow_type = lf;
                 std::vector<int64_t> mem_test = get_memory_for_layers(__func__, ngl_per_device_test, overflow_bufts);
