@@ -362,10 +362,6 @@ static void llama_params_fit_impl(
         }
         mparams.tensor_split = tensor_split;
 
-        if (hp_nex == 0) {
-            return;
-        }
-
         size_t itbo = 0;
         for (size_t id = 0; id < nd; id++) {
             // on last device one of the "full layers" are the non-repeating layers
