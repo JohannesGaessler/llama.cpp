@@ -320,10 +320,10 @@ static constexpr __host__ __device__ uint32_t ggml_cuda_fattn_mma_get_config_amp
     GGML_CUDA_FATTN_MMA_CONFIG_CASE(128, 128, 32, 128, 2,  64,  64,  64,  64, 2, true);
     GGML_CUDA_FATTN_MMA_CONFIG_CASE(128, 128, 64, 128, 2,  64,  64,  64,  64, 2, true);
 
-    GGML_CUDA_FATTN_MMA_CONFIG_CASE(256, 256,  8, 128, 2,  64, 128, 128, 128, 2, true);
-    GGML_CUDA_FATTN_MMA_CONFIG_CASE(256, 256, 16, 128, 2,  64, 128, 128, 128, 2, true);
-    GGML_CUDA_FATTN_MMA_CONFIG_CASE(256, 256, 32, 128, 2,  64, 128, 128, 128, 2, true);
-    GGML_CUDA_FATTN_MMA_CONFIG_CASE(256, 256, 64, 128, 2,  64, 128, 128, 128, 2, true);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE(256, 256,  8,  64, 2,  32, 128, 128, 128, 2, true);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE(256, 256, 16,  64, 2,  32, 128, 128, 128, 2, true);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE(256, 256, 32, 128, 2,  32, 128, 128, 128, 2, true);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE(256, 256, 64, 128, 2,  32, 128, 128, 128, 2, true);
 
     GGML_CUDA_FATTN_MMA_CONFIG_CASE(576, 512,  8,  64, 4,  32, 288, 256, 128, 1, false);
     GGML_CUDA_FATTN_MMA_CONFIG_CASE(576, 512, 16,  64, 4,  32, 288, 256, 128, 1, false);
@@ -1439,13 +1439,10 @@ static __global__ void flash_attn_ext_f16(
     static_assert(!mla || DKQ >= DV, "MLA needs DKQ >= DV");
 
     typedef fattn_mma_f16_config<DKQ, DV> c;
-    constexpr int nthreads_max   = c::nwarps_max*WARP_SIZE;
     constexpr int ntiles    = ncols1*ncols2 <= 8 ? 1 : 2; // Number of tiles per warp.
     constexpr int nbatch_fa = c::nbatch_fa;
-    constexpr int cols_per_warp = ntiles * tile_B::I;
-    constexpr int nwarps_max_x  = (ncols1*ncols2) / cols_per_warp;
-    constexpr int nwarps_max_y  = nbatch_fa / tile_A::I;
-    constexpr int nwarps        = nwarps_max_x*nwarps_max_y <= nthreads_max/WARP_SIZE ? nwarps_max_x*nwarps_max_y : nthreads_max/WARP_SIZE;
+    constexpr int nthreads  = ggml_cuda_fattn_mma_get_nthreads(DKQ, DV, ncols1*ncols2);
+    constexpr int nwarps    = nthreads / WARP_SIZE;
 
     static_assert(FATTN_KQ_STRIDE % nbatch_fa == 0, "bad nbatch_fa");
 
