@@ -427,12 +427,14 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     constexpr int nstages = 0;
 #endif // CP_ASYNC_AVAILABLE
 
-    constexpr int cols_per_warp   = ntiles * tile_B::I;
-    constexpr int cols_per_thread = ntiles == 1 ? 2 : ntiles;
-    constexpr int np              = nwarps * (cols_per_warp/ncols2) / ncols1; // Number of parallel CUDA warps per Q column.
-    constexpr int ncols           = ncols1 * ncols2;
-    constexpr int nbatch_K2       = c::get_nbatch_K2_device(ncols);
-    constexpr int nbatch_V2       = c::get_nbatch_V2_device(ncols);
+    constexpr int  cols_per_warp   = ntiles * tile_B::I;
+    constexpr int  cols_per_thread = ntiles == 1 ? 2 : ntiles;
+    constexpr int  np              = nwarps * (cols_per_warp/ncols2) / ncols1; // Number of parallel CUDA warps per Q column.
+    constexpr int  ncols           = ncols1 * ncols2;
+    constexpr int  nbatch_fa       = c::nbatch_fa;
+    constexpr int  nbatch_K2       = c::get_nbatch_K2_device(ncols);
+    constexpr int  nbatch_V2       = c::get_nbatch_V2_device(ncols);
+    constexpr bool Q_in_reg        = c::get_nbatch_V2_device(ncols);
 
     constexpr int stride_tile_Q = DKQ/2     + 4;
     constexpr int stride_tile_K = nbatch_K2 + 4;
@@ -454,12 +456,12 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         constexpr bool use_cp_async = true;
         cp_async_wait_all();
         __syncthreads();
-        flash_attn_ext_f16_load_tile<stride_tile_V, nwarps, c::nbatch_fa, use_cp_async>
+        flash_attn_ext_f16_load_tile<stride_tile_V, nwarps, nbatch_fa, use_cp_async>
             (V_h2 + int64_t(k_VKQ_0)*stride_V, tile_V, nbatch_V2, stride_V);
     } else {
         constexpr bool use_cp_async = nstages == 1;
         if (ncols2 > 1 || mask_h2) {
-            flash_attn_ext_f16_load_mask<ncols1, nwarps, c::nbatch_fa, use_cp_async>(mask_h2 + k_VKQ_0/2, tile_mask, stride_mask);
+            flash_attn_ext_f16_load_mask<ncols1, nwarps, nbatch_fa, use_cp_async>(mask_h2 + k_VKQ_0/2, tile_mask, stride_mask);
         }
     }
 
@@ -470,7 +472,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 
         if (nstages <= 1) {
             constexpr bool use_cp_async = nstages == 1;
-            flash_attn_ext_f16_load_tile<stride_tile_K, nwarps, c::nbatch_fa, use_cp_async>
+            flash_attn_ext_f16_load_tile<stride_tile_K, nwarps, nbatch_fa, use_cp_async>
                 (K_h2 + int64_t(k_VKQ_0)*stride_K + k0_start, tile_K, k0_diff, stride_K);
             if (use_cp_async) {
                 cp_async_wait_all();
@@ -479,9 +481,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         }
 
         // Calculate tile of KQ:
-        if constexpr (c::Q_in_reg) {
+        if constexpr (Q_in_reg) {
 #pragma unroll
-            for (int i_KQ_00 = 0; i_KQ_00 < c::nbatch_fa; i_KQ_00 += np*tile_A::I) {
+            for (int i_KQ_00 = 0; i_KQ_00 < nbatch_fa; i_KQ_00 += np*tile_A::I) {
                 const int i_KQ_0 = i_KQ_00 + (threadIdx.y % np)*tile_A::I;
 #pragma unroll
                 for (int k_KQ_0 = k0_start; k_KQ_0 < k0_stop; k_KQ_0 += tile_A::J) {
@@ -505,7 +507,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
                 load_ldmatrix(Q_B_16[0], tile_Q + (threadIdx.y / np)*(tile_B_16::I*stride_tile_Q) + k_KQ_0, stride_tile_Q);
 
 #pragma unroll
-                for (int i_KQ_00 = 0; i_KQ_00 < c::nbatch_fa; i_KQ_00 += np*tile_A::I) {
+                for (int i_KQ_00 = 0; i_KQ_00 < nbatch_fa; i_KQ_00 += np*tile_A::I) {
                     const int i_KQ_0 = i_KQ_00 + (threadIdx.y % np)*tile_A::I;
 
                     tile_A K_A;
@@ -523,9 +525,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     }
 
     if (use_logit_softcap) {
-        static_assert(c::nbatch_fa % (np*tile_C_KQ::I) == 0, "bad loop size");
+        static_assert(nbatch_fa % (np*tile_C_KQ::I) == 0, "bad loop size");
 #pragma unroll
-        for (int i = 0; i < c::nbatch_fa/(np*tile_C_KQ::I) * ntiles; ++i) {
+        for (int i = 0; i < nbatch_fa/(np*tile_C_KQ::I) * ntiles; ++i) {
 #pragma unroll
             for (int l = 0; l < tile_C_KQ::ne; ++l) {
                 KQ_C[i].x[l] = logit_softcap*tanhf(KQ_C[i].x[l]);
@@ -543,7 +545,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     if (ntiles == 1) {
         if (ncols2 > 1 || mask_h2) {
 #pragma unroll
-            for (int i00 = 0; i00 < c::nbatch_fa; i00 += np*tile_C_KQ::I) {
+            for (int i00 = 0; i00 < nbatch_fa; i00 += np*tile_C_KQ::I) {
                 const int i0 = i00 + (threadIdx.y % np)*tile_C_KQ::I;
 #pragma unroll
                 for (int l = 0; l < tile_C_KQ::ne; ++l) {
@@ -551,16 +553,16 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
                     const int j = ((threadIdx.y / np)*tile_C_KQ::J + tile_C_KQ::get_j(l)) / ncols2;
 
                     KQ_C[i00/(np*tile_C_KQ::I)].x[l] += slope *
-                        __half2float(((const half *) tile_mask)[j*(c::nbatch_fa + 8) + i]);
+                        __half2float(((const half *) tile_mask)[j*(nbatch_fa + 8) + i]);
                 }
             }
         }
 
         // Calculate softmax for each KQ column using the current max. value.
         // The divisor is stored in KQ_rowsum and will be applied at the end.
-        static_assert(c::nbatch_fa % (np*tile_C_KQ::I) == 0, "bad loop size");
+        static_assert(nbatch_fa % (np*tile_C_KQ::I) == 0, "bad loop size");
 #pragma unroll
-        for (int k = 0; k < c::nbatch_fa/(np*tile_C_KQ::I); ++k) {
+        for (int k = 0; k < nbatch_fa/(np*tile_C_KQ::I); ++k) {
 #pragma unroll
             for (int l = 0; l < tile_C_KQ::ne; ++l) {
                 KQ_max_new[l % 2] = fmaxf(KQ_max_new[l % 2], KQ_C[k].x[l]);
@@ -576,9 +578,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             }
         }
 
-        static_assert(c::nbatch_fa % (np*tile_C_KQ::I) == 0, "bad loop size");
+        static_assert(nbatch_fa % (np*tile_C_KQ::I) == 0, "bad loop size");
 #pragma unroll
-        for (int k = 0; k < c::nbatch_fa/(np*tile_C_KQ::I); ++k) {
+        for (int k = 0; k < nbatch_fa/(np*tile_C_KQ::I); ++k) {
 #pragma unroll
             for (int l = 0; l < tile_C_KQ::ne; ++l) {
                 KQ_C[k].x[l] = expf(KQ_C[k].x[l] - KQ_max_new[l % 2]);
@@ -589,7 +591,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     } else { // ntiles > 1
         if (ncols2 > 1 || mask_h2) {
 #pragma unroll
-            for (int i00 = 0; i00 < c::nbatch_fa; i00 += np*tile_C_KQ_16::J) {
+            for (int i00 = 0; i00 < nbatch_fa; i00 += np*tile_C_KQ_16::J) {
                 const int i0 = i00 + (threadIdx.y % np)*tile_C_KQ_16::J;
 #pragma unroll
                 for (int t = 0; t < ntiles/2; ++t) {
@@ -598,7 +600,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
                         const int i = (i0 + tile_C_KQ_16::get_j(l0)) / 2;
                         const int j = ((threadIdx.y / np)*cols_per_warp + t*tile_C_KQ_16::I + tile_C_KQ_16::get_i(l0)) / ncols2;
 
-                        const float2 tmp = __half22float2(tile_mask[j*(c::nbatch_fa/2 + 4) + i]);
+                        const float2 tmp = __half22float2(tile_mask[j*(nbatch_fa/2 + 4) + i]);
                         const int KQ_index = i00/(np*tile_C_KQ_16::J) * ntiles/2 + t;
                         KQ_C_16[KQ_index].x[l0 + 0] += slope*tmp.x;
                         KQ_C_16[KQ_index].x[l0 + 1] += slope*tmp.y;
@@ -609,9 +611,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 
         // Calculate softmax for each KQ column using the current max. value.
         // The divisor is stored in KQ_rowsum and will be applied at the end.
-        static_assert(c::nbatch_fa % (np*tile_C_KQ::I) == 0, "bad loop size");
+        static_assert(nbatch_fa % (np*tile_C_KQ::I) == 0, "bad loop size");
 #pragma unroll
-        for (int k = 0; k < c::nbatch_fa/(np*tile_C_KQ_16::J); ++k) {
+        for (int k = 0; k < nbatch_fa/(np*tile_C_KQ_16::J); ++k) {
 #pragma unroll
             for (int t = 0; t < ntiles/2; ++t) {
 #pragma unroll
@@ -631,9 +633,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             }
         }
 
-        static_assert(c::nbatch_fa % (np*tile_C_KQ_16::J) == 0, "bad loop size");
+        static_assert(nbatch_fa % (np*tile_C_KQ_16::J) == 0, "bad loop size");
 #pragma unroll
-        for (int k = 0; k < c::nbatch_fa/(np*tile_C_KQ_16::J); ++k) {
+        for (int k = 0; k < nbatch_fa/(np*tile_C_KQ_16::J); ++k) {
 #pragma unroll
             for (int t = 0; t < ntiles/2; ++t) {
 #pragma unroll
@@ -687,16 +689,16 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     }
 
     // Convert KQ C tiles into B tiles for VKQ calculation:
-    tile_B B[c::nbatch_fa/(np*2*tile_B::J) * ntiles];
+    tile_B B[nbatch_fa/(np*2*tile_B::J) * ntiles];
     tile_B_16 * B_16 = (tile_B_16 *) B;
-    static_assert(c::nbatch_fa % (np*2*tile_B::J) == 0, "bad loop size");
+    static_assert(nbatch_fa % (np*2*tile_B::J) == 0, "bad loop size");
     if (ntiles == 1) {
 #pragma unroll
-        for (int k = 0; k < c::nbatch_fa/(np*2*tile_B::J); ++k) {
+        for (int k = 0; k < nbatch_fa/(np*2*tile_B::J); ++k) {
             B[k] = get_transposed(get_half2(KQ_C[k]));
         }
     } else {
-        for (int k = 0; k < c::nbatch_fa/(np*2*tile_B_16::J); ++k) {
+        for (int k = 0; k < nbatch_fa/(np*2*tile_B_16::J); ++k) {
 #pragma unroll
             for (int t = 0; t < ntiles/2; ++t) {
                 B_16[k*ntiles/2 + t] = get_half2(KQ_C_16[k*ntiles/2 + t]);
@@ -711,11 +713,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         __syncthreads();
         if (!last_iter) {
             if (ncols2 > 1 || mask_h2) {
-                flash_attn_ext_f16_load_mask<ncols1, nwarps, c::nbatch_fa, use_cp_async>
-                    (mask_h2 + (k_VKQ_0 + c::nbatch_fa)/2, tile_mask, stride_mask);
+                flash_attn_ext_f16_load_mask<ncols1, nwarps, nbatch_fa, use_cp_async>
+                    (mask_h2 + (k_VKQ_0 + nbatch_fa)/2, tile_mask, stride_mask);
             }
-            flash_attn_ext_f16_load_tile<stride_tile_K, nwarps, c::nbatch_fa, use_cp_async>
-                (K_h2 + int64_t(k_VKQ_0 + c::nbatch_fa)*stride_K, tile_K, nbatch_K2, stride_K);
+            flash_attn_ext_f16_load_tile<stride_tile_K, nwarps, nbatch_fa, use_cp_async>
+                (K_h2 + int64_t(k_VKQ_0 + nbatch_fa)*stride_K, tile_K, nbatch_K2, stride_K);
         }
     }
 
@@ -731,7 +733,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 
         if (nstages <= 1 && i0_start < reusable_cutoff) {
             constexpr bool use_cp_async = nstages == 1;
-            flash_attn_ext_f16_load_tile<stride_tile_V, nwarps, c::nbatch_fa, use_cp_async>
+            flash_attn_ext_f16_load_tile<stride_tile_V, nwarps, nbatch_fa, use_cp_async>
                 (V_h2 + int64_t(k_VKQ_0)*stride_V + i0_start/2, tile_V, i0_diff/2, stride_V);
             if (use_cp_async) {
                 cp_async_wait_all();
@@ -743,9 +745,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         // Calculate VKQ tile:
 #pragma unroll
         for (int i_VKQ_0 = i0_start; i_VKQ_0 < i0_stop; i_VKQ_0 += tile_C_VKQ::I) {
-            static_assert((c::nbatch_fa/2) % (np*tile_A::J) == 0, "bad loop size");
+            static_assert((nbatch_fa/2) % (np*tile_A::J) == 0, "bad loop size");
 #pragma unroll
-            for (int k00 = 0; k00 < c::nbatch_fa/2; k00 += np*tile_A::J) {
+            for (int k00 = 0; k00 < nbatch_fa/2; k00 += np*tile_A::J) {
                 const int k0 = k00 + (threadIdx.y % np)*tile_A::J;
 
                 tile_A A;
@@ -809,12 +811,15 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     constexpr int nstages = 0;
 #endif // CP_ASYNC_AVAILABLE
 
-    constexpr int ncols           = ncols1 * ncols2;
-    constexpr int cols_per_warp   = ntiles * tile_B::I;
-    constexpr int cols_per_thread = ntiles == 1 ? 2 : ntiles;
-    constexpr int np              = nwarps * (cols_per_warp/ncols2) / ncols1; // Number of parallel CUDA warps per Q column.
-    constexpr int nbatch_K2       = c::get_nbatch_K2_device(ncols);
-    constexpr int nbatch_V2       = c::get_nbatch_V2_device(ncols);
+    constexpr int  ncols           = ncols1 * ncols2;
+    constexpr int  cols_per_warp   = ntiles * tile_B::I;
+    constexpr int  cols_per_thread = ntiles == 1 ? 2 : ntiles;
+    constexpr int  np              = nwarps * (cols_per_warp/ncols2) / ncols1; // Number of parallel CUDA warps per Q column.
+    constexpr int  nbatch_fa       = c::nbatch_fa;
+    constexpr int  nbatch_K2       = c::get_nbatch_K2_device(ncols);
+    constexpr int  nbatch_V2       = c::get_nbatch_V2_device(ncols);
+    constexpr int  nbatch_combine  = c::get_nbatch_combine_device(ncols);
+    constexpr bool Q_in_reg        = c::Q_in_reg;
 
     static_assert(nwarps * (cols_per_warp/ncols2) % ncols1 == 0, "bad nwarps");
 
@@ -826,11 +831,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     constexpr int stride_tile_KV_max = stride_tile_K > stride_tile_V ? stride_tile_K : stride_tile_V;
 
     extern __shared__ half2 tile_Q[];
-    half2 * tile_K    = c::Q_in_reg ? tile_Q                                : tile_Q + ncols        * stride_tile_Q;
-    half2 * tile_V    = nstages > 1 ? tile_K + c::nbatch_fa * stride_tile_K : tile_K;
-    half2 * tile_mask = nstages > 1 ? tile_V + c::nbatch_fa * stride_tile_V : tile_V + c::nbatch_fa * stride_tile_KV_max;
+    half2 * tile_K    = Q_in_reg ? tile_Q                                : tile_Q + ncols     * stride_tile_Q;
+    half2 * tile_V    = nstages > 1 ? tile_K + nbatch_fa * stride_tile_K : tile_K;
+    half2 * tile_mask = nstages > 1 ? tile_V + nbatch_fa * stride_tile_V : tile_V + nbatch_fa * stride_tile_KV_max;
 
-    tile_B       Q_B[(c::Q_in_reg ? DKQ/(2*tile_B::J) : 1) * ntiles];
+    tile_B       Q_B[(Q_in_reg ? DKQ/(2*tile_B::J) : 1) * ntiles];
     tile_C_VKQ VKQ_C[DV/tile_C_VKQ::I  * ntiles];
 
     tile_B_16     * Q_B_16   = (tile_B_16     *) Q_B;
@@ -889,7 +894,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
     __syncthreads();
 
-    if (c::Q_in_reg) {
+    if (Q_in_reg) {
         const int j0 = (threadIdx.y / np) * cols_per_warp;
 
 #pragma unroll
@@ -913,11 +918,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         static_assert(nbatch_K2 == DKQ/2, "batching not implemented for multi-stage pipeline");
         constexpr bool use_cp_async = true;
         if (ncols2 > 1 || mask_h2) {
-            flash_attn_ext_f16_load_mask<ncols1, nwarps, c::nbatch_fa, use_cp_async>
-                (mask_h2 + kb0_start*c::nbatch_fa/2, tile_mask, stride_mask);
+            flash_attn_ext_f16_load_mask<ncols1, nwarps, nbatch_fa, use_cp_async>
+                (mask_h2 + kb0_start*nbatch_fa/2, tile_mask, stride_mask);
         }
-        flash_attn_ext_f16_load_tile<stride_tile_K, nwarps, c::nbatch_fa, use_cp_async>
-            (K_h2 + int64_t(kb0_start)*c::nbatch_fa*stride_K, tile_K, nbatch_K2, stride_K);
+        flash_attn_ext_f16_load_tile<stride_tile_K, nwarps, nbatch_fa, use_cp_async>
+            (K_h2 + int64_t(kb0_start)*nbatch_fa*stride_K, tile_K, nbatch_K2, stride_K);
     }
 
     // Iterate over ne11 == previous tokens:
@@ -937,7 +942,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
     // With multi-stage loading there is no __syncthreads at the end of the iter,
     //     there can be a race condition on shared memory access for combining/writing back results.
-    if (nstages > 1 && nwarps*cols_per_warp > c::nbatch_fa) {
+    if (nstages > 1 && nwarps*cols_per_warp > nbatch_fa) {
         __syncthreads();
     }
 
@@ -1005,8 +1010,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     // It's also faster to do small writes to shared memory, then large write to VRAM than to do small writes to VRAM.
     // So also write VKQ accumulators to shared memory in column-major format if np == 1.
 
-    constexpr int nbatch_combine = c::get_nbatch_combine_device(ncols);
-    constexpr int tile_stride    = nbatch_combine + 4;
+    constexpr int tile_stride = nbatch_combine + 4;
     static_assert((DV/2) % nbatch_combine == 0, "bad nbatch_combine");
 
     if constexpr (ntiles == 1) {
@@ -1282,6 +1286,7 @@ static __global__ void flash_attn_ext_f16(
     static_assert(!mla || DKQ >= DV, "MLA needs DKQ >= DV");
 
     typedef fattn_mma_f16_config<DKQ, DV> c;
+    constexpr int nbatch_fa = c::nbatch_fa;
 
     static_assert(FATTN_KQ_STRIDE % fattn_mma_f16_config<DKQ, DV>::nbatch_fa == 0, "bad nbatch_fa");
 
@@ -1297,7 +1302,7 @@ static __global__ void flash_attn_ext_f16(
     const int iter_k = ne11 / FATTN_KQ_STRIDE;
     const int iter_j = (ne01 + (ncols1 - 1)) / ncols1;
 
-    constexpr int kb_niter = FATTN_KQ_STRIDE / c::nbatch_fa; // Number of kernel iterations per assigned KQ slice.
+    constexpr int kb_niter = FATTN_KQ_STRIDE / nbatch_fa; // Number of kernel iterations per assigned KQ slice.
 
     // kbc == k block continuous, current index in continuous ijk space.
     int       kbc      = (blockIdx.x + 0)*(iter_k*iter_j*(ne02/ncols2)*ne03) / gridDim.x;
@@ -1333,7 +1338,7 @@ static __global__ void flash_attn_ext_f16(
         int       kb0_stop_kernel  = kb0_stop  * kb_niter;
 
         if (KV_max) {
-            kb0_stop_kernel = min(kb0_stop_kernel, KV_max[sequence*iter_j + jt] / c::nbatch_fa);
+            kb0_stop_kernel = min(kb0_stop_kernel, KV_max[sequence*iter_j + jt] / nbatch_fa);
         }
 
         constexpr bool is_fixup = false; // All but (potentially) the last iterations write their data to dst rather than the fixup buffer.
@@ -1381,7 +1386,7 @@ static __global__ void flash_attn_ext_f16(
     int       kb0_stop_kernel  = kb0_stop  * kb_niter;
 
     if (KV_max) {
-        kb0_stop_kernel = min(kb0_stop_kernel, KV_max[sequence*iter_j + jt] / c::nbatch_fa);
+        kb0_stop_kernel = min(kb0_stop_kernel, KV_max[sequence*iter_j + jt] / nbatch_fa);
     }
 
     constexpr bool is_fixup = true; // Last index writes its data to fixup buffer to avoid data races with other blocks.
