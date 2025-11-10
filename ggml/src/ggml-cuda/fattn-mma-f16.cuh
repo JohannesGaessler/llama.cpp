@@ -1409,36 +1409,39 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     const int id = ggml_cuda_get_device();
     const int cc = ggml_cuda_info().devices[id].cc;
 
+    constexpr int ncols = ncols1 * ncols2;
+
     typedef fattn_mma_f16_config<DKQ, DV> c;
+    const int  nthreads_max   = c::nwarps_max*WARP_SIZE;
+    const int  nbatch_fa      = c::nbatch_fa;
+    const int  nbatch_K2      = c::get_nbatch_K2_host(cc, ncols);
+    const int  nbatch_V2      = c::get_nbatch_V2_host(cc, ncols);
+    const int  nbatch_combine = c::get_nbatch_combine_host(cc, ncols);
+    const bool Q_in_reg       = c::Q_in_reg;
 
     const int nstages = cp_async_available(cc) ? c::nstages_target : 0;
 
-    constexpr int ncols         = ncols1 * ncols2;
-    constexpr int ntiles        = ncols <= 8 ? 1 : 2; // Number of tiles per warp.
-    constexpr int cols_per_warp = ntiles * tile_B::I;
-    constexpr int nwarps_max_x  = ncols / cols_per_warp;
-    constexpr int nwarps_max_y  = c::nbatch_fa / tile_A::I;
-    constexpr int nwarps        = nwarps_max_x*nwarps_max_y <= c::nwarps_max ? nwarps_max_x*nwarps_max_y : c::nwarps_max;
+    const int ntiles        = ncols <= 8 ? 1 : 2; // Number of tiles per warp.
+    const int cols_per_warp = ntiles * tile_B::I;
+    const int nwarps_max_x  = ncols / cols_per_warp;
+    const int nwarps_max_y  = nbatch_fa / tile_A::I;
+    const int nwarps        = nwarps_max_x*nwarps_max_y <= nthreads_max/WARP_SIZE ? nwarps_max_x*nwarps_max_y : nthreads_max/WARP_SIZE;
 
     constexpr bool mla = DKQ == 576;
-
-    const int nbatch_K2      = c::get_nbatch_K2_host     (cc, ncols);
-    const int nbatch_V2      = c::get_nbatch_K2_host     (cc, ncols);
-    const int nbatch_combine = c::get_nbatch_combine_host(cc, ncols);
 
     static_assert(DKQ   % tile_B::J     == 0, "bad DKQ");
     static_assert(DV    % tile_A::J     == 0, "bad DV");
     static_assert(ncols % cols_per_warp == 0, "bad ncols");
 
-    const size_t nbytes_shared_KV_1stage = c::nbatch_fa         * std::max(nbatch_K2 + 4,  nbatch_V2 + 4) * sizeof(half2);
-    const size_t nbytes_shared_KV_2stage = c::nbatch_fa         *         (nbatch_K2 + 4 + nbatch_V2 + 4) * sizeof(half2);
+    const size_t nbytes_shared_KV_1stage = nbatch_fa            * std::max(nbatch_K2 + 4,  nbatch_V2 + 4) * sizeof(half2);
+    const size_t nbytes_shared_KV_2stage = nbatch_fa            *         (nbatch_K2 + 4 + nbatch_V2 + 4) * sizeof(half2);
     const size_t nbytes_shared_Q         = ncols                * (DKQ/2 + 4)                             * sizeof(half2);
-    const size_t nbytes_shared_mask      = ncols1               * (c::nbatch_fa/2 + 4)                    * sizeof(half2);
+    const size_t nbytes_shared_mask      = ncols1               * (nbatch_fa/2 + 4)                       * sizeof(half2);
     const size_t nbytes_shared_combine   = nwarps*cols_per_warp * (nbatch_combine + 4)                    * sizeof(half2);
 
     const size_t nbytes_shared_KV = nstages <= 1 ? nbytes_shared_KV_1stage : nbytes_shared_KV_2stage;
 
-    const size_t nbytes_shared_total = std::max(nbytes_shared_combine, c::Q_in_reg ?
+    const size_t nbytes_shared_total = std::max(nbytes_shared_combine, Q_in_reg ?
         std::max(nbytes_shared_Q,  nbytes_shared_KV + nbytes_shared_mask) :
                  nbytes_shared_Q + nbytes_shared_KV + nbytes_shared_mask);
 
