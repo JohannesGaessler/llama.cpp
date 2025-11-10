@@ -1398,7 +1398,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 #endif // TURING_MMA_AVAILABLE
 }
 
-template<int DKQ, int DV, int ncols1, int ncols2, int nwarps, bool use_logit_softcap, bool mla>
+template<int DKQ, int DV, int ncols1, int ncols2, bool use_logit_softcap, bool mla>
 __launch_bounds__(ggml_cuda_fattn_mma_get_nthreads(DKQ, DV, ncols1*ncols2), ggml_cuda_fattn_mma_get_occupancy(DKQ, DV, ncols1*ncols2))
 static __global__ void flash_attn_ext_f16(
         const char * __restrict__ Q,
@@ -1439,8 +1439,13 @@ static __global__ void flash_attn_ext_f16(
     static_assert(!mla || DKQ >= DV, "MLA needs DKQ >= DV");
 
     typedef fattn_mma_f16_config<DKQ, DV> c;
+    constexpr int nthreads_max   = c::nwarps_max*WARP_SIZE;
     constexpr int ntiles    = ncols1*ncols2 <= 8 ? 1 : 2; // Number of tiles per warp.
     constexpr int nbatch_fa = c::nbatch_fa;
+    constexpr int cols_per_warp = ntiles * tile_B::I;
+    constexpr int nwarps_max_x  = (ncols1*ncols2) / cols_per_warp;
+    constexpr int nwarps_max_y  = nbatch_fa / tile_A::I;
+    constexpr int nwarps        = nwarps_max_x*nwarps_max_y <= nthreads_max/WARP_SIZE ? nwarps_max_x*nwarps_max_y : nthreads_max/WARP_SIZE;
 
     static_assert(FATTN_KQ_STRIDE % nbatch_fa == 0, "bad nbatch_fa");
 
@@ -1610,7 +1615,7 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     fattn_kernel_t fattn_kernel;
     if (logit_softcap == 0.0f) {
         constexpr bool use_logit_softcap = false;
-        fattn_kernel = flash_attn_ext_f16<DKQ, DV, ncols1, ncols2, nwarps, use_logit_softcap, mla>;
+        fattn_kernel = flash_attn_ext_f16<DKQ, DV, ncols1, ncols2, use_logit_softcap, mla>;
 
 #if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
         static bool shared_memory_limit_raised[GGML_CUDA_MAX_DEVICES] = {false};
@@ -1621,7 +1626,7 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
 #endif // !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
     } else {
         constexpr bool use_logit_softcap = true;
-        fattn_kernel = flash_attn_ext_f16<DKQ, DV, ncols1, ncols2, nwarps, use_logit_softcap, mla>;
+        fattn_kernel = flash_attn_ext_f16<DKQ, DV, ncols1, ncols2, use_logit_softcap, mla>;
 
 #if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
         static bool shared_memory_limit_raised[GGML_CUDA_MAX_DEVICES] = {false};
