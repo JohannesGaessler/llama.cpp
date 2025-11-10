@@ -266,7 +266,7 @@ static __global__ void flash_attn_ext_vec(
                     sum = logit_softcap*tanhf(sum);
                 }
 
-                if (mask) {
+                if (mask && (ncols == 1 || ic0 + j < ne01)) {
                     sum += slope*__half2float(maskh[j*ne11 + i_KQ]);
                 }
 
