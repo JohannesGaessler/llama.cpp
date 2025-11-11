@@ -34,14 +34,6 @@ struct fattn_mma_f16_config< 64,  64> {
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages_target = 2;
 
-    static int get_nbatch_V2_host(const int /*cc*/, const int /*ncols*/) {
-        return 32;
-    }
-
-    static constexpr __device__ int get_nbatch_V2_device(int /*ncols*/) {
-        return 32;
-    }
-
     static int get_nbatch_combine_host(const int /*cc*/, const int /*ncols*/) {
         return 32;
     }
@@ -57,14 +49,6 @@ struct fattn_mma_f16_config< 80,  80> {
     static constexpr int  nwarps_max     = 4;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages_target = 2;
-
-    static int get_nbatch_V2_host(const int /*cc*/, const int /*ncols*/) {
-        return 40;
-    }
-
-    static constexpr __device__ int get_nbatch_V2_device(int /*ncols*/) {
-        return 40;
-    }
 
     static int get_nbatch_combine_host(const int /*cc*/, const int /*ncols*/) {
         return 40;
@@ -82,14 +66,6 @@ struct fattn_mma_f16_config< 96,  96> {
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages_target = 2;
 
-    static int get_nbatch_V2_host(const int /*cc*/, const int /*ncols*/) {
-        return 48;
-    }
-
-    static constexpr __device__ int get_nbatch_V2_device(int /*ncols*/) {
-        return 48;
-    }
-
     static int get_nbatch_combine_host(const int /*cc*/, const int /*ncols*/) {
         return 48;
     }
@@ -105,14 +81,6 @@ struct fattn_mma_f16_config<112, 112> {
     static constexpr int  nwarps_max     = 4;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages_target = 2;
-
-    static int get_nbatch_V2_host(const int /*cc*/, const int /*ncols*/) {
-        return 56;
-    }
-
-    static constexpr __device__ int get_nbatch_V2_device(int /*ncols*/) {
-        return 56;
-    }
 
     static int get_nbatch_combine_host(const int /*cc*/, const int /*ncols*/) {
         return 56;
@@ -130,14 +98,6 @@ struct fattn_mma_f16_config<128, 128> {
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages_target = 2;
 
-    static int get_nbatch_V2_host(const int /*cc*/, const int /*ncols*/) {
-        return 64;
-    }
-
-    static constexpr __device__ int get_nbatch_V2_device(int /*ncols*/) {
-        return 64;
-    }
-
     static int get_nbatch_combine_host(const int /*cc*/, const int /*ncols*/) {
         return 64;
     }
@@ -153,14 +113,6 @@ struct fattn_mma_f16_config<256, 256> {
     static constexpr int  nwarps_max     = 4;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages_target = 2;
-
-    static int get_nbatch_V2_host(const int /*cc*/, const int /*ncols*/) {
-        return 128;
-    }
-
-    static constexpr __device__ int get_nbatch_V2_device(int /*ncols*/) {
-        return 128;
-    }
 
     static int get_nbatch_combine_host(const int cc, const int ncols) {
         if (ggml_cuda_highest_compiled_arch(cc) == GGML_CUDA_CC_TURING) {
@@ -185,21 +137,6 @@ struct fattn_mma_f16_config<576, 512> {
     static constexpr int  nwarps_max     = 8;
     static constexpr bool Q_in_reg       = false;
     static constexpr int  nstages_target = 1;
-
-    static int get_nbatch_V2_host(const int cc, const int ncols) {
-        if (ggml_cuda_highest_compiled_arch(cc) == GGML_CUDA_CC_TURING) {
-            return ncols <= 16 ? 64 : 128;
-        }
-        return ncols <= 16 ? 256 : 128;
-    }
-
-    static constexpr __device__ int get_nbatch_V2_device(int ncols) {
-#if __CUDA_ARCH__ == GGML_CUDA_CC_TURING
-        return ncols <= 16 ? 64 : 128;
-#else
-        return ncols <= 16 ? 256 : 128;
-#endif // __CUDA_ARCH__ == GGML_CUDA_CC_TURING
-    }
 
     static int get_nbatch_combine_host(const int /*cc*/, const int /*ncols*/) {
         return 128;
@@ -523,8 +460,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     constexpr int  ncols           = ncols1 * ncols2;
     constexpr int  nbatch_fa       = c::nbatch_fa;
     constexpr int  nbatch_K2       = ggml_cuda_fattn_mma_get_nbatch_K2(DKQ, DV, ncols);
-    constexpr int  nbatch_V2       = c::get_nbatch_V2_device(ncols);
-    constexpr bool Q_in_reg        = c::get_nbatch_V2_device(ncols);
+    constexpr int  nbatch_V2       = ggml_cuda_fattn_mma_get_nbatch_V2(DKQ, DV, ncols);
+    constexpr bool Q_in_reg        = c::Q_in_reg;
 
     constexpr int stride_tile_Q = DKQ/2     + 4;
     constexpr int stride_tile_K = nbatch_K2 + 4;
@@ -907,7 +844,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     constexpr int  np              = nwarps * (cols_per_warp/ncols2) / ncols1; // Number of parallel CUDA warps per Q column.
     constexpr int  nbatch_fa       = c::nbatch_fa;
     constexpr int  nbatch_K2       = ggml_cuda_fattn_mma_get_nbatch_K2(DKQ, DV, ncols);
-    constexpr int  nbatch_V2       = c::get_nbatch_V2_device(ncols);
+    constexpr int  nbatch_V2       = ggml_cuda_fattn_mma_get_nbatch_V2(DKQ, DV, ncols);
     constexpr int  nbatch_combine  = c::get_nbatch_combine_device(ncols);
     constexpr bool Q_in_reg        = c::Q_in_reg;
 
@@ -1513,7 +1450,7 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     const int  nthreads_max   = c::nwarps_max*WARP_SIZE;
     const int  nbatch_fa      = c::nbatch_fa;
     const int  nbatch_K2      = ggml_cuda_fattn_mma_get_nbatch_K2(DKQ, DV, ncols, cc);
-    const int  nbatch_V2      = c::get_nbatch_V2_host(cc, ncols);
+    const int  nbatch_V2      = ggml_cuda_fattn_mma_get_nbatch_V2(DKQ, DV, ncols, cc);
     const int  nbatch_combine = c::get_nbatch_combine_host(cc, ncols);
     const bool Q_in_reg       = c::Q_in_reg;
 
