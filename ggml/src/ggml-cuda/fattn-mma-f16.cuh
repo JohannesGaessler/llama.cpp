@@ -24,65 +24,6 @@ typedef tile<16,  8, half2> tile_C_VKQ_16;
 // nbatch_V2:      number of V half2 values in direction of DV to load in parallel.
 // nbatch_combine: number of VKQ half2 values in direction of DV to combine in parallel.
 
-template <int DKQ, int DV>
-struct fattn_mma_f16_config;
-
-template <>
-struct fattn_mma_f16_config< 64,  64> {
-    static constexpr int  nbatch_fa      = 64;
-    static constexpr int  nwarps_max     = 4;
-    static constexpr bool Q_in_reg       = true;
-    static constexpr int  nstages_target = 2;
-};
-
-template <>
-struct fattn_mma_f16_config< 80,  80> {
-    static constexpr int  nbatch_fa      = 64;
-    static constexpr int  nwarps_max     = 4;
-    static constexpr bool Q_in_reg       = true;
-    static constexpr int  nstages_target = 2;
-};
-
-template <>
-struct fattn_mma_f16_config< 96,  96> {
-    static constexpr int  nbatch_fa      = 64;
-    static constexpr int  nwarps_max     = 4;
-    static constexpr bool Q_in_reg       = true;
-    static constexpr int  nstages_target = 2;
-};
-
-template <>
-struct fattn_mma_f16_config<112, 112> {
-    static constexpr int  nbatch_fa      = 64;
-    static constexpr int  nwarps_max     = 4;
-    static constexpr bool Q_in_reg       = true;
-    static constexpr int  nstages_target = 2;
-};
-
-template <>
-struct fattn_mma_f16_config<128, 128> {
-    static constexpr int  nbatch_fa      = 64;
-    static constexpr int  nwarps_max     = 4;
-    static constexpr bool Q_in_reg       = true;
-    static constexpr int  nstages_target = 2;
-};
-
-template <>
-struct fattn_mma_f16_config<256, 256> {
-    static constexpr int  nbatch_fa      = 32;
-    static constexpr int  nwarps_max     = 4;
-    static constexpr bool Q_in_reg       = true;
-    static constexpr int  nstages_target = 2;
-};
-
-template <>
-struct fattn_mma_f16_config<576, 512> {
-    static constexpr int  nbatch_fa      = 32;
-    static constexpr int  nwarps_max     = 8;
-    static constexpr bool Q_in_reg       = false;
-    static constexpr int  nstages_target = 1;
-};
-
 // The ROCm compiler cannot handle templating in __launch_bounds__.
 // As a workaround, define a macro to package the kernel parameters as uint32_t:
 #define GGML_CUDA_FATTN_MMA_CONFIG_CASE(DKQ_, DV_, ncols_, nthreads, occupancy, nbatch_fa, nbatch_K2, nbatch_V2, nbatch_combine, nstages_target, Q_in_reg) \
@@ -382,10 +323,10 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         float        * const __restrict__ KQ_rowsum,
         const int kb0) {
 #ifdef TURING_MMA_AVAILABLE
-    typedef fattn_mma_f16_config<DKQ, DV> c;
+    constexpr int ncols = ncols1 * ncols2;
 
 #ifdef CP_ASYNC_AVAILABLE
-    constexpr int nstages = c::nstages_target;
+    constexpr int nstages = ggml_cuda_fattn_mma_get_nstages_target(DKQ, DV, ncols);
 #else
     constexpr int nstages = 0;
 #endif // CP_ASYNC_AVAILABLE
@@ -393,11 +334,10 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     constexpr int  cols_per_warp   = ntiles * tile_B::I;
     constexpr int  cols_per_thread = ntiles == 1 ? 2 : ntiles;
     constexpr int  np              = nwarps * (cols_per_warp/ncols2) / ncols1; // Number of parallel CUDA warps per Q column.
-    constexpr int  ncols           = ncols1 * ncols2;
-    constexpr int  nbatch_fa       = c::nbatch_fa;
+    constexpr int  nbatch_fa       = ggml_cuda_fattn_mma_get_nbatch_fa(DKQ, DV, ncols);
     constexpr int  nbatch_K2       = ggml_cuda_fattn_mma_get_nbatch_K2(DKQ, DV, ncols);
     constexpr int  nbatch_V2       = ggml_cuda_fattn_mma_get_nbatch_V2(DKQ, DV, ncols);
-    constexpr bool Q_in_reg        = c::Q_in_reg;
+    constexpr bool Q_in_reg        = ggml_cuda_fattn_mma_get_Q_in_reg (DKQ, DV, ncols);
 
     constexpr int stride_tile_Q = DKQ/2     + 4;
     constexpr int stride_tile_K = nbatch_K2 + 4;
@@ -765,24 +705,22 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const int kb0_stop) {
 #ifdef TURING_MMA_AVAILABLE
     //In this kernel Q, K, V are matrices while i, j, k are matrix indices.
-
-    typedef fattn_mma_f16_config<DKQ, DV> c;
+    constexpr int ncols = ncols1 * ncols2;
 
 #ifdef CP_ASYNC_AVAILABLE
-    constexpr int nstages = c::nstages_target;
+    constexpr int nstages = ggml_cuda_fattn_mma_get_nstages_target(DKQ, DV, ncols);
 #else
     constexpr int nstages = 0;
 #endif // CP_ASYNC_AVAILABLE
 
-    constexpr int  ncols           = ncols1 * ncols2;
     constexpr int  cols_per_warp   = ntiles * tile_B::I;
     constexpr int  cols_per_thread = ntiles == 1 ? 2 : ntiles;
     constexpr int  np              = nwarps * (cols_per_warp/ncols2) / ncols1; // Number of parallel CUDA warps per Q column.
-    constexpr int  nbatch_fa       = c::nbatch_fa;
+    constexpr int  nbatch_fa       = ggml_cuda_fattn_mma_get_nbatch_fa     (DKQ, DV, ncols);
     constexpr int  nbatch_K2       = ggml_cuda_fattn_mma_get_nbatch_K2     (DKQ, DV, ncols);
     constexpr int  nbatch_V2       = ggml_cuda_fattn_mma_get_nbatch_V2     (DKQ, DV, ncols);
     constexpr int  nbatch_combine  = ggml_cuda_fattn_mma_get_nbatch_combine(DKQ, DV, ncols);
-    constexpr bool Q_in_reg        = c::Q_in_reg;
+    constexpr bool Q_in_reg        = ggml_cuda_fattn_mma_get_Q_in_reg      (DKQ, DV, ncols);
 
     static_assert(nwarps * (cols_per_warp/ncols2) % ncols1 == 0, "bad nwarps");
 
@@ -1248,10 +1186,10 @@ static __global__ void flash_attn_ext_f16(
 
     static_assert(!mla || DKQ >= DV, "MLA needs DKQ >= DV");
 
-    typedef fattn_mma_f16_config<DKQ, DV> c;
-    constexpr int ntiles    = ncols1*ncols2 <= 8 ? 1 : 2; // Number of tiles per warp.
-    constexpr int nbatch_fa = c::nbatch_fa;
-    constexpr int nthreads  = ggml_cuda_fattn_mma_get_nthreads(DKQ, DV, ncols1*ncols2);
+    constexpr int ncols     = ncols1 * ncols2;
+    constexpr int ntiles    = ncols <= 8 ? 1 : 2; // Number of tiles per warp.
+    constexpr int nbatch_fa = ggml_cuda_fattn_mma_get_nbatch_fa(DKQ, DV, ncols);
+    constexpr int nthreads  = ggml_cuda_fattn_mma_get_nthreads(DKQ, DV, ncols);
     constexpr int nwarps    = nthreads / WARP_SIZE;
 
     static_assert(FATTN_KQ_STRIDE % nbatch_fa == 0, "bad nbatch_fa");
@@ -1382,21 +1320,18 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
 
     constexpr int ncols = ncols1 * ncols2;
 
-    typedef fattn_mma_f16_config<DKQ, DV> c;
-    const int  nthreads_max   = c::nwarps_max*WARP_SIZE;
-    const int  nbatch_fa      = c::nbatch_fa;
+    const int  nthreads       = ggml_cuda_fattn_mma_get_nthreads      (DKQ, DV, ncols, cc);
+    const int  nbatch_fa      = ggml_cuda_fattn_mma_get_nbatch_fa     (DKQ, DV, ncols, cc);
     const int  nbatch_K2      = ggml_cuda_fattn_mma_get_nbatch_K2     (DKQ, DV, ncols, cc);
     const int  nbatch_V2      = ggml_cuda_fattn_mma_get_nbatch_V2     (DKQ, DV, ncols, cc);
     const int  nbatch_combine = ggml_cuda_fattn_mma_get_nbatch_combine(DKQ, DV, ncols, cc);
-    const bool Q_in_reg       = c::Q_in_reg;
+    const bool Q_in_reg       = ggml_cuda_fattn_mma_get_Q_in_reg      (DKQ, DV, ncols, cc);
 
-    const int nstages = cp_async_available(cc) ? c::nstages_target : 0;
+    const int nstages = cp_async_available(cc) ? ggml_cuda_fattn_mma_get_nstages_target(DKQ, DV, ncols, cc) : 0;
 
     const int ntiles        = ncols <= 8 ? 1 : 2; // Number of tiles per warp.
     const int cols_per_warp = ntiles * tile_B::I;
-    const int nwarps_max_x  = ncols / cols_per_warp;
-    const int nwarps_max_y  = nbatch_fa / tile_A::I;
-    const int nwarps        = nwarps_max_x*nwarps_max_y <= nthreads_max/WARP_SIZE ? nwarps_max_x*nwarps_max_y : nthreads_max/WARP_SIZE;
+    const int nwarps        = nthreads / WARP_SIZE;
 
     constexpr bool mla = DKQ == 576;
 
