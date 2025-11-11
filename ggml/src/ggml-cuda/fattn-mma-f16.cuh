@@ -33,14 +33,6 @@ struct fattn_mma_f16_config< 64,  64> {
     static constexpr int  nwarps_max     = 4;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages_target = 2;
-
-    static int get_nbatch_combine_host(const int /*cc*/, const int /*ncols*/) {
-        return 32;
-    }
-
-    static constexpr __device__ int get_nbatch_combine_device(int /*ncols*/) {
-        return 32;
-    }
 };
 
 template <>
@@ -49,14 +41,6 @@ struct fattn_mma_f16_config< 80,  80> {
     static constexpr int  nwarps_max     = 4;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages_target = 2;
-
-    static int get_nbatch_combine_host(const int /*cc*/, const int /*ncols*/) {
-        return 40;
-    }
-
-    static constexpr __device__ int get_nbatch_combine_device(int /*ncols*/) {
-        return 40;
-    }
 };
 
 template <>
@@ -65,14 +49,6 @@ struct fattn_mma_f16_config< 96,  96> {
     static constexpr int  nwarps_max     = 4;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages_target = 2;
-
-    static int get_nbatch_combine_host(const int /*cc*/, const int /*ncols*/) {
-        return 48;
-    }
-
-    static constexpr __device__ int get_nbatch_combine_device(int /*ncols*/) {
-        return 48;
-    }
 };
 
 template <>
@@ -81,14 +57,6 @@ struct fattn_mma_f16_config<112, 112> {
     static constexpr int  nwarps_max     = 4;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages_target = 2;
-
-    static int get_nbatch_combine_host(const int /*cc*/, const int /*ncols*/) {
-        return 56;
-    }
-
-    static constexpr __device__ int get_nbatch_combine_device(int /*ncols*/) {
-        return 56;
-    }
 };
 
 template <>
@@ -97,14 +65,6 @@ struct fattn_mma_f16_config<128, 128> {
     static constexpr int  nwarps_max     = 4;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages_target = 2;
-
-    static int get_nbatch_combine_host(const int /*cc*/, const int /*ncols*/) {
-        return 64;
-    }
-
-    static constexpr __device__ int get_nbatch_combine_device(int /*ncols*/) {
-        return 64;
-    }
 };
 
 template <>
@@ -113,22 +73,6 @@ struct fattn_mma_f16_config<256, 256> {
     static constexpr int  nwarps_max     = 4;
     static constexpr bool Q_in_reg       = true;
     static constexpr int  nstages_target = 2;
-
-    static int get_nbatch_combine_host(const int cc, const int ncols) {
-        if (ggml_cuda_highest_compiled_arch(cc) == GGML_CUDA_CC_TURING) {
-            return ncols <= 16 ? 128 : 64;
-        }
-        return 64;
-    }
-
-    static constexpr __device__ int get_nbatch_combine_device(int ncols) {
-#if __CUDA_ARCH__ == GGML_CUDA_CC_TURING
-        return ncols <= 16 ? 128 : 64;
-#else
-        GGML_UNUSED(ncols);
-        return 128;
-#endif // __CUDA_ARCH__ == GGML_CUDA_CC_TURING
-    }
 };
 
 template <>
@@ -137,14 +81,6 @@ struct fattn_mma_f16_config<576, 512> {
     static constexpr int  nwarps_max     = 8;
     static constexpr bool Q_in_reg       = false;
     static constexpr int  nstages_target = 1;
-
-    static int get_nbatch_combine_host(const int /*cc*/, const int /*ncols*/) {
-        return 128;
-    }
-
-    static constexpr __device__ int get_nbatch_combine_device(int /*ncols*/) {
-        return 128;
-    }
 };
 
 // The ROCm compiler cannot handle templating in __launch_bounds__.
@@ -843,9 +779,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     constexpr int  cols_per_thread = ntiles == 1 ? 2 : ntiles;
     constexpr int  np              = nwarps * (cols_per_warp/ncols2) / ncols1; // Number of parallel CUDA warps per Q column.
     constexpr int  nbatch_fa       = c::nbatch_fa;
-    constexpr int  nbatch_K2       = ggml_cuda_fattn_mma_get_nbatch_K2(DKQ, DV, ncols);
-    constexpr int  nbatch_V2       = ggml_cuda_fattn_mma_get_nbatch_V2(DKQ, DV, ncols);
-    constexpr int  nbatch_combine  = c::get_nbatch_combine_device(ncols);
+    constexpr int  nbatch_K2       = ggml_cuda_fattn_mma_get_nbatch_K2     (DKQ, DV, ncols);
+    constexpr int  nbatch_V2       = ggml_cuda_fattn_mma_get_nbatch_V2     (DKQ, DV, ncols);
+    constexpr int  nbatch_combine  = ggml_cuda_fattn_mma_get_nbatch_combine(DKQ, DV, ncols);
     constexpr bool Q_in_reg        = c::Q_in_reg;
 
     static_assert(nwarps * (cols_per_warp/ncols2) % ncols1 == 0, "bad nwarps");
@@ -1449,9 +1385,9 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     typedef fattn_mma_f16_config<DKQ, DV> c;
     const int  nthreads_max   = c::nwarps_max*WARP_SIZE;
     const int  nbatch_fa      = c::nbatch_fa;
-    const int  nbatch_K2      = ggml_cuda_fattn_mma_get_nbatch_K2(DKQ, DV, ncols, cc);
-    const int  nbatch_V2      = ggml_cuda_fattn_mma_get_nbatch_V2(DKQ, DV, ncols, cc);
-    const int  nbatch_combine = c::get_nbatch_combine_host(cc, ncols);
+    const int  nbatch_K2      = ggml_cuda_fattn_mma_get_nbatch_K2     (DKQ, DV, ncols, cc);
+    const int  nbatch_V2      = ggml_cuda_fattn_mma_get_nbatch_V2     (DKQ, DV, ncols, cc);
+    const int  nbatch_combine = ggml_cuda_fattn_mma_get_nbatch_combine(DKQ, DV, ncols, cc);
     const bool Q_in_reg       = c::Q_in_reg;
 
     const int nstages = cp_async_available(cc) ? c::nstages_target : 0;
