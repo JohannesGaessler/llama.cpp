@@ -179,6 +179,21 @@ static constexpr __device__ int ggml_cuda_fattn_mma_get_Q_in_reg(const int DKQ, 
 
 // ------------------------------------------------------------------------------------------------------------------
 
+static __host__ int ggml_cuda_fattn_mma_get_nstages(const int DKQ, const int DV, const int ncols1, const int ncols2, const int cc) {
+    return cp_async_available(cc) && ncols2 >= 2 ? ggml_cuda_fattn_mma_get_nstages_target(DKQ, DV, ncols1*ncols2, cc) : 0;
+}
+
+static constexpr __device__ int ggml_cuda_fattn_mma_get_nstages(const int DKQ, const int DV, const int ncols1, const int ncols2) {
+#ifdef CP_ASYNC_AVAILABLE
+    return ncols2 >= 2 ? ggml_cuda_fattn_mma_get_nstages_target(DKQ, DV, ncols1*ncols2) : 0;
+#else
+    GGML_UNUSED_VARS(DKQ, DV, ncols1, ncols2);
+    return 0;
+#endif // CP_ASYNC_AVAILABLE
+}
+
+// ------------------------------------------------------------------------------------------------------------------
+
 template<int stride_tile, int nwarps, int nbatch_fa, bool use_cp_async>
 static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
         const half2 * const __restrict__ KV, half2 * const __restrict__ tile_KV, const int D2, const int stride_KV) {
@@ -323,14 +338,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         float        * const __restrict__ KQ_rowsum,
         const int kb0) {
 #ifdef TURING_MMA_AVAILABLE
-    constexpr int ncols = ncols1 * ncols2;
-
-#ifdef CP_ASYNC_AVAILABLE
-    constexpr int nstages = ggml_cuda_fattn_mma_get_nstages_target(DKQ, DV, ncols);
-#else
-    constexpr int nstages = 0;
-#endif // CP_ASYNC_AVAILABLE
-
+    constexpr int  ncols           = ncols1 * ncols2;
     constexpr int  cols_per_warp   = ntiles * tile_B::I;
     constexpr int  cols_per_thread = ntiles == 1 ? 2 : ntiles;
     constexpr int  np              = nwarps * (cols_per_warp/ncols2) / ncols1; // Number of parallel CUDA warps per Q column.
@@ -338,6 +346,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     constexpr int  nbatch_K2       = ggml_cuda_fattn_mma_get_nbatch_K2(DKQ, DV, ncols);
     constexpr int  nbatch_V2       = ggml_cuda_fattn_mma_get_nbatch_V2(DKQ, DV, ncols);
     constexpr bool Q_in_reg        = ggml_cuda_fattn_mma_get_Q_in_reg (DKQ, DV, ncols);
+    constexpr int  nstages         = ggml_cuda_fattn_mma_get_nstages  (DKQ, DV, ncols1, ncols2);
 
     constexpr int stride_tile_Q = DKQ/2     + 4;
     constexpr int stride_tile_K = nbatch_K2 + 4;
@@ -705,14 +714,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const int kb0_stop) {
 #ifdef TURING_MMA_AVAILABLE
     //In this kernel Q, K, V are matrices while i, j, k are matrix indices.
-    constexpr int ncols = ncols1 * ncols2;
-
-#ifdef CP_ASYNC_AVAILABLE
-    constexpr int nstages = ggml_cuda_fattn_mma_get_nstages_target(DKQ, DV, ncols);
-#else
-    constexpr int nstages = 0;
-#endif // CP_ASYNC_AVAILABLE
-
+    constexpr int  ncols           = ncols1 * ncols2;
     constexpr int  cols_per_warp   = ntiles * tile_B::I;
     constexpr int  cols_per_thread = ntiles == 1 ? 2 : ntiles;
     constexpr int  np              = nwarps * (cols_per_warp/ncols2) / ncols1; // Number of parallel CUDA warps per Q column.
@@ -721,6 +723,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     constexpr int  nbatch_V2       = ggml_cuda_fattn_mma_get_nbatch_V2     (DKQ, DV, ncols);
     constexpr int  nbatch_combine  = ggml_cuda_fattn_mma_get_nbatch_combine(DKQ, DV, ncols);
     constexpr bool Q_in_reg        = ggml_cuda_fattn_mma_get_Q_in_reg      (DKQ, DV, ncols);
+    constexpr int  nstages         = ggml_cuda_fattn_mma_get_nstages       (DKQ, DV, ncols1, ncols2);
 
     static_assert(nwarps * (cols_per_warp/ncols2) % ncols1 == 0, "bad nwarps");
 
@@ -1326,8 +1329,7 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     const int  nbatch_V2      = ggml_cuda_fattn_mma_get_nbatch_V2     (DKQ, DV, ncols, cc);
     const int  nbatch_combine = ggml_cuda_fattn_mma_get_nbatch_combine(DKQ, DV, ncols, cc);
     const bool Q_in_reg       = ggml_cuda_fattn_mma_get_Q_in_reg      (DKQ, DV, ncols, cc);
-
-    const int nstages = cp_async_available(cc) ? ggml_cuda_fattn_mma_get_nstages_target(DKQ, DV, ncols, cc) : 0;
+    const int  nstages        = ggml_cuda_fattn_mma_get_nstages       (DKQ, DV, ncols1, ncols2, cc);
 
     const int ntiles        = ncols <= 8 ? 1 : 2; // Number of tiles per warp.
     const int cols_per_warp = ntiles * tile_B::I;
