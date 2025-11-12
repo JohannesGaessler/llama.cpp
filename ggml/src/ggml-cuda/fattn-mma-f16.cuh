@@ -320,9 +320,10 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_mask(
             for (int i0 = 0; i0 < nbatch_fa; i0 += WARP_SIZE) {
                 const int i = i0 + threadIdx.x;
 
-                tile_mask[j*(nbatch_fa + 8) + i] = mask_h[j*stride_mask + i];
+                tile_mask[j*(nbatch_fa + 8) + i] = i < i_sup ? mask_h[j*stride_mask + i] : half(0.0f);
             }
         }
+        return;
     }
     constexpr int cols_per_warp = 2*WARP_SIZE/nbatch_fa;
     constexpr int stride_j = nwarps * cols_per_warp;
@@ -506,10 +507,12 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         // The divisor is stored in KQ_rowsum and will be applied at the end.
         static_assert(nbatch_fa % (np*tile_C_KQ::I) == 0, "bad loop size");
 #pragma unroll
-        for (int k = 0; k < nbatch_fa/(np*tile_C_KQ::I); ++k) {
+        for (int k0 = 0; k0 < nbatch_fa; k0 += np*tile_C_KQ::I) {
 #pragma unroll
             for (int l = 0; l < tile_C_KQ::ne; ++l) {
-                KQ_max_new[l % 2] = fmaxf(KQ_max_new[l % 2], KQ_C[k].x[l]);
+                if (!oob_check || k0 + tile_C_KQ::get_i(l) < k_VKQ_sup) {
+                    KQ_max_new[l % 2] = fmaxf(KQ_max_new[l % 2], KQ_C[k0/(np*tile_C_KQ::I)].x[l]);
+                }
             }
         }
 
@@ -524,12 +527,15 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 
         static_assert(nbatch_fa % (np*tile_C_KQ::I) == 0, "bad loop size");
 #pragma unroll
-        for (int k = 0; k < nbatch_fa/(np*tile_C_KQ::I); ++k) {
+        for (int k0 = 0; k0 < nbatch_fa; k0 += np*tile_C_KQ::I) {
 #pragma unroll
             for (int l = 0; l < tile_C_KQ::ne; ++l) {
-                KQ_C[k].x[l] = expf(KQ_C[k].x[l] - KQ_max_new[l % 2]);
-
-                KQ_rowsum_add[l % 2] += KQ_C[k].x[l];
+                if (!oob_check || k0 + (threadIdx.y % np)*tile_C_KQ::I + tile_C_KQ::get_i(l) < k_VKQ_sup) {
+                    KQ_C[k0/(np*tile_C_KQ::I)].x[l] = expf(KQ_C[k0/(np*tile_C_KQ::I)].x[l] - KQ_max_new[l % 2]);
+                    KQ_rowsum_add[l % 2] += KQ_C[k0/(np*tile_C_KQ::I)].x[l];
+                } else {
+                    KQ_C[k0/(np*tile_C_KQ::I)].x[l] = 0.0f;
+                }
             }
         }
     } else { // ntiles > 1
@@ -557,13 +563,15 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         // The divisor is stored in KQ_rowsum and will be applied at the end.
         static_assert(nbatch_fa % (np*tile_C_KQ::I) == 0, "bad loop size");
 #pragma unroll
-        for (int k = 0; k < nbatch_fa/(np*tile_C_KQ_16::J); ++k) {
+        for (int k0 = 0; k0 < nbatch_fa; k0 += np*tile_C_KQ_16::J) {
 #pragma unroll
             for (int t = 0; t < ntiles/2; ++t) {
 #pragma unroll
                 for (int l = 0; l < tile_C_KQ_16::ne; ++l) {
-                    const int KQ_index = 2*t + (l/2) % 2;
-                    KQ_max_new[KQ_index] = fmaxf(KQ_max_new[KQ_index], KQ_C_16[k*ntiles/2 + t].x[l]);
+                    if (!oob_check || k0 + tile_C_KQ_16::get_j(l) < k_VKQ_sup) {
+                        const int KQ_index = 2*t + (l/2) % 2;
+                        KQ_max_new[KQ_index] = fmaxf(KQ_max_new[KQ_index], KQ_C_16[(k0/(np*tile_C_KQ_16::J))*ntiles/2 + t].x[l]);
+                    }
                 }
             }
         }
@@ -579,16 +587,20 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 
         static_assert(nbatch_fa % (np*tile_C_KQ_16::J) == 0, "bad loop size");
 #pragma unroll
-        for (int k = 0; k < nbatch_fa/(np*tile_C_KQ_16::J); ++k) {
+        for (int k0 = 0; k0 < nbatch_fa; k0 += np*tile_C_KQ_16::J) {
 #pragma unroll
             for (int t = 0; t < ntiles/2; ++t) {
 #pragma unroll
                 for (int l = 0; l < tile_C_KQ_16::ne; ++l) {
                     const int KQ_index = 2*t + (l/2) % 2;
 
-                    KQ_C_16[k*ntiles/2 + t].x[l] = expf(KQ_C_16[k*ntiles/2 + t].x[l] - KQ_max_new[KQ_index]);
-
-                    KQ_rowsum_add[KQ_index] += KQ_C_16[k*ntiles/2 + t].x[l];
+                    if (!oob_check || k0 + (threadIdx.y % np)*tile_C_KQ_16::J + tile_C_KQ_16::get_j(l) < k_VKQ_sup) {
+                        KQ_C_16[(k0/(np*tile_C_KQ_16::J))*ntiles/2 + t].x[l] =
+                            expf(KQ_C_16[(k0/(np*tile_C_KQ_16::J))*ntiles/2 + t].x[l] - KQ_max_new[KQ_index]);
+                        KQ_rowsum_add[KQ_index] += KQ_C_16[(k0/(np*tile_C_KQ_16::J))*ntiles/2 + t].x[l];
+                    } else {
+                        KQ_C_16[(k0/(np*tile_C_KQ_16::J))*ntiles/2 + t].x[l] = 0.0f;
+                    }
                 }
             }
         }
