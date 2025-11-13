@@ -361,8 +361,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_mask(
     }
 }
 
-template<int DKQ, int DV, int ncols1, int ncols2, int nwarps, int ntiles,
-    bool use_logit_softcap, bool mla, bool needs_fixup, bool is_fixup, bool last_iter, bool oob_check>
+template<int DKQ, int DV, int ncols1, int ncols2, int nwarps,
+    bool use_logit_softcap, bool mla, bool needs_fixup, bool is_fixup, bool last_iter, bool oob_check,
+    typename T_A, typename T_B, typename T_C_KQ, typename T_C_VKQ>
 static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         const float2 * const __restrict__ Q_f2,
         const half2  * const __restrict__ K_h2,
@@ -382,8 +383,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         half2        * const __restrict__ tile_K,
         half2        * const __restrict__ tile_V,
         half         * const __restrict__ tile_mask,
-        const tile_B * const __restrict__ Q_B,
-        tile_C_VKQ   * const __restrict__ VKQ_C,
+        T_B          * const __restrict__ Q_B,
+        T_C_VKQ      * const __restrict__ VKQ_C,
         float        * const __restrict__ KQ_max,
         float        * const __restrict__ KQ_rowsum,
         const int kb0,
@@ -391,8 +392,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         const int j_VKQ_sup) {
 #ifdef TURING_MMA_AVAILABLE
     constexpr int  ncols           = ncols1 * ncols2;
-    constexpr int  cols_per_warp   = ntiles * tile_B::I;
-    constexpr int  cols_per_thread = ntiles == 1 ? 2 : ntiles;
+    constexpr int  cols_per_warp   = T_B::I;
+    constexpr int  cols_per_thread = 2;
     constexpr int  np              = nwarps * (cols_per_warp/ncols2) / ncols1; // Number of parallel CUDA warps per Q column.
     constexpr int  nbatch_fa       = ggml_cuda_fattn_mma_get_nbatch_fa(DKQ, DV, ncols);
     constexpr int  nbatch_K2       = ggml_cuda_fattn_mma_get_nbatch_K2(DKQ, DV, ncols);
@@ -407,12 +408,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     constexpr int stride_tile_V = mla ? stride_tile_K : nbatch_V2 + 4;
 
     const int k_VKQ_0 = kb0 * nbatch_fa;
-    tile_C_KQ KQ_C[nbatch_fa/(np*tile_C_KQ::I) * ntiles];
-
-    // Use wide variants of tiles if ntiles >= 2.
-    tile_B_16     * Q_B_16   = (tile_B_16     *) Q_B;
-    tile_C_VKQ_16 * VKQ_C_16 = (tile_C_VKQ_16 *) VKQ_C;
-    tile_C_KQ_16  * KQ_C_16  = (tile_C_KQ_16  *) KQ_C;
+    T_C_KQ KQ_C[nbatch_fa/(np*T_C_KQ::I)];
 
     if constexpr (nstages > 1) {
         static_assert(!oob_check, "OOB check incompatible with multi-stage pipeline");
@@ -449,38 +445,35 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         // Calculate tile of KQ:
         if constexpr (Q_in_reg) {
 #pragma unroll
-            for (int i_KQ_00 = 0; i_KQ_00 < nbatch_fa; i_KQ_00 += np*tile_A::I) {
-                const int i_KQ_0 = i_KQ_00 + (threadIdx.y % np)*tile_A::I;
+            for (int i_KQ_00 = 0; i_KQ_00 < nbatch_fa; i_KQ_00 += np*T_A::I) {
+                const int i_KQ_0 = i_KQ_00 + (threadIdx.y % np)*T_A::I;
 #pragma unroll
-                for (int k_KQ_0 = k0_start; k_KQ_0 < k0_stop; k_KQ_0 += tile_A::J) {
-                    tile_A K_A;
+                for (int k_KQ_0 = k0_start; k_KQ_0 < k0_stop; k_KQ_0 += T_A::J) {
+                    T_A K_A;
                     load_ldmatrix(K_A, tile_K + i_KQ_0*stride_tile_K + (k_KQ_0 - k0_start), stride_tile_K);
-                    if (ntiles == 1) {
-                        mma(KQ_C[i_KQ_00/(np*tile_A::I)], K_A, Q_B[k_KQ_0/tile_A::J]);
+                    if constexpr (T_B::I == 8) {
+                        mma(KQ_C[i_KQ_00/(np*T_A::I)], K_A, Q_B[k_KQ_0/T_A::J]);
                     } else {
-#pragma unroll
-                        for (int t = 0; t < ntiles/2; ++t) {
-                            // Wide version of KQ_C is column-major => swap A and B.
-                            mma(KQ_C_16[i_KQ_00/(np*tile_A::I) * ntiles/2 + t], Q_B_16[k_KQ_0/tile_A::J * ntiles/2 + t], K_A);
-                        }
+                        // Wide version of KQ_C is column-major => swap A and B.
+                        mma(KQ_C[i_KQ_00/(np*T_A::I)], Q_B[k_KQ_0/T_A::J], K_A);
                     }
                 }
             }
         } else {
-            static_assert(ntiles == 2, "ntiles != 2 not implemented");
+            static_assert(T_B::I == 16, "T_B::16 != 16 not implemented");
 #pragma unroll
-            for (int k_KQ_0 = k0_start; k_KQ_0 < k0_stop; k_KQ_0 += tile_A::J) {
-                load_ldmatrix(Q_B_16[0], tile_Q + (threadIdx.y / np)*(tile_B_16::I*stride_tile_Q) + k_KQ_0, stride_tile_Q);
+            for (int k_KQ_0 = k0_start; k_KQ_0 < k0_stop; k_KQ_0 += T_A::J) {
+                load_ldmatrix(Q_B[0], tile_Q + (threadIdx.y / np)*(T_B::I*stride_tile_Q) + k_KQ_0, stride_tile_Q);
 
 #pragma unroll
-                for (int i_KQ_00 = 0; i_KQ_00 < nbatch_fa; i_KQ_00 += np*tile_A::I) {
-                    const int i_KQ_0 = i_KQ_00 + (threadIdx.y % np)*tile_A::I;
+                for (int i_KQ_00 = 0; i_KQ_00 < nbatch_fa; i_KQ_00 += np*T_A::I) {
+                    const int i_KQ_0 = i_KQ_00 + (threadIdx.y % np)*T_A::I;
 
-                    tile_A K_A;
+                    T_A K_A;
                     load_ldmatrix(K_A, tile_K + i_KQ_0*stride_tile_K + (k_KQ_0 - k0_start), stride_tile_K);
 
                     // Wide version of KQ_C is column-major => swap A and B.
-                    mma(KQ_C_16[i_KQ_00/(np*tile_A::I)], Q_B_16[0], K_A);
+                    mma(KQ_C[i_KQ_00/(np*T_A::I)], Q_B[0], K_A);
                 }
             }
         }
@@ -491,11 +484,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     }
 
     if (use_logit_softcap) {
-        static_assert(nbatch_fa % (np*tile_C_KQ::I) == 0, "bad loop size");
+        static_assert(nbatch_fa % (np*T_C_KQ::I) == 0, "bad loop size");
 #pragma unroll
-        for (int i = 0; i < nbatch_fa/(np*tile_C_KQ::I) * ntiles; ++i) {
+        for (int i = 0; i < nbatch_fa/(np*T_C_KQ::I); ++i) {
 #pragma unroll
-            for (int l = 0; l < tile_C_KQ::ne; ++l) {
+            for (int l = 0; l < T_C_KQ::ne; ++l) {
                 KQ_C[i].x[l] = logit_softcap*tanhf(KQ_C[i].x[l]);
             }
         }
@@ -508,17 +501,17 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     }
     float KQ_rowsum_add[cols_per_thread] = {0.0f};
 
-    if (ntiles == 1) {
+    if (T_B::I == 8) {
         if (ncols2 > 1 || mask_h) {
 #pragma unroll
-            for (int i00 = 0; i00 < nbatch_fa; i00 += np*tile_C_KQ::I) {
-                const int i0 = i00 + (threadIdx.y % np)*tile_C_KQ::I;
+            for (int i00 = 0; i00 < nbatch_fa; i00 += np*T_C_KQ::I) {
+                const int i0 = i00 + (threadIdx.y % np)*T_C_KQ::I;
 #pragma unroll
-                for (int l = 0; l < tile_C_KQ::ne; ++l) {
-                    const int i = i0 + tile_C_KQ::get_i(l);
-                    const int j = ((threadIdx.y / np)*tile_C_KQ::J + tile_C_KQ::get_j(l)) / ncols2;
+                for (int l = 0; l < T_C_KQ::ne; ++l) {
+                    const int i = i0 + T_C_KQ::get_i(l);
+                    const int j = ((threadIdx.y / np)*T_C_KQ::J + T_C_KQ::get_j(l)) / ncols2;
 
-                    KQ_C[i00/(np*tile_C_KQ::I)].x[l] += slope *
+                    KQ_C[i00/(np*T_C_KQ::I)].x[l] += slope *
                         __half2float(tile_mask[j*(nbatch_fa + 8) + i]);
                 }
             }
@@ -526,13 +519,13 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 
         // Calculate softmax for each KQ column using the current max. value.
         // The divisor is stored in KQ_rowsum and will be applied at the end.
-        static_assert(nbatch_fa % (np*tile_C_KQ::I) == 0, "bad loop size");
+        static_assert(nbatch_fa % (np*T_C_KQ::I) == 0, "bad loop size");
 #pragma unroll
-        for (int k0 = 0; k0 < nbatch_fa; k0 += np*tile_C_KQ::I) {
+        for (int k0 = 0; k0 < nbatch_fa; k0 += np*T_C_KQ::I) {
 #pragma unroll
-            for (int l = 0; l < tile_C_KQ::ne; ++l) {
-                if (!oob_check || k0 + tile_C_KQ::get_i(l) < k_VKQ_sup) {
-                    KQ_max_new[l % 2] = fmaxf(KQ_max_new[l % 2], KQ_C[k0/(np*tile_C_KQ::I)].x[l]);
+            for (int l = 0; l < T_C_KQ::ne; ++l) {
+                if (!oob_check || k0 + T_C_KQ::get_i(l) < k_VKQ_sup) {
+                    KQ_max_new[l % 2] = fmaxf(KQ_max_new[l % 2], KQ_C[k0/(np*T_C_KQ::I)].x[l]);
                 }
             }
         }
@@ -546,53 +539,45 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             }
         }
 
-        static_assert(nbatch_fa % (np*tile_C_KQ::I) == 0, "bad loop size");
+        static_assert(nbatch_fa % (np*T_C_KQ::I) == 0, "bad loop size");
 #pragma unroll
-        for (int k0 = 0; k0 < nbatch_fa; k0 += np*tile_C_KQ::I) {
+        for (int k0 = 0; k0 < nbatch_fa; k0 += np*T_C_KQ::I) {
 #pragma unroll
-            for (int l = 0; l < tile_C_KQ::ne; ++l) {
-                if (!oob_check || k0 + (threadIdx.y % np)*tile_C_KQ::I + tile_C_KQ::get_i(l) < k_VKQ_sup) {
-                    KQ_C[k0/(np*tile_C_KQ::I)].x[l] = expf(KQ_C[k0/(np*tile_C_KQ::I)].x[l] - KQ_max_new[l % 2]);
-                    KQ_rowsum_add[l % 2] += KQ_C[k0/(np*tile_C_KQ::I)].x[l];
+            for (int l = 0; l < T_C_KQ::ne; ++l) {
+                if (!oob_check || k0 + (threadIdx.y % np)*T_C_KQ::I + T_C_KQ::get_i(l) < k_VKQ_sup) {
+                    KQ_C[k0/(np*T_C_KQ::I)].x[l] = expf(KQ_C[k0/(np*T_C_KQ::I)].x[l] - KQ_max_new[l % 2]);
+                    KQ_rowsum_add[l % 2] += KQ_C[k0/(np*T_C_KQ::I)].x[l];
                 } else {
-                    KQ_C[k0/(np*tile_C_KQ::I)].x[l] = 0.0f;
+                    KQ_C[k0/(np*T_C_KQ::I)].x[l] = 0.0f;
                 }
             }
         }
-    } else { // ntiles > 1
+    } else { // T_B::I > 8
         if (ncols2 > 1 || mask_h) {
 #pragma unroll
-            for (int i00 = 0; i00 < nbatch_fa; i00 += np*tile_C_KQ_16::J) {
-                const int i0 = i00 + (threadIdx.y % np)*tile_C_KQ_16::J;
+            for (int i00 = 0; i00 < nbatch_fa; i00 += np*T_C_KQ::J) {
+                const int i0 = i00 + (threadIdx.y % np)*T_C_KQ::J;
 #pragma unroll
-                for (int t = 0; t < ntiles/2; ++t) {
-#pragma unroll
-                    for (int l0 = 0; l0 < tile_C_KQ_16::ne; l0 += 2) {
-                        const int i = (i0 + tile_C_KQ_16::get_j(l0)) / 2;
-                        const int j = ((threadIdx.y / np)*cols_per_warp + t*tile_C_KQ_16::I + tile_C_KQ_16::get_i(l0)) / ncols2;
+                for (int l0 = 0; l0 < T_C_KQ::ne; l0 += 2) {
+                    const int i = (i0 + T_C_KQ::get_j(l0)) / 2;
+                    const int j = ((threadIdx.y / np)*cols_per_warp + T_C_KQ::get_i(l0)) / ncols2;
 
-                        const float2 tmp = __half22float2(((const half2 *)tile_mask)[j*(nbatch_fa/2 + 4) + i]);
-                        const int KQ_index = i00/(np*tile_C_KQ_16::J) * ntiles/2 + t;
-                        KQ_C_16[KQ_index].x[l0 + 0] += slope*tmp.x;
-                        KQ_C_16[KQ_index].x[l0 + 1] += slope*tmp.y;
-                    }
+                    const float2 tmp = __half22float2(((const half2 *)tile_mask)[j*(nbatch_fa/2 + 4) + i]);
+                    KQ_C[i00/(np*T_C_KQ::J)].x[l0 + 0] += slope*tmp.x;
+                    KQ_C[i00/(np*T_C_KQ::J)].x[l0 + 1] += slope*tmp.y;
                 }
             }
         }
 
         // Calculate softmax for each KQ column using the current max. value.
         // The divisor is stored in KQ_rowsum and will be applied at the end.
-        static_assert(nbatch_fa % (np*tile_C_KQ::I) == 0, "bad loop size");
+        static_assert(nbatch_fa % (np*T_C_KQ::I) == 0, "bad loop size");
 #pragma unroll
-        for (int k0 = 0; k0 < nbatch_fa; k0 += np*tile_C_KQ_16::J) {
+        for (int k0 = 0; k0 < nbatch_fa; k0 += np*T_C_KQ::J) {
 #pragma unroll
-            for (int t = 0; t < ntiles/2; ++t) {
-#pragma unroll
-                for (int l = 0; l < tile_C_KQ_16::ne; ++l) {
-                    if (!oob_check || k0 + tile_C_KQ_16::get_j(l) < k_VKQ_sup) {
-                        const int KQ_index = 2*t + (l/2) % 2;
-                        KQ_max_new[KQ_index] = fmaxf(KQ_max_new[KQ_index], KQ_C_16[(k0/(np*tile_C_KQ_16::J))*ntiles/2 + t].x[l]);
-                    }
+            for (int l = 0; l < T_C_KQ::ne; ++l) {
+                if (!oob_check || k0 + T_C_KQ::get_j(l) < k_VKQ_sup) {
+                    KQ_max_new[(l/2) % 2] = fmaxf(KQ_max_new[(l/2) % 2], KQ_C[(k0/(np*T_C_KQ::J))].x[l]);
                 }
             }
         }
@@ -606,22 +591,16 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             }
         }
 
-        static_assert(nbatch_fa % (np*tile_C_KQ_16::J) == 0, "bad loop size");
+        static_assert(nbatch_fa % (np*T_C_KQ::J) == 0, "bad loop size");
 #pragma unroll
-        for (int k0 = 0; k0 < nbatch_fa; k0 += np*tile_C_KQ_16::J) {
+        for (int k0 = 0; k0 < nbatch_fa; k0 += np*T_C_KQ::J) {
 #pragma unroll
-            for (int t = 0; t < ntiles/2; ++t) {
-#pragma unroll
-                for (int l = 0; l < tile_C_KQ_16::ne; ++l) {
-                    const int KQ_index = 2*t + (l/2) % 2;
-
-                    if (!oob_check || k0 + (threadIdx.y % np)*tile_C_KQ_16::J + tile_C_KQ_16::get_j(l) < k_VKQ_sup) {
-                        KQ_C_16[(k0/(np*tile_C_KQ_16::J))*ntiles/2 + t].x[l] =
-                            expf(KQ_C_16[(k0/(np*tile_C_KQ_16::J))*ntiles/2 + t].x[l] - KQ_max_new[KQ_index]);
-                        KQ_rowsum_add[KQ_index] += KQ_C_16[(k0/(np*tile_C_KQ_16::J))*ntiles/2 + t].x[l];
-                    } else {
-                        KQ_C_16[(k0/(np*tile_C_KQ_16::J))*ntiles/2 + t].x[l] = 0.0f;
-                    }
+            for (int l = 0; l < T_C_KQ::ne; ++l) {
+                if (!oob_check || k0 + (threadIdx.y % np)*T_C_KQ::J + T_C_KQ::get_j(l) < k_VKQ_sup) {
+                    KQ_C[(k0/(np*T_C_KQ::J))].x[l] = expf(KQ_C[(k0/(np*T_C_KQ::J))].x[l] - KQ_max_new[(l/2) % 2]);
+                    KQ_rowsum_add[(l/2) % 2] += KQ_C[(k0/(np*T_C_KQ::J))].x[l];
+                } else {
+                    KQ_C[(k0/(np*T_C_KQ::J))].x[l] = 0.0f;
                 }
             }
         }
@@ -641,12 +620,12 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             KQ_rowsum[col] = KQ_max_scale[col]*KQ_rowsum[col] + KQ_rowsum_add[col];
         }
 
-        if (ntiles == 1) {
+        if (T_B::I == 8) {
             const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale[0], KQ_max_scale[1]);
 #pragma unroll
-            for (int i = 0; i < DV/tile_C_VKQ::I; ++i) {
+            for (int i = 0; i < DV/T_C_VKQ::I; ++i) {
 #pragma unroll
-                for (int l = 0; l < tile_C_VKQ::ne; ++l) {
+                for (int l = 0; l < T_C_VKQ::ne; ++l) {
                     VKQ_C[i].x[l] *= KQ_max_scale_h2;
                 }
             }
@@ -655,10 +634,10 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             for (int col = 0; col < cols_per_thread; ++col) {
                 const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale[col], KQ_max_scale[col]);
 #pragma unroll
-                for (int i = 0; i < DV/tile_C_VKQ_16::J; ++i) {
+                for (int i = 0; i < DV/T_C_VKQ::J; ++i) {
 #pragma unroll
-                    for (int l0 = 0; l0 < tile_C_VKQ_16::ne; l0 += 2) {
-                        VKQ_C_16[i*ntiles/2 + col/2].x[l0 + col % 2] *= KQ_max_scale_h2;
+                    for (int l0 = 0; l0 < T_C_VKQ::ne; l0 += 2) {
+                        VKQ_C[i].x[l0 + col] *= KQ_max_scale_h2;
                     }
                 }
             }
@@ -666,20 +645,16 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     }
 
     // Convert KQ C tiles into B tiles for VKQ calculation:
-    tile_B B[nbatch_fa/(np*2*tile_B::J) * ntiles];
-    tile_B_16 * B_16 = (tile_B_16 *) B;
-    static_assert(nbatch_fa % (np*2*tile_B::J) == 0, "bad loop size");
-    if (ntiles == 1) {
+    T_B B[nbatch_fa/(np*2*T_B::J)];
+    static_assert(nbatch_fa % (np*2*T_B::J) == 0, "bad loop size");
+    if constexpr (T_B::I == 8) {
 #pragma unroll
-        for (int k = 0; k < nbatch_fa/(np*2*tile_B::J); ++k) {
+        for (int k = 0; k < nbatch_fa/(np*2*T_B::J); ++k) {
             B[k] = get_transposed(get_half2(KQ_C[k]));
         }
     } else {
-        for (int k = 0; k < nbatch_fa/(np*2*tile_B_16::J); ++k) {
-#pragma unroll
-            for (int t = 0; t < ntiles/2; ++t) {
-                B_16[k*ntiles/2 + t] = get_half2(KQ_C_16[k*ntiles/2 + t]);
-            }
+        for (int k = 0; k < nbatch_fa/(np*2*T_B::J); ++k) {
+            B[k] = get_half2(KQ_C[k]);
         }
     }
 
@@ -723,22 +698,19 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 
         // Calculate VKQ tile:
 #pragma unroll
-        for (int i_VKQ_0 = i0_start; i_VKQ_0 < i0_stop; i_VKQ_0 += tile_C_VKQ::I) {
-            static_assert((nbatch_fa/2) % (np*tile_A::J) == 0, "bad loop size");
+        for (int i_VKQ_0 = i0_start; i_VKQ_0 < i0_stop; i_VKQ_0 += T_C_VKQ::I) {
+            static_assert((nbatch_fa/2) % (np*T_A::J) == 0, "bad loop size");
 #pragma unroll
-            for (int k00 = 0; k00 < nbatch_fa/2; k00 += np*tile_A::J) {
-                const int k0 = k00 + (threadIdx.y % np)*tile_A::J;
+            for (int k00 = 0; k00 < nbatch_fa/2; k00 += np*T_A::J) {
+                const int k0 = k00 + (threadIdx.y % np)*T_A::J;
 
-                tile_A A;
+                T_A A;
                 load_ldmatrix_trans(A, tile_V_i + 2*k0*stride_tile_V + (i_VKQ_0 - i0_start)/2, stride_tile_V);
-                if (ntiles == 1) {
-                    mma(VKQ_C[i_VKQ_0/tile_C_VKQ::I], A, B[k00/(np*tile_A::J)]);
+                if constexpr (T_B::I == 8) {
+                    mma(VKQ_C[i_VKQ_0/T_C_VKQ::I], A, B[k00/(np*T_A::J)]);
                 } else {
-#pragma unroll
-                    for (int t = 0; t < ntiles/2; ++t) {
-                        // Wide version of VKQ_C is column-major => swap A and B.
-                        mma(VKQ_C_16[i_VKQ_0/tile_C_VKQ::I * ntiles/2 + t], B_16[k00/(np*tile_A::J) * ntiles/2 + t], A);
-                    }
+                    // Wide version of VKQ_C is column-major => swap A and B.
+                    mma(VKQ_C[i_VKQ_0/T_C_VKQ::I], B[k00/(np*T_A::J)], A);
                 }
             }
         }
@@ -920,9 +892,10 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         constexpr bool last_iter = false;
         constexpr bool oob_check = false;
         constexpr int  k_VKQ_sup = nbatch_fa;
-        flash_attn_ext_f16_iter<DKQ, DV, ncols1, ncols2, nwarps, ntiles, use_logit_softcap, mla, needs_fixup, is_fixup, last_iter, oob_check>
+        flash_attn_ext_f16_iter
+            <DKQ, DV, ncols1, ncols2, nwarps, use_logit_softcap, mla, needs_fixup, is_fixup, last_iter, oob_check, T_A, T_B, T_C_KQ, T_C_VKQ>
             (Q_f2, K_h2, V_h2, mask_h, dstk, dstk_fixup, scale, slope, logit_softcap,
-             ne01, ne02, stride_K, stride_V, stride_mask, tile_Q, tile_K, tile_V, tile_mask, Q_B, VKQ_C,
+             ne01, ne02, stride_K, stride_V, stride_mask, tile_Q, tile_K, tile_V, tile_mask, (T_B *) Q_B, (T_C_VKQ *) VKQ_C,
              KQ_max, KQ_rowsum, kb0, k_VKQ_sup, j_VKQ_sup);
     }
     // kb0_start is always < kb0_stop so the last iter can be executed unconditionally.
@@ -931,26 +904,29 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
             constexpr bool last_iter = true;
             constexpr bool oob_check = false;
             constexpr int  k_VKQ_sup = nbatch_fa;
-            flash_attn_ext_f16_iter<DKQ, DV, ncols1, ncols2, nwarps, ntiles, use_logit_softcap, mla, needs_fixup, is_fixup, last_iter, oob_check>
+            flash_attn_ext_f16_iter
+                <DKQ, DV, ncols1, ncols2, nwarps, use_logit_softcap, mla, needs_fixup, is_fixup, last_iter, oob_check, T_A, T_B, T_C_KQ, T_C_VKQ>
                 (Q_f2, K_h2, V_h2, mask_h, dstk, dstk_fixup, scale, slope, logit_softcap,
-                 ne01, ne02, stride_K, stride_V, stride_mask, tile_Q, tile_K, tile_V, tile_mask, Q_B, VKQ_C,
+                 ne01, ne02, stride_K, stride_V, stride_mask, tile_Q, tile_K, tile_V, tile_mask, (T_B *) Q_B, (T_C_VKQ *) VKQ_C,
                  KQ_max, KQ_rowsum, kb0, k_VKQ_sup, j_VKQ_sup);
         } else {
             constexpr bool last_iter = true;
             constexpr bool oob_check = true;
             const     int  k_VKQ_sup = ne11 - kb0*nbatch_fa;
-            flash_attn_ext_f16_iter<DKQ, DV, ncols1, ncols2, nwarps, ntiles, use_logit_softcap, mla, needs_fixup, is_fixup, last_iter, oob_check>
+            flash_attn_ext_f16_iter
+                <DKQ, DV, ncols1, ncols2, nwarps, use_logit_softcap, mla, needs_fixup, is_fixup, last_iter, oob_check, T_A, T_B, T_C_KQ, T_C_VKQ>
                 (Q_f2, K_h2, V_h2, mask_h, dstk, dstk_fixup, scale, slope, logit_softcap,
-                 ne01, ne02, stride_K, stride_V, stride_mask, tile_Q, tile_K, tile_V, tile_mask, Q_B, VKQ_C,
+                 ne01, ne02, stride_K, stride_V, stride_mask, tile_Q, tile_K, tile_V, tile_mask, (T_B *) Q_B, (T_C_VKQ *) VKQ_C,
                  KQ_max, KQ_rowsum, kb0, k_VKQ_sup, j_VKQ_sup);
         }
     } else {
         constexpr bool last_iter = true;
         constexpr bool oob_check = false;
         constexpr int  k_VKQ_sup = nbatch_fa;
-        flash_attn_ext_f16_iter<DKQ, DV, ncols1, ncols2, nwarps, ntiles, use_logit_softcap, mla, needs_fixup, is_fixup, last_iter, oob_check>
+        flash_attn_ext_f16_iter
+            <DKQ, DV, ncols1, ncols2, nwarps, use_logit_softcap, mla, needs_fixup, is_fixup, last_iter, oob_check, T_A, T_B, T_C_KQ, T_C_VKQ>
             (Q_f2, K_h2, V_h2, mask_h, dstk, dstk_fixup, scale, slope, logit_softcap,
-             ne01, ne02, stride_K, stride_V, stride_mask, tile_Q, tile_K, tile_V, tile_mask, Q_B, VKQ_C,
+             ne01, ne02, stride_K, stride_V, stride_mask, tile_Q, tile_K, tile_V, tile_mask, (T_B *) Q_B, (T_C_VKQ *) VKQ_C,
              KQ_max, KQ_rowsum, kb0, k_VKQ_sup, j_VKQ_sup);
     }
 
