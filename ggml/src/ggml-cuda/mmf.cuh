@@ -28,19 +28,24 @@ static __global__ void mul_mat_f(
         const int channel_ratio, const int stride_channel_x, const int stride_channel_y, const int stride_channel_dst,
         const int sample_ratio, const int stride_sample_x, const int stride_sample_y, const int stride_sample_dst) {
 #if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
-    constexpr bool I_16_supported = tile<16, 8, T>::supported() && tile<16, 8, float>::supported();
-    constexpr bool I_32_supported = tile<32, 8, T>::supported() && tile<32, 8, float>::supported();
+#ifdef VOLTA_MMA_AVAILABLE
+    if constexpr (!std::is_same_v<T, half2>) {NO_DEVICE_CODE;} else {
+    constexpr int I = cols_per_block <= 8 ? 32 : 16;
+    constexpr int J = cols_per_block <= 8 ?  8 : 16;
 
-    if (!I_16_supported && !I_32_supported) {
+    typedef tile        <I, 8, T>     tile_A;
+    typedef tile_volta_B<J, 8, T>     tile_B;
+    typedef tile        <I, J, float> tile_C;
+#else
+    typedef tile<16, 8, T>     tile_A;
+    typedef tile<8,  8, T>     tile_B;
+    typedef tile<16, 8, float> tile_C;
+#endif // VOLTA_MMA_AVAILABLE
+
+    if (!tile_A::supported() || !tile_B::supported() || !tile_C::supported()) {
         NO_DEVICE_CODE;
         return;
     }
-
-    constexpr int I_preferred = I_16_supported ? 16 : 32; // For Turing MMA both work but 16 is ~1% faster.
-
-    typedef tile<I_preferred, 8, T>     tile_A;
-    typedef tile<8,           8, T>     tile_B;
-    typedef tile<I_preferred, 8, float> tile_C;
 
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
     constexpr int tile_k_padded = warp_size + 4;
@@ -232,6 +237,9 @@ static __global__ void mul_mat_f(
             }
         }
     }
+#ifdef VOLTA_MMA_AVAILABLE
+    }
+#endif //VOLTA_MMA_AVAILABLE
 #else
     GGML_UNUSED_VARS(x, y, ids, dst,
         ncols, ncols_dst_total, nchannels_dst, stride_row, stride_col_y, stride_col_dst,
@@ -254,19 +262,24 @@ static __global__ void mul_mat_f_ids(
         const int sample_ratio, const int stride_sample_x, const int stride_sample_y, const int stride_sample_dst,
         const uint3 sis1_fd, const uint3 nch_fd) {
 #if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
-    constexpr bool I_16_supported = tile<16, 8, T>::supported() && tile<16, 8, float>::supported();
-    constexpr bool I_32_supported = tile<32, 8, T>::supported() && tile<32, 8, float>::supported();
+#ifdef VOLTA_MMA_AVAILABLE
+    if constexpr (!std::is_same_v<T, half2>) {NO_DEVICE_CODE;} else {
+    constexpr int I = cols_per_block <= 8 ? 32 : 16;
+    constexpr int J = cols_per_block <= 8 ?  8 : 16;
 
-    if (!I_16_supported && !I_32_supported) {
+    typedef tile        <I, 8, T>     tile_A;
+    typedef tile_volta_B<J, 8, T>     tile_B;
+    typedef tile        <I, J, float> tile_C;
+#else
+    typedef tile<16, 8, T>     tile_A;
+    typedef tile<8,  8, T>     tile_B;
+    typedef tile<16, 8, float> tile_C;
+#endif // VOLTA_MMA_AVAILABLE
+
+    if (!tile_A::supported() || !tile_B::supported() || !tile_C::supported()) {
         NO_DEVICE_CODE;
         return;
     }
-
-    constexpr int I_preferred = I_16_supported ? 16 : 32; // For Turing MMA both work butr 16 is ~1% faster.
-
-    typedef tile<I_preferred, 8, T>     tile_A;
-    typedef tile<8,           8, T>     tile_B;
-    typedef tile<I_preferred, 8, float> tile_C;
 
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
     constexpr int tile_k_padded = warp_size + 4;
@@ -486,6 +499,9 @@ static __global__ void mul_mat_f_ids(
             }
         }
     }
+#ifdef VOLTA_MMA_AVAILABLE
+    }
+#endif // VOLTA_MMA_AVAILABLE
 #else
     GGML_UNUSED_VARS(x, y, ids_src_compact, ids_dst_compact, expert_bounds, dst,
         ncols, ncols_dst_total, nchannels_dst, stride_row, stride_col_y, stride_col_dst,
