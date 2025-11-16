@@ -30,12 +30,9 @@ static __global__ void mul_mat_f(
 #if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
 #ifdef VOLTA_MMA_AVAILABLE
     if constexpr (!std::is_same_v<T, half2>) {NO_DEVICE_CODE;} else {
-    constexpr int I = cols_per_block <= 8 ? 32 : 16;
-    constexpr int J = cols_per_block <= 8 ?  8 : 16;
-
-    typedef tile        <I, 8, T>     tile_A;
-    typedef tile_volta_B<J, 8, T>     tile_B;
-    typedef tile        <I, J, float> tile_C;
+    typedef tile        <32, 8, T>     tile_A;
+    typedef tile_volta_B< 8, 8, false> tile_B;
+    typedef tile        <32, 8, float> tile_C;
 #else
     typedef tile<16, 8, T>     tile_A;
     typedef tile<8,  8, T>     tile_B;
@@ -264,12 +261,9 @@ static __global__ void mul_mat_f_ids(
 #if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
 #ifdef VOLTA_MMA_AVAILABLE
     if constexpr (!std::is_same_v<T, half2>) {NO_DEVICE_CODE;} else {
-    constexpr int I = cols_per_block <= 8 ? 32 : 16;
-    constexpr int J = cols_per_block <= 8 ?  8 : 16;
-
-    typedef tile        <I, 8, T>     tile_A;
-    typedef tile_volta_B<J, 8, T>     tile_B;
-    typedef tile        <I, J, float> tile_C;
+    typedef tile        <32, 8, half2> tile_A;
+    typedef tile_volta_B< 8, 8, false> tile_B;
+    typedef tile        <32, 8, float> tile_C;
 #else
     typedef tile<16, 8, T>     tile_A;
     typedef tile<8,  8, T>     tile_B;
