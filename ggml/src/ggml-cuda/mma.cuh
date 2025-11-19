@@ -70,16 +70,20 @@ namespace ggml_cuda_mma {
 
     enum data_split {
         DATA_SPLIT_NONE,
-        DATA_SPLIT_MIRRORED
+        DATA_SPLIT_MIRRORED,
+        DATA_SPLIT_I,
+        DATA_SPLIT_J,
+        DATA_SPLIT_PARTIAL,
     };
 
-    template <int I_, int J_, typename T, data_split ds=DATA_SPLIT_NONE, bool transposed=false>
+    template <int I_, int J_, typename T, data_split ds_=DATA_SPLIT_NONE, bool transposed=false>
     struct tile {};
 
     template <int I_, int J_, typename T>
     struct tile<I_, J_, T, DATA_SPLIT_NONE, false> {
-        static constexpr int I  = I_;
-        static constexpr int J  = J_;
+        static constexpr int        I  = I_;
+        static constexpr int        J  = J_;
+        static constexpr data_split ds = DATA_SPLIT_NONE;
 
 #if defined(GGML_USE_HIP)
         static constexpr int ne = I * J / 64;
@@ -293,9 +297,10 @@ namespace ggml_cuda_mma {
 
     template <int I_, int J_>
     struct tile<I_, J_, nv_bfloat162, DATA_SPLIT_NONE, false> {
-        static constexpr int I  = I_;
-        static constexpr int J  = J_;
-        static constexpr int ne = I * J / WARP_SIZE;
+        static constexpr int        I  = I_;
+        static constexpr int        J  = J_;
+        static constexpr data_split ds = DATA_SPLIT_NONE;
+        static constexpr int        ne = I * J / WARP_SIZE;
         nv_bfloat162 x[ne] = {{0.0f, 0.0f}};
 
         static constexpr __device__ bool supported() {
@@ -334,9 +339,10 @@ namespace ggml_cuda_mma {
 
     template <int I_, int J_>
     struct tile<I_, J_, half2, DATA_SPLIT_MIRRORED, false> {
-        static constexpr int I  = I_;
-        static constexpr int J  = J_;
-        static constexpr int ne = I * J / (WARP_SIZE/4);
+        static constexpr int        I  = I_;
+        static constexpr int        J  = J_;
+        static constexpr data_split ds = DATA_SPLIT_NONE;
+        static constexpr int        ne = I * J / (WARP_SIZE/4);
         half2 x[ne] = {{0.0f, 0.0f}};
 
         static constexpr __device__ bool supported() {
@@ -370,9 +376,10 @@ namespace ggml_cuda_mma {
 
     template <int I_, int J_>
     struct tile<I_, J_, half2, DATA_SPLIT_MIRRORED, true> {
-        static constexpr int I  = I_;
-        static constexpr int J  = J_;
-        static constexpr int ne = I * J / (WARP_SIZE/4);
+        static constexpr int        I  = I_;
+        static constexpr int        J  = J_;
+        static constexpr data_split ds = DATA_SPLIT_MIRRORED;
+        static constexpr int        ne = I * J / (WARP_SIZE/4);
         half2 x[ne] = {{0.0f, 0.0f}};
 
         static constexpr __device__ bool supported() {

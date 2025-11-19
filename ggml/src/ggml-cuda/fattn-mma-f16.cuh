@@ -755,6 +755,31 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 #endif // defined(VOLTA_MMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE)
 }
 
+#if defined(TURING_MMA_AVAILABLE)
+template<int ncols> struct mma_tile_sizes {
+    using T_A_KQ  = tile<16,  8, half2>; // row-major
+    using T_A_VKQ = tile<16,  8, half2>; // row-major
+    using T_B     = tile<16,  8, half2>; // column-major
+    using T_C_KQ  = tile<16, 16, float>; // column-major
+    using T_C_VKQ = tile<16,  8, half2>; // column-major
+};
+template<> struct mma_tile_sizes<8> {
+    using T_A_KQ  = tile<16,  8, half2>; // row-major
+    using T_A_VKQ = tile<16,  8, half2>; // row-major
+    using T_B     = tile< 8,  8, half2>; // column-major
+    using T_C_KQ  = tile<16,  8, float>; // row-major
+    using T_C_VKQ = tile<16,  4, half2>; // row-major
+};
+#else // Volta
+template<int ncols> struct mma_tile_sizes {
+    using T_A_KQ  = tile<16,  8, half2, DATA_SPLIT_MIRRORED, false>; // row-major
+    using T_A_VKQ = tile<16,  8, half2, DATA_SPLIT_MIRRORED, true>;  // column-major
+    using T_B     = tile<32,  8, half2, DATA_SPLIT_NONE,     false>; // column-major
+    using T_C_KQ  = tile<32, 16, float, DATA_SPLIT_NONE,     false>; // column-major
+    using T_C_VKQ = tile<32,  8, half2, DATA_SPLIT_NONE,     false>; // column-major
+};
+#endif // defined(TURING_MMA_AVAILABLE)
+
 template<int DKQ, int DV, int ncols1, int ncols2, int nwarps, bool use_logit_softcap, bool mla, bool needs_fixup, bool is_fixup>
 static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const float2 * const __restrict__ Q_f2,
@@ -780,32 +805,13 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const int kb0_stop) {
 #if defined(VOLTA_MMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE)
     //In this kernel Q, K, V are matrices while i, j, k are matrix indices.
+
     constexpr int ncols = ncols1 * ncols2;
-
-#if defined(TURING_MMA_AVAILABLE)
-    constexpr int I = 16;
-    constexpr int J = ncols <= 8 ? 8 : 16;
-    constexpr int K = 8;
-
-    using T_A_KQ  = tile<I, K, half2>;
-    using T_A_VKQ = T_A_KQ;
-    using T_B     = tile<J, K, half2>;
-
-    // T_B is column-major so T_B::I is J in the context of A @ B = C.
-    // T_C is row-major for J <= 8, column-major for J > 8.
-    using T_C_KQ  = tile<T_B::I == 8 ? I : J, T_B::I == 8 ? J     : I,     float>;
-    using T_C_VKQ = tile<T_B::I == 8 ? I : J, T_B::I == 8 ? J / 2 : I / 2, half2>;
-#else // Volta
-    constexpr int I = 16;
-    constexpr int J = 32;
-    constexpr int K = 8;
-
-    using T_A_KQ  = tile<I,   K,   half2, DATA_SPLIT_MIRRORED, false>;
-    using T_A_VKQ = tile<K*2, I/2, half2, DATA_SPLIT_MIRRORED, true>;
-    using T_B     = tile<J,   K,   half2, DATA_SPLIT_NONE,     false>;
-    using T_C_KQ  = tile<J,   I,   float, DATA_SPLIT_NONE,     false>;
-    using T_C_VKQ = tile<J,   I/2, half2, DATA_SPLIT_NONE,     false>;
-#endif // defined(TURING_MMA_AVAILABLE)
+    using     T_A_KQ    = typename mma_tile_sizes<ncols>::T_A_KQ;
+    using     T_A_VKQ   = typename mma_tile_sizes<ncols>::T_A_VKQ;
+    using     T_B       = typename mma_tile_sizes<ncols>::T_B;
+    using     T_C_KQ    = typename mma_tile_sizes<ncols>::T_C_KQ;
+    using     T_C_VKQ   = typename mma_tile_sizes<ncols>::T_C_VKQ;
 
     constexpr int  cols_per_warp   = T_B::I;
     constexpr int  cols_per_thread = 2; // This is specifically KQ columns, Volta only has a single VKQ column.
