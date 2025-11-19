@@ -184,26 +184,6 @@ static constexpr __device__ int ggml_cuda_fattn_mma_get_nstages(const int DKQ, c
 #endif // CP_ASYNC_AVAILABLE
 }
 
-static constexpr __device__ int ggml_cuda_fattn_mma_get_tile_I(const int /*ncols*/) {
-    return 16;
-}
-
-static constexpr __device__ int ggml_cuda_fattn_mma_get_tile_J(const int ncols) {
-#if defined(TURING_MMA_AVAILABLE)
-    if (ncols <= 8) {
-        return 8;
-    }
-    return 16;
-#else // Volta
-    return 32;
-#endif // defined(TURING_MMA_AVAILABLE)
-    GGML_UNUSED(ncols);
-}
-
-static constexpr __device__ int ggml_cuda_fattn_mma_get_tile_K(const int /*ncols*/) {
-    return 8;
-}
-
 // ------------------------------------------------------------------------------------------------------------------
 
 template<int stride_tile, int nwarps, int nbatch_fa, bool use_cp_async, bool oob_check>
@@ -803,9 +783,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     constexpr int ncols = ncols1 * ncols2;
 
 #if defined(TURING_MMA_AVAILABLE)
-    constexpr int I = ggml_cuda_fattn_mma_get_tile_I(ncols);
-    constexpr int J = ggml_cuda_fattn_mma_get_tile_J(ncols);
-    constexpr int K = ggml_cuda_fattn_mma_get_tile_K(ncols);
+    constexpr int I = 16;
+    constexpr int J = ncols <= 8 ? 8 : 16;
+    constexpr int K = 8;
 
     using T_A_KQ  = tile<I, K, half2>;
     using T_A_VKQ = T_A_KQ;
@@ -816,9 +796,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     using T_C_KQ  = tile<T_B::I == 8 ? I : J, T_B::I == 8 ? J     : I,     float>;
     using T_C_VKQ = tile<T_B::I == 8 ? I : J, T_B::I == 8 ? J / 2 : I / 2, half2>;
 #else // Volta
-    constexpr int I = ggml_cuda_fattn_mma_get_tile_I(ncols);
-    constexpr int J = ggml_cuda_fattn_mma_get_tile_J(ncols);
-    constexpr int K = ggml_cuda_fattn_mma_get_tile_K(ncols);
+    constexpr int I = 16;
+    constexpr int J = 32;
+    constexpr int K = 8;
 
     using T_A_KQ  = tile<I,   K,   half2, DATA_SPLIT_MIRRORED, false>;
     using T_A_VKQ = tile<K*2, I/2, half2, DATA_SPLIT_MIRRORED, true>;
