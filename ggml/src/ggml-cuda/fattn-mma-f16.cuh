@@ -803,27 +803,28 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     constexpr int ncols = ncols1 * ncols2;
 
 #if defined(TURING_MMA_AVAILABLE)
-    using T_A_KQ  = tile<ggml_cuda_fattn_mma_get_tile_I(ncols), ggml_cuda_fattn_mma_get_tile_K(ncols), half2>;
+    constexpr int I = ggml_cuda_fattn_mma_get_tile_I(ncols);
+    constexpr int J = ggml_cuda_fattn_mma_get_tile_J(ncols);
+    constexpr int K = ggml_cuda_fattn_mma_get_tile_K(ncols);
+
+    using T_A_KQ  = tile<I, K, half2>;
     using T_A_VKQ = T_A_KQ;
-    using T_B     = tile<ggml_cuda_fattn_mma_get_tile_J(ncols), ggml_cuda_fattn_mma_get_tile_K(ncols), half2>;
+    using T_B     = tile<J, K, half2>;
 
     // T_B is column-major so T_B::I is J in the context of A @ B = C.
     // T_C is row-major for J <= 8, column-major for J > 8.
-    using T_C_KQ = tile<
-        T_B::I == 8 ? ggml_cuda_fattn_mma_get_tile_I(ncols) : ggml_cuda_fattn_mma_get_tile_J(ncols),
-        T_B::I == 8 ? ggml_cuda_fattn_mma_get_tile_J(ncols) : ggml_cuda_fattn_mma_get_tile_I(ncols),
-        float>;
-    using T_C_VKQ = tile<
-        T_B::I == 8 ? ggml_cuda_fattn_mma_get_tile_I(ncols)     : ggml_cuda_fattn_mma_get_tile_J(ncols),
-        T_B::I == 8 ? ggml_cuda_fattn_mma_get_tile_J(ncols) / 2 : ggml_cuda_fattn_mma_get_tile_I(ncols) / 2,
-        half2>;
+    using T_C_KQ  = tile<T_B::I == 8 ? I : J, T_B::I == 8 ? J     : I,     float>;
+    using T_C_VKQ = tile<T_B::I == 8 ? I : J, T_B::I == 8 ? J / 2 : I / 2, half2>;
 #else // Volta
-    using T_A_KQ  = tile_volta_B<ggml_cuda_fattn_mma_get_tile_I(ncols),   ggml_cuda_fattn_mma_get_tile_K(ncols),   false>;
-    using T_A_VKQ = tile_volta_B<ggml_cuda_fattn_mma_get_tile_K(ncols)*2, ggml_cuda_fattn_mma_get_tile_I(ncols)/2, true>;
-    using T_B     = tile        <ggml_cuda_fattn_mma_get_tile_J(ncols),   ggml_cuda_fattn_mma_get_tile_K(ncols),   half2>;
+    constexpr int I = ggml_cuda_fattn_mma_get_tile_I(ncols);
+    constexpr int J = ggml_cuda_fattn_mma_get_tile_J(ncols);
+    constexpr int K = ggml_cuda_fattn_mma_get_tile_K(ncols);
 
-    using T_C_KQ  = tile<ggml_cuda_fattn_mma_get_tile_J(ncols), ggml_cuda_fattn_mma_get_tile_I(ncols),     float>;
-    using T_C_VKQ = tile<ggml_cuda_fattn_mma_get_tile_J(ncols), ggml_cuda_fattn_mma_get_tile_I(ncols) / 2, half2>;
+    using T_A_KQ  = tile<I,   K,   half2, DATA_SPLIT_MIRRORED, false>;
+    using T_A_VKQ = tile<K*2, I/2, half2, DATA_SPLIT_MIRRORED, true>;
+    using T_B     = tile<J,   K,   half2, DATA_SPLIT_NONE,     false>;
+    using T_C_KQ  = tile<J,   I,   float, DATA_SPLIT_NONE,     false>;
+    using T_C_VKQ = tile<J,   I/2, half2, DATA_SPLIT_NONE,     false>;
 #endif // defined(TURING_MMA_AVAILABLE)
 
     constexpr int  cols_per_warp   = T_B::I;

@@ -68,8 +68,16 @@ static __device__ __forceinline__ half2 ggml_cuda_movmatrix(const half2 x) {
 
 namespace ggml_cuda_mma {
 
+    enum data_split {
+        DATA_SPLIT_NONE,
+        DATA_SPLIT_MIRRORED
+    };
+
+    template <int I_, int J_, typename T, data_split ds=DATA_SPLIT_NONE, bool transposed=false>
+    struct tile {};
+
     template <int I_, int J_, typename T>
-    struct tile {
+    struct tile<I_, J_, T, DATA_SPLIT_NONE, false> {
         static constexpr int I  = I_;
         static constexpr int J  = J_;
 
@@ -124,16 +132,13 @@ namespace ggml_cuda_mma {
         T x[ne] = {0};
 
         static constexpr __device__ bool supported() {
-            if (I == 16 && J == 16) return true;
             if (I == 32 && J ==  8) return true;
             if (I == 32 && J == 16) return true;
             return false;
         }
 
         static __device__ __forceinline__ int get_i(const int l) {
-            if constexpr (I == 16 && J == 16) {
-                return (((threadIdx.x % 8) / 4) * 8) + ((threadIdx.x / 16) * 4) + (l & 2) + (threadIdx.x % 2);
-            } else if constexpr (I == 32 && J == 8) {
+            if constexpr (I == 32 && J == 8) {
 #ifdef GGML_CUDA_MMA_NO_VOLTA_PERM
                 return (((threadIdx.x % 16) / 4) * 8) + ((threadIdx.x / 16) * 4) + (l & 2) + (threadIdx.x % 2);
 #else
@@ -148,9 +153,7 @@ namespace ggml_cuda_mma {
         }
 
         static __device__ __forceinline__ int get_j(const int l) {
-            if constexpr (I == 16 && J == 16) {
-                return (((threadIdx.x % 16) / 8) * 8) + (threadIdx.x & 2) + (l & (4 + 1));
-            } else if constexpr (I == 32 && J == 8) {
+            if constexpr (I == 32 && J == 8) {
                 return (threadIdx.x & 2) + (l & (4 + 1));
             } else if constexpr (I == 32 && J == 16) {
                 return (threadIdx.x & 2) + (l & (8 + 4 + 1));
@@ -209,7 +212,7 @@ namespace ggml_cuda_mma {
     };
 
     template <int I_, int J_>
-    struct tile<I_, J_, half2> {
+    struct tile<I_, J_, half2, DATA_SPLIT_NONE, false> {
         static constexpr int I  = I_;
         static constexpr int J  = J_;
 
@@ -289,7 +292,7 @@ namespace ggml_cuda_mma {
     };
 
     template <int I_, int J_>
-    struct tile<I_, J_, nv_bfloat162> {
+    struct tile<I_, J_, nv_bfloat162, DATA_SPLIT_NONE, false> {
         static constexpr int I  = I_;
         static constexpr int J  = J_;
         static constexpr int ne = I * J / WARP_SIZE;
@@ -329,12 +332,8 @@ namespace ggml_cuda_mma {
         }
     };
 
-    // Volta needs an asymmetric layout between 16x8 A and 16x8 B tiles, temporary struct until refactor:
-    template <int I_, int J_, bool transposed>
-    struct tile_volta_B {};
-
     template <int I_, int J_>
-    struct tile_volta_B<I_, J_, false> {
+    struct tile<I_, J_, half2, DATA_SPLIT_MIRRORED, false> {
         static constexpr int I  = I_;
         static constexpr int J  = J_;
         static constexpr int ne = I * J / (WARP_SIZE/4);
@@ -370,7 +369,7 @@ namespace ggml_cuda_mma {
     };
 
     template <int I_, int J_>
-    struct tile_volta_B<I_, J_, true> {
+    struct tile<I_, J_, half2, DATA_SPLIT_MIRRORED, true> {
         static constexpr int I  = I_;
         static constexpr int J  = J_;
         static constexpr int ne = I * J / (WARP_SIZE/4);
@@ -519,7 +518,8 @@ namespace ggml_cuda_mma {
 
     template <int I>
     static __device__ __forceinline__ void load_ldmatrix(
-            tile_volta_B<I, 8, false> & t, const half2 * __restrict__ xs0, const int stride) {
+            tile<I, 8, half2, DATA_SPLIT_MIRRORED, false> & t,
+            const half2 * __restrict__ xs0, const int stride) {
 #pragma unroll
         for (int l0 = 0; l0 < t.ne; l0 += 4) {
             ggml_cuda_memcpy_1<4*sizeof(half2)>(t.x + l0, xs0 + t.get_i(l0)*stride + t.get_j(l0));
@@ -527,7 +527,8 @@ namespace ggml_cuda_mma {
     }
 
     static __device__ __forceinline__ void load_ldmatrix(
-            tile_volta_B<16, 8, true> & t, const half2 * __restrict__ xs0, const int stride) {
+            tile<16, 8, half2, DATA_SPLIT_MIRRORED, true> & t,
+            const half2 * __restrict__ xs0, const int stride) {
 #pragma unroll
         for (int l0 = 0; l0 < t.ne; l0 += 2) {
             ggml_cuda_memcpy_1<2*sizeof(half2)>(t.x + l0, xs0 + t.get_i(l0)*stride + t.get_j(l0));
@@ -828,7 +829,7 @@ namespace ggml_cuda_mma {
     }
 
     static __device__ __forceinline__ void mma(
-            tile<32, 8, float> & D, const tile<32, 8, half2> & A, const tile_volta_B<8, 8, false> & B) {
+            tile<32, 8, float> & D, const tile<32, 8, half2> & A, const tile<8, 8, half2, DATA_SPLIT_MIRRORED, false> & B) {
 #if __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
         const int * Axi = (const int *) A.x;
         const int * Bxi = (const int *) B.x;
@@ -856,15 +857,15 @@ namespace ggml_cuda_mma {
     }
 
     static __device__ __forceinline__ void mma(
-            tile<32, 16, float> & D, const tile<32, 8, half2> & A, const tile_volta_B<16, 8, false> & B) {
-        tile        <32, 8, float> * D8 = (tile        <32, 8, float> *) &D;
-        tile_volta_B< 8, 8, false> * B8 = (tile_volta_B< 8, 8, false> *) &B;
+            tile<32, 16, float> & D, const tile<32, 8, half2> & A, const tile<16, 8, half2, DATA_SPLIT_MIRRORED, false> & B) {
+        tile<32, 8, float, DATA_SPLIT_NONE,     false> * D8 = (tile<32, 8, float, DATA_SPLIT_NONE,     false> *) &D;
+        tile< 8, 8, half2, DATA_SPLIT_MIRRORED, false> * B8 = (tile< 8, 8, half2, DATA_SPLIT_MIRRORED, false> *) &B;
         mma(D8[0], A, B8[0]);
         mma(D8[1], A, B8[1]);
     }
 
     static __device__ __forceinline__ void mma(
-            tile<32, 4, half2> & D, const tile<32, 8, half2> & A, const tile_volta_B<16, 4, true> & B) {
+            tile<32, 4, half2> & D, const tile<32, 8, half2> & A, const tile<16, 4, half2, DATA_SPLIT_MIRRORED, true> & B) {
 #if __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
         const int * Axi = (const int *) A.x;
         const int * Bxi = (const int *) B.x;
@@ -892,9 +893,9 @@ namespace ggml_cuda_mma {
     }
 
     static __device__ __forceinline__ void mma(
-            tile<32, 8, half2> & D, const tile<32, 8, half2> & A, const tile_volta_B<16, 8, true> & B) {
-        tile        <32, 4, half2> * D4 = (tile        <32, 4, half2> *) &D;
-        tile_volta_B<16, 4, true>  * B4 = (tile_volta_B<16, 4, true>  *) &B;
+            tile<32, 8, half2> & D, const tile<32, 8, half2> & A, const tile<16, 8, half2, DATA_SPLIT_MIRRORED, true> & B) {
+        tile<32, 4, half2, DATA_SPLIT_NONE,     false> * D4 = (tile<32, 4, half2, DATA_SPLIT_NONE,     false> *) &D;
+        tile<16, 4, half2, DATA_SPLIT_MIRRORED, true>  * B4 = (tile<16, 4, half2, DATA_SPLIT_MIRRORED, true>  *) &B;
         mma(D4[0], A, B4[0]);
         mma(D4[1], A, B4[1]);
     }
