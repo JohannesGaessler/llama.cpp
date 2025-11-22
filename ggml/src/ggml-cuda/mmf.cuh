@@ -30,8 +30,8 @@ static __global__ void mul_mat_f(
 #if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
 #ifdef VOLTA_MMA_AVAILABLE
     if constexpr (!std::is_same_v<T, half2>) {NO_DEVICE_CODE;} else {
-    typedef tile<32, 8, T,     DATA_SPLIT_NONE,     false> tile_A;
-    typedef tile< 8, 8, T,     DATA_SPLIT_MIRRORED, false> tile_B;
+    typedef tile<32, 4, T,     DATA_SPLIT_NONE,     false> tile_A;
+    typedef tile< 8, 4, T,     DATA_SPLIT_MIRRORED, false> tile_B;
     typedef tile<32, 8, float, DATA_SPLIT_NONE,     false> tile_C;
 #else
     typedef tile<16, 8, T>     tile_A;
@@ -261,8 +261,8 @@ static __global__ void mul_mat_f_ids(
 #if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
 #ifdef VOLTA_MMA_AVAILABLE
     if constexpr (!std::is_same_v<T, half2>) {NO_DEVICE_CODE;} else {
-    typedef tile<32, 8, T,     DATA_SPLIT_NONE,     false> tile_A;
-    typedef tile< 8, 8, T,     DATA_SPLIT_MIRRORED, false> tile_B;
+    typedef tile<32, 4, T,     DATA_SPLIT_NONE,     false> tile_A;
+    typedef tile< 8, 4, T,     DATA_SPLIT_MIRRORED, false> tile_B;
     typedef tile<32, 8, float, DATA_SPLIT_NONE,     false> tile_C;
 #else
     typedef tile<16, 8, T>     tile_A;

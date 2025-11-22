@@ -68,13 +68,21 @@ static __device__ __forceinline__ half2 ggml_cuda_movmatrix(const half2 x) {
 
 namespace ggml_cuda_mma {
 
+    // Some architectures like Volta or CDNA3 perform multiple matrix multiplications per warp in parallel,
+    //     effectively the warp is being split into subgroups of threads that each perform a single mma instruction.
+    // In those cases the data can be split in different ways across the warp.
     enum data_split {
-        DATA_SPLIT_NONE,
-        DATA_SPLIT_MIRRORED,
-        DATA_SPLIT_I,
-        DATA_SPLIT_J,
-        DATA_SPLIT_PARTIAL,
+        DATA_SPLIT_NONE,     // Each data value is held exactly once per warp (always applies to Turing, Ampere, Ada Lovelace, consumer Blackwell).
+        DATA_SPLIT_MIRRORED, // Each data value is held exactly once per subgroup.
+        DATA_SPLIT_I,        // Each data value is held exactly once per warp with striping in the I dimension.
+        DATA_SPLIT_J,        // Each data value is held exactly once per warp with striping in the J dimension.
+        DATA_SPLIT_PARTIAL,  // Each subgroup holds a partial sum for each data value.
     };
+    // Implemented mma combinations are:
+    //   - (NONE,     NONE)     -> NONE
+    //   - (NONE,     MIRRORED) -> NONE
+    //   - (MIRRORED, I)        -> J
+    //   - (J,        J)        -> PARTIAL (Due to transposition of B the combination of (J, I) -> PARTIAL is actually implemented.)
 
     template <int I_, int J_, typename T, data_split ds_=DATA_SPLIT_NONE, bool transposed=false>
     struct tile {};
@@ -137,7 +145,6 @@ namespace ggml_cuda_mma {
 
         static constexpr __device__ bool supported() {
             if (I == 32 && J ==  8) return true;
-            if (I == 32 && J == 16) return true;
             return false;
         }
 
@@ -148,8 +155,6 @@ namespace ggml_cuda_mma {
 #else
                 return (l & 2) + (threadIdx.x & ~2);
 #endif // GGML_CUDA_MMA_NO_VOLTA_PERM
-            } else if constexpr (I == 32 && J == 16) {
-                return tile<32, 8, T>::get_i(l);
             } else {
                 NO_DEVICE_CODE;
                 return -1;
@@ -159,8 +164,6 @@ namespace ggml_cuda_mma {
         static __device__ __forceinline__ int get_j(const int l) {
             if constexpr (I == 32 && J == 8) {
                 return (threadIdx.x & 2) + (l & (4 + 1));
-            } else if constexpr (I == 32 && J == 16) {
-                return (threadIdx.x & 2) + (l & (8 + 4 + 1));
             } else {
                 NO_DEVICE_CODE;
                 return -1;
@@ -225,12 +228,12 @@ namespace ggml_cuda_mma {
         half2 x[ne] = {{0.0f, 0.0f}};
 
         static constexpr __device__ bool supported() {
-            if (I == 32 && J ==  8) return true;
+            if (I == 32 && J ==  4) return true;
             return false;
         }
 
         static __device__ __forceinline__ int get_i(const int l) {
-            if constexpr (I == 32 && J == 8) {
+            if constexpr (I == 32 && J == 4) {
 #ifdef GGML_CUDA_MMA_NO_VOLTA_PERM
                 return (((threadIdx.x % 16) / 4) * 8) + ((threadIdx.x / 16) * 4) + (threadIdx.x % 4);
 #else
@@ -243,7 +246,7 @@ namespace ggml_cuda_mma {
         }
 
         static __device__ __forceinline__ int get_j(const int l) {
-            if constexpr (I == 32 && J == 8) {
+            if constexpr (I == 32 && J == 4) {
                 return l;
             } else {
                 NO_DEVICE_CODE;
@@ -341,21 +344,18 @@ namespace ggml_cuda_mma {
     struct tile<I_, J_, half2, DATA_SPLIT_MIRRORED, false> {
         static constexpr int        I  = I_;
         static constexpr int        J  = J_;
-        static constexpr data_split ds = DATA_SPLIT_NONE;
+        static constexpr data_split ds = DATA_SPLIT_MIRRORED;
         static constexpr int        ne = I * J / (WARP_SIZE/4);
         half2 x[ne] = {{0.0f, 0.0f}};
 
         static constexpr __device__ bool supported() {
-            if (I ==  8 && J ==  8) return true;
-            if (I == 16 && J ==  8) return true;
+            if (I ==  8 && J ==  4) return true;
             return false;
         }
 
         static __device__ __forceinline__ int get_i(const int l) {
-            if constexpr (I == 8 && J == 8) {
+            if constexpr (I == 8 && J == 4) {
                 return ((threadIdx.x / 16) * 4) + (threadIdx.x % 4);
-            } else if constexpr (I == 16 && J == 8) {
-                return (l & 8) + ((threadIdx.x / 16) * 4) + (threadIdx.x % 4);
             } else {
                 NO_DEVICE_CODE;
                 return -1;
@@ -363,10 +363,8 @@ namespace ggml_cuda_mma {
         }
 
         static __device__ __forceinline__ int get_j(const int l) {
-            if constexpr (I == 8 && J == 8) {
+            if constexpr (I == 8 && J == 4) {
                 return l;
-            } else if constexpr (I == 16 && J == 8) {
-                return l % 8;
             } else {
                 NO_DEVICE_CODE;
                 return -1;
@@ -383,16 +381,13 @@ namespace ggml_cuda_mma {
         half2 x[ne] = {{0.0f, 0.0f}};
 
         static constexpr __device__ bool supported() {
-            if (I == 16 && J ==  4) return true;
-            if (I == 16 && J ==  8) return true;
+            if (I ==  8 && J ==  4) return true;
             return false;
         }
 
         static __device__ __forceinline__ int get_i(const int l) {
-            if constexpr (I == 16 && J == 4) {
-                return ((l       / 2) * 4) + (threadIdx.x % 4);
-            } else if constexpr (I == 16 && J == 8) {
-                return (((l % 8) / 2) * 4) + (threadIdx.x % 4);
+            if constexpr (I == 8 && J == 4) {
+                return ((l / 2) * 4) + (threadIdx.x % 4);
             } else {
                 NO_DEVICE_CODE;
                 return -1;
@@ -400,10 +395,8 @@ namespace ggml_cuda_mma {
         }
 
         static __device__ __forceinline__ int get_j(const int l) {
-            if constexpr (I == 16 && J == 4) {
-                return                 ((threadIdx.x / 16) * 2) + (l % 2);
-            } else if constexpr (I == 16 && J == 8) {
-                return ((l / 8) * 4) + ((threadIdx.x / 16) * 2) + (l % 2);
+            if constexpr (I == 8 && J == 4) {
+                return ((threadIdx.x / 16) * 2) + (l % 2);
             } else {
                 NO_DEVICE_CODE;
                 return -1;
@@ -422,8 +415,8 @@ namespace ggml_cuda_mma {
         return ret;
     }
 #else
-    static __device__ __forceinline__ tile<32, 8, half2> get_half2(const tile<32, 16, float> & tile_float) {
-        tile<32, 8, half2> ret;
+    static __device__ __forceinline__ tile<32, 4, half2> get_half2(const tile<32, 8, float> & tile_float) {
+        tile<32, 4, half2> ret;
 #pragma unroll
         for (int l0 = 0; l0 < tile_float.ne; l0 += 4) {
             int i = (threadIdx.x % 4) / 2;
@@ -444,8 +437,8 @@ namespace ggml_cuda_mma {
         return ret;
     }
 
-    template <int I, int J, typename T>
-    static __device__ __forceinline__ void load_generic(tile<I, J, T> & t, const T * __restrict__ xs0, const int stride) {
+    template <int I, int J, typename T, data_split ds, bool transposed>
+    static __device__ __forceinline__ void load_generic(tile<I, J, T, ds, transposed> & t, const T * __restrict__ xs0, const int stride) {
 #if defined(AMD_MFMA_AVAILABLE)
         if constexpr (I == 64 && J == 2) { // Special tile size to load <16, 4> as <16, 8>
 #pragma unroll
@@ -525,17 +518,12 @@ namespace ggml_cuda_mma {
 
     template <int I>
     static __device__ __forceinline__ void load_ldmatrix(
-            tile<I, 8, half2, DATA_SPLIT_MIRRORED, false> & t,
-            const half2 * __restrict__ xs0, const int stride) {
-#pragma unroll
-        for (int l0 = 0; l0 < t.ne; l0 += 4) {
-            ggml_cuda_memcpy_1<4*sizeof(half2)>(t.x + l0, xs0 + t.get_i(l0)*stride + t.get_j(l0));
-        }
+            tile<I, 4, half2, DATA_SPLIT_MIRRORED, false> & t, const half2 * __restrict__ xs0, const int stride) {
+        ggml_cuda_memcpy_1<4*sizeof(half2)>(t.x, xs0 + t.get_i(0)*stride);
     }
 
     static __device__ __forceinline__ void load_ldmatrix(
-            tile<16, 8, half2, DATA_SPLIT_MIRRORED, true> & t,
-            const half2 * __restrict__ xs0, const int stride) {
+            tile<8, 4, half2, DATA_SPLIT_MIRRORED, true> & t, const half2 * __restrict__ xs0, const int stride) {
 #pragma unroll
         for (int l0 = 0; l0 < t.ne; l0 += 2) {
             ggml_cuda_memcpy_1<2*sizeof(half2)>(t.x + l0, xs0 + t.get_i(l0)*stride + t.get_j(l0));
@@ -544,20 +532,17 @@ namespace ggml_cuda_mma {
 
     template <typename T>
     static __device__ __forceinline__ void load_ldmatrix(
-            tile<32, 8, T> & t, const T * __restrict__ xs0, const int stride) {
+            tile<32, 4, T> & t, const T * __restrict__ xs0, const int stride) {
 #if __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
 #if 1
         // TODO: more generic handling
         static_assert(sizeof(T) == 4, "bad type size");
-        ggml_cuda_memcpy_1<4*sizeof(T)>(t.x + 0, xs0 + t.get_i(0)*stride + 0);
-        ggml_cuda_memcpy_1<4*sizeof(T)>(t.x + 4, xs0 + t.get_i(4)*stride + 4);
+        ggml_cuda_memcpy_1<4*sizeof(T)>(t.x, xs0 + t.get_i(0)*stride);
 #else
         load_generic(t, xs0, stride);
 #endif // 1
 #else
-        tile<16, 8, T> * t16 = (tile<16, 8, T> *) &t;
-        load_ldmatrix(t16[0], xs0 +  0*stride, stride);
-        load_ldmatrix(t16[1], xs0 + 16*stride, stride);
+        NO_DEVICE_CODE;
 #endif // __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
     }
 
@@ -836,7 +821,7 @@ namespace ggml_cuda_mma {
     }
 
     static __device__ __forceinline__ void mma(
-            tile<32, 8, float> & D, const tile<32, 8, half2> & A, const tile<8, 8, half2, DATA_SPLIT_MIRRORED, false> & B) {
+            tile<32, 8, float> & D, const tile<32, 4, half2> & A, const tile<8, 4, half2, DATA_SPLIT_MIRRORED, false> & B) {
 #if __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
         const int * Axi = (const int *) A.x;
         const int * Bxi = (const int *) B.x;
@@ -849,14 +834,6 @@ namespace ggml_cuda_mma {
             "{%0, %1, %2, %3, %4, %5, %6, %7}, {%8, %9}, {%10, %11}, {%0, %1, %2, %3, %4, %5, %6, %7};"
             : "+r"(Dxi[0]), "+r"(Dxi[1]), "+r"(Dxi[2]), "+r"(Dxi[3]), "+r"(Dxi[4]), "+r"(Dxi[5]), "+r"(Dxi[6]), "+r"(Dxi[7])
             : "r"(Axi[2]), "r"(Axi[3]), "r"(Bxi[2]), "r"(Bxi[3]));
-        asm("mma.sync.aligned.m8n8k4.row.col.f32.f16.f16.f32 "
-            "{%0, %1, %2, %3, %4, %5, %6, %7}, {%8, %9}, {%10, %11}, {%0, %1, %2, %3, %4, %5, %6, %7};"
-            : "+r"(Dxi[0]), "+r"(Dxi[1]), "+r"(Dxi[2]), "+r"(Dxi[3]), "+r"(Dxi[4]), "+r"(Dxi[5]), "+r"(Dxi[6]), "+r"(Dxi[7])
-            : "r"(Axi[4]), "r"(Axi[5]), "r"(Bxi[4]), "r"(Bxi[5]));
-        asm("mma.sync.aligned.m8n8k4.row.col.f32.f16.f16.f32 "
-            "{%0, %1, %2, %3, %4, %5, %6, %7}, {%8, %9}, {%10, %11}, {%0, %1, %2, %3, %4, %5, %6, %7};"
-            : "+r"(Dxi[0]), "+r"(Dxi[1]), "+r"(Dxi[2]), "+r"(Dxi[3]), "+r"(Dxi[4]), "+r"(Dxi[5]), "+r"(Dxi[6]), "+r"(Dxi[7])
-            : "r"(Axi[6]), "r"(Axi[7]), "r"(Bxi[6]), "r"(Bxi[7]));
 #else
         GGML_UNUSED_VARS(D, A, B);
         NO_DEVICE_CODE;
@@ -864,15 +841,7 @@ namespace ggml_cuda_mma {
     }
 
     static __device__ __forceinline__ void mma(
-            tile<32, 16, float> & D, const tile<32, 8, half2> & A, const tile<16, 8, half2, DATA_SPLIT_MIRRORED, false> & B) {
-        tile<32, 8, float, DATA_SPLIT_NONE,     false> * D8 = (tile<32, 8, float, DATA_SPLIT_NONE,     false> *) &D;
-        tile< 8, 8, half2, DATA_SPLIT_MIRRORED, false> * B8 = (tile< 8, 8, half2, DATA_SPLIT_MIRRORED, false> *) &B;
-        mma(D8[0], A, B8[0]);
-        mma(D8[1], A, B8[1]);
-    }
-
-    static __device__ __forceinline__ void mma(
-            tile<32, 4, half2> & D, const tile<32, 8, half2> & A, const tile<16, 4, half2, DATA_SPLIT_MIRRORED, true> & B) {
+            tile<32, 4, half2> & D, const tile<32, 4, half2> & A, const tile<8, 4, half2, DATA_SPLIT_MIRRORED, true> & B) {
 #if __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
         const int * Axi = (const int *) A.x;
         const int * Bxi = (const int *) B.x;
@@ -885,26 +854,10 @@ namespace ggml_cuda_mma {
             "{%0, %1, %2, %3}, {%4, %5}, {%6, %7}, {%0, %1, %2, %3};"
             : "+r"(Dxi[0]), "+r"(Dxi[1]), "+r"(Dxi[2]), "+r"(Dxi[3])
             : "r"(Axi[2]), "r"(Axi[3]), "r"(Bxi[2]), "r"(Bxi[3]));
-        asm("mma.sync.aligned.m8n8k4.row.row.f16.f16.f16.f16 "
-            "{%0, %1, %2, %3}, {%4, %5}, {%6, %7}, {%0, %1, %2, %3};"
-            : "+r"(Dxi[0]), "+r"(Dxi[1]), "+r"(Dxi[2]), "+r"(Dxi[3])
-            : "r"(Axi[4]), "r"(Axi[5]), "r"(Bxi[4]), "r"(Bxi[5]));
-        asm("mma.sync.aligned.m8n8k4.row.row.f16.f16.f16.f16 "
-            "{%0, %1, %2, %3}, {%4, %5}, {%6, %7}, {%0, %1, %2, %3};"
-            : "+r"(Dxi[0]), "+r"(Dxi[1]), "+r"(Dxi[2]), "+r"(Dxi[3])
-            : "r"(Axi[6]), "r"(Axi[7]), "r"(Bxi[6]), "r"(Bxi[7]));
 #else
         GGML_UNUSED_VARS(D, A, B);
         NO_DEVICE_CODE;
 #endif // __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
-    }
-
-    static __device__ __forceinline__ void mma(
-            tile<32, 8, half2> & D, const tile<32, 8, half2> & A, const tile<16, 8, half2, DATA_SPLIT_MIRRORED, true> & B) {
-        tile<32, 4, half2, DATA_SPLIT_NONE,     false> * D4 = (tile<32, 4, half2, DATA_SPLIT_NONE,     false> *) &D;
-        tile<16, 4, half2, DATA_SPLIT_MIRRORED, true>  * B4 = (tile<16, 4, half2, DATA_SPLIT_MIRRORED, true>  *) &B;
-        mma(D4[0], A, B4[0]);
-        mma(D4[1], A, B4[1]);
     }
 
     // Catch unimplemented template specializations to reduce compilation failures for unsupported architectures:
