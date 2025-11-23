@@ -526,7 +526,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     if (use_logit_softcap) {
         static_assert(nbatch_fa % (np*T_C_KQ::J) == 0, "bad loop size");
 #pragma unroll
-        for (int i = 0; i < cols_per_warp == 8 ? nbatch_fa/(np*T_C_KQ::I) : nbatch_fa/(np*T_C_KQ::J); ++i) {
+        for (int i = 0; i < (cols_per_warp == 8 ? nbatch_fa/(np*T_C_KQ::I) : nbatch_fa/(np*T_C_KQ::J)); ++i) {
 #pragma unroll
             for (int l = 0; l < T_C_KQ::ne; ++l) {
                 KQ_C[i].x[l] = logit_softcap*tanhf(KQ_C[i].x[l]);
@@ -1068,7 +1068,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         float KQ_max_scale[cols_per_thread];
 #pragma unroll
         for (int col = 0; col < cols_per_thread; ++col) {
-            const int jc = cols_per_warp == 8 ? T_C_KQ::get_j(col/2) + col % 2 : T_C_KQ::get_i(col);
+            const int jc = cols_per_warp == 8 ? T_C_KQ::get_j(col) + col % 2 : T_C_KQ::get_i(2*col);
             const float sink = sinks_f[jc % ncols2];
 
             const float KQ_max_new = fmaxf(KQ_max[col], sink);
