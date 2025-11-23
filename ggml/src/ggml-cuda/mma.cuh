@@ -849,13 +849,4 @@ namespace ggml_cuda_mma {
         NO_DEVICE_CODE;
 #endif // __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
     }
-
-    // Catch unimplemented template specializations to reduce compilation failures for unsupported architectures:
-    template <typename T1, typename T2, int I, int J, int K>
-    static __device__ __forceinline__ void mma(
-            tile<I, J, T1> & D, const tile<I, K, T2> & A, const tile<J, K, T2> & B) {
-        GGML_UNUSED_VARS(D, A, B);
-        NO_DEVICE_CODE;
-    }
-
 }
