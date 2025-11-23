@@ -1068,7 +1068,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         float KQ_max_scale[cols_per_thread];
 #pragma unroll
         for (int col = 0; col < cols_per_thread; ++col) {
-            const int jc = cols_per_warp == 8 ? T_C_KQ::get_j(col) + col % 2 : T_C_KQ::get_i(2*col);
+            const int jc = cols_per_warp == 8 ? T_C_KQ::get_j(2*col) : T_C_KQ::get_i(2*col);
             const float sink = sinks_f[jc % ncols2];
 
             const float KQ_max_new = fmaxf(KQ_max[col], sink);
@@ -1111,8 +1111,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 #pragma unroll
         for (int i = 0; i < (DV/2)/T_C_VKQ::J; ++i) {
 #pragma unroll
-            for (int l0 = 0; l0 < T_C_VKQ::ne; l0 += 2) {
-                VKQ_C[i].x[l0 + col] *= KQ_max_scale_h2;
+            for (int l = 0; l < T_C_VKQ::ne; ++l) {
+                VKQ_C[i].x[l] *= KQ_max_scale_h2;
             }
         }
 #endif // defined(TURING_MMA_AVAILABLE)
