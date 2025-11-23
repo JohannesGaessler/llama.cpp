@@ -74,15 +74,10 @@ namespace ggml_cuda_mma {
     enum data_split {
         DATA_SPLIT_NONE     =  0, // Each data value is held exactly once per warp (always applies to Turing, Ampere, Ada Lovelace, consumer Blackwell).
         DATA_SPLIT_MIRRORED = 10, // Each data value is held exactly once per subgroup.
-        DATA_SPLIT_I        = 20, // Each data value is held exactly once per warp with striping in the I dimension.
-        DATA_SPLIT_J        = 30, // Each data value is held exactly once per warp with striping in the J dimension.
-        DATA_SPLIT_PARTIAL  = 40, // Each subgroup holds a partial sum for each data value.
     };
     // Implemented mma combinations are:
     //   - (NONE,     NONE)     -> NONE
     //   - (NONE,     MIRRORED) -> NONE
-    //   - (MIRRORED, I)        -> J
-    //   - (J,        J)        -> PARTIAL (Due to transposition of B the combination of (J, I) -> PARTIAL is actually implemented.)
 
     template <int I_, int J_, typename T, data_split ds_=DATA_SPLIT_NONE, bool transposed=false>
     struct tile {};
@@ -405,169 +400,6 @@ namespace ggml_cuda_mma {
         }
     };
 
-    template <int I_, int J_>
-    struct tile<I_, J_, half2, DATA_SPLIT_I, false> {
-        static constexpr int        I  = I_;
-        static constexpr int        J  = J_;
-        static constexpr data_split ds = DATA_SPLIT_I;
-        static constexpr int        ne = I * J / 32;
-
-        half2 x[ne] = {{0.0f, 0.0f}};
-
-        static constexpr __device__ bool supported() {
-            if (I == 32 && J ==  4) return true;
-            return false;
-        }
-
-        static __device__ __forceinline__ int get_i(const int /*l*/) {
-            if constexpr (I == 32 && J == 4) {
-                return (((threadIdx.x % 16) / 4) * 8) + ((threadIdx.x / 16) * 4) + (threadIdx.x % 4);
-            } else {
-                NO_DEVICE_CODE;
-                return -1;
-            }
-        }
-
-        static __device__ __forceinline__ int get_j(const int l) {
-            if constexpr (I == 32 && J == 4) {
-                return l;
-            } else {
-                NO_DEVICE_CODE;
-                return -1;
-            }
-        }
-    };
-
-    template <int I_, int J_>
-    struct tile<I_, J_, half2, DATA_SPLIT_I, true> {
-        static constexpr int        I  = I_;
-        static constexpr int        J  = J_;
-        static constexpr data_split ds = DATA_SPLIT_I;
-        static constexpr int        ne = I * J / 32;
-
-        half2 x[ne] = {{0.0f, 0.0f}};
-
-        static constexpr __device__ bool supported() {
-            if (I == 32 && J ==  4) return true;
-            return false;
-        }
-
-        static __device__ __forceinline__ int get_i(const int l) {
-            if constexpr (I == 32 && J == 4) {
-                return (((threadIdx.x % 16) / 4) * 8) + ((l / 2) * 4) + (threadIdx.x % 4);
-            } else {
-                NO_DEVICE_CODE;
-                return -1;
-            }
-        }
-
-        static __device__ __forceinline__ int get_j(const int l) {
-            if constexpr (I == 32 && J == 4) {
-                return ((threadIdx.x / 16) * 2) + (l % 2);
-            } else {
-                NO_DEVICE_CODE;
-                return -1;
-            }
-        }
-    };
-
-    template <int I_, int J_, typename T>
-    struct tile<I_, J_, T, DATA_SPLIT_J, false> {
-        static constexpr int        I  = I_;
-        static constexpr int        J  = J_;
-        static constexpr data_split ds = DATA_SPLIT_J;
-        static constexpr int        ne = I * J / 32;
-        T x[ne] = {0};
-
-        static constexpr __device__ bool supported() {
-            if (I ==  8 && J == 32) return true;
-            return false;
-        }
-
-        static __device__ __forceinline__ int get_i(const int l) {
-            if constexpr (I == 8 && J == 32) {
-                return ((threadIdx.x / 16) * 4) + (l & 2) + (threadIdx.x % 2);
-            } else {
-                NO_DEVICE_CODE;
-                return -1;
-            }
-        }
-
-        static __device__ __forceinline__ int get_j(const int l) {
-            if constexpr (I == 8 && J == 32) {
-                return (((threadIdx.x % 16) / 4) * 8) + (threadIdx.x & 2) + (l & (4 + 1));
-            } else {
-                NO_DEVICE_CODE;
-                return -1;
-            }
-        }
-    };
-
-    template <int I_, int J_>
-    struct tile<I_, J_, half2, DATA_SPLIT_J, false> {
-        static constexpr int        I  = I_;
-        static constexpr int        J  = J_;
-        static constexpr data_split ds = DATA_SPLIT_J;
-        static constexpr int        ne = I * J / WARP_SIZE;
-
-        half2 x[ne] = {{0.0f, 0.0f}};
-
-        static constexpr __device__ bool supported() {
-            if (I ==  8 && J == 16) return true;
-            return false;
-        }
-
-        static __device__ __forceinline__ int get_i(const int /*l*/) {
-            if constexpr (I == 8 && J == 16) {
-                return ((threadIdx.x / 16) * 4) + (threadIdx.x % 4);
-            } else {
-                NO_DEVICE_CODE;
-                return -1;
-            }
-        }
-
-        static __device__ __forceinline__ int get_j(const int l) {
-            if constexpr (I == 8 && J == 16) {
-                return (threadIdx.x & (8 + 4)) + l;
-            } else {
-                NO_DEVICE_CODE;
-                return -1;
-            }
-        }
-    };
-
-    template <int I_, int J_>
-    struct tile<I_, J_, half2, DATA_SPLIT_PARTIAL, false> {
-        static constexpr int        I  = I_;
-        static constexpr int        J  = J_;
-        static constexpr data_split ds = DATA_SPLIT_PARTIAL;
-        static constexpr int        ne = I * J / (WARP_SIZE/4);
-        half2 x[ne] = {{0.0f, 0.0f}};
-
-        static constexpr __device__ bool supported() {
-            if (I ==  8 && J ==  4) return true;
-            return false;
-        }
-
-        static __device__ __forceinline__ int get_i(const int /*l*/) {
-            if constexpr (I == 8 && J == 4) {
-                return ((threadIdx.x / 16) * 4) + (threadIdx.x % 4);
-            } else {
-                NO_DEVICE_CODE;
-                return -1;
-            }
-        }
-
-        static __device__ __forceinline__ int get_j(const int l) {
-            if constexpr (I == 8 && J == 4) {
-                return l;
-            } else {
-                NO_DEVICE_CODE;
-                return -1;
-            }
-        }
-    };
-
 #if defined(TURING_MMA_AVAILABLE)
     template <int I, int J>
     static __device__ __forceinline__ tile<I, J/2, half2> get_half2(const tile<I, J, float> & tile_float) {
@@ -587,11 +419,9 @@ namespace ggml_cuda_mma {
         return ret;
     }
 #else
-    template <int I, int J, data_split ds>
-    static __device__ __forceinline__ tile<I, J/2, half2, ds, false> get_half2(const tile<I, J, float, ds, false> & tile_float) {
-        static_assert(ds == DATA_SPLIT_NONE || ds == DATA_SPLIT_J, "data_split not implemented");
-        static_assert(J >= (ds == DATA_SPLIT_NONE ? 4 : 16), "bad J");
-        tile<I, J/2, half2, ds, false> ret;
+    template <int I, int J>
+    static __device__ __forceinline__ tile<I, J/2, half2> get_half2(const tile<I, J, float> & tile_float) {
+        tile<I, J/2, half2> ret;
 #pragma unroll
         for (int l0 = 0; l0 < tile_float.ne; l0 += 4) {
             int i = (threadIdx.x % 4) / 2;
@@ -696,27 +526,10 @@ namespace ggml_cuda_mma {
         }
     }
 
-    template <typename T, data_split ds>
     static __device__ __forceinline__ void load_ldmatrix(
-            tile<32, 4, half2, ds, false> & t, const T * __restrict__ xs0, const int stride) {
+            tile<32, 4, half2> & t, const half2 * __restrict__ xs0, const int stride) {
 #if __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
-        static_assert(ds == DATA_SPLIT_NONE || ds == DATA_SPLIT_I, "bad data_split");
-        ggml_cuda_memcpy_1<4*sizeof(T)>(t.x, xs0 + t.get_i(0)*stride);
-#else
-        GGML_UNUSED_VARS(t, xs0, stride);
-        NO_DEVICE_CODE;
-#endif // __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
-    }
-
-    template <typename T, data_split ds>
-    static __device__ __forceinline__ void load_ldmatrix(
-            tile<32, 4, half2, ds, true> & t, const T * __restrict__ xs0, const int stride) {
-#if __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
-        static_assert(ds == DATA_SPLIT_NONE || ds == DATA_SPLIT_I, "bad data_split");
-#pragma unroll
-        for (int l0 = 0; l0 < t.ne; l0 += 2) {
-            ggml_cuda_memcpy_1<2*sizeof(half2)>(t.x + l0, xs0 + t.get_i(l0)*stride + t.get_j(l0));
-        }
+        ggml_cuda_memcpy_1<4*sizeof(half2)>(t.x, xs0 + t.get_i(0)*stride);
 #else
         GGML_UNUSED_VARS(t, xs0, stride);
         NO_DEVICE_CODE;
@@ -1018,49 +831,7 @@ namespace ggml_cuda_mma {
     }
 
     static __device__ __forceinline__ void mma(
-            tile<8, 32, float, DATA_SPLIT_J, false> & D, const tile<8, 4, half2, DATA_SPLIT_MIRRORED, false> & A,
-            const tile<32, 4, half2, DATA_SPLIT_I, false> & B) {
-#if __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
-        const int * Axi = (const int *) A.x;
-        const int * Bxi = (const int *) B.x;
-        int       * Dxi = (int       *) D.x;
-        asm("mma.sync.aligned.m8n8k4.row.col.f32.f16.f16.f32 "
-            "{%0, %1, %2, %3, %4, %5, %6, %7}, {%8, %9}, {%10, %11}, {%0, %1, %2, %3, %4, %5, %6, %7};"
-            : "+r"(Dxi[0]), "+r"(Dxi[1]), "+r"(Dxi[2]), "+r"(Dxi[3]), "+r"(Dxi[4]), "+r"(Dxi[5]), "+r"(Dxi[6]), "+r"(Dxi[7])
-            : "r"(Axi[0]), "r"(Axi[1]), "r"(Bxi[0]), "r"(Bxi[1]));
-        asm("mma.sync.aligned.m8n8k4.row.col.f32.f16.f16.f32 "
-            "{%0, %1, %2, %3, %4, %5, %6, %7}, {%8, %9}, {%10, %11}, {%0, %1, %2, %3, %4, %5, %6, %7};"
-            : "+r"(Dxi[0]), "+r"(Dxi[1]), "+r"(Dxi[2]), "+r"(Dxi[3]), "+r"(Dxi[4]), "+r"(Dxi[5]), "+r"(Dxi[6]), "+r"(Dxi[7])
-            : "r"(Axi[2]), "r"(Axi[3]), "r"(Bxi[2]), "r"(Bxi[3]));
-#else
-        GGML_UNUSED_VARS(D, A, B);
-        NO_DEVICE_CODE;
-#endif // __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
-    }
-
-    static __device__ __forceinline__ void mma(
             tile<32, 4, half2> & D, const tile<32, 4, half2> & A, const tile<8, 4, half2, DATA_SPLIT_MIRRORED, true> & B) {
-#if __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
-        const int * Axi = (const int *) A.x;
-        const int * Bxi = (const int *) B.x;
-        int       * Dxi = (int       *) D.x;
-        asm("mma.sync.aligned.m8n8k4.row.row.f16.f16.f16.f16 "
-            "{%0, %1, %2, %3}, {%4, %5}, {%6, %7}, {%0, %1, %2, %3};"
-            : "+r"(Dxi[0]), "+r"(Dxi[1]), "+r"(Dxi[2]), "+r"(Dxi[3])
-            : "r"(Axi[0]), "r"(Axi[1]), "r"(Bxi[0]), "r"(Bxi[1]));
-        asm("mma.sync.aligned.m8n8k4.row.row.f16.f16.f16.f16 "
-            "{%0, %1, %2, %3}, {%4, %5}, {%6, %7}, {%0, %1, %2, %3};"
-            : "+r"(Dxi[0]), "+r"(Dxi[1]), "+r"(Dxi[2]), "+r"(Dxi[3])
-            : "r"(Axi[2]), "r"(Axi[3]), "r"(Bxi[2]), "r"(Bxi[3]));
-#else
-        GGML_UNUSED_VARS(D, A, B);
-        NO_DEVICE_CODE;
-#endif // __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
-    }
-
-    static __device__ __forceinline__ void mma(
-            tile<8, 4, half2, DATA_SPLIT_PARTIAL, false> & D, const tile<8, 16, half2, DATA_SPLIT_J, false> & A,
-            const tile<32, 4, half2, DATA_SPLIT_I, true> & B) {
 #if __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
         const int * Axi = (const int *) A.x;
         const int * Bxi = (const int *) B.x;

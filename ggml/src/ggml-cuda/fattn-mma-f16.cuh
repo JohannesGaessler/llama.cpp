@@ -849,14 +849,6 @@ template<int ncols> struct mma_tile_sizes {
     using T_B_VKQ = tile<32,  4, half2, DATA_SPLIT_NONE,     false>; // column-major
     using T_C_VKQ = tile<32,  4, half2, DATA_SPLIT_NONE,     false>; // column-major
 };
-template<> struct mma_tile_sizes<8> {
-    using T_A_KQ  = tile<32,  4, half2, DATA_SPLIT_I,        false>; // row-major
-    using T_B_KQ  = tile< 8,  4, half2, DATA_SPLIT_MIRRORED, false>; // column-major
-    using T_C_KQ  = tile< 8, 32, float, DATA_SPLIT_J,        false>; // column-major
-    using T_A_VKQ = tile<32,  4, half2, DATA_SPLIT_I,        true>;  // column-major
-    using T_B_VKQ = tile< 8, 16, half2, DATA_SPLIT_J,        false>; // column-major
-    using T_C_VKQ = tile< 8,  4, half2, DATA_SPLIT_PARTIAL,  false>; // column-major
-};
 #endif // defined(TURING_MMA_AVAILABLE)
 
 template<int DKQ, int DV, int ncols1, int ncols2, int nwarps, bool use_logit_softcap, bool mla, bool needs_fixup, bool is_fixup>
@@ -902,6 +894,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     constexpr int  nbatch_combine  = ggml_cuda_fattn_mma_get_nbatch_combine(DKQ, DV, ncols);
     constexpr bool Q_in_reg        = ggml_cuda_fattn_mma_get_Q_in_reg      (DKQ, DV, ncols);
     constexpr int  nstages         = ggml_cuda_fattn_mma_get_nstages       (DKQ, DV, ncols1, ncols2);
+
+    if (cols_per_warp > ncols) {
+        NO_DEVICE_CODE;
+        return;
+    }
 
     static_assert(nwarps * (cols_per_warp/ncols2) % ncols1 == 0, "bad nwarps");
 
@@ -1284,50 +1281,16 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         } else
 #endif // defined(TURING_MMA_AVAILABLE)
         {
-            if constexpr (T_C_VKQ::ds == DATA_SPLIT_NONE) {
-                const int j0 = threadIdx.y*cols_per_warp;
+            const int j0 = threadIdx.y*cols_per_warp;
 #pragma unroll
-                for (int k1 = 0; k1 < nbatch_combine; k1 += T_C_VKQ::J) {
+            for (int k1 = 0; k1 < nbatch_combine; k1 += T_C_VKQ::J) {
 #pragma unroll
-                    for (int l = 0; l < T_C_VKQ::ne; ++l) {
-                        const int j = j0 + T_C_VKQ::get_i(l);
-                        const int k = k1 + T_C_VKQ::get_j(l);
+                for (int l = 0; l < T_C_VKQ::ne; ++l) {
+                    const int j = j0 + T_C_VKQ::get_i(l);
+                    const int k = k1 + T_C_VKQ::get_j(l);
 
-                        tile_Q[j*tile_stride + k] = VKQ_C[(k00 + k1)/T_C_VKQ::J].x[l];
-                    }
+                    tile_Q[j*tile_stride + k] = VKQ_C[(k00 + k1)/T_C_VKQ::J].x[l];
                 }
-            } else if constexpr (T_C_VKQ::ds == DATA_SPLIT_PARTIAL) {
-                const int j0 = threadIdx.y*cols_per_warp;
-#pragma unroll
-                for (int k1 = 0; k1 < nbatch_combine; k1 += T_C_VKQ::J) {
-#pragma unroll
-                    for (int l = 0; l < T_C_VKQ::ne; ++l) {
-                        // The partial sums are spread across 4 threads.
-                        constexpr int offset_first = 8;
-                        constexpr int offset_last  = 4;
-#pragma unroll
-                        for (int offset = offset_first; offset >= offset_last; offset >>= 1) {
-                            VKQ_C[(k00 + k1)/T_C_VKQ::J].x[l] += __shfl_xor_sync(
-                                0xFFFFFFFF, VKQ_C[(k00 + k1)/T_C_VKQ::J].x[l], offset, WARP_SIZE);
-                        }
-                    }
-                }
-#pragma unroll
-                for (int k10 = 0; k10 < nbatch_combine; k10 += 4*T_C_VKQ::J) {
-                    const int k1 = k10 + ((threadIdx.x % 16) / 4) * T_C_VKQ::J;
-
-                    if (k10 + (4*T_C_VKQ::J) <= nbatch_combine || k1 < nbatch_combine) {
-#pragma unroll
-                        for (int l = 0; l < T_C_VKQ::ne; ++l) {
-                            const int j = j0 + T_C_VKQ::get_i(l);
-                            const int k = k1 + T_C_VKQ::get_j(l);
-
-                            tile_Q[j*tile_stride + k] = VKQ_C[(k00 + k1)/T_C_VKQ::J].x[l];
-                        }
-                    }
-                }
-            } else {
-                static_assert(T_C_VKQ::ds == -1, "data_split not implemented");
             }
         }
 
