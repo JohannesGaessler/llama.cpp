@@ -300,10 +300,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
         return BEST_FATTN_KERNEL_MMA_F16;
     }
 
-    if (volta_mma_available(cc)) {
-        if (Q->ne[0] == 40 || Q->ne[0] == 72) {
-            return BEST_FATTN_KERNEL_TILE; // Not supported for mma kernel.
-        }
+    if (volta_mma_available(cc) && Q->ne[0] != 40 && Q->ne[0] != 72) {
         int gqa_ratio_eff = 1;
         while (gqa_ratio % (2*gqa_ratio_eff) == 0 && gqa_ratio_eff < 8) {
             gqa_ratio_eff *= 2;

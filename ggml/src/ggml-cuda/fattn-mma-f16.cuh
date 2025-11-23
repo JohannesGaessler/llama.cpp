@@ -1106,7 +1106,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
             }
         }
 #else // Volta
-        const int col = (threadIdx.x & 2) / 2;
+        const int col = (threadIdx.x / 2) % 2;
         const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale[col], KQ_max_scale[col]);
 #pragma unroll
         for (int i = 0; i < (DV/2)/T_C_VKQ::J; ++i) {
@@ -1162,7 +1162,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 #else // Volta
         const int jc_cwm = threadIdx.y*cols_per_warp + T_C_KQ::get_i(threadIdx.x & 2);
         const float2 KQ_cmr = make_float2(KQ_max[(threadIdx.x & 2) / 2], KQ_rowsum[(threadIdx.x & 2) / 2]);
-        const bool thread_should_write = cols_per_warp == 8 || T_C_KQ::get_j(threadIdx.x & 2) < 8;
+        const bool thread_should_write = T_C_KQ::J == 8 || T_C_KQ::get_j(threadIdx.x & 2) < 8;
 #endif // defined(TURING_MMA_AVAILABLE)
 
         if (((!needs_fixup && !is_fixup) || np > 1) && thread_should_write) {
