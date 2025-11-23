@@ -96,20 +96,20 @@ static void ggml_cuda_flash_attn_ext_mma_f16(ggml_backend_cuda_context & ctx, gg
             GGML_ASSERT(V->ne[0] == 256);
             ggml_cuda_flash_attn_ext_mma_f16_switch_ncols2<256, 256>(ctx, dst);
             break;
-        // case 576: {
-        //     // For Deepseek, go straight to the ncols1 switch to avoid compiling unnecessary kernels.
-        //     GGML_ASSERT(V->ne[0] == 512);
-        //     float max_bias = 0.0f;
-        //     memcpy(&max_bias, (const float *) KQV->op_params + 1, sizeof(float));
+        case 576: {
+            // For Deepseek, go straight to the ncols1 switch to avoid compiling unnecessary kernels.
+            GGML_ASSERT(V->ne[0] == 512);
+            float max_bias = 0.0f;
+            memcpy(&max_bias, (const float *) KQV->op_params + 1, sizeof(float));
 
-        //     const bool use_gqa_opt = mask && max_bias == 0.0f;
-        //     GGML_ASSERT(use_gqa_opt);
+            const bool use_gqa_opt = mask && max_bias == 0.0f;
+            GGML_ASSERT(use_gqa_opt);
 
-        //     GGML_ASSERT(Q->ne[2] % K->ne[2] == 0);
-        //     const int gqa_ratio = Q->ne[2] / K->ne[2];
-        //     GGML_ASSERT(gqa_ratio % 16 == 0);
-        //     ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<576, 512, 16>(ctx, dst);
-        // } break;
+            GGML_ASSERT(Q->ne[2] % K->ne[2] == 0);
+            const int gqa_ratio = Q->ne[2] / K->ne[2];
+            GGML_ASSERT(gqa_ratio % 16 == 0);
+            ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<576, 512, 16>(ctx, dst);
+        } break;
         default:
             GGML_ABORT("fatal error");
             break;
@@ -301,7 +301,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
     }
 
     if (volta_mma_available(cc)) {
-        if (Q->ne[0] == 40 == Q->ne[0] == 72) {
+        if (Q->ne[0] == 40 || Q->ne[0] == 72) {
             return BEST_FATTN_KERNEL_TILE; // Not supported for mma kernel.
         }
         int gqa_ratio_eff = 1;
