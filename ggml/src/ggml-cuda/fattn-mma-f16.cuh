@@ -526,7 +526,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     if (use_logit_softcap) {
         static_assert(nbatch_fa % (np*T_C_KQ::J) == 0, "bad loop size");
 #pragma unroll
-        for (int i = 0; i < nbatch_fa/(np*T_C_KQ::J); ++i) {
+        for (int i = 0; i < cols_per_warp == 8 ? nbatch_fa/(np*T_C_KQ::I) : nbatch_fa/(np*T_C_KQ::J); ++i) {
 #pragma unroll
             for (int l = 0; l < T_C_KQ::ne; ++l) {
                 KQ_C[i].x[l] = logit_softcap*tanhf(KQ_C[i].x[l]);
