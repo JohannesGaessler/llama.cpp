@@ -90,19 +90,67 @@ static constexpr __host__ __device__ uint32_t ggml_cuda_fattn_mma_get_config_tur
     return ggml_cuda_fattn_mma_get_config_ampere(DKQ, DV, ncols);
 }
 
+static constexpr __host__ __device__ uint32_t ggml_cuda_fattn_mma_get_config_volta(const int DKQ, const int DV, const int ncols) {
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE( 64,  64,  8, 128, 2, 128,  32,  32,  32, 2, true);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE( 64,  64, 16, 128, 2,  64,  32,  32,  32, 2, true);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE( 64,  64, 32, 128, 2,  64,  32,  32,  32, 2, true);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE( 64,  64, 64, 128, 2,  64,  32,  32,  32, 2, true);
+
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE( 80,  80,  8, 128, 2, 128,  40,  40,  40, 2, true);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE( 80,  80, 16, 128, 2,  64,  40,  40,  40, 2, true);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE( 80,  80, 32, 128, 2,  64,  40,  40,  40, 2, true);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE( 80,  80, 64, 128, 2,  64,  40,  40,  40, 2, true);
+
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE( 96,  96,  8, 128, 2, 128,  48,  48,  48, 2, true);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE( 96,  96, 16, 128, 2,  64,  48,  48,  48, 2, true);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE( 96,  96, 32, 128, 2,  64,  48,  48,  48, 2, true);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE( 96,  96, 64, 128, 2,  64,  48,  48,  48, 2, true);
+
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE(112, 112,  8, 128, 2, 128,  56,  56,  56, 2, true);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE(112, 112, 16, 128, 2,  64,  56,  56,  56, 2, true);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE(112, 112, 32, 128, 2,  64,  56,  56,  56, 2, true);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE(112, 112, 64, 128, 2,  64,  56,  56,  56, 2, true);
+
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE(128, 128,  8, 128, 2, 128,  64,  64,  64, 2, true);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE(128, 128, 16, 128, 2,  64,  64,  64,  64, 2, true);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE(128, 128, 32, 128, 2,  64,  64,  64,  64, 2, true);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE(128, 128, 64, 128, 2,  64,  64,  64,  64, 2, true);
+
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE(256, 256,  8,  32, 2,  32, 128, 128, 128, 2, true);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE(256, 256, 16,  64, 2,  32, 128, 128, 128, 2, true);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE(256, 256, 32, 128, 2,  32, 128, 128, 128, 2, true);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE(256, 256, 64, 128, 2,  32, 128, 128, 128, 2, true);
+
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE(576, 512,  8,  64, 4,  32, 288, 256, 128, 1, false);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE(576, 512, 16,  64, 4,  32, 288, 256, 128, 1, false);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE(576, 512, 32, 128, 2,  32, 160, 128, 128, 1, false);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE(576, 512, 64, 256, 1,  32, 160, 128, 128, 1, false);
+
+    return 0;
+}
+
 static __host__ uint32_t ggml_cuda_fattn_mma_get_config(const int DKQ, const int DV, const int ncols, const int cc) {
     if (ampere_mma_available(cc)) {
         return ggml_cuda_fattn_mma_get_config_ampere(DKQ, DV, ncols);
     }
-    return ggml_cuda_fattn_mma_get_config_turing(DKQ, DV, ncols);
+    if (ampere_mma_available(cc)) {
+        return ggml_cuda_fattn_mma_get_config_turing(DKQ, DV, ncols);
+    }
+    GGML_ASSERT(volta_mma_available(cc));
+    return ggml_cuda_fattn_mma_get_config_volta(DKQ, DV, ncols);
 }
 
 static constexpr __device__ uint32_t ggml_cuda_fattn_mma_get_config(const int DKQ, const int DV, const int ncols) {
-#ifdef AMPERE_MMA_AVAILABLE
+#if defined(AMPERE_MMA_AVAILABLE)
     return ggml_cuda_fattn_mma_get_config_ampere(DKQ, DV, ncols);
-#else
+#elif defined(TURING_MMA_AVAILABLE)
     return ggml_cuda_fattn_mma_get_config_turing(DKQ, DV, ncols);
-#endif // AMPERE_MMA_AVAILABLE
+#elif defined(VOLTA_MMA_AVAILABLE)
+    return ggml_cuda_fattn_mma_get_config_volta(DKQ, DV, ncols);
+#else
+    GGML_UNUSED_VARS(DKQ, DV, ncols);
+    return 0;
+#endif // defined(AMPERE_MMA_AVAILABLE)
 }
 
 static __host__ int ggml_cuda_fattn_mma_get_nthreads(const int DKQ, const int DV, const int ncols, const int cc) {
@@ -273,9 +321,8 @@ template<int ncols1, int nwarps, int nbatch_fa, bool use_cp_async, bool oob_chec
 static __device__ __forceinline__ void flash_attn_ext_f16_load_mask(
         const half * const __restrict__ mask_h, half * const __restrict__ tile_mask,
         const int stride_mask, const int i_sup, const int j_sup) {
-    static_assert(nbatch_fa == 2*WARP_SIZE || WARP_SIZE % nbatch_fa == 0, "bad KQ_per_iter");
-
     if constexpr (use_cp_async) {
+        static_assert(nbatch_fa <= 8*WARP_SIZE && nbatch_fa % 8 == 0, "bad nbatch_fa");
         static_assert(!oob_check, "OOB check incompatible with cp_async");
         constexpr int preload = nbatch_fa >= 32 ? nbatch_fa * sizeof(half) : 64;
         constexpr int cols_per_warp = 8*WARP_SIZE/nbatch_fa;
@@ -285,8 +332,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_mask(
 
 #pragma unroll
         for (int j0 = 0; j0 < ncols1; j0 += stride_j) {
-            const int j = j0 + threadIdx.y*cols_per_warp +
-                (nbatch_fa == 2*WARP_SIZE ? threadIdx.x / (WARP_SIZE/4) : threadIdx.x / (WARP_SIZE/cols_per_warp));
+            const int j = j0 + threadIdx.y*cols_per_warp + threadIdx.x / (WARP_SIZE/cols_per_warp);
 
             if (j0 + stride_j > ncols1 && j >= ncols1) {
                 break;
@@ -301,10 +347,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_mask(
                 ggml_cuda_memcpy_1<16>(tile_mask + j*(nbatch_fa + 8) + i, zero);
             }
         }
-        return;
-    }
-
-    if (oob_check) {
+    } else if constexpr (oob_check) {
 #pragma unroll
         for (int j0 = 0; j0 < ncols1; j0 += nwarps) {
             const int j = j0 + threadIdx.y;
@@ -320,21 +363,37 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_mask(
                 tile_mask[j*(nbatch_fa + 8) + i] = i < i_sup ? mask_h[j*stride_mask + i] : half(0.0f);
             }
         }
-        return;
-    }
-    constexpr int cols_per_warp = 2*WARP_SIZE/nbatch_fa;
-    constexpr int stride_j = nwarps * cols_per_warp;
+    } else if constexpr (nbatch_fa < 2*WARP_SIZE) {
+        constexpr int cols_per_warp = 2*WARP_SIZE/nbatch_fa;
+        constexpr int stride_j = nwarps * cols_per_warp;
 #pragma unroll
-    for (int j0 = 0; j0 < ncols1; j0 += stride_j) {
-        const int j = j0 + threadIdx.y*cols_per_warp + (nbatch_fa == 2*WARP_SIZE ? 0 : threadIdx.x / (WARP_SIZE/cols_per_warp));
+        for (int j0 = 0; j0 < ncols1; j0 += stride_j) {
+            const int j = j0 + threadIdx.y*cols_per_warp + threadIdx.x / (WARP_SIZE/cols_per_warp);
 
-        if (j0 + stride_j > ncols1 && j >= ncols1) {
-            break;
+            if (j0 + stride_j > ncols1 && j >= ncols1) {
+                break;
+            }
+
+            const int i = threadIdx.x % (WARP_SIZE/cols_per_warp);
+
+            ggml_cuda_memcpy_1<sizeof(half2)>(tile_mask + j*(nbatch_fa + 8) + 2*i, mask_h + j*stride_mask + 2*i);
         }
+    } else {
+#pragma unroll
+        for (int j0 = 0; j0 < ncols1; j0 += nwarps) {
+            const int j = j0 + threadIdx.y;
 
-        const int i = nbatch_fa == 2*WARP_SIZE ? threadIdx.x : (threadIdx.x % (WARP_SIZE/cols_per_warp));
+            if (j0 + nwarps > ncols1 && j >= ncols1) {
+                break;
+            }
 
-        ggml_cuda_memcpy_1<sizeof(half2)>(tile_mask + j*(nbatch_fa + 8) + 2*i, mask_h + j*stride_mask + 2*i);
+#pragma unroll
+            for (int i0 = 0; i0 < nbatch_fa; i0 += 2*WARP_SIZE) {
+                const int i = i0 + 2*threadIdx.x;
+
+                ggml_cuda_memcpy_1<sizeof(half2)>(tile_mask + j*(nbatch_fa + 8) + i, mask_h + j*stride_mask + i);
+            }
+        }
     }
 }
 
@@ -432,9 +491,12 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
                 for (int k_KQ_0 = k0_start; k_KQ_0 < k0_stop; k_KQ_0 += T_A_KQ::J) {
                     T_A_KQ K_A;
                     load_ldmatrix(K_A, tile_K + i_KQ_0*stride_tile_K + (k_KQ_0 - k0_start), stride_tile_K);
+#ifdef TURING_MMA_AVAILABLE
                     if constexpr (T_B_KQ::I == 8) {
                         mma(KQ_C[i_KQ_00/(np*T_A_KQ::I)], K_A, Q_B[k_KQ_0/T_A_KQ::J]);
-                    } else {
+                    } else
+#endif // TURING_MMA_AVAILABLE
+                    {
                         // Wide version of KQ_C is column-major => swap A and B.
                         mma(KQ_C[i_KQ_00/(np*T_A_KQ::I)], Q_B[k_KQ_0/T_A_KQ::J], K_A);
                     }
@@ -486,6 +548,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     }
     float KQ_rowsum_add[cols_per_thread] = {0.0f};
 
+#if defined(TURING_MMA_AVAILABLE)
     if constexpr (T_B_KQ::I == 8) {
         if (ncols2 > 1 || mask_h) {
 #pragma unroll
@@ -537,7 +600,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
                 }
             }
         }
-    } else { // T_B_KQ::I > 8
+    } else
+#endif // defined(TURING_MMA_AVAILABLE)
+    { // not Turing mma or T_B_KQ::I > 8
         if (ncols2 > 1 || mask_h) {
 #pragma unroll
             for (int i00 = 0; i00 < nbatch_fa; i00 += np*T_C_KQ::J) {
@@ -576,8 +641,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             constexpr int offset_first = 2;
             constexpr int offset_last  = 1;
 #else
-            // Values per KQ column are spread across 2 threads:
-            constexpr int offset_first = 2;
+            // Values per KQ column are spread across 8/2 threads:
+            constexpr int offset_first = T_B_KQ::I == 8 ? 8 : 2;
             constexpr int offset_last  = 2;
 #endif // defined(TURING_MMA_AVAILABLE)
 #pragma unroll
@@ -616,6 +681,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             KQ_rowsum[col] = KQ_max_scale[col]*KQ_rowsum[col] + KQ_rowsum_add[col];
         }
 
+#if defined(TURING_MMA_AVAILABLE)
         if constexpr (T_B_KQ::I == 8) {
             const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale[0], KQ_max_scale[1]);
 #pragma unroll
@@ -626,7 +692,6 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
                 }
             }
         } else {
-#if defined(TURING_MMA_AVAILABLE)
 #pragma unroll
             for (int col = 0; col < cols_per_thread; ++col) {
                 const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale[col], KQ_max_scale[col]);
@@ -638,29 +703,32 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
                     }
                 }
             }
+        }
 #else // Volta
         const half2 KQ_max_scale_h2 = make_half2(
             KQ_max_scale[(threadIdx.x / 2) % 2], KQ_max_scale[(threadIdx.x / 2) % 2]);
 #pragma unroll
-        for (int i = 0; i < DV/T_C_VKQ::J; ++i) {
+        for (int i = 0; i < (DV/2)/T_C_VKQ::J; ++i) {
 #pragma unroll
             for (int l = 0; l < T_C_VKQ::ne; ++l) {
                 VKQ_C[i].x[l] *= KQ_max_scale_h2;
             }
         }
 #endif // defined(TURING_MMA_AVAILABLE)
-        }
     }
 
     // Convert KQ C tiles into B tiles for VKQ calculation:
     T_B_VKQ B[nbatch_fa/(np*2*T_B_VKQ::J)];
     static_assert(nbatch_fa % (np*2*T_B_VKQ::J) == 0, "bad loop size");
+#ifdef TURING_MMA_AVAILABLE
     if constexpr (T_B_VKQ::I == 8) {
 #pragma unroll
         for (int k = 0; k < nbatch_fa/(np*2*T_B_VKQ::J); ++k) {
             B[k] = get_transposed(get_half2(KQ_C[k]));
         }
-    } else {
+    } else
+#endif // TURING_MMA_AVAILABLE
+    {
         for (int k = 0; k < nbatch_fa/(np*2*T_B_VKQ::J); ++k) {
             B[k] = get_half2(KQ_C[k]);
         }
@@ -704,7 +772,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         }
         const half2 * tile_V_i = i0_start < reusable_cutoff ? tile_V : tile_V + (i0_start - reusable_cutoff)/2;
 
-        // Calculate VKQ tile, need to use logical rather than physical elements for i0 due to permutation of V:
+        // Calculate VKQ tile, need to use logical rather than physical elements for i0 due to transposition of V:
 #if defined(TURING_MMA_AVAILABLE)
         constexpr int i0_stride = T_B_KQ::I == 8 ? T_C_VKQ::I : 2*T_C_VKQ::J;
 #else // Volta
@@ -780,6 +848,14 @@ template<int ncols> struct mma_tile_sizes {
     using T_A_VKQ = tile< 8,  4, half2, DATA_SPLIT_MIRRORED, true>;  // column-major
     using T_B_VKQ = tile<32,  4, half2, DATA_SPLIT_NONE,     false>; // column-major
     using T_C_VKQ = tile<32,  4, half2, DATA_SPLIT_NONE,     false>; // column-major
+};
+template<> struct mma_tile_sizes<8> {
+    using T_A_KQ  = tile<32,  4, half2, DATA_SPLIT_I,        false>; // row-major
+    using T_B_KQ  = tile< 8,  4, half2, DATA_SPLIT_MIRRORED, false>; // column-major
+    using T_C_KQ  = tile< 8, 32, float, DATA_SPLIT_J,        false>; // column-major
+    using T_A_VKQ = tile<32,  4, half2, DATA_SPLIT_I,        true>;  // column-major
+    using T_B_VKQ = tile< 8, 16, half2, DATA_SPLIT_J,        false>; // column-major
+    using T_C_VKQ = tile< 8,  4, half2, DATA_SPLIT_PARTIAL,  false>; // column-major
 };
 #endif // defined(TURING_MMA_AVAILABLE)
 
@@ -982,13 +1058,14 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     }
 
     // Finally, sum up partial KQ rowsums.
-    // The partial sums are spread across 8/4 threads each, does not need full reduce.
     {
 #if defined(TURING_MMA_AVAILABLE)
+        // The partial sums are spread across 8/4 threads.
         constexpr int offset_first = T_B_KQ::I == 8 ? 16 : 2;
         constexpr int offset_last  = T_B_KQ::I == 8 ?  4 : 1;
 #else // Volta
-        constexpr int offset_first = 2;
+        // The partial sums are spread across 8/2 threads.
+        constexpr int offset_first = T_B_KQ::I == 8 ? 8 : 2;
         constexpr int offset_last  = 2;
 #endif // defined(TURING_MMA_AVAILABLE)
 #pragma unroll
@@ -1056,6 +1133,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     constexpr int tile_stride = nbatch_combine + 4;
     static_assert((DV/2) % nbatch_combine == 0, "bad nbatch_combine");
 
+#if defined(TURING_MMA_AVAILABLE)
     if constexpr (T_B_KQ::I == 8) {
         const int jc_cwmo = (threadIdx.x % (2*T_C_VKQ::J)) / T_C_VKQ::J; // jc combine write meta offset
         const int jc_cwm = threadIdx.y*(2*T_C_VKQ::J) + 2*T_C_VKQ::get_j(-1) + jc_cwmo; // jc combine write meta
@@ -1079,7 +1157,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
                 dstk_fixup_meta[jc_cwm] = KQ_cmr;
             }
         }
-    } else {
+    } else
+#endif // defined(TURING_MMA_AVAILABLE)
+    {
         // jc_cwm = jc combine write meta
         // KQ_cmr = KQ combine max rowsum
         // Use the 16 bytes of padding in each Q column to store the meta data: KQ max, KQ rowsum, KQ max scale.
@@ -1090,7 +1170,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 #else // Volta
         const int jc_cwm = threadIdx.y*cols_per_warp + T_C_KQ::get_i(threadIdx.x & 2);
         const float2 KQ_cmr = make_float2(KQ_max[(threadIdx.x & 2) / 2], KQ_rowsum[(threadIdx.x & 2) / 2]);
-        const bool thread_should_write = true;
+        const bool thread_should_write = T_C_KQ::J == 8 || T_C_KQ::get_j(threadIdx.x & 2) < 8;
 #endif // defined(TURING_MMA_AVAILABLE)
 
         if (((!needs_fixup && !is_fixup) || np > 1) && thread_should_write) {
@@ -1187,30 +1267,67 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
 #pragma unroll
     for (int k00 = 0; k00 < DV/2; k00 += nbatch_combine) {
+#if defined(TURING_MMA_AVAILABLE)
         if constexpr (T_B_KQ::I == 8) {
             const int jc_cwd = threadIdx.y*T_B_KQ::I + T_B_KQ::get_i(-1); // jc combine write data
 #pragma unroll
-            for (int k0 = 0; k0 < nbatch_combine; k0 += T_B_KQ::J) {
-                const T_B_KQ B = get_transposed(VKQ_C[(k00 + k0)/T_B_KQ::J]); // Conversion of C to B matrix puts it in column-major format.
+            for (int k1 = 0; k1 < nbatch_combine; k1 += T_B_KQ::J) {
+                const T_B_KQ B = get_transposed(VKQ_C[(k00 + k1)/T_B_KQ::J]); // Conversion of C to B matrix puts it in column-major format.
 
 #pragma unroll
                 for (int l = 0; l < T_B_KQ::ne; ++l) {
-                    const int k = k0 + T_B_KQ::get_j(l);
+                    const int k = k1 + T_B_KQ::get_j(l);
 
                     tile_Q[jc_cwd*tile_stride + k] = B.x[l];
                 }
             }
-        } else {
-            const int j0 = threadIdx.y*cols_per_warp;
+        } else
+#endif // defined(TURING_MMA_AVAILABLE)
+        {
+            if constexpr (T_C_VKQ::ds == DATA_SPLIT_NONE) {
+                const int j0 = threadIdx.y*cols_per_warp;
 #pragma unroll
-            for (int k0 = 0; k0 < nbatch_combine; k0 += T_C_VKQ::J) {
+                for (int k1 = 0; k1 < nbatch_combine; k1 += T_C_VKQ::J) {
 #pragma unroll
-                for (int l = 0; l < T_C_VKQ::ne; ++l) {
-                    const int j = j0 + T_C_VKQ::get_i(l);
-                    const int k = k0 + T_C_VKQ::get_j(l);
+                    for (int l = 0; l < T_C_VKQ::ne; ++l) {
+                        const int j = j0 + T_C_VKQ::get_i(l);
+                        const int k = k1 + T_C_VKQ::get_j(l);
 
-                    tile_Q[j*tile_stride + k] = VKQ_C[(k00 + k0)/T_C_VKQ::J].x[l];
+                        tile_Q[j*tile_stride + k] = VKQ_C[(k00 + k1)/T_C_VKQ::J].x[l];
+                    }
                 }
+            } else if constexpr (T_C_VKQ::ds == DATA_SPLIT_PARTIAL) {
+                const int j0 = threadIdx.y*cols_per_warp;
+#pragma unroll
+                for (int k1 = 0; k1 < nbatch_combine; k1 += T_C_VKQ::J) {
+#pragma unroll
+                    for (int l = 0; l < T_C_VKQ::ne; ++l) {
+                        // The partial sums are spread across 4 threads.
+                        constexpr int offset_first = 8;
+                        constexpr int offset_last  = 4;
+#pragma unroll
+                        for (int offset = offset_first; offset >= offset_last; offset >>= 1) {
+                            VKQ_C[(k00 + k1)/T_C_VKQ::J].x[l] += __shfl_xor_sync(
+                                0xFFFFFFFF, VKQ_C[(k00 + k1)/T_C_VKQ::J].x[l], offset, WARP_SIZE);
+                        }
+                    }
+                }
+#pragma unroll
+                for (int k10 = 0; k10 < nbatch_combine; k10 += 4*T_C_VKQ::J) {
+                    const int k1 = k10 + ((threadIdx.x % 16) / 4) * T_C_VKQ::J;
+
+                    if (k10 + (4*T_C_VKQ::J) <= nbatch_combine || k1 < nbatch_combine) {
+#pragma unroll
+                        for (int l = 0; l < T_C_VKQ::ne; ++l) {
+                            const int j = j0 + T_C_VKQ::get_i(l);
+                            const int k = k1 + T_C_VKQ::get_j(l);
+
+                            tile_Q[j*tile_stride + k] = VKQ_C[(k00 + k1)/T_C_VKQ::J].x[l];
+                        }
+                    }
+                }
+            } else {
+                static_assert(T_C_VKQ::ds == -1, "data_split not implemented");
             }
         }
 

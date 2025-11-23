@@ -70,7 +70,7 @@ for type_k in TYPES_KV:
         with open(f"fattn-vec-instance-{get_short_name(type_k)}-{get_short_name(type_v)}.cu", "w") as f:
             f.write(SOURCE_FATTN_VEC.format(type_k=type_k, type_v=type_v))
 
-for ncols in [32, 64]:
+for ncols in [8, 32, 64]:
     for ncols2 in [1, 2, 4, 8, 16]:
         if ncols2 > ncols:
             continue

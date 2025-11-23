@@ -11,12 +11,12 @@ static void ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1(ggml_backend_cuda_con
     const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
     const ggml_tensor * Q = dst->src[0];
 
-    // if constexpr (ncols2 <= 8) {
-    //     if (Q->ne[1] <= 8/ncols2) {
-    //         ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, 8/ncols2, ncols2>(ctx, dst);
-    //         return;
-    //     }
-    // }
+    if constexpr (ncols2 <= 8) {
+        if (Q->ne[1] <= 8/ncols2) {
+            ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, 8/ncols2, ncols2>(ctx, dst);
+            return;
+        }
+    }
 
     // if (Q->ne[1] <= 16/ncols2) {
     //     ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, 16/ncols2, ncols2>(ctx, dst);
