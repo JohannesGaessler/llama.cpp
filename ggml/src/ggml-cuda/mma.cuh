@@ -21,7 +21,7 @@
 // On Volta each warp is doing 4 8x8 mma operations in parallel.
 // The basic memory layout for a 32x8 output tile is to stack 4 input tiles in I direction and to mirror the B tile.
 // However, the i indices in this file are by default permuted to simplify the index calculations.
-#define GGML_CUDA_MMA_NO_VOLTA_PERM
+// #define GGML_CUDA_MMA_NO_VOLTA_PERM
 
 #if CUDART_VERSION >= 11080
 
@@ -424,11 +424,10 @@ namespace ggml_cuda_mma {
         tile<I, J/2, half2> ret;
 #pragma unroll
         for (int l0 = 0; l0 < tile_float.ne; l0 += 4) {
-            int i = (threadIdx.x % 4) / 2;
-            ret.x[l0/2 + i] = make_half2(tile_float.x[l0 + 2*i+0], tile_float.x[l0 + 2*i+1]);
-            i ^= 1;
-            ret.x[l0/2 + i] = make_half2(tile_float.x[l0 + 2*i+0], tile_float.x[l0 + 2*i+1]);
-            ret.x[l0/2 + i] = __shfl_xor_sync(0xFFFFFFFF, ret.x[l0/2 + i], 2, WARP_SIZE);
+            ret.x[l0/2 + 0] = make_half2(tile_float.x[l0 + 0], tile_float.x[l0 + 1]);
+            ret.x[l0/2 + 1] = make_half2(tile_float.x[l0 + 2], tile_float.x[l0 + 3]);
+            ret.x[l0/2 + (((threadIdx.x % 4) / 2) ^ 1)] = __shfl_xor_sync(
+                0xFFFFFFFF, ret.x[l0/2 + (((threadIdx.x % 4) / 2) ^ 1)], 2, WARP_SIZE);
         }
         return ret;
     }
