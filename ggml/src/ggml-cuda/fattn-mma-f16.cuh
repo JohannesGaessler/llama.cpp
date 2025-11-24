@@ -305,7 +305,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_mask(
 
             const int i = 8 * (threadIdx.x % (nbatch_fa/8));
 
-            if (j < j_sup) {
+            if (ncols1 <= 2 || j < j_sup) {
                 cp_async_cg_16<preload>(tile_mask_32 + j*(nbatch_fa*sizeof(half) + 16) + i*sizeof(half), mask_h + j*stride_mask + i);
             } else {
                 const half zero[8] = {0.0f};
@@ -325,7 +325,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_mask(
             for (int i0 = 0; i0 < nbatch_fa; i0 += WARP_SIZE) {
                 const int i = i0 + threadIdx.x;
 
-                tile_mask[j*(nbatch_fa + 8) + i] = i < i_sup ? mask_h[j*stride_mask + i] : half(0.0f);
+                tile_mask[j*(nbatch_fa + 8) + i] = i < i_sup && (ncols1 <= 2 || j < j_sup) ?
+                    mask_h[j*stride_mask + i] : half(0.0f);
             }
         }
     } else if constexpr (nbatch_fa < 2*WARP_SIZE) {
@@ -342,7 +343,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_mask(
             const int i = threadIdx.x % (WARP_SIZE/cols_per_warp);
 
             // TODO bigger chunks
-            ggml_cuda_memcpy_1<sizeof(half2)>(tile_mask + j*(nbatch_fa + 8) + 2*i, mask_h + j*stride_mask + 2*i);
+            const half zero[2] = {0.0f};
+            ggml_cuda_memcpy_1<sizeof(half2)>(tile_mask + j*(nbatch_fa + 8) + 2*i,
+                ncols1 <= 2 || j < j_sup ? mask_h + j*stride_mask + 2*i : zero);
         }
     } else {
 #pragma unroll
@@ -357,7 +360,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_mask(
             for (int i0 = 0; i0 < nbatch_fa; i0 += 2*WARP_SIZE) {
                 const int i = i0 + 2*threadIdx.x;
 
-                ggml_cuda_memcpy_1<sizeof(half2)>(tile_mask + j*(nbatch_fa + 8) + i, mask_h + j*stride_mask + i);
+                const half zero[2] = {0.0f};
+                ggml_cuda_memcpy_1<sizeof(half2)>(tile_mask + j*(nbatch_fa + 8) + i,
+                    ncols1 <= 2 || j < j_sup ? mask_h + j*stride_mask + i : zero);
             }
         }
     }
