@@ -12,23 +12,48 @@ static void ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1(ggml_backend_cuda_con
     const ggml_tensor * Q = dst->src[0];
 
     if constexpr (ncols2 <= 8) {
-        if (turing_mma_available(cc) && Q->ne[1] <= 8/ncols2) {
-            ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, 8/ncols2, ncols2>(ctx, dst);
+        constexpr int  ncols1      = 8 / ncols2;
+        constexpr bool oob_check_j = ncols1 > 2;
+        if (turing_mma_available(cc) && Q->ne[1] <= ncols1) {
+            ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, ncols1, ncols2, oob_check_j>(ctx, dst);
             return;
         }
     }
 
     if (turing_mma_available(cc) && Q->ne[1] <= 16/ncols2) {
-        ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, 16/ncols2, ncols2>(ctx, dst);
+        constexpr int  ncols1      = 16 / ncols2;
+        constexpr bool oob_check_j = ncols1 > 2;
+        ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, ncols1, ncols2, oob_check_j>(ctx, dst);
         return;
     }
 
-    if (ggml_cuda_highest_compiled_arch(cc) == GGML_CUDA_CC_TURING || Q->ne[1] <= 32/ncols2) {
-        ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, 32/ncols2, ncols2>(ctx, dst);
+    // On Turing 64 columns are not viable to to shared memory limits:
+    if (ggml_cuda_highest_compiled_arch(cc) == GGML_CUDA_CC_TURING) {
+        constexpr int ncols1 = 32 / ncols2;
+        if (Q->ne[1] % ncols1 == 0) {
+            constexpr bool oob_check_j = false;
+            ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, ncols1, ncols2, oob_check_j>(ctx, dst);
+            return;
+        }
+        constexpr bool oob_check_j = ncols1 > 2;
+        ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, ncols1, ncols2, oob_check_j>(ctx, dst);
         return;
     }
 
-    ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, 64/ncols2, ncols2>(ctx, dst);
+    if (Q->ne[1] <= 32/ncols2) {
+        constexpr int  ncols1      = 32 / ncols2;
+        constexpr bool oob_check_j = ncols1 > 2;
+        ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, ncols1, ncols2, oob_check_j>(ctx, dst);
+        return;
+    }
+    constexpr int  ncols1      = 64 / ncols2;
+    if (Q->ne[1] % ncols1 == 0) {
+        constexpr bool oob_check_j = false;
+        ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, ncols1, ncols2, oob_check_j>(ctx, dst);
+        return;
+    }
+    constexpr bool oob_check_j = ncols1 > 2;
+    ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, ncols1, ncols2, oob_check_j>(ctx, dst);
 }
 
 template <int DKQ, int DV>
