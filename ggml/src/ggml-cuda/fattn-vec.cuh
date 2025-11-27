@@ -92,6 +92,20 @@ static __global__ void flash_attn_ext_vec(
     constexpr dequantize_V_t dequantize_V = get_dequantize_V<type_V, float, V_rows_per_thread>();
 #endif // FAST_FP16_AVAILABLE
 
+    // Due to the use of FP16 arithmetic there can be issues with numerical overflow.
+    // The KQ accumulation is always done using FP32 but on NVIDIA GPUs and old AMD GPUs each intermediate
+    //     multiplciation result has to be representable as FP16 before it can be converted to FP32.
+    // For this reason, downscale the Q values and afterwards apply the inverse scale to KQ.
+    // In effect this reduces the numerical precision for small values but allows for more headroom for large values.
+    // By default the smallest normal number that can be represented with FP16 is ~2^(-14) = 6.1035e-05,
+    //     with the scaling below this threshold is effectively increased to ~2^(-10) = 9.7656e-04.
+    // However, since small values contribute little to the overall KQ value this is still sufficient.
+#ifdef V_DOT2_F32_F16_AVAILABLE
+    constexpr float KQ_fp16_scale = 1.0f;
+#else
+    constexpr float KQ_fp16_scale = 1.0f/16.0f;
+#endif V_DOT2_F32_F16_AVAILABLE
+
     const int ic0 = blockIdx.x * ncols; // Index of the Q/QKV column to work on.
 
     const int sequence = blockIdx.z / ne02;
@@ -192,7 +206,7 @@ static __global__ void flash_attn_ext_vec(
         __syncthreads();
     } else {
 #ifdef FAST_FP16_AVAILABLE
-        const half2 scale_h2 = make_half2(scale, scale);
+        const half2 scale_h2 = make_half2(scale*KQ_fp16_scale, scale*KQ_fp16_scale);
 #pragma unroll
         for (int j = 0; j < ncols; ++j) {
             const float2 * Q_j = (const float2 *) (Q + j*nb01);
@@ -260,6 +274,7 @@ static __global__ void flash_attn_ext_vec(
 #pragma unroll
             for (int j = 0; j < ncols; ++j) {
                 float sum = vec_dot_KQ(K + i_KQ*nb11, Q_reg[j], Q_i32[j], Q_ds[j]);
+                sum *= 1.0f/KQ_fp16_scale;
                 sum = warp_reduce_sum<nthreads_KQ>(sum);
 
                 if (use_logit_softcap) {
