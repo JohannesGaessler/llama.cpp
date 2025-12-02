@@ -437,6 +437,7 @@ static void llama_params_fit_impl(
     targets.reserve(nd);
     for (size_t id = 0; id < nd; id++) {
         targets.push_back(dmds_full[id].free - margin);
+        LLAMA_LOG_DEBUG("%s: id=%zu, target=%" PRId64 " MiB\n", __func__, id, targets[id]/MiB);
     }
 
     const bool partial_moe = hp_nex > 0 && global_surplus_cpu_moe > 0;
@@ -487,16 +488,19 @@ static void llama_params_fit_impl(
                         const std::vector<int64_t> mem_test = get_memory_for_layers(__func__, ngl_per_device_test, overflow_bufts, partial_moe);
 
                         if (mem_test[id] <= targets[id]) {
-                            ngl_per_device      = ngl_per_device_test;
-                            mem                 = mem_test;
+                            ngl_per_device = ngl_per_device_test;
+                            mem            = mem_test;
+                            LLAMA_LOG_DEBUG("%s: set ngl_per_device[%d].n_layer=%" PRIu32 "\n", __func__, id, ngl_per_device[id].n_layer);
                         } else {
                             ngl_per_device_high = ngl_per_device_test;
                             mem_high            = mem_test;
+                            LLAMA_LOG_DEBUG("%s: set ngl_per_device_high[%d].n_layer=%" PRIu32 "\n", __func__, id, ngl_per_device[id].n_layer);
                         }
                         delta = ngl_per_device_high[id].n_layer - ngl_per_device[id].n_layer;
                     }
                 } else {
                     ngl_per_device = ngl_per_device_high;
+                    LLAMA_LOG_DEBUG("%s: set ngl_per_device[%d].n_layer=%" PRIu32 "\n", __func__, id, ngl_per_device[id].n_layer);
                 }
             }
 
@@ -551,20 +555,24 @@ static void llama_params_fit_impl(
                     ngl_per_device_test[id].n_layer += n_convert_jd;
                     n_converted_test += n_convert_jd;
 
-                    if (n_converted_test == step_size) {
+                    if (ngl_per_device_test[id_dense_start_test].n_layer > 0) {
                         break;
                     }
                 }
                 const std::vector<int64_t> mem_test = get_memory_for_layers(__func__, ngl_per_device_test, overflow_bufts, partial_moe);
 
                 if (mem_test[id] <= targets[id]) {
-                    ngl_per_device      = ngl_per_device_test;
-                    mem                 = mem_test;
-                    id_dense_start      = id_dense_start_test;
+                    ngl_per_device = ngl_per_device_test;
+                    mem            = mem_test;
+                    id_dense_start = id_dense_start_test;
+                    LLAMA_LOG_DEBUG("%s: set ngl_per_device[%zu].(n_layer, n_part)=(%" PRIu32 ", %" PRIu32 "), id_dense_start=%zu\n",
+                        __func__, id, ngl_per_device[id].n_layer, ngl_per_device[id].n_part, id_dense_start);
                 } else {
                     ngl_per_device_high = ngl_per_device_test;
                     mem_high            = mem_test;
                     id_dense_start_high = id_dense_start_test;
+                    LLAMA_LOG_DEBUG("%s: set ngl_per_device_high[%zu].(n_layer, n_part)=(%" PRIu32 ", %" PRIu32 "), id_dense_start_high=%zu\n",
+                        __func__, id, ngl_per_device_high[id].n_layer, ngl_per_device_high[id].n_part, id_dense_start_high);
                 }
                 delta = (ngl_per_device_high[id].n_layer - ngl_per_device_high[id].n_part)
                     - (ngl_per_device[id].n_layer - ngl_per_device[id].n_part);
@@ -572,27 +580,52 @@ static void llama_params_fit_impl(
         } else {
             ngl_per_device = ngl_per_device_high;
             id_dense_start = id_dense_start_high;
+            LLAMA_LOG_DEBUG("%s: set ngl_per_device[%zu].(n_layer, n_part)=(%" PRIu32 ", %" PRIu32 "), id_dense_start=%zu\n",
+                __func__, id, ngl_per_device[id].n_layer, ngl_per_device[id].n_part, id_dense_start);
         }
 
-        // // try to fit at least part of one more layer
-        // std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
-        // ngl_per_device_test[id].il_stop++;
-        // for (size_t jd = id + 1; jd < id_stop; jd++) {
-        //     ngl_per_device_test[jd].il_part_start = std::min(hp_ngl, ngl_per_device_test[jd].il_part_start + 1);
-        //     ngl_per_device_test[jd].il_full_start = std::min(hp_ngl, ngl_per_device_test[jd].il_full_start + 1);
-        //     ngl_per_device_test[jd].il_stop       = std::min(hp_ngl, ngl_per_device_test[jd].il_stop       + 1);
-        // }
-        // ngl_per_device_test[id_stop].il_part_start = std::min(hp_ngl, ngl_per_device_test[id_stop].il_part_start + 1);
-        // ngl_per_device_test[id_stop].il_full_start = std::min(hp_ngl, ngl_per_device_test[id_stop].il_full_start + 1);
-        // for (layer_fraction_t lf : {LAYER_FRACTION_ATTN, LAYER_FRACTION_UP, LAYER_FRACTION_GATE}) {
-        //     ngl_per_device_test[id].overflow_type = lf;
-        //     std::vector<int64_t> mem_test = get_memory_for_layers(__func__, ngl_per_device_test, overflow_bufts);
-        //     if (mem_test[id] > targets[id]) {
-        //         break;
-        //     }
-        //     ngl_per_device = ngl_per_device_test;
-        //     mem            = mem_test;
-        // }
+        // try to fit at least part of one more layer
+        std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
+        size_t id_dense_start_test = id_dense_start;
+        ngl_per_device_test[id_dense_start_test].n_layer--;
+        ngl_per_device_test[id_dense_start_test].n_part--;
+        ngl_per_device_test[id].n_layer++;
+        ngl_per_device_test[id].n_part++;
+        if (ngl_per_device_test[id_dense_start_test].n_layer == 0) {
+            id_dense_start_test++;
+        }
+        ngl_per_device_test[id].overflow_type = LAYER_FRACTION_UP;
+        LLAMA_LOG_DEBUG("%s: trying to fit one extra layer with over_flow_type=LAYER_FRACTION_UP\n", __func__);
+        std::vector<int64_t> mem_test = get_memory_for_layers(__func__, ngl_per_device_test, overflow_bufts, partial_moe);
+        if (mem_test[id] < targets[id]) {
+            ngl_per_device = ngl_per_device_test;
+            mem            = mem_test;
+            id_dense_start = id_dense_start_test;
+            LLAMA_LOG_DEBUG("%s: set ngl_per_device[%zu].(n_layer, n_part, overflow_type)=(%" PRIu32 ", %" PRIu32 ", UP), id_dense_start=%zu\n",
+                __func__, id, ngl_per_device[id].n_layer, ngl_per_device[id].n_part, id_dense_start);
+
+            ngl_per_device_test[id].overflow_type = LAYER_FRACTION_GATE;
+            LLAMA_LOG_DEBUG("%s: trying to fit one extra layer with over_flow_type=LAYER_FRACTION_GATE\n", __func__);
+            mem_test = get_memory_for_layers(__func__, ngl_per_device_test, overflow_bufts, partial_moe);
+            if (mem_test[id] < targets[id]) {
+                ngl_per_device = ngl_per_device_test;
+                mem            = mem_test;
+                id_dense_start = id_dense_start_test;
+                LLAMA_LOG_DEBUG("%s: set ngl_per_device[%zu].(n_layer, n_part, overflow_type)=(%" PRIu32 ", %" PRIu32 ", GATE), id_dense_start=%zu\n",
+                    __func__, id, ngl_per_device[id].n_layer, ngl_per_device[id].n_part, id_dense_start);
+            }
+        } else {
+            ngl_per_device_test[id].overflow_type = LAYER_FRACTION_ATTN;
+            LLAMA_LOG_DEBUG("%s: trying to fit one extra layer with over_flow_type=LAYER_FRACTION_ATTN\n", __func__);
+            mem_test = get_memory_for_layers(__func__, ngl_per_device_test, overflow_bufts, partial_moe);
+            if (mem_test[id] < targets[id]) {
+                ngl_per_device = ngl_per_device_test;
+                mem            = mem_test;
+                id_dense_start = id_dense_start_test;
+                LLAMA_LOG_DEBUG("%s: set ngl_per_device[%zu].(n_layer, n_part, overflow_type)=(%" PRIu32 ", %" PRIu32 ", ATTN), id_dense_start=%zu\n",
+                    __func__, id, ngl_per_device[id].n_layer, ngl_per_device[id].n_part, id_dense_start);
+            }
+        }
 
         const int64_t projected_margin = dmds_full[id].free - mem[id];
         LLAMA_LOG_INFO(
