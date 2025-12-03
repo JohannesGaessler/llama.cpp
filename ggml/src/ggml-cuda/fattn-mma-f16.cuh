@@ -71,7 +71,7 @@ static constexpr __host__ __device__ fattn_mma_config ggml_cuda_fattn_mma_get_co
     GGML_CUDA_FATTN_MMA_CONFIG_CASE(576, 512, 32, 128, 2,  32, 160, 128, 128, 1, false);
     GGML_CUDA_FATTN_MMA_CONFIG_CASE(576, 512, 64, 256, 1,  32, 160, 128, 128, 1, false);
 
-    return fattn_mma_config(0, 0, 0, 0, 0, 0, 0, false);
+    return fattn_mma_config(32, 1, 0, 0, 0, 0, 0, false);
 }
 
 static constexpr __host__ __device__ fattn_mma_config ggml_cuda_fattn_mma_get_config_turing(const int DKQ, const int DV, const int ncols) {
@@ -118,7 +118,7 @@ static constexpr __device__ fattn_mma_config ggml_cuda_fattn_mma_get_config(cons
     return ggml_cuda_fattn_mma_get_config_volta(DKQ, DV, ncols);
 #else
     GGML_UNUSED_VARS(DKQ, DV, ncols);
-    return fattn_mma_config(0, 0, 0, 0, 0, 0, 0, false);
+    return fattn_mma_config(32, 1, 0, 0, 0, 0, 0, false);
 #endif // defined(AMPERE_MMA_AVAILABLE)
 }
 
