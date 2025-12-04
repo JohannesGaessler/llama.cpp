@@ -488,8 +488,9 @@ static void llama_params_fit_impl(
                         const std::vector<int64_t> mem_test = get_memory_for_layers(__func__, ngl_per_device_test, overflow_bufts, partial_moe);
 
                         if (mem_test[id] <= targets[id]) {
-                            ngl_per_device = ngl_per_device_test;
-                            mem            = mem_test;
+                            ngl_per_device  = ngl_per_device_test;
+                            mem             = mem_test;
+                            n_unassigned   -= ngl_per_device[id].n_layer;
                             LLAMA_LOG_DEBUG("%s: set ngl_per_device[%d].n_layer=%" PRIu32 "\n", __func__, id, ngl_per_device[id].n_layer);
                         } else {
                             ngl_per_device_high = ngl_per_device_test;
@@ -499,7 +500,8 @@ static void llama_params_fit_impl(
                         delta = ngl_per_device_high[id].n_layer - ngl_per_device[id].n_layer;
                     }
                 } else {
-                    ngl_per_device = ngl_per_device_high;
+                    ngl_per_device  = ngl_per_device_high;
+                    n_unassigned   -= ngl_per_device[id].n_layer;
                     LLAMA_LOG_DEBUG("%s: set ngl_per_device[%d].n_layer=%" PRIu32 "\n", __func__, id, ngl_per_device[id].n_layer);
                 }
             }
