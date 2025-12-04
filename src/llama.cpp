@@ -462,59 +462,57 @@ static void llama_params_fit_impl(
         }
     }
 
-    {
-        LLAMA_LOG_INFO("%s: filling dense layers back-to-front:\n", __func__);
-        uint32_t n_unassigned = hp_ngl;
-        for (int id = nd - 1; id >= 0; id--) {
-            std::vector<ngl_t> ngl_per_device_high = ngl_per_device;
-            ngl_per_device_high[id].n_layer = n_unassigned;
-            if (hp_nex > 0) {
-                ngl_per_device_high[id].n_part = ngl_per_device_high[id].n_layer;
-            }
-            if (ngl_per_device_high[id].n_layer > 0) {
-                std::vector<int64_t> mem_high = get_memory_for_layers(__func__, ngl_per_device_high, overflow_bufts, partial_moe);
-                if (mem_high[id] > targets[id]) {
-                    uint32_t delta = ngl_per_device_high[id].n_layer - ngl_per_device[id].n_layer;
-                    while (delta > 1) {
-                        uint32_t step_size = int64_t(delta) * (targets[id] - mem[id]) / (mem_high[id] - mem[id]);
-                        step_size = std::max(step_size, uint32_t(1));
-                        step_size = std::min(step_size, delta - 1);
+    LLAMA_LOG_INFO("%s: filling dense layers back-to-front:\n", __func__);
+    uint32_t n_unassigned = hp_ngl;
+    for (int id = nd - 1; id >= 0; id--) {
+        std::vector<ngl_t> ngl_per_device_high = ngl_per_device;
+        ngl_per_device_high[id].n_layer = n_unassigned;
+        if (hp_nex > 0) {
+            ngl_per_device_high[id].n_part = ngl_per_device_high[id].n_layer;
+        }
+        if (ngl_per_device_high[id].n_layer > 0) {
+            std::vector<int64_t> mem_high = get_memory_for_layers(__func__, ngl_per_device_high, overflow_bufts, partial_moe);
+            if (mem_high[id] > targets[id]) {
+                uint32_t delta = ngl_per_device_high[id].n_layer - ngl_per_device[id].n_layer;
+                while (delta > 1) {
+                    uint32_t step_size = int64_t(delta) * (targets[id] - mem[id]) / (mem_high[id] - mem[id]);
+                    step_size = std::max(step_size, uint32_t(1));
+                    step_size = std::min(step_size, delta - 1);
 
-                        std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
-                        ngl_per_device_test[id].n_layer += step_size;
-                        if (hp_nex) {
-                            ngl_per_device_test[id].n_part += step_size;
-                        }
-                        const std::vector<int64_t> mem_test = get_memory_for_layers(__func__, ngl_per_device_test, overflow_bufts, partial_moe);
-
-                        if (mem_test[id] <= targets[id]) {
-                            ngl_per_device  = ngl_per_device_test;
-                            mem             = mem_test;
-                            n_unassigned   -= ngl_per_device[id].n_layer;
-                            LLAMA_LOG_DEBUG("%s: set ngl_per_device[%d].n_layer=%" PRIu32 "\n", __func__, id, ngl_per_device[id].n_layer);
-                        } else {
-                            ngl_per_device_high = ngl_per_device_test;
-                            mem_high            = mem_test;
-                            LLAMA_LOG_DEBUG("%s: set ngl_per_device_high[%d].n_layer=%" PRIu32 "\n", __func__, id, ngl_per_device[id].n_layer);
-                        }
-                        delta = ngl_per_device_high[id].n_layer - ngl_per_device[id].n_layer;
+                    std::vector<ngl_t> ngl_per_device_test = ngl_per_device;
+                    ngl_per_device_test[id].n_layer += step_size;
+                    if (hp_nex) {
+                        ngl_per_device_test[id].n_part += step_size;
                     }
-                } else {
-                    ngl_per_device  = ngl_per_device_high;
-                    n_unassigned   -= ngl_per_device[id].n_layer;
-                    LLAMA_LOG_DEBUG("%s: set ngl_per_device[%d].n_layer=%" PRIu32 "\n", __func__, id, ngl_per_device[id].n_layer);
-                }
-            }
+                    const std::vector<int64_t> mem_test = get_memory_for_layers(__func__, ngl_per_device_test, overflow_bufts, partial_moe);
 
-            const int64_t projected_margin = dmds_full[id].free - mem[id];
-            LLAMA_LOG_INFO(
-                "%s:   - %s: %2" PRIu32 " layers, %6" PRId64 " MiB used, %6" PRId64 " MiB free\n",
-                __func__, dev_names[id].c_str(), ngl_per_device[id].n_layer, mem[id]/MiB, projected_margin/MiB);
+                    if (mem_test[id] <= targets[id]) {
+                        ngl_per_device  = ngl_per_device_test;
+                        mem             = mem_test;
+                        n_unassigned   -= ngl_per_device[id].n_layer;
+                        LLAMA_LOG_DEBUG("%s: set ngl_per_device[%d].n_layer=%" PRIu32 "\n", __func__, id, ngl_per_device[id].n_layer);
+                    } else {
+                        ngl_per_device_high = ngl_per_device_test;
+                        mem_high            = mem_test;
+                        LLAMA_LOG_DEBUG("%s: set ngl_per_device_high[%d].n_layer=%" PRIu32 "\n", __func__, id, ngl_per_device[id].n_layer);
+                    }
+                    delta = ngl_per_device_high[id].n_layer - ngl_per_device[id].n_layer;
+                }
+            } else {
+                ngl_per_device  = ngl_per_device_high;
+                n_unassigned   -= ngl_per_device[id].n_layer;
+                LLAMA_LOG_DEBUG("%s: set ngl_per_device[%d].n_layer=%" PRIu32 "\n", __func__, id, ngl_per_device[id].n_layer);
+            }
         }
-        if (hp_nex == 0 || global_surplus_cpu_moe <= 0) {
-            set_ngl_tensor_split_tbo(ngl_per_device, overflow_bufts, *mparams, partial_moe);
-            return;
-        }
+
+        const int64_t projected_margin = dmds_full[id].free - mem[id];
+        LLAMA_LOG_INFO(
+            "%s:   - %s: %2" PRIu32 " layers, %6" PRId64 " MiB used, %6" PRId64 " MiB free\n",
+            __func__, dev_names[id].c_str(), ngl_per_device[id].n_layer, mem[id]/MiB, projected_margin/MiB);
+    }
+    if (hp_nex == 0 || global_surplus_cpu_moe <= 0) {
+        set_ngl_tensor_split_tbo(ngl_per_device, overflow_bufts, *mparams, partial_moe);
+        return;
     }
 
     size_t id_dense_start = nd;
