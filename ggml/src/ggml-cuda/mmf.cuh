@@ -29,7 +29,7 @@ static __global__ void mul_mat_f(
         const int channel_ratio, const int stride_channel_x, const int stride_channel_y, const int stride_channel_dst,
         const int sample_ratio, const int stride_sample_x, const int stride_sample_y, const int stride_sample_dst) {
 // TODO: handle this in a consistent and simpler way after AMD MFMA support has been added
-#if (!defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)) || defined(AMD_WMMA_AVAILABLE)
+#if (!defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)) || (defined(AMD_WMMA_AVAILABLE) && defined(RDNA4))
 #if defined(AMD_WMMA_AVAILABLE)
     // Special case for tf32, just dummy mma layout as wmma doesn't support it.
     constexpr int tile_B_I = std::is_same_v<T, float> ? 8 : 16;
@@ -254,7 +254,7 @@ static __global__ void mul_mat_f(
         channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
         sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst);
     NO_DEVICE_CODE;
-#endif // (!defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)) || defined(AMD_WMMA_AVAILABLE)
+#endif // (!defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)) || (defined(AMD_WMMA_AVAILABLE) && defined(RDNA4))
 }
 
 //This kernel is for larger batch sizes of mul_mat_id
@@ -269,7 +269,7 @@ static __global__ void mul_mat_f_ids(
         const int sample_ratio, const int stride_sample_x, const int stride_sample_y, const int stride_sample_dst,
         const uint3 sis1_fd, const uint3 nch_fd) {
 // TODO: handle this in a consistent and simpler way after AMD MFMA support has been added
-#if (!defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)) || defined(AMD_WMMA_AVAILABLE)
+#if (!defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)) || (defined(AMD_WMMA_AVAILABLE) && defined(RDNA4))
 #if defined(AMD_WMMA_AVAILABLE)
     // Special case for tf32, just dummy mma layout as wmma doesn't support it.
     constexpr int tile_B_I = std::is_same_v<T, float> ? 8 : 16;
@@ -522,7 +522,7 @@ static __global__ void mul_mat_f_ids(
         channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
         sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst, sis1_fd, nch_fd);
     NO_DEVICE_CODE;
-#endif // (!defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)) || defined(AMD_WMMA_AVAILABLE)
+#endif // (!defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)) || (defined(AMD_WMMA_AVAILABLE) && defined(RDNA4))
 }
 
 template<typename T, int cols_per_block, int nwarps>
