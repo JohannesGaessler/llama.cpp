@@ -237,9 +237,7 @@ void ggml_cuda_op_mul_mat_q(
 }
 
 bool ggml_cuda_should_use_mmq(enum ggml_type type, int cc, int64_t ne11) {
-#ifdef GGML_CUDA_FORCE_CUBLAS
     return false;
-#endif // GGML_CUDA_FORCE_CUBLAS
 
     bool mmq_supported;
 
