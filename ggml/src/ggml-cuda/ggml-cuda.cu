@@ -308,6 +308,8 @@ static ggml_cuda_device_info ggml_cuda_init() {
     // configure logging to stdout
     // CUBLAS_CHECK(cublasLoggerConfigure(1, 1, 0, nullptr));
 
+    fprintf(stderr, "__CUDA_ARCH_LIST__=%s\n", STRINGIZE(__CUDA_ARCH_LIST__));
+
     return info;
 }
 
