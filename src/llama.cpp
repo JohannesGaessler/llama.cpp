@@ -393,7 +393,7 @@ static void llama_params_fit_impl(
                         + std::to_string(ntbo) + " is insufficient for model");
                 }
                 tensor_buft_overrides[itbo].pattern = get_overflow_pattern(il, il == il0 ? ngl_per_device[id].overflow_type : LAYER_FRACTION_MOE);
-                tensor_buft_overrides[itbo].buft = overflow_bufts[id];
+                tensor_buft_overrides[itbo].buft = il == il0 ? overflow_bufts[id] : ggml_backend_cpu_buffer_type();
                 itbo++;
             }
             il0 += ngl_per_device[id].n_part;
@@ -468,7 +468,7 @@ static void llama_params_fit_impl(
         LLAMA_LOG_DEBUG("%s: id=%zu, target=%" PRId64 " MiB\n", __func__, id, targets[id]/MiB);
     }
 
-    std::vector<ggml_backend_buffer_type_t> overflow_bufts; // which bufts the partial layers of a device overflow to:
+    std::vector<ggml_backend_buffer_type_t> overflow_bufts; // which bufts the first partial layer of a device overflows to:
     overflow_bufts.reserve(nd);
     for (size_t id = 0; id < nd - 1; ++id) {
         overflow_bufts.push_back(ggml_backend_dev_buffer_type(devs[id + 1]));
