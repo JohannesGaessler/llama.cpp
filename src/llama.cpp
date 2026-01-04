@@ -359,6 +359,11 @@ static void llama_params_fit_impl(
 
         // for the first partial layer varying parts can overflow, all further layers use LAYER_FRACTION_MOE:
         layer_fraction_t overflow_type = LAYER_FRACTION_MOE;
+
+        uint32_t n_full() const {
+            assert(n_layer >= n_part);
+            return n_layer - n_part;
+        }
     };
 
     const size_t ntbo = llama_max_tensor_buft_overrides();
@@ -382,7 +387,7 @@ static void llama_params_fit_impl(
 
         size_t itbo = 0;
         for (size_t id = 0; id < nd; id++) {
-            il0 += ngl_per_device[id].n_layer - ngl_per_device[id].n_part;
+            il0 += ngl_per_device[id].n_full();
             for (uint32_t il = il0; il < il0 + ngl_per_device[id].n_part; il++) {
                 if (itbo + 1 >= ntbo) {
                     tensor_buft_overrides[itbo].pattern = nullptr;
@@ -583,12 +588,8 @@ static void llama_params_fit_impl(
         std::vector<int64_t> mem_high = get_memory_for_layers(__func__, ngl_per_device_high, overflow_bufts);
 
         if (mem_high[id] > targets[id]) {
-            assert(ngl_per_device_high[id].n_layer >= ngl_per_device_high[id].n_part);
-            assert(ngl_per_device[id].n_layer >= ngl_per_device[id].n_part);
-            assert((ngl_per_device_high[id].n_layer - ngl_per_device_high[id].n_part)
-                   >= ngl_per_device[id].n_layer - ngl_per_device[id].n_part);
-            uint32_t delta = (ngl_per_device_high[id].n_layer - ngl_per_device_high[id].n_part)
-                - (ngl_per_device[id].n_layer - ngl_per_device[id].n_part);
+            assert(ngl_per_device_high[id].n_full() >= ngl_per_device[id].n_full());
+            uint32_t delta = ngl_per_device_high[id].n_full() - ngl_per_device[id].n_full();
             while (delta > 1) {
                 uint32_t step_size = int64_t(delta) * (targets[id] - mem[id]) / (mem_high[id] - mem[id]);
                 step_size = std::max(step_size, uint32_t(1));
@@ -604,7 +605,7 @@ static void llama_params_fit_impl(
                     ngl_per_device_test[id].n_layer += n_convert_jd;
                     n_converted_test += n_convert_jd;
 
-                    if (ngl_per_device_test[id_dense_start_test].n_layer > 0) {
+                    if (ngl_per_device_test[id_dense_start_test].n_part > 0) {
                         break;
                     }
                 }
@@ -623,8 +624,8 @@ static void llama_params_fit_impl(
                     LLAMA_LOG_DEBUG("%s: set ngl_per_device_high[%zu].(n_layer, n_part)=(%" PRIu32 ", %" PRIu32 "), id_dense_start_high=%zu\n",
                         __func__, id, ngl_per_device_high[id].n_layer, ngl_per_device_high[id].n_part, id_dense_start_high);
                 }
-                delta = (ngl_per_device_high[id].n_layer - ngl_per_device_high[id].n_part)
-                    - (ngl_per_device[id].n_layer - ngl_per_device[id].n_part);
+                assert(ngl_per_device_high[id].n_full() >= ngl_per_device[id].n_full());
+                delta = ngl_per_device_high[id].n_full() - ngl_per_device[id].n_full();
             }
         } else {
             ngl_per_device = ngl_per_device_high;
@@ -642,7 +643,7 @@ static void llama_params_fit_impl(
             ngl_per_device_test[id_dense_start_test].n_part--;
             ngl_per_device_test[id].n_layer++;
             ngl_per_device_test[id].n_part++;
-            if (ngl_per_device_test[id_dense_start_test].n_layer == 0) {
+            if (ngl_per_device_test[id_dense_start_test].n_part == 0) {
                 id_dense_start_test++;
             }
             ngl_per_device_test[id].overflow_type = LAYER_FRACTION_UP;
