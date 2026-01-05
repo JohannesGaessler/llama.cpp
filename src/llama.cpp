@@ -687,6 +687,14 @@ static void llama_params_fit_impl(
             __func__, dev_names[id].c_str(), ngl_per_device[id].n_layer, ngl_per_device[id].n_part, mem[id]/MiB, projected_margin/MiB);
     }
 
+    // print info for devices that were not changed during the conversion from dense only to full layers:
+    for (size_t id = id_dense_start + 1; id < nd; id++) {
+        const int64_t projected_margin = dmds_full[id].free - mem[id];
+        LLAMA_LOG_INFO(
+            "%s:   - %s: %2" PRIu32 " layers (%2" PRIu32 " overflowing), %6" PRId64 " MiB used, %6" PRId64 " MiB free\n",
+            __func__, dev_names[id].c_str(), ngl_per_device[id].n_layer, ngl_per_device[id].n_part, mem[id]/MiB, projected_margin/MiB);
+    }
+
     set_ngl_tensor_split_tbo(ngl_per_device, overflow_bufts, *mparams);
 }
 
