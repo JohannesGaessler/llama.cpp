@@ -576,7 +576,7 @@ static void llama_params_fit_impl(
     assert(id_dense_start < nd);
 
     LLAMA_LOG_INFO("%s: converting dense-only layers to full layers and filling them front-to-back with overflow to next device/system memory:\n", __func__);
-    for (size_t id = 0; id <= id_dense_start; id++) {
+    for (size_t id = 0; id <= id_dense_start && id_dense_start < nd; id++) {
         std::vector<ngl_t> ngl_per_device_high = ngl_per_device;
         for (size_t jd = id_dense_start; jd < nd; jd++) {
             const uint32_t n_layer_move = jd < nd - 1 ? ngl_per_device_high[jd].n_layer : ngl_per_device_high[jd].n_layer - 1;
