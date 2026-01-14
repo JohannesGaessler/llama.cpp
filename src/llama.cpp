@@ -21,7 +21,9 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <regex>
 #include <stdexcept>
+#include <vector>
 
 #if defined(_MSC_VER)
 #pragma warning(disable: 4244 4267) // possible loss of data
@@ -148,6 +150,9 @@ static void llama_params_fit_impl(
         const char * path_model, struct llama_model_params * mparams, struct llama_context_params * cparams,
         float * tensor_split, struct llama_model_tensor_buft_override * tensor_buft_overrides,
         size_t * margins_s, uint32_t n_ctx_min, enum ggml_log_level log_level) {
+    if (mparams->split_mode == LLAMA_SPLIT_MODE_TENSOR) {
+        throw llama_params_fit_exception("llama_params_fit is not implemented for SPLIT_MODE_TENSOR, abort");
+    }
     constexpr int64_t MiB = 1024*1024;
     typedef std::vector<llama_device_memory_data> dmds_t;
     const llama_model_params default_mparams = llama_model_default_params();
@@ -817,7 +822,8 @@ static int llama_model_load(const std::string & fname, std::vector<std::string> 
 
     model.t_start_us = tm.t_start_us;
 
-    try {
+    // try {
+    {
         llama_model_loader ml(fname, splits, params.use_mmap, params.use_direct_io, params.check_tensors, params.no_alloc, params.kv_overrides, params.tensor_buft_overrides);
 
         ml.print_info();
@@ -855,12 +861,49 @@ static int llama_model_load(const std::string & fname, std::vector<std::string> 
         if (!model.load_tensors(ml)) {
             return -2;
         }
-    } catch (const std::exception & err) {
-        LLAMA_LOG_ERROR("%s: error loading model: %s\n", __func__, err.what());
-        return -1;
     }
+    // } catch (const std::exception & err) {
+    //     LLAMA_LOG_ERROR("%s: error loading model: %s\n", __func__, err.what());
+    //     return -1;
+    // }
 
     return 0;
+}
+
+static enum ggml_backend_meta_split_state llama_meta_device_get_tensor_split(const struct ggml_tensor * tensor, void * userdata) {
+    // attention
+    const std::regex pattern_qkv_weight("blk\\.\\d*\\.attn_(q|k|v).*");
+    if (std::regex_match(tensor->name, pattern_qkv_weight)) {
+        return GGML_BACKEND_SPLIT_STATE_BY_NE1;
+    }
+    const std::regex pattern_kv_cache("cache_(k|v)_l\\d*");
+    if (std::regex_match(tensor->name, pattern_kv_cache)) {
+        return GGML_BACKEND_SPLIT_STATE_BY_NE0;
+    }
+    const std::regex pattern_attn_out("blk\\.\\d*\\.attn_output.*");
+    if (std::regex_match(tensor->name, pattern_attn_out)) {
+        return GGML_BACKEND_SPLIT_STATE_BY_NE0;
+    }
+
+    // FFN
+    const std::regex pattern_ffn_up_gate("blk\\.\\d*\\.ffn_(up|gate).*");
+    if (std::regex_match(tensor->name, pattern_ffn_up_gate)) {
+        return GGML_BACKEND_SPLIT_STATE_BY_NE1;
+    }
+    const std::regex pattern_ffn_down("blk\\.\\d*\\.ffn_down.*");
+    if (std::regex_match(tensor->name, pattern_ffn_down)) {
+        return GGML_BACKEND_SPLIT_STATE_BY_NE0;
+    }
+
+    // output
+    const std::regex pattern_output("output");
+    if (std::regex_match(tensor->name, pattern_output)) {
+        return GGML_BACKEND_SPLIT_STATE_BY_NE1;
+    }
+
+    // everything else
+    return GGML_BACKEND_SPLIT_STATE_MIRRORED;
+    GGML_UNUSED(userdata);
 }
 
 static struct llama_model * llama_model_load_from_file_impl(
@@ -895,8 +938,16 @@ static struct llama_model * llama_model_load_from_file_impl(
 
     // create list of devices to use with this model
     if (params.devices) {
-        for (ggml_backend_dev_t * dev = params.devices; *dev; ++dev) {
-            model->devices.push_back(*dev);
+        if (params.split_mode == LLAMA_SPLIT_MODE_TENSOR) {
+            size_t n_devs = 0;
+            while (params.devices[n_devs]) {
+                n_devs++;
+            }
+            model->devices.push_back(ggml_backend_meta_device(params.devices, n_devs, llama_meta_device_get_tensor_split, nullptr));
+        } else {
+            for (ggml_backend_dev_t * dev = params.devices; *dev; ++dev) {
+                model->devices.push_back(*dev);
+            }
         }
     } else {
         // default device selection
@@ -906,6 +957,16 @@ static struct llama_model * llama_model_load_from_file_impl(
         std::vector<ggml_backend_dev_t> igpus;
         std::vector<ggml_backend_dev_t> rpc_servers;
 
+        if (params.split_mode == LLAMA_SPLIT_MODE_TENSOR) {
+            std::vector<ggml_backend_dev_t> devs;
+            devs.reserve(ggml_backend_dev_count());
+            for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+                devs.push_back(ggml_backend_dev_get(i));
+            }
+            GGML_ASSERT(devs.size() >= 2);
+            GGML_ASSERT(ggml_backend_dev_buffer_type(devs.back()) == ggml_backend_cpu_buffer_type());
+            gpus.push_back(ggml_backend_meta_device(devs.data(), devs.size() - 1, llama_meta_device_get_tensor_split, nullptr));
+        } else {
         for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
             ggml_backend_dev_t dev = ggml_backend_dev_get(i);
             switch (ggml_backend_dev_type(dev)) {
@@ -948,6 +1009,7 @@ static struct llama_model * llama_model_load_from_file_impl(
                     igpus.push_back(dev);
                     break;
             }
+        }
         }
 
         // add RPC servers at the front of the list to minimize network transfers

@@ -1,5 +1,6 @@
 #include "llama-kv-cache.h"
 
+#include "ggml.h"
 #include "llama-impl.h"
 #include "llama-io.h"
 #include "llama-model.h"
