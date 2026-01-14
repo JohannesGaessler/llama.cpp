@@ -2,6 +2,7 @@
 
 #include "ggml.h"
 #include "ggml-alloc.h"
+#include <cstdint>
 
 #ifdef GGML_BACKEND_SHARED
 #    if defined(_WIN32) && !defined(__MINGW32__)
@@ -210,6 +211,30 @@ extern "C" {
         const char * value;
     };
     typedef struct ggml_backend_feature * (*ggml_backend_get_features_t)(ggml_backend_reg_t reg);
+
+    //
+    // Meta backend
+    //
+
+    enum ggml_backend_split_state {
+        GGML_BACKEND_SPLIT_STATE_BY_COLS     =  0,
+        GGML_BACKEND_SPLIT_STATE_BY_ROWS     =  1,
+        GGML_BACKEND_SPLIT_STATE_BY_CHANNELS =  2,
+        GGML_BACKEND_SPLIT_STATE_MIRRORED    = 10,
+    };
+
+    GGML_API bool ggml_backend_buffer_type_is_meta(ggml_backend_buffer_type_t buft);
+    GGML_API size_t ggml_backend_meta_buffer_type_n_bufts(ggml_backend_buffer_type_t buft);
+    GGML_API ggml_backend_buffer_type_t ggml_backend_meta_buffer_type_simple_buft(ggml_backend_buffer_type_t buft, size_t index);
+    GGML_API void ggml_backend_meta_buffer_type_ne_bounds(ggml_backend_buffer_type_t buft, int64_t ne, int64_t * ne_bounds);
+    GGML_API ggml_backend_buffer_type_t ggml_backend_meta_buffer_type(ggml_backend_buffer_type_t * bufts, int64_t * tensor_split, size_t n_bufts);
+
+    GGML_API bool ggml_backend_buffer_is_meta(ggml_backend_buffer_t buf);
+    GGML_API ggml_backend_buffer_t ggml_backend_meta_alloc_ctx_tensors_from_buft(struct ggml_context * ctx, ggml_backend_buffer_type_t buft);
+    GGML_API bool ggml_backend_meta_buffer_simple_tensors(ggml_backend_buffer_t buffer, const struct ggml_tensor * tensor, struct ggml_tensor ** simple_tensors);
+
+    GGML_API bool ggml_backend_is_meta(ggml_backend_t backend);
+    GGML_API ggml_backend_t ggml_backend_meta_init(ggml_backend_t * simple_backends, size_t n_backends);
 
     //
     // Backend registry
