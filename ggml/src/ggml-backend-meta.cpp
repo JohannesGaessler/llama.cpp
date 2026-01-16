@@ -5,7 +5,6 @@
 #include "ggml-alloc.h"
 
 #include <algorithm>
-#include <array>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -20,6 +19,10 @@ struct ggml_backend_meta;
 
 struct ggml_backend_meta_device_context {
     std::vector<ggml_backend_dev_t> simple_devs;
+
+    bool operator<(const ggml_backend_meta_device_context & other) const {
+        return simple_devs < other.simple_devs;
+    }
 };
 
 //
@@ -183,6 +186,7 @@ struct ggml_backend_meta_buffer_context {
         for (size_t i = 0; i < buf_configs.size(); i++) {
             ret.push_back(ret.back() + buf_configs[i].tensor_split);
         }
+        return ret;
     }
 };
 
@@ -208,7 +212,7 @@ struct ggml_backend_meta_buffer_context {
 static void ggml_backend_meta_buffer_free_buffer(ggml_backend_buffer_t buffer) {
     GGML_ASSERT(ggml_backend_buffer_is_meta(buffer));
     ggml_backend_meta_buffer_context * buf_ctx = (ggml_backend_meta_buffer_context *) buffer->context;
-    for (auto & [ctx, buf] : buf_ctx->buf_configs) {
+    for (auto & [ctx, buf, _] : buf_ctx->buf_configs) {
         ggml_backend_buffer_free(buf);
         ggml_free(ctx);
     }
@@ -308,7 +312,8 @@ ggml_backend_buffer_t ggml_backend_meta_alloc_ctx_tensors_from_buft(
         /*.no_alloc   =*/ true,
     };
 
-    const size_t n_devs = ggml_backend_meta_device_n_devs(ggml_backend_buft_get_device(buft));
+    ggml_backend_dev_t meta_dev = ggml_backend_buft_get_device(buft);
+    const size_t n_devs = ggml_backend_meta_device_n_devs(meta_dev);
     ggml_backend_meta_buffer_context * buf_ctx = new ggml_backend_meta_buffer_context;
     buf_ctx->orig_ctx = ctx;
     for (size_t i = 0; i < n_devs; i++) {
@@ -343,8 +348,8 @@ ggml_backend_buffer_t ggml_backend_meta_alloc_ctx_tensors_from_buft(
     }
 
     for (size_t i = 0; i < n_devs; i++) {
-        buf_ctx->buf_configs[i].buf = ggml_backend_alloc_ctx_tensors_from_buft(
-            buf_ctx->buf_configs[i].ctx, ggml_backend_meta_buffer_type_simple_buft(buft, i));
+        ggml_backend_buffer_type_t buft = ggml_backend_dev_buffer_type(ggml_backend_meta_device_simple_dev(meta_dev, i));
+        buf_ctx->buf_configs[i].buf = ggml_backend_alloc_ctx_tensors_from_buft(buf_ctx->buf_configs[i].ctx, buft);
     }
     return ggml_backend_buffer_init(buft, ggml_backend_meta_buffer_iface, nullptr, 0);
 }
@@ -370,30 +375,30 @@ static void ggml_backend_meta_free(ggml_backend_t backend) {
     delete backend;
 }
 
-static ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const ggml_tensor * t) {
-    auto get_split_state = [&](const size_t i) -> ggml_backend_meta_split_state {
-        if (t->src[i] == nullptr) {
-            return GGML_BACKEND_SPLIT_STATE_UNKNOWN;
-        }
-        return ggml_backend_meta_buffer_type_split_state(ggml_backend_buffer_get_type(t->src[i]->buffer));
-    };
-    switch (t->op) {
-        case GGML_OP_MUL_MAT: {
-            if (get_split_state(0) == GGML_BACKEND_SPLIT_STATE_BY_NE1 && get_split_state(1) == GGML_BACKEND_SPLIT_STATE_MIRRORED) {
-                return GGML_BACKEND_SPLIT_STATE_BY_NE0;
-            }
-            if (get_split_state(0) == GGML_BACKEND_SPLIT_STATE_BY_NE0 && get_split_state(1) == GGML_BACKEND_SPLIT_STATE_BY_NE0) {
-                return GGML_BACKEND_SPLIT_STATE_PARTIAL;
-            }
-            if (get_split_state(0) == GGML_BACKEND_SPLIT_STATE_BY_NE2 && get_split_state(1) == GGML_BACKEND_SPLIT_STATE_BY_NE2) {
-                return GGML_BACKEND_SPLIT_STATE_BY_NE2;
-            }
-        } break;
-        default: {
-        } break;
-    }
-    return GGML_BACKEND_SPLIT_STATE_UNKNOWN;
-}
+// static ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const ggml_tensor * t) {
+//     auto get_split_state = [&](const size_t i) -> ggml_backend_meta_split_state {
+//         if (t->src[i] == nullptr) {
+//             return GGML_BACKEND_SPLIT_STATE_UNKNOWN;
+//         }
+//         return ggml_backend_meta_buffer_type_split_state(ggml_backend_buffer_get_type(t->src[i]->buffer));
+//     };
+//     switch (t->op) {
+//         case GGML_OP_MUL_MAT: {
+//             if (get_split_state(0) == GGML_BACKEND_SPLIT_STATE_BY_NE1 && get_split_state(1) == GGML_BACKEND_SPLIT_STATE_MIRRORED) {
+//                 return GGML_BACKEND_SPLIT_STATE_BY_NE0;
+//             }
+//             if (get_split_state(0) == GGML_BACKEND_SPLIT_STATE_BY_NE0 && get_split_state(1) == GGML_BACKEND_SPLIT_STATE_BY_NE0) {
+//                 return GGML_BACKEND_SPLIT_STATE_PARTIAL;
+//             }
+//             if (get_split_state(0) == GGML_BACKEND_SPLIT_STATE_BY_NE2 && get_split_state(1) == GGML_BACKEND_SPLIT_STATE_BY_NE2) {
+//                 return GGML_BACKEND_SPLIT_STATE_BY_NE2;
+//             }
+//         } break;
+//         default: {
+//         } break;
+//     }
+//     return GGML_BACKEND_SPLIT_STATE_UNKNOWN;
+// }
 
 static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
     GGML_ASSERT(ggml_backend_is_meta(backend));
