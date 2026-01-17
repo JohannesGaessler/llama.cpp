@@ -1,5 +1,6 @@
 #include "ggml-alloc.h"
 #include "ggml-backend-impl.h"
+#include "ggml-backend.h"
 #include "ggml.h"
 #include "ggml-impl.h"
 #include <assert.h>
@@ -498,35 +499,45 @@ struct ggml_gallocr {
     int n_leafs;
 };
 
-ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs) {
-    ggml_gallocr_t galloc = (ggml_gallocr_t)calloc(1, sizeof(struct ggml_gallocr));
+ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, size_t n_bufs) {
+    ggml_gallocr_t galloc = (ggml_gallocr_t) calloc(1, sizeof(struct ggml_gallocr));
     GGML_ASSERT(galloc != NULL);
 
-    galloc->bufts = calloc(n_bufs, sizeof(ggml_backend_buffer_type_t));
+    size_t n_bufs_physical = 0;
+    for (size_t i = 0; i < n_bufs; i++) {
+        n_bufs_physical += ggml_backend_buffer_type_is_meta(bufts[i]) ? ggml_backend_meta_buffer_type_n_bufts(bufts[i]) : 1;
+    }
+
+    galloc->bufts = (ggml_backend_buffer_type_t *) calloc(n_bufs_physical, sizeof(ggml_backend_buffer_type_t));
     GGML_ASSERT(galloc->bufts != NULL);
 
-    galloc->buffers = calloc(n_bufs, sizeof(struct vbuffer *));
+    galloc->buffers = (struct vbuffer **) calloc(n_bufs_physical, sizeof(struct vbuffer *));
     GGML_ASSERT(galloc->buffers != NULL);
 
-    galloc->buf_tallocs = calloc(n_bufs, sizeof(struct ggml_dyn_tallocr *));
+    galloc->buf_tallocs = (struct ggml_dyn_tallocr **) calloc(n_bufs_physical, sizeof(struct ggml_dyn_tallocr *));
     GGML_ASSERT(galloc->buf_tallocs != NULL);
 
-    for (int i = 0; i < n_bufs; i++) {
-        galloc->bufts[i] = bufts[i];
-        galloc->buffers[i] = NULL;
+    size_t i_physical = 0;
+    for (size_t i = 0; i < n_bufs; i++) {
+        const bool is_meta = ggml_backend_buffer_type_is_meta(bufts[i]);
+        const size_t n_physical_bufts_i = is_meta ? ggml_backend_meta_buffer_type_n_bufts(bufts[i]) : 1;
+        for (size_t j = 0; j < n_physical_bufts_i; j++, i_physical++) {
+            galloc->bufts[i_physical] = is_meta ? ggml_backend_meta_buffer_type_simple_buft(bufts[i], j) : bufts[i];
+            galloc->buffers[i_physical] = NULL;
 
-        // check if the same buffer type is used multiple times and reuse the same allocator
-        for (int j = 0; j < i; j++) {
-            if (bufts[i] == bufts[j]) {
-                galloc->buf_tallocs[i] = galloc->buf_tallocs[j];
-                break;
+            // check if the same buffer type is used multiple times and reuse the same allocator
+            for (size_t k = 0; k < i_physical; k++) {
+                if (galloc->bufts[i_physical] == galloc->bufts[k]) {
+                    galloc->buf_tallocs[i_physical] = galloc->buf_tallocs[k];
+                    break;
+                }
             }
-        }
 
-        if (galloc->buf_tallocs[i] == NULL) {
-            size_t alignment = ggml_backend_buft_get_alignment(bufts[i]);
-            size_t max_size = ggml_backend_buft_get_max_size(bufts[i]);
-            galloc->buf_tallocs[i] = ggml_dyn_tallocr_new(alignment, max_size);
+            if (galloc->buf_tallocs[i_physical] == NULL) {
+                const size_t alignment = ggml_backend_buft_get_alignment(galloc->bufts[i_physical]);
+                const size_t max_size = ggml_backend_buft_get_max_size(galloc->bufts[i_physical]);
+                galloc->buf_tallocs[i_physical] = ggml_dyn_tallocr_new(alignment, max_size);
+            }
         }
     }
     galloc->n_buffers = n_bufs;
@@ -1057,14 +1068,14 @@ bool ggml_gallocr_alloc_graph(ggml_gallocr_t galloc, struct ggml_cgraph * graph)
         if (galloc->n_buffers == 1) {
 #ifndef NDEBUG
             GGML_LOG_DEBUG("%s: reallocating buffers automatically\n", __func__);
-#endif
+#endif // NDEBUG
             if (!ggml_gallocr_reserve(galloc, graph)) {
                 return false;
             }
         } else {
 #ifndef NDEBUG
             GGML_LOG_DEBUG("%s: cannot reallocate multi buffer graph automatically, call reserve\n", __func__);
-#endif
+#endif // NDEBUG
             return false;
         }
     }

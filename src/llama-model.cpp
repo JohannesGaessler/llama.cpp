@@ -1,5 +1,7 @@
 #include "llama-model.h"
 
+#include "ggml-alloc.h"
+#include "ggml-backend.h"
 #include "llama-impl.h"
 #include "llama-mmap.h"
 #include "llama-cparams.h"
@@ -12,11 +14,13 @@
 
 #include "ggml-cpp.h"
 
+#include "llama.h"
 #include "models/models.h"
 
 #include <algorithm>
 #include <cassert>
 #include <cfloat>
+#include <cstddef>
 #include <cstring>
 #include <cmath>
 #include <functional>
@@ -415,14 +419,16 @@ static buft_list_t make_gpu_buft_list(ggml_backend_dev_t dev, llama_split_mode s
 
     // add the device extra buffer type (if any)
     ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(dev);
-    auto ggml_backend_dev_get_extra_bufts_fn = (ggml_backend_dev_get_extra_bufts_t)
-        ggml_backend_reg_get_proc_address(reg, "ggml_backend_dev_get_extra_bufts");
+    if (reg) {
+        auto ggml_backend_dev_get_extra_bufts_fn = (ggml_backend_dev_get_extra_bufts_t)
+            ggml_backend_reg_get_proc_address(reg, "ggml_backend_dev_get_extra_bufts");
 
-    if (ggml_backend_dev_get_extra_bufts_fn) {
-        ggml_backend_buffer_type_t * extra_bufts = ggml_backend_dev_get_extra_bufts_fn(dev);
-        while (extra_bufts && *extra_bufts) {
-            buft_list.emplace_back(dev, *extra_bufts);
-            ++extra_bufts;
+        if (ggml_backend_dev_get_extra_bufts_fn) {
+            ggml_backend_buffer_type_t * extra_bufts = ggml_backend_dev_get_extra_bufts_fn(dev);
+            while (extra_bufts && *extra_bufts) {
+                buft_list.emplace_back(dev, *extra_bufts);
+                ++extra_bufts;
+            }
         }
     }
 
@@ -6924,7 +6930,13 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                     t->buffer = buf; // set dummy buffer for weights so that the backend scheduler won't try to allocate them
                 }
             } else {
-                buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft); // real buffer
+                if (ggml_backend_device_is_meta(ggml_backend_buft_get_device(buft))) {
+                    std::vector<size_t> tensor_split(16, 1);
+                    std::vector<ggml_backend_meta_split_state> split_states(16384, GGML_BACKEND_SPLIT_STATE_MIRRORED);
+                    buf = ggml_backend_meta_alloc_ctx_tensors_from_buft(ctx, buft, tensor_split.data(), split_states.data());
+                } else {
+                    buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft); // real buffer
+                }
             }
             if (buf == nullptr) {
                 throw std::runtime_error(format("unable to allocate %s buffer", ggml_backend_buft_name(buft)));

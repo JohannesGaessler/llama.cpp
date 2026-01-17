@@ -230,6 +230,8 @@ extern "C" {
     };
 
     GGML_API bool ggml_backend_buffer_type_is_meta(ggml_backend_buffer_type_t buft);
+    GGML_API size_t ggml_backend_meta_buffer_type_n_bufts(ggml_backend_buffer_type_t meta_buft);
+    GGML_API ggml_backend_buffer_type_t ggml_backend_meta_buffer_type_simple_buft(ggml_backend_buffer_type_t meta_buft, size_t index);
 
     GGML_API bool ggml_backend_buffer_is_meta(ggml_backend_buffer_t buf);
     GGML_API ggml_backend_buffer_t ggml_backend_meta_alloc_ctx_tensors_from_buft(
