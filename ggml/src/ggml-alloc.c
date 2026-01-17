@@ -1,5 +1,6 @@
 #include "ggml-alloc.h"
 #include "ggml-backend-impl.h"
+#include "ggml-backend.h"
 #include "ggml.h"
 #include "ggml-impl.h"
 #include <assert.h>
@@ -353,6 +354,9 @@ static void ggml_dyn_tallocr_free_bytes(struct ggml_dyn_tallocr * alloc, struct 
 }
 
 static void ggml_dyn_tallocr_reset(struct ggml_dyn_tallocr * alloc) {
+    if (alloc == NULL) {
+        return;
+    }
     for (int i = 0; i < GGML_VBUFFER_MAX_CHUNKS; i++) {
         free(alloc->chunks[i]);
         alloc->chunks[i] = NULL;
@@ -363,7 +367,7 @@ static void ggml_dyn_tallocr_reset(struct ggml_dyn_tallocr * alloc) {
     for (int i = 0; i < 1024; i++) {
         alloc->allocated_tensors[i].tensor = NULL;
     }
-#endif
+#endif // GGML_ALLOCATOR_DEBUG
 }
 
 static struct ggml_dyn_tallocr * ggml_dyn_tallocr_new(size_t alignment, size_t max_buffer_size) {
@@ -498,38 +502,50 @@ struct ggml_gallocr {
     int n_leafs;
 };
 
+static void ggml_backend_gallocr_init_buft(ggml_gallocr_t galloc, ggml_backend_buffer_type_t buft) {
+    galloc->bufts[galloc->n_buffers] = buft;
+
+    // check if the same buffer type is used multiple times and reuse the same allocator
+    for (int i = 0; i < galloc->n_buffers; i++) {
+        if (buft == galloc->bufts[i]) {
+            galloc->buf_tallocs[galloc->n_buffers] = galloc->buf_tallocs[i];
+            break;
+        }
+    }
+
+    if (galloc->buf_tallocs[galloc->n_buffers] == NULL && !ggml_backend_buffer_type_is_meta(buft)) {
+        const size_t alignment = ggml_backend_buft_get_alignment(buft);
+        const size_t max_size = ggml_backend_buft_get_max_size(buft);
+        galloc->buf_tallocs[galloc->n_buffers] = ggml_dyn_tallocr_new(alignment, max_size);
+    }
+    galloc->n_buffers++;
+}
+
 ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs) {
     ggml_gallocr_t galloc = (ggml_gallocr_t)calloc(1, sizeof(struct ggml_gallocr));
     GGML_ASSERT(galloc != NULL);
 
-    galloc->bufts = calloc(n_bufs, sizeof(ggml_backend_buffer_type_t));
+    galloc->bufts = calloc(n_bufs + 1024, sizeof(ggml_backend_buffer_type_t));
     GGML_ASSERT(galloc->bufts != NULL);
 
-    galloc->buffers = calloc(n_bufs, sizeof(struct vbuffer *));
+    galloc->buffers = calloc(n_bufs + 1024, sizeof(struct vbuffer *));
     GGML_ASSERT(galloc->buffers != NULL);
 
-    galloc->buf_tallocs = calloc(n_bufs, sizeof(struct ggml_dyn_tallocr *));
+    galloc->buf_tallocs = calloc(n_bufs + 1024, sizeof(struct ggml_dyn_tallocr *));
     GGML_ASSERT(galloc->buf_tallocs != NULL);
 
     for (int i = 0; i < n_bufs; i++) {
-        galloc->bufts[i] = bufts[i];
-        galloc->buffers[i] = NULL;
-
-        // check if the same buffer type is used multiple times and reuse the same allocator
-        for (int j = 0; j < i; j++) {
-            if (bufts[i] == bufts[j]) {
-                galloc->buf_tallocs[i] = galloc->buf_tallocs[j];
-                break;
-            }
+        ggml_backend_gallocr_init_buft(galloc, bufts[i]);
+    }
+    for (int i = 0; i < n_bufs; i++) {
+        if (!ggml_backend_buffer_type_is_meta(bufts[i])) {
+            continue;
         }
-
-        if (galloc->buf_tallocs[i] == NULL) {
-            size_t alignment = ggml_backend_buft_get_alignment(bufts[i]);
-            size_t max_size = ggml_backend_buft_get_max_size(bufts[i]);
-            galloc->buf_tallocs[i] = ggml_dyn_tallocr_new(alignment, max_size);
+        const size_t n_bufts_simple = ggml_backend_meta_buffer_type_n_bufts(bufts[i]);
+        for (size_t j = 0; j < n_bufts_simple; j++) {
+            ggml_backend_gallocr_init_buft(galloc, ggml_backend_meta_buffer_type_simple_buft(bufts[i], j));
         }
     }
-    galloc->n_buffers = n_bufs;
 
     return galloc;
 }
@@ -682,12 +698,33 @@ static void ggml_gallocr_allocate_node(ggml_gallocr_t galloc, struct ggml_tensor
                 }
             }
         }
-        // allocate tensor from the buffer
-        struct ggml_dyn_tallocr * alloc = galloc->buf_tallocs[buffer_id];
         ggml_backend_buffer_type_t buft = galloc->bufts[buffer_id];
-        size_t size = ggml_backend_buft_get_alloc_size(buft, node);
-        hn->buffer_id = buffer_id;
-        hn->addr = ggml_dyn_tallocr_alloc(alloc, size, node);
+        if (ggml_backend_buffer_type_is_meta(buft)) {
+            const size_t n_bufts_simple = ggml_backend_meta_buffer_type_n_bufts(buft);
+            for (size_t i = 0; i < n_bufts_simple; i++) {
+                ggml_backend_buffer_type_t simple_buft = ggml_backend_meta_buffer_type_simple_buft(buft, i);
+                struct ggml_tensor * simple_node = ggml_backend_meta_buffer_simple_tensor(galloc->buffers[buffer_id]->chunks[0], node, i);
+
+                size_t buffer_id_simple = 0;
+                while (galloc->bufts[buffer_id_simple] != simple_buft) {
+                    buffer_id_simple++;
+                }
+
+                struct ggml_dyn_tallocr * alloc = galloc->buf_tallocs[buffer_id_simple];
+                const size_t size = ggml_backend_buft_get_alloc_size(simple_buft, simple_node);
+
+                struct hash_node * hn_simple = ggml_gallocr_hash_get(galloc, node);
+                hn_simple->buffer_id = buffer_id_simple;
+                hn_simple->addr = ggml_dyn_tallocr_alloc(alloc, size, simple_node);
+            }
+            node->buffer = galloc->buffers[buffer_id]->chunks[0];
+        } else {
+            // allocate tensor from the buffer
+            struct ggml_dyn_tallocr * alloc = galloc->buf_tallocs[buffer_id];
+            const size_t size = ggml_backend_buft_get_alloc_size(buft, node);
+            hn->buffer_id = buffer_id;
+            hn->addr = ggml_dyn_tallocr_alloc(alloc, size, node);
+        }
     }
 }
 
@@ -847,6 +884,14 @@ static bool ggml_gallocr_reserve_n_impl(
         ggml_dyn_tallocr_reset(galloc->buf_tallocs[i]);
     }
 
+    const size_t * tensor_split = NULL; // FIXME
+    for (int i = 0; i < galloc->n_buffers; i++) {
+        if (ggml_backend_buffer_type_is_meta(galloc->bufts[i])) {
+            galloc->buffers[i] = calloc(1, sizeof(struct vbuffer));
+            galloc->buffers[i]->chunks[0] = ggml_backend_meta_abstract_buffer(galloc->bufts[i], graph, tensor_split);
+        }
+    }
+
     // allocate in hash table
     ggml_gallocr_alloc_graph_impl(galloc, graph, node_buffer_ids, leaf_buffer_ids);
 
@@ -906,6 +951,10 @@ static bool ggml_gallocr_reserve_n_impl(
 
     // reallocate buffers if needed
     for (int i = 0; i < galloc->n_buffers; i++) {
+        if (galloc->buffers[i] != NULL && ggml_backend_buffer_is_meta(galloc->buffers[i]->chunks[0])) {
+            continue;
+        }
+
         // if the buffer type is used multiple times, we reuse the same buffer
         for (int j = 0; j < i; j++) {
             if (galloc->buf_tallocs[j] == galloc->buf_tallocs[i]) {

@@ -234,8 +234,10 @@ extern "C" {
     GGML_API ggml_backend_buffer_type_t ggml_backend_meta_buffer_type_simple_buft(ggml_backend_buffer_type_t meta_buft, size_t index);
 
     GGML_API bool ggml_backend_buffer_is_meta(ggml_backend_buffer_t buf);
+    GGML_API struct ggml_tensor * ggml_backend_meta_buffer_simple_tensor(ggml_backend_buffer_t buf, const struct ggml_tensor * tensor, size_t index);
     GGML_API ggml_backend_buffer_t ggml_backend_meta_alloc_ctx_tensors_from_buft(
         struct ggml_context * ctx, ggml_backend_buffer_type_t buft, const size_t * tensor_split, const enum ggml_backend_meta_split_state * split_states);
+    GGML_API ggml_backend_buffer_t ggml_backend_meta_abstract_buffer(ggml_backend_buffer_type_t meta_buft, struct ggml_cgraph * cgraph, const size_t * tensor_split);
 
     GGML_API bool ggml_backend_is_meta(ggml_backend_t backend);
     GGML_API ggml_backend_t ggml_backend_meta_init(ggml_backend_t * simple_backends, size_t n_backends);
