@@ -46,7 +46,7 @@ GGML_API enum ggml_status    ggml_tallocr_alloc(struct ggml_tallocr * talloc, st
 typedef struct ggml_gallocr * ggml_gallocr_t;
 
 GGML_API ggml_gallocr_t ggml_gallocr_new(ggml_backend_buffer_type_t buft);
-GGML_API ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, size_t n_bufts);
+GGML_API ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs);
 GGML_API void           ggml_gallocr_free(ggml_gallocr_t galloc);
 
 // pre-allocate buffers from a measure graph - does not allocate or modify the graph
@@ -58,14 +58,14 @@ GGML_API bool ggml_gallocr_reserve(ggml_gallocr_t galloc, struct ggml_cgraph * g
 GGML_API void ggml_gallocr_reserve_n_size(
     ggml_gallocr_t galloc,
     struct ggml_cgraph * graph,
-    const int * node_buft_ids,
-    const int * leaf_buft_ids,
+    const int * node_buffer_ids,
+    const int * leaf_buffer_ids,
     size_t * sizes);
 GGML_API bool ggml_gallocr_reserve_n(
     ggml_gallocr_t galloc,
     struct ggml_cgraph * graph,
-    const int * node_buft_ids,
-    const int * leaf_buft_ids);
+    const int * node_buffer_ids,
+    const int * leaf_buffer_ids);
 
 // automatic reallocation if the topology changes when using a single buffer
 // returns false if using multiple buffers and a re-allocation is needed (call ggml_gallocr_reserve_n first to set the node buffers)
