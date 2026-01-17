@@ -1885,7 +1885,7 @@ enum ggml_status ggml_backend_view_init(struct ggml_tensor * tensor) {
     GGML_ASSERT(tensor->buffer == NULL);
     GGML_ASSERT(tensor->view_src != NULL);
     GGML_ASSERT(tensor->view_src->buffer != NULL);
-    GGML_ASSERT(tensor->view_src->data != NULL);
+    GGML_ASSERT(tensor->view_src->data != NULL || ggml_backend_buffer_is_meta(tensor->view_src->buffer));
 
     tensor->buffer = tensor->view_src->buffer;
     tensor->data = (char *)tensor->view_src->data + tensor->view_offs;
