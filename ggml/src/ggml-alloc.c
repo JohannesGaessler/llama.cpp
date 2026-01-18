@@ -1,5 +1,6 @@
 #include "ggml-alloc.h"
 #include "ggml-backend-impl.h"
+#include "ggml-backend.h"
 #include "ggml.h"
 #include "ggml-impl.h"
 #include <assert.h>
@@ -86,12 +87,11 @@ enum ggml_status ggml_tallocr_alloc(struct ggml_tallocr * talloc, struct ggml_te
         GGML_ABORT("not enough space in the buffer");
     }
 
-    void * addr = (char *)ggml_backend_buffer_get_base(talloc->buffer) + talloc->offset;
+    assert((((uintptr_t) ggml_backend_buffer_get_base(talloc->buffer) + talloc->offset) % talloc->alignment) == 0);
+
+    const enum ggml_status status = ggml_backend_tensor_alloc_rel(talloc->buffer, tensor, talloc->offset);
     talloc->offset += size;
-
-    assert(((uintptr_t)addr % talloc->alignment) == 0);
-
-    return ggml_backend_tensor_alloc(talloc->buffer, tensor, addr);
+    return status;
 }
 
 // dynamic tensor allocator
@@ -443,9 +443,7 @@ static struct vbuffer * ggml_vbuffer_alloc(ggml_backend_buffer_type_t buft, cons
 }
 
 static void ggml_vbuffer_tensor_alloc(struct vbuffer * buf, struct ggml_tensor * tensor, struct buffer_address buf_addr) {
-    void * base = ggml_backend_buffer_get_base(buf->chunks[buf_addr.chunk]);
-    void * addr = (char *)base + buf_addr.offset;
-    ggml_backend_tensor_alloc(buf->chunks[buf_addr.chunk], tensor, addr);
+    ggml_backend_tensor_alloc_rel(buf->chunks[buf_addr.chunk], tensor, buf_addr.offset);
 }
 
 static void ggml_vbuffer_reset(struct vbuffer * buf) {
@@ -512,20 +510,20 @@ ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs
     GGML_ASSERT(galloc->buf_tallocs != NULL);
 
     for (int i = 0; i < n_bufs; i++) {
-        galloc->bufts[i] = bufts[i];
+        galloc->bufts[i] = ggml_backend_buffer_type_is_meta(bufts[i]) ? ggml_backend_meta_buffer_type_simple_buft(bufts[i], 0) : bufts[i];
         galloc->buffers[i] = NULL;
 
         // check if the same buffer type is used multiple times and reuse the same allocator
         for (int j = 0; j < i; j++) {
-            if (bufts[i] == bufts[j]) {
+            if (galloc->bufts[i] == galloc->bufts[j]) {
                 galloc->buf_tallocs[i] = galloc->buf_tallocs[j];
                 break;
             }
         }
 
         if (galloc->buf_tallocs[i] == NULL) {
-            size_t alignment = ggml_backend_buft_get_alignment(bufts[i]);
-            size_t max_size = ggml_backend_buft_get_max_size(bufts[i]);
+            size_t alignment = ggml_backend_buft_get_alignment(galloc->bufts[i]);
+            size_t max_size = ggml_backend_buft_get_max_size(galloc->bufts[i]);
             galloc->buf_tallocs[i] = ggml_dyn_tallocr_new(alignment, max_size);
         }
     }

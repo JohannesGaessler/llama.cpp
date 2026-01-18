@@ -374,6 +374,19 @@ bool ggml_backend_buffer_is_meta(ggml_backend_buffer_t buf) {
     return buf != nullptr && buf->iface.free_buffer == ggml_backend_meta_buffer_iface.free_buffer;
 }
 
+size_t ggml_backend_meta_buffer_n_bufs(ggml_backend_buffer_t meta_buf) {
+    GGML_ASSERT(ggml_backend_buffer_is_meta(meta_buf));
+    ggml_backend_meta_buffer_context * buf_ctx = (ggml_backend_meta_buffer_context *) meta_buf->context;
+    return buf_ctx->buf_configs.size();
+}
+
+ggml_backend_buffer_t ggml_backend_meta_buffer_simple_buffer(ggml_backend_buffer_t meta_buf, size_t index) {
+    GGML_ASSERT(ggml_backend_buffer_is_meta(meta_buf));
+    ggml_backend_meta_buffer_context * buf_ctx = (ggml_backend_meta_buffer_context *) meta_buf->context;
+    GGML_ASSERT(index < buf_ctx->buf_configs.size());
+    return buf_ctx->buf_configs[index].buf;
+}
+
 struct ggml_tensor * ggml_backend_meta_buffer_simple_tensor(ggml_backend_buffer_t buf, const struct ggml_tensor * tensor, size_t index) {
     GGML_ASSERT(ggml_backend_buffer_is_meta(buf));
     ggml_backend_meta_buffer_context * buf_ctx = (ggml_backend_meta_buffer_context *) buf->context;
@@ -444,6 +457,7 @@ ggml_backend_buffer_t ggml_backend_meta_alloc_ctx_tensors_from_buft(
     ggml_backend_buffer_t ret = ggml_backend_buffer_init(buft, ggml_backend_meta_buffer_iface, buf_ctx, 0);
     for (ggml_tensor * t : original_tensors) {
         t->buffer = ret;
+        t->data = (void *) 0x123456789; // FIXME
     }
     return ret;
 }
@@ -488,9 +502,9 @@ ggml_backend_buffer_t ggml_backend_meta_abstract_buffer(ggml_backend_buffer_type
     }
 
     ggml_backend_buffer_t ret = ggml_backend_buffer_init(meta_buft, ggml_backend_meta_buffer_iface, buf_ctx, 0);
-    for (int i = 0; i < cgraph->n_nodes; i++) {
-        cgraph->nodes[i]->buffer = ret;
-    }
+    // for (int i = 0; i < cgraph->n_nodes; i++) {
+    //     cgraph->nodes[i]->buffer = ret;
+    // }
     return ret;
 }
 
@@ -544,8 +558,25 @@ static void ggml_backend_meta_free(ggml_backend_t backend) {
 static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
     GGML_ASSERT(ggml_backend_is_meta(backend));
     const ggml_backend_meta_context * backend_ctx = (const ggml_backend_meta_context *) backend->context;
-    for (size_t i = 0; i < backend_ctx->simple_backends.size(); i++) {
-        const ggml_status status = ggml_backend_graph_compute_async(backend_ctx->simple_backends[i], cgraph);
+    std::vector<ggml_tensor *> simple_nodes(cgraph->n_nodes);
+    ggml_cgraph simple_cgraph = {
+        /*.size             =*/ 0,
+        /*.n_nodes          =*/ cgraph->n_nodes,
+        /*.n_leafs          =*/ 0,
+        /*.nodes            =*/ simple_nodes.data(),
+        /*.grads            =*/ nullptr,
+        /*.grad_accs        =*/ nullptr,
+        /*.leafs            =*/ nullptr,
+        /*.use_counts       =*/ cgraph->use_counts,
+        /*.visited_hash_set =*/ cgraph->visited_hash_set,
+        /*.order            =*/ cgraph->order,
+    };
+
+    for (size_t j = 0; j < backend_ctx->simple_backends.size(); j++) {
+        for (int i = 0; i < cgraph->n_nodes; i++) {
+            simple_nodes[i] = ggml_backend_meta_buffer_simple_tensor(cgraph->nodes[i]->buffer, cgraph->nodes[i], j);
+        }
+        const ggml_status status = ggml_backend_graph_compute_async(backend_ctx->simple_backends[j], &simple_cgraph);
         if (status != GGML_STATUS_SUCCESS) {
             return status;
         }

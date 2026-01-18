@@ -234,6 +234,8 @@ extern "C" {
     GGML_API ggml_backend_buffer_type_t ggml_backend_meta_buffer_type_simple_buft(ggml_backend_buffer_type_t meta_buft, size_t index);
 
     GGML_API bool ggml_backend_buffer_is_meta(ggml_backend_buffer_t buf);
+    GGML_API size_t ggml_backend_meta_buffer_n_bufs(ggml_backend_buffer_t meta_buf);
+    GGML_API ggml_backend_buffer_t ggml_backend_meta_buffer_simple_buffer(ggml_backend_buffer_t meta_buf, size_t index);
     GGML_API struct ggml_tensor * ggml_backend_meta_buffer_simple_tensor(ggml_backend_buffer_t buf, const struct ggml_tensor * tensor, size_t index);
     GGML_API ggml_backend_buffer_t ggml_backend_meta_alloc_ctx_tensors_from_buft(
         struct ggml_context * ctx, ggml_backend_buffer_type_t buft, const size_t * tensor_split, const enum ggml_backend_meta_split_state * split_states);
@@ -393,6 +395,7 @@ extern "C" {
 
     // Tensor initialization
     GGML_API enum ggml_status ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, void * addr);
+    GGML_API enum ggml_status ggml_backend_tensor_alloc_rel(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, size_t offset);
     GGML_API enum ggml_status ggml_backend_view_init(struct ggml_tensor * tensor);
 
     // CPU buffer types are always available
