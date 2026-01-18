@@ -510,7 +510,7 @@ ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs
     GGML_ASSERT(galloc->buf_tallocs != NULL);
 
     for (int i = 0; i < n_bufs; i++) {
-        galloc->bufts[i] = ggml_backend_buffer_type_is_meta(bufts[i]) ? ggml_backend_meta_buffer_type_simple_buft(bufts[i], 0) : bufts[i];
+        galloc->bufts[i]   = bufts[i];
         galloc->buffers[i] = NULL;
 
         // check if the same buffer type is used multiple times and reuse the same allocator
@@ -522,8 +522,8 @@ ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs
         }
 
         if (galloc->buf_tallocs[i] == NULL) {
-            size_t alignment = ggml_backend_buft_get_alignment(galloc->bufts[i]);
-            size_t max_size = ggml_backend_buft_get_max_size(galloc->bufts[i]);
+            const size_t alignment = ggml_backend_buft_get_alignment(galloc->bufts[i]);
+            const size_t max_size = ggml_backend_buft_get_max_size(galloc->bufts[i]);
             galloc->buf_tallocs[i] = ggml_dyn_tallocr_new(alignment, max_size);
         }
     }
@@ -938,6 +938,9 @@ static bool ggml_gallocr_reserve_n_impl(
                 galloc->buffers[i] = NULL;
             } else {
                 galloc->buffers[i] = ggml_vbuffer_alloc(galloc->bufts[i], galloc->buf_tallocs[i], GGML_BACKEND_BUFFER_USAGE_COMPUTE);
+                if (ggml_backend_buffer_is_meta(galloc->buffers[i]->chunks[0])) {
+                    ggml_backend_meta_buffer_set_tensors(galloc->buffers[i]->chunks[0], graph->nodes, graph->n_nodes);
+                }
                 if (galloc->buffers[i] == NULL) {
                     GGML_LOG_ERROR("%s: failed to allocate %s buffer of size %zu\n", __func__, ggml_backend_buft_name(galloc->bufts[i]), new_size);
                     return false;
@@ -1071,6 +1074,11 @@ bool ggml_gallocr_alloc_graph(ggml_gallocr_t galloc, struct ggml_cgraph * graph)
     for (int i = 0; i < galloc->n_buffers; i++) {
         if (galloc->buffers[i] != NULL) {
             ggml_vbuffer_reset(galloc->buffers[i]);
+        }
+    }
+    for (int i = 0; i < galloc->n_buffers; i++) {
+        if (ggml_backend_buffer_is_meta(galloc->buffers[i]->chunks[0])) {
+            ggml_backend_meta_buffer_set_tensors(galloc->buffers[i]->chunks[0], graph->nodes, graph->n_nodes);
         }
     }
 

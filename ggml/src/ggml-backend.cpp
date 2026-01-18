@@ -1927,6 +1927,7 @@ enum ggml_status ggml_backend_tensor_alloc_rel(ggml_backend_buffer_t buffer, str
             }
         }
         tensor->buffer = buffer;
+        tensor->data   = (void *) 0x123456789;
         return GGML_STATUS_SUCCESS;
     }
 

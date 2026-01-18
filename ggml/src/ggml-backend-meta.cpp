@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
 struct ggml_backend_meta_device;
@@ -191,11 +192,33 @@ static const char * ggml_backend_meta_buffer_type_get_name(ggml_backend_buffer_t
     GGML_UNUSED(buft);
 }
 
+static ggml_backend_buffer_t ggml_backend_meta_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size);
+
+static size_t ggml_backend_meta_buffer_type_get_alignment(ggml_backend_buffer_type_t buft) {
+    const size_t n_simple_bufts = ggml_backend_meta_buffer_type_n_bufts(buft);
+    size_t max_alignment = 1;
+    for (size_t i = 0; i < n_simple_bufts; i++) {
+        const size_t alignment = ggml_backend_buft_get_alignment(ggml_backend_meta_buffer_type_simple_buft(buft, i));
+        max_alignment = std::max(max_alignment, alignment);
+        GGML_ASSERT(max_alignment % alignment == 0);
+    }
+    return max_alignment;
+}
+
+static size_t ggml_backend_meta_buffer_type_get_max_size(ggml_backend_buffer_type_t buft) {
+    const size_t n_simple_bufts = ggml_backend_meta_buffer_type_n_bufts(buft);
+    size_t max_size = SIZE_MAX;
+    for (size_t i = 0; i < n_simple_bufts; i++) {
+        max_size = std::min(max_size, ggml_backend_buft_get_max_size(ggml_backend_meta_buffer_type_simple_buft(buft, i)));
+    }
+    return max_size;
+}
+
 static const struct ggml_backend_buffer_type_i ggml_backend_meta_buffer_type_iface = {
     /* .get_name         = */ ggml_backend_meta_buffer_type_get_name,
-    /* .alloc_buffer     = */ nullptr,
-    /* .get_alignment    = */ nullptr,
-    /* .get_max_size     = */ nullptr, // defaults to SIZE_MAX
+    /* .alloc_buffer     = */ ggml_backend_meta_buffer_type_alloc_buffer,
+    /* .get_alignment    = */ ggml_backend_meta_buffer_type_get_alignment,
+    /* .get_max_size     = */ ggml_backend_meta_buffer_type_get_max_size,
     /* .get_alloc_size   = */ nullptr, // defaults to ggml_nbytes
     /* .is_host          = */ nullptr,
 };
@@ -399,6 +422,19 @@ struct ggml_tensor * ggml_backend_meta_buffer_simple_tensor(ggml_backend_buffer_
     return it->second[index];
 }
 
+static ggml_backend_buffer_t ggml_backend_meta_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
+    const size_t n_simple_bufts = ggml_backend_meta_buffer_type_n_bufts(buft);
+
+    ggml_backend_meta_buffer_context * buf_ctx = new ggml_backend_meta_buffer_context;
+    buf_ctx->buf_configs.reserve(n_simple_bufts);
+    for (size_t i = 0; i < n_simple_bufts; i++) {
+        ggml_backend_buffer_t simple_buf = ggml_backend_buft_alloc_buffer(ggml_backend_meta_buffer_type_simple_buft(buft, i), size);
+        buf_ctx->buf_configs.emplace_back(nullptr, simple_buf, 1);
+    }
+
+    return ggml_backend_buffer_init(buft, ggml_backend_meta_buffer_iface, buf_ctx, 0);
+}
+
 ggml_backend_buffer_t ggml_backend_meta_alloc_ctx_tensors_from_buft(
         struct ggml_context * ctx, ggml_backend_buffer_type_t buft, const size_t * tensor_split, const enum ggml_backend_meta_split_state * split_states) {
     GGML_ASSERT(ggml_backend_buffer_type_is_meta(buft));
@@ -463,6 +499,7 @@ ggml_backend_buffer_t ggml_backend_meta_alloc_ctx_tensors_from_buft(
 }
 
 ggml_backend_buffer_t ggml_backend_meta_abstract_buffer(ggml_backend_buffer_type_t meta_buft, struct ggml_cgraph * cgraph, const size_t * tensor_split) {
+    GGML_ASSERT(false);
     GGML_ASSERT(ggml_backend_buffer_type_is_meta(meta_buft));
     ggml_init_params params = {
         /*.mem_size   =*/ ggml_graph_overhead_custom(cgraph->n_nodes, cgraph->grads) + cgraph->n_nodes*ggml_tensor_overhead(),
@@ -506,6 +543,44 @@ ggml_backend_buffer_t ggml_backend_meta_abstract_buffer(ggml_backend_buffer_type
     //     cgraph->nodes[i]->buffer = ret;
     // }
     return ret;
+}
+
+void ggml_backend_meta_buffer_set_tensors(ggml_backend_buffer_t meta_buf, struct ggml_tensor ** tensors, size_t n_tensors) {
+    GGML_ASSERT(ggml_backend_buffer_is_meta(meta_buf));
+    ggml_backend_meta_buffer_context * buf_ctx = (ggml_backend_meta_buffer_context *) meta_buf->context;
+
+    ggml_init_params params = {
+        /*.mem_size   =*/ n_tensors*ggml_tensor_overhead(),
+        /*.mem_buffer =*/ nullptr,
+        /*.no_alloc   =*/ true,
+    };
+    for (size_t i = 0; i < buf_ctx->buf_configs.size(); i++) {
+        buf_ctx->buf_configs[i].ctx = ggml_init(params);
+    }
+
+    const std::vector<size_t> tensor_split_scan = buf_ctx->tensor_split_scan();
+
+    for (size_t i = 0; i < n_tensors; i++) {
+        int split_dim = GGML_BACKEND_SPLIT_STATE_MIRRORED; // FIXME
+        int64_t ne[GGML_MAX_DIMS];
+        for (size_t k = 0; k < GGML_MAX_DIMS; k++) {
+            ne[k] = tensors[i]->ne[k];
+        }
+        std::vector<ggml_tensor *> simple_tensors;
+        simple_tensors.reserve(buf_ctx->buf_configs.size());
+        for (size_t j = 0; j < buf_ctx->buf_configs.size(); j++) {
+            if (split_dim >= 0 && split_dim < GGML_MAX_DIMS) {
+                const int64_t low  = ne[split_dim] * tensor_split_scan[j]     / tensor_split_scan.back();
+                const int64_t high = ne[split_dim] * tensor_split_scan[j + 1] / tensor_split_scan.back();
+                ne[split_dim] = high - low;
+            }
+
+            ggml_tensor * t_j = ggml_new_tensor(buf_ctx->buf_configs[j].ctx, tensors[i]->type, GGML_MAX_DIMS, ne);
+            ggml_set_name(t_j, tensors[i]->name);
+            simple_tensors.push_back(t_j);
+        }
+        buf_ctx->simple_tensors[tensors[i]] = simple_tensors;
+    }
 }
 
 static ggml_guid_t ggml_backend_meta_guid() {
