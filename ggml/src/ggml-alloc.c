@@ -87,11 +87,12 @@ enum ggml_status ggml_tallocr_alloc(struct ggml_tallocr * talloc, struct ggml_te
         GGML_ABORT("not enough space in the buffer");
     }
 
-    assert((((uintptr_t) ggml_backend_buffer_get_base(talloc->buffer) + talloc->offset) % talloc->alignment) == 0);
-
-    const enum ggml_status status = ggml_backend_tensor_alloc_rel(talloc->buffer, tensor, talloc->offset);
+    void * addr = (char *)ggml_backend_buffer_get_base(talloc->buffer) + talloc->offset;
     talloc->offset += size;
-    return status;
+
+    assert(((uintptr_t)addr % talloc->alignment) == 0);
+
+    return ggml_backend_tensor_alloc(talloc->buffer, tensor, addr);
 }
 
 // dynamic tensor allocator
@@ -443,7 +444,9 @@ static struct vbuffer * ggml_vbuffer_alloc(ggml_backend_buffer_type_t buft, cons
 }
 
 static void ggml_vbuffer_tensor_alloc(struct vbuffer * buf, struct ggml_tensor * tensor, struct buffer_address buf_addr) {
-    ggml_backend_tensor_alloc_rel(buf->chunks[buf_addr.chunk], tensor, buf_addr.offset);
+    void * base = ggml_backend_buffer_get_base(buf->chunks[buf_addr.chunk]);
+    void * addr = (char *)base + buf_addr.offset;
+    ggml_backend_tensor_alloc(buf->chunks[buf_addr.chunk], tensor, addr);
 }
 
 static void ggml_vbuffer_reset(struct vbuffer * buf) {
@@ -510,20 +513,20 @@ ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs
     GGML_ASSERT(galloc->buf_tallocs != NULL);
 
     for (int i = 0; i < n_bufs; i++) {
-        galloc->bufts[i]   = bufts[i];
+        galloc->bufts[i] = bufts[i];
         galloc->buffers[i] = NULL;
 
         // check if the same buffer type is used multiple times and reuse the same allocator
         for (int j = 0; j < i; j++) {
-            if (galloc->bufts[i] == galloc->bufts[j]) {
+            if (bufts[i] == bufts[j]) {
                 galloc->buf_tallocs[i] = galloc->buf_tallocs[j];
                 break;
             }
         }
 
         if (galloc->buf_tallocs[i] == NULL) {
-            const size_t alignment = ggml_backend_buft_get_alignment(galloc->bufts[i]);
-            const size_t max_size = ggml_backend_buft_get_max_size(galloc->bufts[i]);
+            size_t alignment = ggml_backend_buft_get_alignment(bufts[i]);
+            size_t max_size = ggml_backend_buft_get_max_size(bufts[i]);
             galloc->buf_tallocs[i] = ggml_dyn_tallocr_new(alignment, max_size);
         }
     }
@@ -938,9 +941,6 @@ static bool ggml_gallocr_reserve_n_impl(
                 galloc->buffers[i] = NULL;
             } else {
                 galloc->buffers[i] = ggml_vbuffer_alloc(galloc->bufts[i], galloc->buf_tallocs[i], GGML_BACKEND_BUFFER_USAGE_COMPUTE);
-                if (ggml_backend_buffer_is_meta(galloc->buffers[i]->chunks[0])) {
-                    ggml_backend_meta_buffer_set_tensors(galloc->buffers[i]->chunks[0], graph->nodes, graph->n_nodes);
-                }
                 if (galloc->buffers[i] == NULL) {
                     GGML_LOG_ERROR("%s: failed to allocate %s buffer of size %zu\n", __func__, ggml_backend_buft_name(galloc->bufts[i]), new_size);
                     return false;
@@ -1074,11 +1074,6 @@ bool ggml_gallocr_alloc_graph(ggml_gallocr_t galloc, struct ggml_cgraph * graph)
     for (int i = 0; i < galloc->n_buffers; i++) {
         if (galloc->buffers[i] != NULL) {
             ggml_vbuffer_reset(galloc->buffers[i]);
-        }
-    }
-    for (int i = 0; i < galloc->n_buffers; i++) {
-        if (ggml_backend_buffer_is_meta(galloc->buffers[i]->chunks[0])) {
-            ggml_backend_meta_buffer_set_tensors(galloc->buffers[i]->chunks[0], graph->nodes, graph->n_nodes);
         }
     }
 

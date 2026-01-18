@@ -1896,45 +1896,15 @@ enum ggml_status ggml_backend_view_init(struct ggml_tensor * tensor) {
 
 enum ggml_status ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, void * addr) {
     GGML_ASSERT(tensor);
-    GGML_ASSERT(tensor->buffer   == nullptr);
-    GGML_ASSERT(tensor->data     == nullptr);
-    GGML_ASSERT(tensor->view_src == nullptr);
+    GGML_ASSERT(tensor->buffer == NULL);
+    GGML_ASSERT(tensor->data == NULL);
+    GGML_ASSERT(tensor->view_src == NULL);
     GGML_ASSERT(addr >= ggml_backend_buffer_get_base(buffer));
-    GGML_ASSERT((char *) addr + ggml_backend_buffer_get_alloc_size(buffer, tensor) <=
-                (char *) ggml_backend_buffer_get_base(buffer) + ggml_backend_buffer_get_size(buffer));
-    GGML_ASSERT(!ggml_backend_buffer_is_meta(buffer));
+    GGML_ASSERT((char *)addr + ggml_backend_buffer_get_alloc_size(buffer, tensor) <=
+                (char *)ggml_backend_buffer_get_base(buffer) + ggml_backend_buffer_get_size(buffer));
 
     tensor->buffer = buffer;
-    tensor->data   = addr;
-    return ggml_backend_buffer_init_tensor(buffer, tensor);
-}
-
-enum ggml_status ggml_backend_tensor_alloc_rel(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, size_t offset) {
-    GGML_ASSERT(tensor);
-    GGML_ASSERT(tensor->buffer   == nullptr);
-    GGML_ASSERT(tensor->data     == nullptr);
-    GGML_ASSERT(tensor->view_src == nullptr);
-
-    if (ggml_backend_buffer_is_meta(buffer)) {
-        const size_t n_simple_bufs = ggml_backend_meta_buffer_n_bufs(buffer);
-        std::vector<ggml_tensor *> simple_tensors;
-        for (size_t i = 0; i < n_simple_bufs; i++) {
-            ggml_backend_buffer_t simple_buf = ggml_backend_meta_buffer_simple_buffer(buffer, i);
-            ggml_tensor * simple_tensor = ggml_backend_meta_buffer_simple_tensor(buffer, tensor, i);
-            const enum ggml_status status = ggml_backend_tensor_alloc_rel(simple_buf, simple_tensor, offset);
-            if (status != GGML_STATUS_SUCCESS) {
-                return status;
-            }
-        }
-        tensor->buffer = buffer;
-        tensor->data   = (void *) 0x123456789;
-        return GGML_STATUS_SUCCESS;
-    }
-
-    GGML_ASSERT(offset + ggml_backend_buffer_get_alloc_size(buffer, tensor) <= ggml_backend_buffer_get_size(buffer));
-
-    tensor->buffer = buffer;
-    tensor->data   = (char *) ggml_backend_buffer_get_base(buffer) + offset;
+    tensor->data = addr;
     return ggml_backend_buffer_init_tensor(buffer, tensor);
 }
 
