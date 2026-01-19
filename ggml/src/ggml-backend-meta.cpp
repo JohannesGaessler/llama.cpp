@@ -581,9 +581,15 @@ void ggml_backend_meta_buffer_set_tensors(ggml_backend_buffer_t meta_buf, struct
                 ne[split_dim] = high - low;
             }
 
-            ggml_tensor * t_j = ggml_new_tensor(buf_ctx->buf_configs[j].ctx, tensors[i]->type, GGML_MAX_DIMS, ne);
-            ggml_set_name(t_j, tensors[i]->name);
-            simple_tensors.push_back(t_j);
+            ggml_context          * simple_ctx = buf_ctx->buf_configs[j].ctx;
+            ggml_backend_buffer_t   simple_buf = buf_ctx->buf_configs[j].buf;
+
+            ggml_tensor * t_ij = ggml_new_tensor(simple_ctx, tensors[i]->type, GGML_MAX_DIMS, ne);
+            ggml_set_name(t_ij, tensors[i]->name);
+            t_ij->buffer = simple_buf;
+            t_ij->data   = (char *) ggml_backend_buffer_get_base(simple_buf)
+                + size_t(tensors[i]->data) - size_t(ggml_backend_buffer_get_base(meta_buf));
+            simple_tensors.push_back(t_ij);
         }
         buf_ctx->split_states[tensors[i]]   = split_state;
         buf_ctx->simple_tensors[tensors[i]] = simple_tensors;
