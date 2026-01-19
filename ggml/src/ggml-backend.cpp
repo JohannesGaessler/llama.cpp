@@ -125,7 +125,7 @@ size_t ggml_backend_buffer_get_size(ggml_backend_buffer_t buffer) {
 void * ggml_backend_buffer_get_base(ggml_backend_buffer_t buffer) {
     GGML_ASSERT(buffer);
     // get_base is optional if the buffer is zero-sized
-    if (buffer->size == 0) {
+    if (!ggml_backend_buffer_is_meta(buffer) && buffer->size == 0) {
         return NULL;
     }
 
@@ -288,7 +288,7 @@ void ggml_backend_tensor_set(struct ggml_tensor * tensor, const void * data, siz
     }
 
     GGML_ASSERT(buf != NULL && "tensor buffer not set");
-    GGML_ASSERT((ggml_backend_buffer_is_meta(buf) || tensor->data != NULL) && "tensor not allocated");
+    GGML_ASSERT(tensor->data != NULL && "tensor not allocated");
     GGML_ASSERT(offset + size <= ggml_nbytes(tensor) && "tensor write out of bounds");
 
     buf->iface.set_tensor(buf, tensor, data, offset, size);
@@ -1887,7 +1887,7 @@ enum ggml_status ggml_backend_view_init(struct ggml_tensor * tensor) {
     GGML_ASSERT(tensor->buffer == NULL);
     GGML_ASSERT(tensor->view_src != NULL);
     GGML_ASSERT(tensor->view_src->buffer != NULL);
-    GGML_ASSERT(tensor->view_src->data != NULL || ggml_backend_buffer_is_meta(tensor->view_src->buffer));
+    GGML_ASSERT(tensor->view_src->data != NULL);
 
     tensor->buffer = tensor->view_src->buffer;
     tensor->data = (char *)tensor->view_src->data + tensor->view_offs;
@@ -1900,8 +1900,9 @@ enum ggml_status ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct 
     GGML_ASSERT(tensor->data == NULL);
     GGML_ASSERT(tensor->view_src == NULL);
     GGML_ASSERT(addr >= ggml_backend_buffer_get_base(buffer));
-    GGML_ASSERT((char *)addr + ggml_backend_buffer_get_alloc_size(buffer, tensor) <=
-                (char *)ggml_backend_buffer_get_base(buffer) + ggml_backend_buffer_get_size(buffer));
+    GGML_ASSERT(ggml_backend_buffer_is_meta(buffer) ||
+        (char *) addr + ggml_backend_buffer_get_alloc_size(buffer, tensor) <=
+        (char *) ggml_backend_buffer_get_base(buffer) + ggml_backend_buffer_get_size(buffer));
 
     tensor->buffer = buffer;
     tensor->data = addr;
