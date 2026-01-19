@@ -566,7 +566,8 @@ void ggml_backend_meta_buffer_set_tensors(ggml_backend_buffer_t meta_buf, struct
     const std::vector<size_t> tensor_split_scan = buf_ctx->tensor_split_scan();
 
     for (size_t i = 0; i < n_tensors; i++) {
-        int split_dim = GGML_BACKEND_SPLIT_STATE_MIRRORED; // FIXME
+        const ggml_backend_meta_split_state split_state = GGML_BACKEND_SPLIT_STATE_MIRRORED; // FIXME
+        int split_dim = split_state;
         int64_t ne[GGML_MAX_DIMS];
         for (size_t k = 0; k < GGML_MAX_DIMS; k++) {
             ne[k] = tensors[i]->ne[k];
@@ -584,6 +585,7 @@ void ggml_backend_meta_buffer_set_tensors(ggml_backend_buffer_t meta_buf, struct
             ggml_set_name(t_j, tensors[i]->name);
             simple_tensors.push_back(t_j);
         }
+        buf_ctx->split_states[tensors[i]]   = split_state;
         buf_ctx->simple_tensors[tensors[i]] = simple_tensors;
     }
 }
