@@ -1098,6 +1098,14 @@ bool ggml_gallocr_alloc_graph(ggml_gallocr_t galloc, struct ggml_cgraph * graph)
         ggml_gallocr_init_tensor(galloc, node, &node_alloc->dst);
     }
 
+    for (int i = 0; i < galloc->n_buffers; i++) {
+        for (int j = 0; j < GGML_VBUFFER_MAX_CHUNKS; j++) {
+            if (ggml_backend_buffer_is_meta(galloc->buffers[i]->chunks[j])) {
+                ggml_backend_meta_buffer_set_tensors(galloc->buffers[i]->chunks[j], graph->nodes, graph->n_nodes);
+            }
+        }
+    }
+
     return true;
 }
 
