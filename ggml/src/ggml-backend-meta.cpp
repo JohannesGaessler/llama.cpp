@@ -603,9 +603,9 @@ static ggml_guid_t ggml_backend_meta_guid() {
 
 struct ggml_backend_meta_context {
     struct backend_config {
-        ggml_backend_t               backend;
-        ggml_context               * ctx;
-        ggml_cgraph                * cgraph;
+        ggml_backend_t             backend;
+        ggml_cgraph                cgraph;
+        std::vector<ggml_tensor *> nodes;
 
         backend_config(ggml_backend_t backend) : backend(backend) {}
     };
@@ -714,24 +714,17 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
     GGML_ASSERT(ggml_backend_is_meta(backend));
     ggml_backend_meta_context * backend_ctx = (ggml_backend_meta_context *) backend->context;
 
-    ggml_init_params params = {
-        /*.mem_size   =*/ ggml_graph_overhead_custom(cgraph->n_nodes, cgraph->grads) + cgraph->n_nodes*ggml_tensor_overhead(),
-        /*.mem_buffer =*/ nullptr,
-        /*.no_alloc   =*/ true,
-    };
     for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
         auto & bcj = backend_ctx->backend_configs[j];
-        bcj.ctx    = ggml_init(params);
-        bcj.cgraph = dup_graph(bcj.ctx, cgraph);
+        bcj.cgraph = *cgraph;
 
+        bcj.nodes.resize(cgraph->n_nodes);
         for (int i = 0; i < cgraph->n_nodes; i++) {
-            const uintptr_t base_meta   = uintptr_t(ggml_backend_buffer_get_base(    cgraph->nodes[i]->buffer));
-            const uintptr_t base_simple = uintptr_t(ggml_backend_buffer_get_base(bcj.cgraph->nodes[i]->buffer));
-            bcj.cgraph->nodes[i] -= base_meta;
-            bcj.cgraph->nodes[i] += base_simple;
+            bcj.nodes[i] = ggml_backend_meta_buffer_simple_tensor(cgraph->nodes[i]->buffer, cgraph->nodes[i], j);
         }
+        bcj.cgraph.nodes = bcj.nodes.data();
 
-        const ggml_status status = ggml_backend_graph_compute_async(bcj.backend, bcj.cgraph);
+        const ggml_status status = ggml_backend_graph_compute_async(bcj.backend, &bcj.cgraph);
         if (status != GGML_STATUS_SUCCESS) {
             return status;
         }
