@@ -325,6 +325,65 @@ static void * ggml_backend_meta_buffer_get_base(ggml_backend_buffer_t buffer) {
     return (void *) 0x1000000000000000;
 }
 
+static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor) {
+    GGML_ASSERT(ggml_backend_buffer_is_meta(buffer));
+    ggml_backend_meta_buffer_context * buf_ctx = (ggml_backend_meta_buffer_context *) buffer->context;
+
+    const ggml_backend_meta_split_state split_state = GGML_BACKEND_SPLIT_STATE_MIRRORED; // FIXME
+    int split_dim = split_state;
+    int64_t ne[GGML_MAX_DIMS];
+    for (size_t k = 0; k < GGML_MAX_DIMS; k++) {
+        ne[k] = tensor->ne[k];
+    }
+
+    const std::vector<size_t> tensor_split_scan = buf_ctx->tensor_split_scan();
+
+    std::vector<ggml_tensor *> simple_tensors;
+    simple_tensors.reserve(buf_ctx->buf_configs.size());
+    for (size_t j = 0; j < buf_ctx->buf_configs.size(); j++) {
+        if (split_dim >= 0 && split_dim < GGML_MAX_DIMS) {
+            const int64_t low  = ne[split_dim] * tensor_split_scan[j]     / tensor_split_scan.back();
+            const int64_t high = ne[split_dim] * tensor_split_scan[j + 1] / tensor_split_scan.back();
+            ne[split_dim] = high - low;
+        }
+
+        ggml_context          * simple_ctx = buf_ctx->buf_configs[j].ctx;
+        ggml_backend_buffer_t   simple_buf = buf_ctx->buf_configs[j].buf;
+
+        ggml_tensor * t_ij = ggml_new_tensor(simple_ctx, tensor->type, GGML_MAX_DIMS, ne);
+        t_ij->op = tensor->op;
+        for (int i = 0; i < GGML_MAX_DIMS; i++) {
+            t_ij->nb[i] = tensor->nb[i];
+        }
+        t_ij->flags = tensor->flags;
+        memcpy(t_ij->op_params, tensor->op_params, sizeof(tensor->op_params));
+        ggml_set_name(t_ij, tensor->name);
+        t_ij->buffer = simple_buf;
+        t_ij->data   = (char *) ggml_backend_buffer_get_base(simple_buf)
+            + size_t(tensor->data) - size_t(ggml_backend_buffer_get_base(buffer));
+        t_ij->extra = tensor->extra;
+        t_ij->view_offs = tensor->view_offs;
+        t_ij->view_src = tensor->view_src;
+        if (t_ij->view_src != nullptr && ggml_backend_buffer_is_meta(t_ij->view_src->buffer)) {
+            t_ij->view_src = ggml_backend_meta_buffer_simple_tensor(tensor->view_src->buffer, tensor->view_src, j);
+        }
+        for (int i = 0; i < GGML_MAX_SRC; i++) {
+            t_ij->src[i] = tensor->src[i];
+            if (tensor->src[i] == tensor) {
+                t_ij->src[i] = t_ij;
+            } else if (t_ij->src[i] != nullptr && ggml_backend_buffer_is_meta(t_ij->src[i]->buffer)) {
+                t_ij->src[i] = ggml_backend_meta_buffer_simple_tensor(tensor->src[i]->buffer, tensor->src[i], j);
+            }
+        }
+
+        simple_tensors.push_back(t_ij);
+    }
+    buf_ctx->split_states[tensor]   = split_state;
+    buf_ctx->simple_tensors[tensor] = simple_tensors;
+
+    return GGML_STATUS_SUCCESS;
+}
+
 static void ggml_backend_meta_buffer_set_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
     GGML_ASSERT(ggml_backend_buffer_is_meta(buffer));
     GGML_ASSERT(offset == 0);
@@ -389,7 +448,7 @@ static void ggml_backend_meta_buffer_get_tensor(ggml_backend_buffer_t buffer, co
 static const ggml_backend_buffer_i ggml_backend_meta_buffer_iface = {
     /* .free_buffer     = */ ggml_backend_meta_buffer_free_buffer,
     /* .get_base        = */ ggml_backend_meta_buffer_get_base,
-    /* .init_tensor     = */ nullptr,
+    /* .init_tensor     = */ ggml_backend_meta_buffer_init_tensor,
     /* .memset_tensor   = */ nullptr,
     /* .set_tensor      = */ ggml_backend_meta_buffer_set_tensor,
     /* .get_tensor      = */ ggml_backend_meta_buffer_get_tensor,
@@ -430,11 +489,17 @@ struct ggml_tensor * ggml_backend_meta_buffer_simple_tensor(ggml_backend_buffer_
 static ggml_backend_buffer_t ggml_backend_meta_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
     const size_t n_simple_bufts = ggml_backend_meta_buffer_type_n_bufts(buft);
 
+    ggml_init_params params = {
+        /*.mem_size   =*/ 1024*1024*1024, // FIXME
+        /*.mem_buffer =*/ nullptr,
+        /*.no_alloc   =*/ true,
+    };
+
     ggml_backend_meta_buffer_context * buf_ctx = new ggml_backend_meta_buffer_context;
     buf_ctx->buf_configs.reserve(n_simple_bufts);
     for (size_t i = 0; i < n_simple_bufts; i++) {
         ggml_backend_buffer_t simple_buf = ggml_backend_buft_alloc_buffer(ggml_backend_meta_buffer_type_simple_buft(buft, i), size);
-        buf_ctx->buf_configs.emplace_back(nullptr, simple_buf, 1);
+        buf_ctx->buf_configs.emplace_back(ggml_init(params), simple_buf, 1);
     }
 
     return ggml_backend_buffer_init(buft, ggml_backend_meta_buffer_iface, buf_ctx, 0);
@@ -451,7 +516,7 @@ ggml_backend_buffer_t ggml_backend_meta_alloc_ctx_tensors_from_buft(
         original_tensors.push_back(t);
     }
     ggml_init_params params = {
-        /*.mem_size   =*/ original_tensors.size()*ggml_tensor_overhead(),
+        /*.mem_size   =*/ 8*original_tensors.size()*ggml_tensor_overhead(),
         /*.mem_buffer =*/ nullptr,
         /*.no_alloc   =*/ true,
     };
@@ -484,8 +549,9 @@ ggml_backend_buffer_t ggml_backend_meta_alloc_ctx_tensors_from_buft(
                 ne[split_dim] = high - low;
             }
 
+            // GGML_ASSERT(original_tensors[i]->op == GGML_OP_NONE);
             ggml_tensor * t_j = ggml_new_tensor(buf_ctx->buf_configs[j].ctx, original_tensors[i]->type, GGML_MAX_DIMS, ne);
-            ggml_set_name(t_j, original_tensors[i]->name);
+            ggml_set_name(t_j, original_tensors[i]->op == GGML_OP_NONE ? original_tensors[i]->name : "BAD");
             simple_tensors.push_back(t_j);
         }
         buf_ctx->simple_tensors[original_tensors[i]] = simple_tensors;
@@ -555,7 +621,7 @@ void ggml_backend_meta_buffer_set_tensors(ggml_backend_buffer_t meta_buf, struct
     ggml_backend_meta_buffer_context * buf_ctx = (ggml_backend_meta_buffer_context *) meta_buf->context;
 
     ggml_init_params params = {
-        /*.mem_size   =*/ n_tensors*ggml_tensor_overhead(),
+        /*.mem_size   =*/ 2*n_tensors*ggml_tensor_overhead(),
         /*.mem_buffer =*/ nullptr,
         /*.no_alloc   =*/ true,
     };
@@ -563,37 +629,38 @@ void ggml_backend_meta_buffer_set_tensors(ggml_backend_buffer_t meta_buf, struct
         buf_ctx->buf_configs[i].ctx = ggml_init(params);
     }
 
-    const std::vector<size_t> tensor_split_scan = buf_ctx->tensor_split_scan();
+    GGML_UNUSED(tensors);
+    // const std::vector<size_t> tensor_split_scan = buf_ctx->tensor_split_scan();
 
-    for (size_t i = 0; i < n_tensors; i++) {
-        const ggml_backend_meta_split_state split_state = GGML_BACKEND_SPLIT_STATE_MIRRORED; // FIXME
-        int split_dim = split_state;
-        int64_t ne[GGML_MAX_DIMS];
-        for (size_t k = 0; k < GGML_MAX_DIMS; k++) {
-            ne[k] = tensors[i]->ne[k];
-        }
-        std::vector<ggml_tensor *> simple_tensors;
-        simple_tensors.reserve(buf_ctx->buf_configs.size());
-        for (size_t j = 0; j < buf_ctx->buf_configs.size(); j++) {
-            if (split_dim >= 0 && split_dim < GGML_MAX_DIMS) {
-                const int64_t low  = ne[split_dim] * tensor_split_scan[j]     / tensor_split_scan.back();
-                const int64_t high = ne[split_dim] * tensor_split_scan[j + 1] / tensor_split_scan.back();
-                ne[split_dim] = high - low;
-            }
+    // for (size_t i = 0; i < n_tensors; i++) {
+    //     const ggml_backend_meta_split_state split_state = GGML_BACKEND_SPLIT_STATE_MIRRORED; // FIXME
+    //     int split_dim = split_state;
+    //     int64_t ne[GGML_MAX_DIMS];
+    //     for (size_t k = 0; k < GGML_MAX_DIMS; k++) {
+    //         ne[k] = tensors[i]->ne[k];
+    //     }
+    //     std::vector<ggml_tensor *> simple_tensors;
+    //     simple_tensors.reserve(buf_ctx->buf_configs.size());
+    //     for (size_t j = 0; j < buf_ctx->buf_configs.size(); j++) {
+    //         if (split_dim >= 0 && split_dim < GGML_MAX_DIMS) {
+    //             const int64_t low  = ne[split_dim] * tensor_split_scan[j]     / tensor_split_scan.back();
+    //             const int64_t high = ne[split_dim] * tensor_split_scan[j + 1] / tensor_split_scan.back();
+    //             ne[split_dim] = high - low;
+    //         }
 
-            ggml_context          * simple_ctx = buf_ctx->buf_configs[j].ctx;
-            ggml_backend_buffer_t   simple_buf = buf_ctx->buf_configs[j].buf;
+    //         ggml_context          * simple_ctx = buf_ctx->buf_configs[j].ctx;
+    //         ggml_backend_buffer_t   simple_buf = buf_ctx->buf_configs[j].buf;
 
-            ggml_tensor * t_ij = ggml_new_tensor(simple_ctx, tensors[i]->type, GGML_MAX_DIMS, ne);
-            ggml_set_name(t_ij, tensors[i]->name);
-            t_ij->buffer = simple_buf;
-            t_ij->data   = (char *) ggml_backend_buffer_get_base(simple_buf)
-                + size_t(tensors[i]->data) - size_t(ggml_backend_buffer_get_base(meta_buf));
-            simple_tensors.push_back(t_ij);
-        }
-        buf_ctx->split_states[tensors[i]]   = split_state;
-        buf_ctx->simple_tensors[tensors[i]] = simple_tensors;
-    }
+    //         ggml_tensor * t_ij = ggml_new_tensor(simple_ctx, tensors[i]->type, GGML_MAX_DIMS, ne);
+    //         ggml_set_name(t_ij, tensors[i]->name);
+    //         t_ij->buffer = simple_buf;
+    //         t_ij->data   = (char *) ggml_backend_buffer_get_base(simple_buf)
+    //             + size_t(tensors[i]->data) - size_t(ggml_backend_buffer_get_base(meta_buf));
+    //         simple_tensors.push_back(t_ij);
+    //     }
+    //     buf_ctx->split_states[tensors[i]]   = split_state;
+    //     buf_ctx->simple_tensors[tensors[i]] = simple_tensors;
+    // }
 }
 
 static ggml_guid_t ggml_backend_meta_guid() {
