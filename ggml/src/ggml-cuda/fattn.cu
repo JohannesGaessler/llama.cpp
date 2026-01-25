@@ -126,10 +126,6 @@ static void ggml_cuda_flash_attn_ext_mma_f16(ggml_backend_cuda_context & ctx, gg
             const int gqa_ratio = Q->ne[2] / K->ne[2];
             GGML_ASSERT(gqa_ratio % 4 == 0);
             if (gqa_ratio == 20) { // GLM 4.7 Flash
-                if (GGML_CUDA_CC_IS_AMD(cc)) {
-                    ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<576, 512, 16>(ctx, dst);
-                    break;
-                }
                 if (cc >= GGML_CUDA_CC_BLACKWELL) {
                     ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<576, 512, 4>(ctx, dst);
                     break;
@@ -401,14 +397,14 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
                 }
             }
         }
-        // int gqa_ratio_eff = 1;
-        // const int ncols2_max = Q->ne[0] == 576 ? 16 : 8;
-        // while (gqa_ratio % (2*gqa_ratio_eff) == 0 && gqa_ratio_eff < ncols2_max) {
-        //     gqa_ratio_eff *= 2;
-        // }
-        // if (Q->ne[1] * gqa_ratio_eff <= 8) {
-        //     return BEST_FATTN_KERNEL_TILE; // AMD WMMA is only faster if the full tile width of 16 can be utilized.
-        // }
+        int gqa_ratio_eff = 1;
+        const int ncols2_max = Q->ne[0] == 576 ? 16 : 8;
+        while (gqa_ratio % (2*gqa_ratio_eff) == 0 && gqa_ratio_eff < ncols2_max) {
+            gqa_ratio_eff *= 2;
+        }
+        if (Q->ne[1] * gqa_ratio_eff <= 8) {
+            return BEST_FATTN_KERNEL_TILE; // AMD WMMA is only faster if the full tile width of 16 can be utilized.
+        }
         return BEST_FATTN_KERNEL_MMA_F16;
     }
 
