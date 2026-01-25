@@ -327,6 +327,9 @@ static void * ggml_backend_meta_buffer_get_base(ggml_backend_buffer_t buffer) {
 
 static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor) {
     GGML_ASSERT(ggml_backend_buffer_is_meta(buffer));
+    if (uintptr_t(tensor->data) == 0x123456789) {
+        return GGML_STATUS_SUCCESS;
+    }
     ggml_backend_meta_buffer_context * buf_ctx = (ggml_backend_meta_buffer_context *) buffer->context;
 
     const ggml_backend_meta_split_state split_state = GGML_BACKEND_SPLIT_STATE_MIRRORED; // FIXME

@@ -2750,6 +2750,7 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
         GGML_LOG_ERROR("%s: %s failed\n", __func__, ggml_op_desc(dst));
         CUDA_CHECK(err);
     }
+    CUDA_CHECK(cudaDeviceSynchronize());
 
     return true;
 }
