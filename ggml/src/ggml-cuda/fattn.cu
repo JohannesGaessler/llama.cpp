@@ -131,8 +131,8 @@ static void ggml_cuda_flash_attn_ext_mma_f16(ggml_backend_cuda_context & ctx, gg
                     break;
                 }
                 if (cc >= GGML_CUDA_CC_ADA_LOVELACE) {
-                    if (Q->ne[1] == 1) {
-                        ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<576, 512, 32>(ctx, dst);
+                    if (Q->ne[1] <= 4) {
+                        ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<576, 512, 16>(ctx, dst);
                         break;
                     }
                     ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<576, 512, 4>(ctx, dst);
@@ -146,7 +146,8 @@ static void ggml_cuda_flash_attn_ext_mma_f16(ggml_backend_cuda_context & ctx, gg
                     ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<576, 512, 4>(ctx, dst);
                     break;
                 }
-                ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<576, 512, 32>(ctx, dst);
+                // Volta:
+                ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<576, 512, 4>(ctx, dst);
             } else if (gqa_ratio % 16 == 0) {
                 ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<576, 512, 16>(ctx, dst);
             } else {
@@ -360,17 +361,17 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
     }
 
     if (volta_mma_available(cc) && Q->ne[0] != 40 && Q->ne[0] != 72) {
-        // int gqa_ratio_eff = 1;
-        // const int ncols2_max = Q->ne[0] == 576 ? 16 : 8;
-        // while (gqa_ratio % (2*gqa_ratio_eff) == 0 && gqa_ratio_eff < ncols2_max) {
-        //     gqa_ratio_eff *= 2;
-        // }
-        // if (can_use_vector_kernel && Q->ne[1] * gqa_ratio_eff <= 2) {
-        //     return BEST_FATTN_KERNEL_VEC;
-        // }
-        // if (Q->ne[1] * gqa_ratio_eff <= 16) {
-        //     return BEST_FATTN_KERNEL_TILE; // On Volta tensor cores are only faster for sufficiently large matrices.
-        // }
+        int gqa_ratio_eff = 1;
+        const int ncols2_max = Q->ne[0] == 576 ? 16 : 8;
+        while (gqa_ratio % (2*gqa_ratio_eff) == 0 && gqa_ratio_eff < ncols2_max) {
+            gqa_ratio_eff *= 2;
+        }
+        if (can_use_vector_kernel && Q->ne[1] * gqa_ratio_eff <= 2) {
+            return BEST_FATTN_KERNEL_VEC;
+        }
+        if (Q->ne[1] * gqa_ratio_eff <= 16) {
+            return BEST_FATTN_KERNEL_TILE; // On Volta tensor cores are only faster for sufficiently large matrices.
+        }
         return BEST_FATTN_KERNEL_MMA_F16;
     }
 
