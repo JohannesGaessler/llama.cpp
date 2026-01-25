@@ -363,7 +363,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
     if (volta_mma_available(cc) && Q->ne[0] != 40 && Q->ne[0] != 72) {
         int gqa_ratio_eff = 1;
         const int ncols2_max = Q->ne[0] == 576 ? 16 : 8;
-        while (gqa_ratio % (2*gqa_ratio_eff) == 0 && gqa_ratio_eff < ncols2_max) {
+        while (2*gqa_ratio_eff < gqa_ratio && gqa_ratio_eff < ncols2_max) {
             gqa_ratio_eff *= 2;
         }
         if (can_use_vector_kernel && Q->ne[1] * gqa_ratio_eff <= 2) {
@@ -399,7 +399,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
         }
         int gqa_ratio_eff = 1;
         const int ncols2_max = Q->ne[0] == 576 ? 16 : 8;
-        while (gqa_ratio % (2*gqa_ratio_eff) == 0 && gqa_ratio_eff < ncols2_max) {
+        while (2*gqa_ratio_eff < gqa_ratio && gqa_ratio_eff < ncols2_max) {
             gqa_ratio_eff *= 2;
         }
         if (Q->ne[1] * gqa_ratio_eff <= 8) {

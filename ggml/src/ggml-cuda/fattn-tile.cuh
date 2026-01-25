@@ -752,7 +752,7 @@ static __global__ void flash_attn_tile(
         const float m1,
         const uint32_t n_head_log2,
         const float logit_softcap,
-        const int32_t ne00, const uint3   ne01, const int32_t ne02, const int32_t ne03,
+        const int32_t ne00, const uint3   ne01, const uint3   ne02, const int32_t ne03,
                             const int32_t nb01, const int32_t nb02, const int32_t nb03,
         const int32_t ne10, const int32_t ne11, const int32_t ne12, const int32_t ne13,
                             const int32_t nb11, const int32_t nb12, const int64_t nb13,
@@ -794,10 +794,11 @@ static __global__ void flash_attn_tile(
 
     const int col_Q_0 = blockIdx.x * ncols1; // Index of the first Q column for this CUDA block to work on.
 
-    const int sequence = blockIdx.z / (ne02/ncols2);
-    const int head0 = blockIdx.z*ncols2 - sequence*ne02; // == blockIdx.z % (ne02/ncols2)
-    const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
-    const float * Q_f  = (const float *) (Q + nb03*sequence + nb02* head0);
+    const int nblocks_z = (ne02.z + (ncols2 - 1)) / ncols2;
+    const int sequence = blockIdx.z / nblocks_z;
+    const int head0 = ncols2*(blockIdx.z - sequence*nblocks_z);
+    const int gqa_ratio = ne02.z / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
+    const float * Q_f  = (const float *) (Q + nb03*sequence);
     const half2 * K_h2 = (const half2 *) (K + nb13*sequence + nb12*(head0 / gqa_ratio));
     const half2 * V_h2 = (const half2 *) (V + nb23*sequence + nb22*(head0 / gqa_ratio)); // K and V have same shape
 
@@ -858,9 +859,10 @@ static __global__ void flash_attn_tile(
         for (int i0 = 0; i0 < DKQp; i0 += np*warp_size*cpy_ne_D) {
             if (i0 + np*warp_size*cpy_ne_D <= DKQ || i0 + (threadIdx.y % np)*(warp_size*cpy_ne_D) + threadIdx.x*cpy_ne_D < DKQ) {
                 __align__(16) float tmp_f[cpy_ne_D] = {0.0f};
-                ggml_cuda_memcpy_1<sizeof(tmp_f)>
-                    (tmp_f, &Q_f[c*(nb02/sizeof(float)) + fastmodulo(col_Q_0 + j, ne01)*(nb01/sizeof(float))
-                                 + i0 + (threadIdx.y % np)*(warp_size*cpy_ne_D) + threadIdx.x*cpy_ne_D]);
+                ggml_cuda_memcpy_1<sizeof(tmp_f)> (tmp_f, &Q_f[
+                    fastmodulo(head0   + c, ne02)*(nb02/sizeof(float))
+                  + fastmodulo(col_Q_0 + j, ne01)*(nb01/sizeof(float))
+                  + i0 + (threadIdx.y % np)*(warp_size*cpy_ne_D) + threadIdx.x*cpy_ne_D]);
 
 #pragma unroll
                 for (int i1 = 0; i1 < cpy_ne_D; ++i1) {
@@ -1029,13 +1031,13 @@ static __global__ void flash_attn_tile(
         const int j = jc / ncols2;
         const int c = jc % ncols2;
 
-        if (ncols1 > 1 && col_Q_0 + j >= int(ne01.z)) {
-            return;
+        if ((ncols1 > 1 && col_Q_0 + j >= int(ne01.z)) || (ncols2 > 1 && head0 + c >= int(ne02.z))) {
+            continue;
         }
 
         const float scale = gridDim.y == 1 ? 1.0f/KQ_sum[jc0] : 1.0f;
 
-        const int j_dst_unrolled = ((sequence*int(ne01.z) + col_Q_0 + j)*ne02 + head0 + c)*gridDim.y + blockIdx.y;
+        const int j_dst_unrolled = ((sequence*ne01.z + col_Q_0 + j)*ne02.z + head0 + c)*gridDim.y + blockIdx.y;
 
 #ifdef FAST_FP16_AVAILABLE
         constexpr int cpy_ne_D = cpy_ne/2 < (DVp/2)/warp_size ? cpy_ne/2 : (DVp/2)/warp_size;
@@ -1191,28 +1193,28 @@ static void launch_fattn_tile_switch_ncols2(ggml_backend_cuda_context & ctx, ggm
     const bool use_gqa_opt = mask && max_bias == 0.0f && Q->ne[1] <= gqa_limit && K->ne[1] % FATTN_KQ_STRIDE == 0;
 
     if constexpr (DV == 512) {
-        if (use_gqa_opt && gqa_ratio % 16 == 0) {
+        if (use_gqa_opt && gqa_ratio > 8) {
             launch_fattn_tile_switch_ncols1<DKQ, DV, 16, use_logit_softcap>(ctx, dst);
             return;
         }
-        if (use_gqa_opt && gqa_ratio % 4 == 0) {
+        if (use_gqa_opt && gqa_ratio > 2) {
             launch_fattn_tile_switch_ncols1<DKQ, DV, 4, use_logit_softcap>(ctx, dst);
             return;
         }
     }
 
     if constexpr (DV <= 256) {
-        if (use_gqa_opt && gqa_ratio % 8 == 0) {
+        if (use_gqa_opt && gqa_ratio > 4) {
             launch_fattn_tile_switch_ncols1<DKQ, DV, 8, use_logit_softcap>(ctx, dst);
             return;
         }
 
-        if (use_gqa_opt && gqa_ratio % 4 == 0) {
+        if (use_gqa_opt && gqa_ratio > 2) {
             launch_fattn_tile_switch_ncols1<DKQ, DV, 4, use_logit_softcap>(ctx, dst);
             return;
         }
 
-        if (use_gqa_opt && gqa_ratio % 2 == 0) {
+        if (use_gqa_opt && gqa_ratio > 1) {
             launch_fattn_tile_switch_ncols1<DKQ, DV, 2, use_logit_softcap>(ctx, dst);
             return;
         }
