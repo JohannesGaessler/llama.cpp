@@ -68,6 +68,7 @@ static constexpr __host__ __device__ fattn_mma_config ggml_cuda_fattn_mma_get_co
 
     GGML_CUDA_FATTN_MMA_CONFIG_CASE(576, 512,  8,  64, 4,  32, 288, 256, 128, 1, false);
     GGML_CUDA_FATTN_MMA_CONFIG_CASE(576, 512, 16,  64, 4,  32, 288, 256, 128, 1, false);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE(576, 512, 24, 128, 2,  32, 160, 128, 128, 1, false);
     GGML_CUDA_FATTN_MMA_CONFIG_CASE(576, 512, 32, 128, 2,  32, 160, 128, 128, 1, false);
     GGML_CUDA_FATTN_MMA_CONFIG_CASE(576, 512, 64, 256, 1,  32, 160, 128, 128, 1, false);
 
@@ -892,6 +893,14 @@ template<int ncols> struct mma_tile_sizes {
     using T_C_VKQ = tile<16,  8, half2>; // column-major
 };
 template<> struct mma_tile_sizes<8> {
+    using T_A_KQ  = tile<16,  8, half2>; // row-major
+    using T_B_KQ  = tile< 8,  8, half2>; // column-major
+    using T_C_KQ  = tile<16,  8, float>; // row-major
+    using T_A_VKQ = tile<16,  8, half2>; // row-major
+    using T_B_VKQ = tile< 8,  8, half2>; // column-major
+    using T_C_VKQ = tile<16,  4, half2>; // row-major
+};
+template<> struct mma_tile_sizes<24> {
     using T_A_KQ  = tile<16,  8, half2>; // row-major
     using T_B_KQ  = tile< 8,  8, half2>; // column-major
     using T_C_KQ  = tile<16,  8, float>; // row-major
@@ -1741,5 +1750,6 @@ extern DECL_FATTN_MMA_F16_CASE(576, 512, 4, 16);
 extern DECL_FATTN_MMA_F16_CASE(576, 512,  4,  4);
 extern DECL_FATTN_MMA_F16_CASE(576, 512,  8,  4);
 extern DECL_FATTN_MMA_F16_CASE(576, 512, 16,  4);
+extern DECL_FATTN_MMA_F16_CASE(576, 512,  1, 24);
 extern DECL_FATTN_MMA_F16_CASE(576, 512,  1, 32);
 extern DECL_FATTN_MMA_F16_CASE(576, 512,  2, 32);

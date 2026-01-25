@@ -25,12 +25,20 @@ static void ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1(ggml_backend_cuda_con
         }
     }
 
-    if (ggml_cuda_highest_compiled_arch(cc) == GGML_CUDA_CC_TURING || amd_wmma_available(cc) || Q->ne[1] <= 32/ncols2) {
-        ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, 32/ncols2, ncols2>(ctx, dst);
-        return;
-    }
+    if constexpr (ncols2 == 24) {
+        if (turing_mma_available(cc)) {
+            ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, 24/ncols2, ncols2>(ctx, dst);
+            return;
+        }
+    } else {
+        if (ggml_cuda_highest_compiled_arch(cc) == GGML_CUDA_CC_TURING || amd_wmma_available(cc) || Q->ne[1] <= 32/ncols2) {
+            ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, 32/ncols2, ncols2>(ctx, dst);
+            return;
+        }
 
-    ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, 64/ncols2, ncols2>(ctx, dst);
+        ggml_cuda_flash_attn_ext_mma_f16_case<DKQ, DV, 64/ncols2, ncols2>(ctx, dst);
+    }
+    GGML_ABORT("fatal error");
 }
 
 template <int DKQ, int DV>
@@ -125,7 +133,7 @@ static void ggml_cuda_flash_attn_ext_mma_f16(ggml_backend_cuda_context & ctx, gg
             const int gqa_ratio = Q->ne[2] / K->ne[2];
             GGML_ASSERT(gqa_ratio % 4 == 0);
             if (gqa_ratio % 20 == 0) {
-                ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<576, 512, 32>(ctx, dst);
+                ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<576, 512, 24>(ctx, dst);
             } else if (gqa_ratio % 16 == 0) {
                 ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1<576, 512, 16>(ctx, dst);
             } else {
