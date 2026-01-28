@@ -926,7 +926,9 @@ static struct llama_model * llama_model_load_from_file_impl(
             for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
                 devs.push_back(ggml_backend_dev_get(i));
             }
-            gpus.push_back(ggml_backend_meta_device(devs.data(), devs.size()));
+            GGML_ASSERT(devs.size() >= 2);
+            GGML_ASSERT(ggml_backend_dev_buffer_type(devs.back()) == ggml_backend_cpu_buffer_type());
+            gpus.push_back(ggml_backend_meta_device(devs.data(), devs.size() - 1));
         } else {
         for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
             ggml_backend_dev_t dev = ggml_backend_dev_get(i);
