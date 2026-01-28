@@ -1,7 +1,5 @@
 #include "llama-model.h"
 
-#include "ggml-alloc.h"
-#include "ggml-backend.h"
 #include "llama-impl.h"
 #include "llama-mmap.h"
 #include "llama-cparams.h"
@@ -14,13 +12,11 @@
 
 #include "ggml-cpp.h"
 
-#include "llama.h"
 #include "models/models.h"
 
 #include <algorithm>
 #include <cassert>
 #include <cfloat>
-#include <cstddef>
 #include <cstring>
 #include <cmath>
 #include <functional>
@@ -6930,13 +6926,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                     t->buffer = buf; // set dummy buffer for weights so that the backend scheduler won't try to allocate them
                 }
             } else {
-                if (ggml_backend_device_is_meta(ggml_backend_buft_get_device(buft))) {
-                    std::vector<size_t> tensor_split(16, 1);
-                    std::vector<ggml_backend_meta_split_state> split_states(16384, GGML_BACKEND_SPLIT_STATE_MIRRORED);
-                    buf = ggml_backend_meta_alloc_ctx_tensors_from_buft(ctx, buft, tensor_split.data(), split_states.data());
-                } else {
-                    buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft); // real buffer
-                }
+                buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft); // real buffer
             }
             if (buf == nullptr) {
                 throw std::runtime_error(format("unable to allocate %s buffer", ggml_backend_buft_name(buft)));

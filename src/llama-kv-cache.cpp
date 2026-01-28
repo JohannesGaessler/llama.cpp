@@ -1,5 +1,6 @@
 #include "llama-kv-cache.h"
 
+#include "ggml.h"
 #include "llama-impl.h"
 #include "llama-io.h"
 #include "llama-model.h"
@@ -181,10 +182,6 @@ llama_kv_cache::llama_kv_cache(
             for (ggml_tensor * t = ggml_get_first_tensor(ctx.get()); t != nullptr; t = ggml_get_next_tensor(ctx.get(), t)) {
                 t->buffer = buf; // set dummy buffer for KV cache so that the backend scheduler won't try to allocate it
             }
-        } else if (ggml_backend_device_is_meta(ggml_backend_buft_get_device(buft))) {
-            std::vector<size_t> tensor_split(16, 1);
-            std::vector<ggml_backend_meta_split_state> split_states(16384, GGML_BACKEND_SPLIT_STATE_MIRRORED);
-            buf = ggml_backend_meta_alloc_ctx_tensors_from_buft(ctx.get(), buft, tensor_split.data(), split_states.data());
         } else {
             buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx.get(), buft); // real buffer
         }

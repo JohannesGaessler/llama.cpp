@@ -327,9 +327,6 @@ static void * ggml_backend_meta_buffer_get_base(ggml_backend_buffer_t buffer) {
 
 static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor) {
     GGML_ASSERT(ggml_backend_buffer_is_meta(buffer));
-    if (uintptr_t(tensor->data) == 0x123456789) {
-        return GGML_STATUS_SUCCESS;
-    }
     ggml_backend_meta_buffer_context * buf_ctx = (ggml_backend_meta_buffer_context *) buffer->context;
 
     const ggml_backend_meta_split_state split_state = GGML_BACKEND_SPLIT_STATE_MIRRORED; // FIXME
@@ -448,6 +445,13 @@ static void ggml_backend_meta_buffer_get_tensor(ggml_backend_buffer_t buffer, co
     }
 }
 
+static void ggml_backend_meta_buffer_clear(ggml_backend_buffer_t buffer, uint8_t value) {
+    const size_t n_buffers = ggml_backend_meta_buffer_n_bufs(buffer);
+    for (size_t i = 0; i < n_buffers; i++) {
+        ggml_backend_buffer_clear(ggml_backend_meta_buffer_simple_buffer(buffer, i), value);
+    }
+}
+
 static const ggml_backend_buffer_i ggml_backend_meta_buffer_iface = {
     /* .free_buffer     = */ ggml_backend_meta_buffer_free_buffer,
     /* .get_base        = */ ggml_backend_meta_buffer_get_base,
@@ -456,7 +460,7 @@ static const ggml_backend_buffer_i ggml_backend_meta_buffer_iface = {
     /* .set_tensor      = */ ggml_backend_meta_buffer_set_tensor,
     /* .get_tensor      = */ ggml_backend_meta_buffer_get_tensor,
     /* .cpy_tensor      = */ nullptr,
-    /* .clear           = */ nullptr,
+    /* .clear           = */ ggml_backend_meta_buffer_clear,
     /* .reset           = */ nullptr,
 };
 
@@ -499,13 +503,15 @@ static ggml_backend_buffer_t ggml_backend_meta_buffer_type_alloc_buffer(ggml_bac
     };
 
     ggml_backend_meta_buffer_context * buf_ctx = new ggml_backend_meta_buffer_context;
+    size_t max_size = 0;
     buf_ctx->buf_configs.reserve(n_simple_bufts);
     for (size_t i = 0; i < n_simple_bufts; i++) {
         ggml_backend_buffer_t simple_buf = ggml_backend_buft_alloc_buffer(ggml_backend_meta_buffer_type_simple_buft(buft, i), size);
+        max_size = std::max(max_size, ggml_backend_buffer_get_size(simple_buf));
         buf_ctx->buf_configs.emplace_back(ggml_init(params), simple_buf, 1);
     }
 
-    return ggml_backend_buffer_init(buft, ggml_backend_meta_buffer_iface, buf_ctx, 0);
+    return ggml_backend_buffer_init(buft, ggml_backend_meta_buffer_iface, buf_ctx, max_size);
 }
 
 ggml_backend_buffer_t ggml_backend_meta_alloc_ctx_tensors_from_buft(
@@ -791,6 +797,10 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
         bcj.nodes.resize(cgraph->n_nodes);
         for (int i = 0; i < cgraph->n_nodes; i++) {
             bcj.nodes[i] = ggml_backend_meta_buffer_simple_tensor(cgraph->nodes[i]->buffer, cgraph->nodes[i], j);
+            // if (bcj.nodes[i] == nullptr && cgraph->nodes[i]->view_src != nullptr && uintptr_t(cgraph->nodes[i]->data) == 0x123456789) {
+            //     bcj.nodes[i] =
+            // }
+            GGML_ASSERT(bcj.nodes[i]);
         }
         bcj.cgraph.nodes = bcj.nodes.data();
 
