@@ -536,14 +536,16 @@ static void ggml_backend_meta_free(ggml_backend_t backend) {
 static void ggml_backend_meta_set_tensor_async(ggml_backend_t backend, ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
     const size_t n_backends = ggml_backend_meta_n_backends(backend);
     for (size_t i = 0; i < n_backends; i++) {
-        ggml_backend_tensor_set_async(ggml_backend_meta_simple_backend(backend, i), tensor, data, offset, size);
+        ggml_backend_tensor_set_async(
+            ggml_backend_meta_simple_backend(backend, i), ggml_backend_meta_buffer_simple_tensor(tensor->buffer, tensor, i), data, offset, size);
     }
 }
 
 static void ggml_backend_meta_get_tensor_async(ggml_backend_t backend, const ggml_tensor * tensor, void * data, size_t offset, size_t size) {
     const size_t n_backends = ggml_backend_meta_n_backends(backend);
     GGML_ASSERT(n_backends >= 1);
-    ggml_backend_tensor_get_async(ggml_backend_meta_simple_backend(backend, 0), tensor, data, offset, size); // TODO other backends may be more optimal
+    ggml_backend_tensor_get_async( // TODO other backends may be more optimal
+        ggml_backend_meta_simple_backend(backend, 0), ggml_backend_meta_buffer_simple_tensor(tensor->buffer, tensor, 0), data, offset, size);
 }
 
 static void ggml_backend_meta_synchronize(ggml_backend_t backend) {
