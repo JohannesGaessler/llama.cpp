@@ -239,7 +239,8 @@ extern "C" {
     GGML_API struct ggml_tensor * ggml_backend_meta_buffer_simple_tensor(ggml_backend_buffer_t buf, const struct ggml_tensor * tensor, size_t index);
 
     GGML_API bool ggml_backend_is_meta(ggml_backend_t backend);
-    GGML_API ggml_backend_t ggml_backend_meta_init(ggml_backend_t * simple_backends, size_t n_backends);
+    GGML_API size_t ggml_backend_meta_n_backends(ggml_backend_t meta_backend);
+    GGML_API ggml_backend_t ggml_backend_meta_simple_backend(ggml_backend_t meta_backend, size_t index);
 
     //
     // Backend registry

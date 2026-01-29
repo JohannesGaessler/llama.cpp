@@ -72,17 +72,7 @@ static void ggml_backend_meta_device_get_props(ggml_backend_dev_t dev, ggml_back
     };
 }
 
-static ggml_backend_t ggml_backend_meta_device_init_backend(ggml_backend_dev_t dev, const char * params) {
-    const size_t n_devs = ggml_backend_meta_device_n_devs(dev);
-    std::vector<ggml_backend_t> simple_backends;
-    simple_backends.reserve(n_devs);
-    for (size_t i = 0; i < n_devs; i++) {
-        simple_backends.push_back(ggml_backend_dev_init(ggml_backend_meta_device_simple_dev(dev, i), params));
-    }
-    ggml_backend_t ret = ggml_backend_meta_init(simple_backends.data(), simple_backends.size());
-    ret->device = dev;
-    return ret;
-}
+static ggml_backend_t ggml_backend_meta_device_init_backend(ggml_backend_dev_t dev, const char * params);
 
 static ggml_backend_buffer_type_t ggml_backend_meta_device_get_buffer_type(ggml_backend_dev_t dev);
 
@@ -543,6 +533,13 @@ static void ggml_backend_meta_free(ggml_backend_t backend) {
     delete backend;
 }
 
+static void ggml_backend_meta_synchronize(ggml_backend_t backend) {
+    const size_t n_backends = ggml_backend_meta_n_backends(backend);
+    for (size_t i = 0; i < n_backends; i++) {
+        ggml_backend_synchronize(ggml_backend_meta_simple_backend(backend, i));
+    }
+}
+
 // static ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const ggml_tensor * t) {
 //     auto get_split_state = [&](const size_t i) -> ggml_backend_meta_split_state {
 //         if (t->src[i] == nullptr) {
@@ -660,7 +657,7 @@ static const ggml_backend_i ggml_backend_meta_i = {
     /* .set_tensor_async        = */ nullptr,
     /* .get_tensor_async        = */ nullptr,
     /* .cpy_tensor_async        = */ nullptr,
-    /* .synchronize             = */ nullptr,
+    /* .synchronize             = */ ggml_backend_meta_synchronize,
     /* .graph_plan_create       = */ nullptr,
     /* .graph_plan_free         = */ nullptr,
     /* .graph_plan_update       = */ nullptr,
@@ -675,17 +672,32 @@ bool ggml_backend_is_meta(ggml_backend_t backend) {
     return backend != nullptr && backend->iface.get_name == ggml_backend_meta_i.get_name;
 }
 
-ggml_backend_t ggml_backend_meta_init(ggml_backend_t * simple_backends, size_t n_backends) {
+static ggml_backend_t ggml_backend_meta_device_init_backend(ggml_backend_dev_t dev, const char * params) {
+    const size_t n_devs = ggml_backend_meta_device_n_devs(dev);
+
     ggml_backend_meta_context * backend_ctx = new ggml_backend_meta_context;
-    backend_ctx->backend_configs.reserve(n_backends);
-    for (size_t i = 0; i < n_backends; i++) {
-        backend_ctx->backend_configs.emplace_back(simple_backends[i]);
+    backend_ctx->backend_configs.reserve(n_devs);
+    for (size_t i = 0; i < n_devs; i++) {
+        backend_ctx->backend_configs.emplace_back(
+            ggml_backend_dev_init(ggml_backend_meta_device_simple_dev(dev, i), params));
     }
 
     ggml_backend_t backend = new struct ggml_backend;
     backend->guid    = ggml_backend_meta_guid();
     backend->iface   = ggml_backend_meta_i;
-    backend->device  = nullptr; // FIXME this results in segfaults
+    backend->device  = dev;
     backend->context = backend_ctx;
     return backend;
+}
+
+size_t ggml_backend_meta_n_backends(ggml_backend_t meta_backend) {
+    GGML_ASSERT(ggml_backend_is_meta(meta_backend));
+    ggml_backend_meta_context * backend_ctx = (ggml_backend_meta_context *) meta_backend->context;
+    return backend_ctx->backend_configs.size();
+}
+
+ggml_backend_t ggml_backend_meta_simple_backend(ggml_backend_t meta_backend, size_t index) {
+    GGML_ASSERT(ggml_backend_is_meta(meta_backend));
+    ggml_backend_meta_context * backend_ctx = (ggml_backend_meta_context *) meta_backend->context;
+    return backend_ctx->backend_configs[index].backend;
 }
