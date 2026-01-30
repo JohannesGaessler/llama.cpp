@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <regex>
 #include <stdexcept>
 #include <vector>
 
@@ -869,6 +870,19 @@ static int llama_model_load(const std::string & fname, std::vector<std::string> 
     return 0;
 }
 
+static enum ggml_backend_meta_split_state llama_meta_device_get_tensor_split(const struct ggml_tensor * tensor, void * userdata) {
+    // const std::regex pattern_ne0("blk\\.\\d*\\.ffn_down.*");
+    // if (std::regex_match(tensor->name, pattern_ne0)) {
+    //     return GGML_BACKEND_SPLIT_STATE_BY_NE0;
+    // }
+    // const std::regex pattern_ne1("blk\\.\\d*\\.ffn_(up|gate).*");
+    // if (std::regex_match(tensor->name, pattern_ne1)) {
+    //     return GGML_BACKEND_SPLIT_STATE_BY_NE1;
+    // }
+    return GGML_BACKEND_SPLIT_STATE_MIRRORED;
+    GGML_UNUSED(userdata);
+}
+
 static struct llama_model * llama_model_load_from_file_impl(
         const std::string & path_model,
         std::vector<std::string> & splits,
@@ -906,7 +920,7 @@ static struct llama_model * llama_model_load_from_file_impl(
             while (params.devices[n_devs]) {
                 n_devs++;
             }
-            model->devices.push_back(ggml_backend_meta_device(params.devices, n_devs));
+            model->devices.push_back(ggml_backend_meta_device(params.devices, n_devs, llama_meta_device_get_tensor_split, nullptr));
         } else {
             for (ggml_backend_dev_t * dev = params.devices; *dev; ++dev) {
                 model->devices.push_back(*dev);
@@ -928,7 +942,7 @@ static struct llama_model * llama_model_load_from_file_impl(
             }
             GGML_ASSERT(devs.size() >= 2);
             GGML_ASSERT(ggml_backend_dev_buffer_type(devs.back()) == ggml_backend_cpu_buffer_type());
-            gpus.push_back(ggml_backend_meta_device(devs.data(), devs.size() - 1));
+            gpus.push_back(ggml_backend_meta_device(devs.data(), devs.size() - 1, llama_meta_device_get_tensor_split, nullptr));
         } else {
         for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
             ggml_backend_dev_t dev = ggml_backend_dev_get(i);

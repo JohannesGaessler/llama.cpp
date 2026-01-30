@@ -215,11 +215,6 @@ extern "C" {
     // Meta backend
     //
 
-    GGML_API bool ggml_backend_device_is_meta(ggml_backend_dev_t dev);
-    GGML_API size_t ggml_backend_meta_device_n_devs(ggml_backend_dev_t meta_dev);
-    GGML_API ggml_backend_dev_t ggml_backend_meta_device_simple_dev(ggml_backend_dev_t meta_dev, size_t index);
-    GGML_API ggml_backend_dev_t ggml_backend_meta_device(ggml_backend_dev_t * devs, size_t n_devs);
-
     enum ggml_backend_meta_split_state {
         GGML_BACKEND_SPLIT_STATE_BY_NE0   =  0,
         GGML_BACKEND_SPLIT_STATE_BY_NE1   =  1,
@@ -228,6 +223,14 @@ extern "C" {
         GGML_BACKEND_SPLIT_STATE_PARTIAL  = 11,
         GGML_BACKEND_SPLIT_STATE_UNKNOWN  = 99,
     };
+
+    typedef enum ggml_backend_meta_split_state (*ggml_backend_meta_get_split_state_t)(const struct ggml_tensor * tensor, void * userdata);
+
+    GGML_API bool ggml_backend_device_is_meta(ggml_backend_dev_t dev);
+    GGML_API size_t ggml_backend_meta_device_n_devs(ggml_backend_dev_t meta_dev);
+    GGML_API ggml_backend_dev_t ggml_backend_meta_device_simple_dev(ggml_backend_dev_t meta_dev, size_t index);
+    GGML_API ggml_backend_dev_t ggml_backend_meta_device(
+        ggml_backend_dev_t * devs, size_t n_devs, ggml_backend_meta_get_split_state_t get_split_state, void * get_split_state_ud);
 
     GGML_API bool ggml_backend_buffer_type_is_meta(ggml_backend_buffer_type_t buft);
     GGML_API size_t ggml_backend_meta_buffer_type_n_bufts(ggml_backend_buffer_type_t meta_buft);
@@ -241,6 +244,8 @@ extern "C" {
     GGML_API bool ggml_backend_is_meta(ggml_backend_t backend);
     GGML_API size_t ggml_backend_meta_n_backends(ggml_backend_t meta_backend);
     GGML_API ggml_backend_t ggml_backend_meta_simple_backend(ggml_backend_t meta_backend, size_t index);
+
+    GGML_API enum ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struct ggml_tensor * tensor);
 
     //
     // Backend registry
