@@ -875,10 +875,10 @@ static enum ggml_backend_meta_split_state llama_meta_device_get_tensor_split(con
     // if (std::regex_match(tensor->name, pattern_ne0)) {
     //     return GGML_BACKEND_SPLIT_STATE_BY_NE0;
     // }
-    // const std::regex pattern_ne1("blk\\.\\d*\\.ffn_(up|gate).*");
-    // if (std::regex_match(tensor->name, pattern_ne1)) {
-    //     return GGML_BACKEND_SPLIT_STATE_BY_NE1;
-    // }
+    const std::regex pattern_ne1("blk\\.\\d*\\.ffn_(up|gate).*");
+    if (std::regex_match(tensor->name, pattern_ne1)) {
+        return GGML_BACKEND_SPLIT_STATE_BY_NE1;
+    }
     return GGML_BACKEND_SPLIT_STATE_MIRRORED;
     GGML_UNUSED(userdata);
 }

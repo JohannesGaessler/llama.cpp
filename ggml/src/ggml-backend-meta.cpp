@@ -729,30 +729,47 @@ enum ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struc
     GGML_ASSERT(ggml_backend_buffer_is_meta(tensor->buffer));
     ggml_backend_meta_buffer_context * buf_ctx = (ggml_backend_meta_buffer_context *) tensor->buffer->context;
 
-    if (buf_ctx->split_state_cache.find(tensor) == buf_ctx->split_state_cache.end()) {
-        if (ggml_backend_buffer_get_usage(tensor->buffer) == GGML_BACKEND_BUFFER_USAGE_WEIGHTS) {
+    auto calculate_split_state = [&]() -> ggml_backend_meta_split_state {
+        if (ggml_backend_buffer_get_usage(tensor->buffer) != GGML_BACKEND_BUFFER_USAGE_COMPUTE) {
             ggml_backend_dev_t dev = ggml_backend_buft_get_device(ggml_backend_buffer_get_type(tensor->buffer));
             const ggml_backend_meta_device_context * dev_ctx = (const ggml_backend_meta_device_context *) dev->context;
-            buf_ctx->split_state_cache[tensor] = dev_ctx->get_split_state(tensor, dev_ctx->get_split_state_ud);
-        } else {
-            bool all_srcs_mirrored = true;
-            for (size_t i = 0; i < GGML_MAX_SRC; i++) {
-                if (tensor->src[i] != nullptr && tensor->src[i] != tensor &&
-                        ggml_backend_meta_get_split_state(tensor->src[i]) != GGML_BACKEND_SPLIT_STATE_MIRRORED) {
-                    all_srcs_mirrored = false;
-                    break;
-                }
+            return dev_ctx->get_split_state(tensor, dev_ctx->get_split_state_ud);
+        }
+
+        std::vector<ggml_backend_meta_split_state> src_split_states(GGML_MAX_SRC, GGML_BACKEND_SPLIT_STATE_NONE);
+        for (size_t i = 0; i < GGML_MAX_SRC; i++) {
+            if (tensor->src[i] == nullptr || tensor->src[i] == tensor) {
+                src_split_states[i] = GGML_BACKEND_SPLIT_STATE_UNKNOWN;
+                continue;
             }
-            if (all_srcs_mirrored) {
-                buf_ctx->split_state_cache[tensor] = GGML_BACKEND_SPLIT_STATE_MIRRORED;
-            } else {
-                switch (tensor->op) {
-                    default: {
-                        buf_ctx->split_state_cache[tensor] = GGML_BACKEND_SPLIT_STATE_UNKNOWN;
-                    } break;
-                }
+            src_split_states[i] = ggml_backend_meta_get_split_state(tensor->src[i]);
+        }
+
+        if (tensor->op == GGML_OP_MUL_MAT) {
+            if (src_split_states[0] == GGML_BACKEND_SPLIT_STATE_MIRRORED && src_split_states[1] == GGML_BACKEND_SPLIT_STATE_MIRRORED) {
+                return GGML_BACKEND_SPLIT_STATE_MIRRORED;
+            }
+            if (src_split_states[0] == GGML_BACKEND_SPLIT_STATE_BY_NE1 && src_split_states[1] == GGML_BACKEND_SPLIT_STATE_MIRRORED) {
+                return GGML_BACKEND_SPLIT_STATE_BY_NE0;
             }
         }
+
+        ggml_backend_meta_split_state homogeneous_src_split_state = GGML_BACKEND_SPLIT_STATE_NONE;
+        for (size_t i = 0; i < GGML_MAX_SRC; i++) {
+            if (homogeneous_src_split_state == GGML_BACKEND_SPLIT_STATE_NONE) {
+                homogeneous_src_split_state = src_split_states[i];
+            } else if (src_split_states[i] != homogeneous_src_split_state) {
+                homogeneous_src_split_state = GGML_BACKEND_SPLIT_STATE_UNKNOWN;
+            }
+        }
+        if (homogeneous_src_split_state == GGML_BACKEND_SPLIT_STATE_NONE || homogeneous_src_split_state == GGML_BACKEND_SPLIT_STATE_UNKNOWN) {
+            homogeneous_src_split_state = GGML_BACKEND_SPLIT_STATE_MIRRORED;
+        }
+        return homogeneous_src_split_state;
+    };
+
+    if (buf_ctx->split_state_cache.find(tensor) == buf_ctx->split_state_cache.end()) {
+        buf_ctx->split_state_cache[tensor] = calculate_split_state();
     }
     return buf_ctx->split_state_cache[tensor];
 }
