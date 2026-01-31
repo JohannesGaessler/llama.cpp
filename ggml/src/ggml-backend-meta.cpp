@@ -325,8 +325,8 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
     GGML_ASSERT(ggml_backend_buffer_is_meta(buffer));
     ggml_backend_meta_buffer_context * buf_ctx = (ggml_backend_meta_buffer_context *) buffer->context;
 
-    const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor);
-    GGML_ASSERT(split_state != GGML_BACKEND_SPLIT_STATE_UNKNOWN);
+    const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor, /*assume_fix_via_sync =*/ true);
+    GGML_ASSERT(split_state != GGML_BACKEND_SPLIT_STATE_UNKNOWN && split_state != GGML_BACKEND_SPLIT_STATE_UNKNOWN);
 
     int split_dim = split_state;
     int64_t ne[GGML_MAX_DIMS];
@@ -387,7 +387,7 @@ static void ggml_backend_meta_buffer_set_tensor(ggml_backend_buffer_t buffer, gg
     GGML_ASSERT(size == ggml_nbytes(tensor));
     const ggml_backend_meta_buffer_context * buf_ctx = (const ggml_backend_meta_buffer_context *) buffer->context;
 
-    const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor);
+    const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor, /*assume_fix_via_sync =*/ false);
     std::vector<ggml_tensor *> simple_tensors;
     {
         auto it = buf_ctx->simple_tensors.find(tensor);
@@ -424,7 +424,7 @@ static void ggml_backend_meta_buffer_get_tensor(ggml_backend_buffer_t buffer, co
     GGML_ASSERT(size == ggml_nbytes(tensor));
     const ggml_backend_meta_buffer_context * buf_ctx = (const ggml_backend_meta_buffer_context *) buffer->context;
 
-    const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor);
+    const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor, /*assume_fix_via_sync =*/ false);
     std::vector<ggml_tensor *> simple_tensors;
     {
         auto it = buf_ctx->simple_tensors.find(tensor);
@@ -520,7 +520,7 @@ static ggml_guid_t ggml_backend_meta_guid() {
 struct ggml_backend_meta_context {
     struct backend_config {
         ggml_backend_t             backend;
-        ggml_cgraph                cgraph;
+        std::vector<ggml_cgraph>   cgraphs;
         std::vector<ggml_tensor *> nodes;
 
         backend_config(ggml_backend_t backend) : backend(backend) {}
@@ -654,21 +654,47 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
 
     for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
         auto & bcj = backend_ctx->backend_configs[j];
-        bcj.cgraph = *cgraph;
+        bcj.cgraphs.clear();
 
         bcj.nodes.resize(cgraph->n_nodes);
         for (int i = 0; i < cgraph->n_nodes; i++) {
             bcj.nodes[i] = ggml_backend_meta_buffer_simple_tensor(cgraph->nodes[i]->buffer, cgraph->nodes[i], j);
-            // if (bcj.nodes[i] == nullptr && cgraph->nodes[i]->view_src != nullptr && uintptr_t(cgraph->nodes[i]->data) == 0x123456789) {
-            //     bcj.nodes[i] =
-            // }
             GGML_ASSERT(bcj.nodes[i]);
         }
-        bcj.cgraph.nodes = bcj.nodes.data();
+    }
+    {
+        int i_start = 0;
+        int i_stop  = 0;
+        for (; i_stop < cgraph->n_nodes; i_stop++) {
+            ggml_tensor * node = cgraph->nodes[i_stop];
+            if (ggml_backend_meta_get_split_state(node, true) == ggml_backend_meta_get_split_state(node, false)) {
+                continue;
+            }
+            for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
+                auto & bcj = backend_ctx->backend_configs[j];
+                bcj.cgraphs.push_back(*cgraph);
+                bcj.cgraphs.back().nodes = bcj.nodes.data() + i_start;
+                bcj.cgraphs.back().n_nodes = i_stop + 1 - i_start;
+            }
+            i_start = i_stop + 1;
+        }
+        if (i_start != i_stop) {
+            for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
+                auto & bcj = backend_ctx->backend_configs[j];
+                bcj.cgraphs.push_back(*cgraph);
+                bcj.cgraphs.back().nodes = bcj.nodes.data() + i_start;
+                bcj.cgraphs.back().n_nodes = i_stop - i_start;
+            }
+        }
+    }
 
-        const ggml_status status = ggml_backend_graph_compute_async(bcj.backend, &bcj.cgraph);
-        if (status != GGML_STATUS_SUCCESS) {
-            return status;
+    for (size_t i = 0; i < backend_ctx->backend_configs[0].cgraphs.size(); i++) {
+        for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
+            auto & bcj = backend_ctx->backend_configs[j];
+            const ggml_status status = ggml_backend_graph_compute_async(bcj.backend, &bcj.cgraphs[i]);
+            if (status != GGML_STATUS_SUCCESS) {
+                return status;
+            }
         }
     }
     return GGML_STATUS_SUCCESS;
@@ -725,7 +751,7 @@ ggml_backend_t ggml_backend_meta_simple_backend(ggml_backend_t meta_backend, siz
     return backend_ctx->backend_configs[index].backend;
 }
 
-enum ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struct ggml_tensor * tensor) {
+enum ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struct ggml_tensor * tensor, bool assume_fix_via_sync) {
     GGML_ASSERT(ggml_backend_buffer_is_meta(tensor->buffer));
     ggml_backend_meta_buffer_context * buf_ctx = (ggml_backend_meta_buffer_context *) tensor->buffer->context;
 
@@ -742,7 +768,7 @@ enum ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struc
                 src_split_states[i] = GGML_BACKEND_SPLIT_STATE_UNKNOWN;
                 continue;
             }
-            src_split_states[i] = ggml_backend_meta_get_split_state(tensor->src[i]);
+            src_split_states[i] = ggml_backend_meta_get_split_state(tensor->src[i], /*assume_fix_via_sync =*/ true);
         }
 
         if (tensor->op == GGML_OP_MUL_MAT) {
@@ -756,13 +782,16 @@ enum ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struc
 
         ggml_backend_meta_split_state homogeneous_src_split_state = GGML_BACKEND_SPLIT_STATE_NONE;
         for (size_t i = 0; i < GGML_MAX_SRC; i++) {
+            if (tensor->src[i] == nullptr || tensor->src[i] == tensor) {
+                continue;
+            }
             if (homogeneous_src_split_state == GGML_BACKEND_SPLIT_STATE_NONE) {
                 homogeneous_src_split_state = src_split_states[i];
             } else if (src_split_states[i] != homogeneous_src_split_state) {
                 homogeneous_src_split_state = GGML_BACKEND_SPLIT_STATE_UNKNOWN;
             }
         }
-        if (homogeneous_src_split_state == GGML_BACKEND_SPLIT_STATE_NONE || homogeneous_src_split_state == GGML_BACKEND_SPLIT_STATE_UNKNOWN) {
+        if (homogeneous_src_split_state == GGML_BACKEND_SPLIT_STATE_NONE) {
             homogeneous_src_split_state = GGML_BACKEND_SPLIT_STATE_MIRRORED;
         }
         return homogeneous_src_split_state;
@@ -771,5 +800,11 @@ enum ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struc
     if (buf_ctx->split_state_cache.find(tensor) == buf_ctx->split_state_cache.end()) {
         buf_ctx->split_state_cache[tensor] = calculate_split_state();
     }
-    return buf_ctx->split_state_cache[tensor];
+
+    ggml_backend_meta_split_state ret = buf_ctx->split_state_cache[tensor];
+    GGML_ASSERT(ret != GGML_BACKEND_SPLIT_STATE_NONE);
+    if (assume_fix_via_sync && ret == GGML_BACKEND_SPLIT_STATE_UNKNOWN) {
+        ret = GGML_BACKEND_SPLIT_STATE_MIRRORED;
+    }
+    return ret;
 }
