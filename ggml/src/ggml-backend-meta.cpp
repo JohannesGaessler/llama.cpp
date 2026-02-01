@@ -350,8 +350,12 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
 
         ggml_tensor * t_ij = ggml_new_tensor(simple_ctx, tensor->type, GGML_MAX_DIMS, ne);
         t_ij->op = tensor->op;
-        for (int i = 0; i < GGML_MAX_DIMS; i++) {
-            t_ij->nb[i] = tensor->nb[i];
+        if (split_dim >= 0 && split_dim < GGML_MAX_DIMS) {
+            GGML_ASSERT(ggml_is_contiguous(tensor));
+        } else {
+            for (int i = 0; i < GGML_MAX_DIMS; i++) {
+                t_ij->nb[i] = tensor->nb[i];
+            }
         }
         t_ij->flags = tensor->flags;
         memcpy(t_ij->op_params, tensor->op_params, sizeof(tensor->op_params));
