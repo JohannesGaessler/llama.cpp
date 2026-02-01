@@ -709,7 +709,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 const ggml_backend_meta_split_state split_state_fixed   = ggml_backend_meta_get_split_state(node, true);
                 // GGML_ASSERT(split_state_unfixed == GGML_BACKEND_SPLIT_STATE_PARTIAL);
                 // GGML_ASSERT(split_state_fixed   == GGML_BACKEND_SPLIT_STATE_MIRRORED);
-                new_subgraph = split_state_fixed != split_state_unfixed;
+                new_subgraph = split_state_fixed != split_state_unfixed && split_state_unfixed == GGML_BACKEND_SPLIT_STATE_PARTIAL;
             }
             if (!new_subgraph) {
                 continue;
@@ -857,6 +857,9 @@ enum ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struc
         }
 
         if (tensor->op == GGML_OP_MUL_MAT) {
+            if (assume_fix_via_sync) {
+                return GGML_BACKEND_SPLIT_STATE_MIRRORED;
+            }
             if (src_split_states[0] == GGML_BACKEND_SPLIT_STATE_MIRRORED && src_split_states[1] == GGML_BACKEND_SPLIT_STATE_MIRRORED) {
                 return GGML_BACKEND_SPLIT_STATE_MIRRORED;
             }
@@ -866,7 +869,7 @@ enum ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struc
             if (src_split_states[0] == GGML_BACKEND_SPLIT_STATE_BY_NE0 && src_split_states[1] == GGML_BACKEND_SPLIT_STATE_BY_NE0) {
                 return GGML_BACKEND_SPLIT_STATE_PARTIAL;
             }
-            return assume_fix_via_sync ? GGML_BACKEND_SPLIT_STATE_MIRRORED : GGML_BACKEND_SPLIT_STATE_UNKNOWN;
+            return GGML_BACKEND_SPLIT_STATE_UNKNOWN;
         }
 
         ggml_backend_meta_split_state homogeneous_src_split_state = GGML_BACKEND_SPLIT_STATE_NONE;
