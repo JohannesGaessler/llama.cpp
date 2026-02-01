@@ -772,15 +772,18 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                     bcj.cgraphs[i].nodes_aux.push_back(ggml_add_inplace(bcj.ctx, node, bcj.cgraphs[i].tmp));
                     bcj.cgraphs[i].nodes_aux.back()->buffer = bcj.buf;
 
-                    bcj.cgraphs[i].cgraphs_aux.push_back(*cgraph);
-                    bcj.cgraphs[i].cgraphs_aux.back().nodes = &bcj.cgraphs[i].nodes_aux.back();
-                    bcj.cgraphs[i].cgraphs_aux.back().n_nodes = 1;
-                    const ggml_status status = ggml_backend_graph_compute_async(bcj.backend, &bcj.cgraphs[i].cgraphs_aux.back());
-                    if (status != GGML_STATUS_SUCCESS) {
-                        return status;
-                    }
                 }
                 ggml_backend_synchronize(bcj.backend);
+            }
+            for (size_t j = 0; j < n_backends; j++) {
+                auto & bcj = backend_ctx->backend_configs[j];
+                bcj.cgraphs[i].cgraphs_aux.push_back(*cgraph);
+                bcj.cgraphs[i].cgraphs_aux.back().nodes = &bcj.cgraphs[i].nodes_aux.back();
+                bcj.cgraphs[i].cgraphs_aux.back().n_nodes = 1;
+                const ggml_status status = ggml_backend_graph_compute_async(bcj.backend, &bcj.cgraphs[i].cgraphs_aux.back());
+                if (status != GGML_STATUS_SUCCESS) {
+                    return status;
+                }
             }
         }
         for (size_t j = 0; j < n_backends; j++) {
