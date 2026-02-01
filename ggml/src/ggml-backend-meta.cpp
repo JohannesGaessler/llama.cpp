@@ -757,6 +757,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                     ggml_tensor * node_other = bcj_other.cgraphs[i-1].cgraph.nodes[bcj_other.cgraphs[i-1].cgraph.n_nodes-1];
                     ggml_backend_tensor_copy_async(bcj_other.backend, bcj.backend, node_other, bcj.cgraphs[i].tmp);
                     bcj.cgraphs[i].cgraph.nodes[0] = ggml_add_inplace(bcj.ctx, node, bcj.cgraphs[i].tmp);
+                    bcj.cgraphs[i].cgraph.nodes[0]->buffer = bcj.buf;
                 }
                 ggml_backend_synchronize(bcj.backend);
             }
