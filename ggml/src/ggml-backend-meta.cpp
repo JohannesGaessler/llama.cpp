@@ -709,7 +709,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 const ggml_backend_meta_split_state split_state_fixed   = ggml_backend_meta_get_split_state(node, true);
                 // GGML_ASSERT(split_state_unfixed == GGML_BACKEND_SPLIT_STATE_PARTIAL);
                 // GGML_ASSERT(split_state_fixed   == GGML_BACKEND_SPLIT_STATE_MIRRORED);
-                new_subgraph = split_state_fixed != split_state_unfixed && split_state_unfixed == GGML_BACKEND_SPLIT_STATE_PARTIAL;
+                new_subgraph = split_state_unfixed == GGML_BACKEND_SPLIT_STATE_PARTIAL;
             }
             if (!new_subgraph) {
                 continue;
