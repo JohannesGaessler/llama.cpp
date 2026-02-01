@@ -755,27 +755,31 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
             if (status != GGML_STATUS_SUCCESS) {
                 return status;
             }
-            ggml_backend_synchronize(bcj.backend);
         }
 
         if (i < n_subgraphs - 1) {
             for (size_t j = 0; j < n_backends; j++) {
                 auto & bcj = backend_ctx->backend_configs[j];
-                ggml_tensor * node = bcj.cgraphs[i].cgraph_main.nodes[bcj.cgraphs[i].cgraph_main.n_nodes-1];
-                GGML_ASSERT(ggml_is_contiguous(node));
 
                 bcj.cgraphs[i].cgraphs_aux.clear();
                 bcj.cgraphs[i].cgraphs_aux.reserve(n_reduce_steps);
                 bcj.cgraphs[i].nodes_aux.clear();
                 bcj.cgraphs[i].nodes_aux.reserve(n_reduce_steps*2);
+            }
 
-                for (size_t offset_j = 1; offset_j < n_backends; offset_j *= 2) {
+            for (size_t offset_j = 1; offset_j < n_backends; offset_j *= 2) {
+                for (size_t j = 0; j < n_backends; j++) {
                     const size_t j_other = j ^ offset_j;
                     if (j_other >= n_backends) {
                         continue;
                     }
 
+                    auto & bcj       = backend_ctx->backend_configs[j];
                     auto & bcj_other = backend_ctx->backend_configs[j_other];
+
+                    ggml_tensor * node = bcj.cgraphs[i].cgraph_main.nodes[bcj.cgraphs[i].cgraph_main.n_nodes-1];
+                    GGML_ASSERT(ggml_is_contiguous(node));
+
                     ggml_tensor * node_other = bcj_other.cgraphs[i].cgraph_main.nodes[bcj_other.cgraphs[i].cgraph_main.n_nodes-1];
                     GGML_ASSERT(ggml_is_contiguous(node_other));
 
@@ -794,15 +798,14 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                     bcj.cgraphs[i].cgraphs_aux.back().nodes = &bcj.cgraphs[i].nodes_aux.back();
                     bcj.cgraphs[i].cgraphs_aux.back().n_nodes = 1;
                 }
-                ggml_backend_synchronize(bcj.backend);
-            }
-            for (size_t j = 0; j < n_backends; j++) {
-                auto & bcj = backend_ctx->backend_configs[j];
-                const ggml_status status = ggml_backend_graph_compute_async(bcj.backend, &bcj.cgraphs[i].cgraphs_aux.back());
-                if (status != GGML_STATUS_SUCCESS) {
-                    return status;
+
+                for (size_t j = 0; j < n_backends; j++) {
+                    auto & bcj = backend_ctx->backend_configs[j];
+                    const ggml_status status = ggml_backend_graph_compute_async(bcj.backend, &bcj.cgraphs[i].cgraphs_aux.back());
+                    if (status != GGML_STATUS_SUCCESS) {
+                        return status;
+                    }
                 }
-                ggml_backend_synchronize(bcj.backend);
             }
         }
     }
