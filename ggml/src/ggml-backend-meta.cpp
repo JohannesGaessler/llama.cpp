@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -681,10 +682,10 @@ static ggml_cgraph * dup_graph(ggml_context * ctx, ggml_cgraph * src) {
 }
 
 static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
-    GGML_ASSERT(ggml_backend_is_meta(backend));
+    const size_t n_backends = ggml_backend_meta_n_backends(backend);
     ggml_backend_meta_context * backend_ctx = (ggml_backend_meta_context *) backend->context;
 
-    for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
+    for (size_t j = 0; j < n_backends; j++) {
         auto & bcj = backend_ctx->backend_configs[j];
         bcj.cgraphs.clear();
         bcj.nodes.clear();
@@ -706,7 +707,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 new_subgraph = true;
             } else {
                 const ggml_backend_meta_split_state split_state_unfixed = ggml_backend_meta_get_split_state(node, false);
-                const ggml_backend_meta_split_state split_state_fixed   = ggml_backend_meta_get_split_state(node, true);
+                // const ggml_backend_meta_split_state split_state_fixed   = ggml_backend_meta_get_split_state(node, true);
                 // GGML_ASSERT(split_state_unfixed == GGML_BACKEND_SPLIT_STATE_PARTIAL);
                 // GGML_ASSERT(split_state_fixed   == GGML_BACKEND_SPLIT_STATE_MIRRORED);
                 new_subgraph = split_state_unfixed == GGML_BACKEND_SPLIT_STATE_PARTIAL;
@@ -715,7 +716,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 continue;
             }
 
-            for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
+            for (size_t j = 0; j < n_backends; j++) {
                 auto & bcj = backend_ctx->backend_configs[j];
                 bcj.cgraphs.emplace_back(*cgraph, i_start);
                 bcj.nodes.insert(bcj.nodes.begin() + i_start + bcj.cgraphs.size()-1, nullptr);
@@ -733,7 +734,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
         /*.mem_buffer =*/ nullptr,
         /*.no_alloc   =*/ true,
     };
-    for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
+    for (size_t j = 0; j < n_backends; j++) {
         auto & bcj = backend_ctx->backend_configs[j];
         if (bcj.ctx != nullptr) {
             ggml_free(bcj.ctx);
@@ -747,7 +748,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
 
     for (size_t i = 0; i < n_subgraphs; i++) {
         if (i > 0) {
-            for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
+            for (size_t j = 0; j < n_backends; j++) {
                 auto & bcj = backend_ctx->backend_configs[j];
                 ggml_tensor * node = bcj.cgraphs[i-1].cgraph.nodes[bcj.cgraphs[i-1].cgraph.n_nodes-1];
                 GGML_ASSERT(ggml_is_contiguous(node));
@@ -766,7 +767,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 ggml_backend_synchronize(bcj.backend);
             }
         }
-        for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
+        for (size_t j = 0; j < n_backends; j++) {
             auto & bcj = backend_ctx->backend_configs[j];
             while (bcj.cgraphs[i].cgraph.nodes[0] == nullptr) {
                 bcj.cgraphs[i].cgraph.nodes   += 1;
