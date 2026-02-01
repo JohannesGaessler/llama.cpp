@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -538,12 +539,13 @@ static ggml_guid_t ggml_backend_meta_guid() {
 
 struct ggml_backend_meta_context {
     struct cgraph_config {
-        ggml_cgraph cgraph;
+        ggml_cgraph cgraph_main;
         int         offset;
 
-        ggml_tensor * tmp = nullptr;
+        std::vector<ggml_cgraph>   cgraphs_aux;
+        std::vector<ggml_tensor *> nodes_aux;
 
-        cgraph_config(ggml_cgraph cgraph, int offset) : cgraph(cgraph), offset(offset) {}
+        cgraph_config(ggml_cgraph cgraph_main, int offset) : cgraph_main(cgraph_main), offset(offset) {}
     };
     struct backend_config {
         ggml_backend_t             backend;
@@ -681,10 +683,10 @@ static ggml_cgraph * dup_graph(ggml_context * ctx, ggml_cgraph * src) {
 }
 
 static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
-    GGML_ASSERT(ggml_backend_is_meta(backend));
+    const size_t n_backends = ggml_backend_meta_n_backends(backend);
     ggml_backend_meta_context * backend_ctx = (ggml_backend_meta_context *) backend->context;
 
-    for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
+    for (size_t j = 0; j < n_backends; j++) {
         auto & bcj = backend_ctx->backend_configs[j];
         bcj.cgraphs.clear();
         bcj.nodes.clear();
@@ -706,7 +708,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 new_subgraph = true;
             } else {
                 const ggml_backend_meta_split_state split_state_unfixed = ggml_backend_meta_get_split_state(node, false);
-                const ggml_backend_meta_split_state split_state_fixed   = ggml_backend_meta_get_split_state(node, true);
+                // const ggml_backend_meta_split_state split_state_fixed   = ggml_backend_meta_get_split_state(node, true);
                 // GGML_ASSERT(split_state_unfixed == GGML_BACKEND_SPLIT_STATE_PARTIAL);
                 // GGML_ASSERT(split_state_fixed   == GGML_BACKEND_SPLIT_STATE_MIRRORED);
                 new_subgraph = split_state_unfixed == GGML_BACKEND_SPLIT_STATE_PARTIAL;
@@ -715,25 +717,26 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 continue;
             }
 
-            for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
+            for (size_t j = 0; j < n_backends; j++) {
                 auto & bcj = backend_ctx->backend_configs[j];
                 bcj.cgraphs.emplace_back(*cgraph, i_start);
-                bcj.nodes.insert(bcj.nodes.begin() + i_start + bcj.cgraphs.size()-1, nullptr);
-                bcj.cgraphs.back().cgraph.nodes = bcj.nodes.data() + i_start + bcj.cgraphs.size()-1;
-                bcj.cgraphs.back().cgraph.n_nodes = i + 1 - i_start + 1;
+                bcj.cgraphs.back().cgraph_main.nodes = bcj.nodes.data() + i_start;
+                bcj.cgraphs.back().cgraph_main.n_nodes = i + 1 - i_start;
             }
             max_tmp_size = std::max(max_tmp_size, ggml_nbytes(node));
             i_start = i + 1;
         }
+        GGML_ASSERT(i_start == cgraph->n_nodes);
     }
     const size_t n_subgraphs = backend_ctx->backend_configs[0].cgraphs.size();
+    const size_t n_reduce_steps = std::ceilf(std::log2(n_backends));
 
     ggml_init_params params = {
         /*.mem_size   =*/ n_subgraphs*2*ggml_tensor_overhead(),
         /*.mem_buffer =*/ nullptr,
         /*.no_alloc   =*/ true,
     };
-    for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
+    for (size_t j = 0; j < n_backends; j++) {
         auto & bcj = backend_ctx->backend_configs[j];
         if (bcj.ctx != nullptr) {
             ggml_free(bcj.ctx);
@@ -746,38 +749,56 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
     }
 
     for (size_t i = 0; i < n_subgraphs; i++) {
-        if (i > 0) {
-            for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
-                auto & bcj = backend_ctx->backend_configs[j];
-                ggml_tensor * node = bcj.cgraphs[i-1].cgraph.nodes[bcj.cgraphs[i-1].cgraph.n_nodes-1];
-                GGML_ASSERT(ggml_is_contiguous(node));
-                bcj.cgraphs[i].tmp = ggml_dup_tensor(bcj.ctx, node);
-                bcj.cgraphs[i].tmp->buffer = bcj.buf;
-                bcj.cgraphs[i].tmp->data = ggml_backend_buffer_get_base(bcj.buf);
-                for (size_t offset_j = 1; offset_j < backend_ctx->backend_configs.size(); offset_j *= 2) {
-                    const size_t j_other = j ^ offset_j;
-                    auto & bcj_other = backend_ctx->backend_configs[j_other];
-                    ggml_tensor * node_other = bcj_other.cgraphs[i-1].cgraph.nodes[bcj_other.cgraphs[i-1].cgraph.n_nodes-1];
-                    GGML_ASSERT(ggml_is_contiguous(node_other));
-                    ggml_backend_tensor_copy_async(bcj_other.backend, bcj.backend, node_other, bcj.cgraphs[i].tmp);
-                    bcj.cgraphs[i].cgraph.nodes[0] = ggml_add_inplace(bcj.ctx, node, bcj.cgraphs[i].tmp);
-                    bcj.cgraphs[i].cgraph.nodes[0]->buffer = bcj.buf;
-                }
-                ggml_backend_synchronize(bcj.backend);
-            }
-        }
-        for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
+        for (size_t j = 0; j < n_backends; j++) {
             auto & bcj = backend_ctx->backend_configs[j];
-            while (bcj.cgraphs[i].cgraph.nodes[0] == nullptr) {
-                bcj.cgraphs[i].cgraph.nodes   += 1;
-                bcj.cgraphs[i].cgraph.n_nodes -= 1;
-                GGML_ASSERT(bcj.cgraphs[i].cgraph.n_nodes > 0);
-            }
-            const ggml_status status = ggml_backend_graph_compute_async(bcj.backend, &bcj.cgraphs[i].cgraph);
+            const ggml_status status = ggml_backend_graph_compute_async(bcj.backend, &bcj.cgraphs[i].cgraph_main);
             if (status != GGML_STATUS_SUCCESS) {
                 return status;
             }
             ggml_backend_synchronize(bcj.backend);
+        }
+
+        if (i < n_subgraphs - 1) {
+            for (size_t j = 0; j < n_backends; j++) {
+                auto & bcj = backend_ctx->backend_configs[j];
+                ggml_tensor * node = bcj.cgraphs[i].cgraph_main.nodes[bcj.cgraphs[i].cgraph_main.n_nodes-1];
+                GGML_ASSERT(ggml_is_contiguous(node));
+
+                bcj.cgraphs[i].cgraphs_aux.resize(n_reduce_steps);
+                bcj.cgraphs[i].nodes_aux.resize(n_reduce_steps*2);
+
+                for (size_t offset_j = 1; offset_j < n_backends; offset_j *= 2) {
+                    const size_t j_other = j ^ offset_j;
+                    if (j_other >= n_backends) {
+                        continue;
+                    }
+
+                    auto & bcj_other = backend_ctx->backend_configs[j_other];
+                    ggml_tensor * node_other = bcj_other.cgraphs[i].cgraph_main.nodes[bcj_other.cgraphs[i].cgraph_main.n_nodes-1];
+                    GGML_ASSERT(ggml_is_contiguous(node_other));
+
+                    ggml_tensor * node_tmp = ggml_dup_tensor(bcj.ctx, node);
+                    node_tmp->buffer = bcj.buf;
+                    node_tmp->data = ggml_backend_buffer_get_base(bcj.buf);
+                    bcj.cgraphs[i].nodes_aux.push_back(node_tmp);
+
+                    ggml_backend_tensor_copy_async(bcj_other.backend, bcj.backend, node_other, node_tmp);
+
+                    ggml_tensor * node_red = ggml_add_inplace(bcj.ctx, node, node_tmp);
+                    node_red->buffer = bcj.buf;
+                    bcj.cgraphs[i].nodes_aux.push_back(node_red);
+
+                    bcj.cgraphs[i].cgraphs_aux.push_back(*cgraph);
+                    bcj.cgraphs[i].cgraphs_aux.back().nodes = bcj.cgraphs[i].nodes_aux.data() + bcj.cgraphs[i].nodes_aux.size() - 1;
+                    bcj.cgraphs[i].cgraphs_aux.back().n_nodes = 1;
+
+                    const ggml_status status = ggml_backend_graph_compute_async(bcj.backend, &bcj.cgraphs[i].cgraphs_aux.back());
+                    if (status != GGML_STATUS_SUCCESS) {
+                        return status;
+                    }
+                }
+                ggml_backend_synchronize(bcj.backend);
+            }
         }
     }
     return GGML_STATUS_SUCCESS;
