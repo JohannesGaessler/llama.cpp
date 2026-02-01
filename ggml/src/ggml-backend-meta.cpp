@@ -764,8 +764,8 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 ggml_tensor * node = bcj.cgraphs[i].cgraph_main.nodes[bcj.cgraphs[i].cgraph_main.n_nodes-1];
                 GGML_ASSERT(ggml_is_contiguous(node));
 
-                bcj.cgraphs[i].cgraphs_aux.resize(n_reduce_steps);
-                bcj.cgraphs[i].nodes_aux.resize(n_reduce_steps*2);
+                bcj.cgraphs[i].cgraphs_aux.reserve(n_reduce_steps);
+                bcj.cgraphs[i].nodes_aux.reserve(n_reduce_steps*2);
 
                 for (size_t offset_j = 1; offset_j < n_backends; offset_j *= 2) {
                     const size_t j_other = j ^ offset_j;
