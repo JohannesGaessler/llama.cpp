@@ -857,9 +857,6 @@ enum ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struc
         }
 
         if (tensor->op == GGML_OP_MUL_MAT) {
-            if (assume_fix_via_sync) {
-                return GGML_BACKEND_SPLIT_STATE_MIRRORED;
-            }
             if (src_split_states[0] == GGML_BACKEND_SPLIT_STATE_MIRRORED && src_split_states[1] == GGML_BACKEND_SPLIT_STATE_MIRRORED) {
                 return GGML_BACKEND_SPLIT_STATE_MIRRORED;
             }
@@ -869,6 +866,7 @@ enum ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struc
             if (src_split_states[0] == GGML_BACKEND_SPLIT_STATE_BY_NE0 && src_split_states[1] == GGML_BACKEND_SPLIT_STATE_BY_NE0) {
                 return GGML_BACKEND_SPLIT_STATE_PARTIAL;
             }
+            GGML_ABORT("fatal error");
             return GGML_BACKEND_SPLIT_STATE_UNKNOWN;
         }
 
