@@ -340,8 +340,8 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
     simple_tensors.reserve(buf_ctx->buf_configs.size());
     for (size_t j = 0; j < buf_ctx->buf_configs.size(); j++) {
         if (split_dim >= 0 && split_dim < GGML_MAX_DIMS) {
-            const int64_t low  = ne[split_dim] * tensor_split_scan[j]     / tensor_split_scan.back();
-            const int64_t high = ne[split_dim] * tensor_split_scan[j + 1] / tensor_split_scan.back();
+            const int64_t low  = tensor->ne[split_dim] * tensor_split_scan[j]     / tensor_split_scan.back();
+            const int64_t high = tensor->ne[split_dim] * tensor_split_scan[j + 1] / tensor_split_scan.back();
             ne[split_dim] = high - low;
         }
 
