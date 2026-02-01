@@ -750,6 +750,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
             for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
                 auto & bcj = backend_ctx->backend_configs[j];
                 ggml_tensor * node = bcj.cgraphs[i-1].cgraph.nodes[bcj.cgraphs[i-1].cgraph.n_nodes-1];
+                GGML_ASSERT(ggml_is_contiguous(node));
                 bcj.cgraphs[i].tmp = ggml_dup_tensor(bcj.ctx, node);
                 bcj.cgraphs[i].tmp->buffer = bcj.buf;
                 bcj.cgraphs[i].tmp->data = ggml_backend_buffer_get_base(bcj.buf);
@@ -757,6 +758,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                     const size_t j_other = j ^ offset_j;
                     auto & bcj_other = backend_ctx->backend_configs[j_other];
                     ggml_tensor * node_other = bcj_other.cgraphs[i-1].cgraph.nodes[bcj_other.cgraphs[i-1].cgraph.n_nodes-1];
+                    GGML_ASSERT(ggml_is_contiguous(node_other));
                     ggml_backend_tensor_copy_async(bcj_other.backend, bcj.backend, node_other, bcj.cgraphs[i].tmp);
                     ggml_backend_synchronize(bcj.backend);
                     ggml_backend_synchronize(bcj_other.backend);
