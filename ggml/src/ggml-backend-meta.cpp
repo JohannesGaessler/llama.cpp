@@ -681,10 +681,11 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
     for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
         auto & bcj = backend_ctx->backend_configs[j];
         bcj.cgraphs.clear();
+        bcj.nodes.clear();
+        bcj.nodes.reserve(2*cgraph->n_nodes);
 
-        bcj.nodes.resize(cgraph->n_nodes);
         for (int i = 0; i < cgraph->n_nodes; i++) {
-            bcj.nodes[i] = ggml_backend_meta_buffer_simple_tensor(cgraph->nodes[i]->buffer, cgraph->nodes[i], j);
+            bcj.nodes.push_back(ggml_backend_meta_buffer_simple_tensor(cgraph->nodes[i]->buffer, cgraph->nodes[i], j));
             GGML_ASSERT(bcj.nodes[i]);
         }
     }
@@ -692,38 +693,37 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
     size_t max_tmp_size = 0;
     {
         int i_start = 0;
-        int i_stop  = 0;
-        for (; i_stop < cgraph->n_nodes; i_stop++) {
-            ggml_tensor * node = cgraph->nodes[i_stop];
-            const ggml_backend_meta_split_state split_state_unfixed = ggml_backend_meta_get_split_state(node, false);
-            const ggml_backend_meta_split_state split_state_fixed   = ggml_backend_meta_get_split_state(node, true);
-            if (split_state_fixed == split_state_unfixed) {
+        for (int i = 0; i < cgraph->n_nodes; i++) {
+            ggml_tensor * node = cgraph->nodes[i];
+            bool new_subgraph = false;
+            if (i + 1 == cgraph->n_nodes) {
+                new_subgraph = true;
+            } else {
+                const ggml_backend_meta_split_state split_state_unfixed = ggml_backend_meta_get_split_state(node, false);
+                const ggml_backend_meta_split_state split_state_fixed   = ggml_backend_meta_get_split_state(node, true);
+                // GGML_ASSERT(split_state_unfixed == GGML_BACKEND_SPLIT_STATE_PARTIAL);
+                // GGML_ASSERT(split_state_fixed   == GGML_BACKEND_SPLIT_STATE_MIRRORED);
+                new_subgraph = split_state_fixed != split_state_unfixed;
+            }
+            if (!new_subgraph) {
                 continue;
             }
-            // GGML_ASSERT(split_state_unfixed == GGML_BACKEND_SPLIT_STATE_PARTIAL);
-            // GGML_ASSERT(split_state_fixed   == GGML_BACKEND_SPLIT_STATE_MIRRORED);
 
             for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
                 auto & bcj = backend_ctx->backend_configs[j];
                 bcj.cgraphs.emplace_back(*cgraph, i_start);
-                bcj.cgraphs.back().cgraph.nodes = bcj.nodes.data() + i_start;
-                bcj.cgraphs.back().cgraph.n_nodes = i_stop + 1 - i_start;
+                bcj.nodes.insert(bcj.nodes.begin() + i_start + bcj.cgraphs.size()-1, nullptr);
+                bcj.cgraphs.back().cgraph.nodes = bcj.nodes.data() + i_start + bcj.cgraphs.size()-1;
+                bcj.cgraphs.back().cgraph.n_nodes = i + 1 - i_start + 1;
             }
             max_tmp_size = std::max(max_tmp_size, ggml_nbytes(node));
-            i_start = i_stop + 1;
-        }
-        if (i_start != i_stop) {
-            for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
-                auto & bcj = backend_ctx->backend_configs[j];
-                bcj.cgraphs.emplace_back(*cgraph, i_start);
-                bcj.cgraphs.back().cgraph.nodes = bcj.nodes.data() + i_start;
-                bcj.cgraphs.back().cgraph.n_nodes = i_stop - i_start;
-            }
+            i_start = i + 1;
         }
     }
+    const size_t n_subgraphs = backend_ctx->backend_configs[0].cgraphs.size();
 
     ggml_init_params params = {
-        /*.mem_size   =*/ backend_ctx->backend_configs[0].cgraphs.size()*ggml_tensor_overhead(),
+        /*.mem_size   =*/ n_subgraphs*ggml_tensor_overhead(),
         /*.mem_buffer =*/ nullptr,
         /*.no_alloc   =*/ true,
     };
@@ -739,9 +739,13 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
         bcj.buf = ggml_backend_alloc_buffer(bcj.backend, max_tmp_size);
     }
 
-    for (size_t i = 0; i < backend_ctx->backend_configs[0].cgraphs.size(); i++) {
+    for (size_t i = 0; i < n_subgraphs; i++) {
         for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
             auto & bcj = backend_ctx->backend_configs[j];
+            if (bcj.cgraphs[i].cgraph.nodes[0] == nullptr) {
+                bcj.cgraphs[i].cgraph.nodes   += 1;
+                bcj.cgraphs[i].cgraph.n_nodes -= 1;
+            }
             const ggml_status status = ggml_backend_graph_compute_async(bcj.backend, &bcj.cgraphs[i].cgraph);
             if (status != GGML_STATUS_SUCCESS) {
                 return status;
