@@ -385,6 +385,7 @@ static void ggml_backend_meta_buffer_set_tensor(ggml_backend_buffer_t buffer, gg
     GGML_ASSERT(ggml_backend_buffer_is_meta(buffer));
     GGML_ASSERT(offset == 0);
     GGML_ASSERT(size == ggml_nbytes(tensor));
+    GGML_ASSERT(ggml_is_contiguous(tensor));
     const ggml_backend_meta_buffer_context * buf_ctx = (const ggml_backend_meta_buffer_context *) buffer->context;
 
     const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor, /*assume_fix_via_sync =*/ false);
@@ -396,6 +397,20 @@ static void ggml_backend_meta_buffer_set_tensor(ggml_backend_buffer_t buffer, gg
     }
 
     switch (split_state) {
+        case GGML_BACKEND_SPLIT_STATE_BY_NE0: {
+            GGML_ASSERT(tensor->ne[2] == 1);
+            GGML_ASSERT(tensor->ne[3] == 1);
+            const size_t row_size_full = ggml_row_size(tensor->type, tensor->ne[0]);
+            size_t row_offset_j = 0;
+            for (ggml_tensor * t : simple_tensors) {
+                const size_t row_size_j = ggml_row_size(tensor->type, t->ne[0]);
+                for (int64_t i1 = 0; i1 < tensor->ne[1]; i1++) {
+                    ggml_backend_tensor_set(t, (const char *) data + i1*row_size_full + row_offset_j, i1*row_size_j, row_size_j);
+                }
+                row_offset_j += row_size_j;
+            }
+            GGML_ASSERT(row_offset_j == row_size_full);
+        } break;
         case GGML_BACKEND_SPLIT_STATE_BY_NE1: {
             GGML_ASSERT(tensor->ne[2] == 1);
             GGML_ASSERT(tensor->ne[3] == 1);
@@ -518,10 +533,21 @@ static ggml_guid_t ggml_backend_meta_guid() {
 }
 
 struct ggml_backend_meta_context {
+    struct cgraph_config {
+        ggml_cgraph cgraph;
+        int         offset;
+
+        ggml_tensor * tmp = nullptr;
+
+        cgraph_config(ggml_cgraph cgraph, int offset) : cgraph(cgraph), offset(offset) {}
+    };
     struct backend_config {
         ggml_backend_t             backend;
-        std::vector<ggml_cgraph>   cgraphs;
+        std::vector<cgraph_config> cgraphs;
         std::vector<ggml_tensor *> nodes;
+
+        ggml_context          * ctx = nullptr;
+        ggml_backend_buffer_t   buf = nullptr;
 
         backend_config(ggml_backend_t backend) : backend(backend) {}
     };
@@ -662,38 +688,71 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
             GGML_ASSERT(bcj.nodes[i]);
         }
     }
+
+    size_t max_tmp_size = 0;
     {
         int i_start = 0;
         int i_stop  = 0;
         for (; i_stop < cgraph->n_nodes; i_stop++) {
             ggml_tensor * node = cgraph->nodes[i_stop];
-            if (ggml_backend_meta_get_split_state(node, true) == ggml_backend_meta_get_split_state(node, false)) {
+            const ggml_backend_meta_split_state split_state_unfixed = ggml_backend_meta_get_split_state(node, false);
+            const ggml_backend_meta_split_state split_state_fixed   = ggml_backend_meta_get_split_state(node, true);
+            if (split_state_fixed == split_state_unfixed) {
                 continue;
             }
+            // GGML_ASSERT(split_state_unfixed == GGML_BACKEND_SPLIT_STATE_PARTIAL);
+            // GGML_ASSERT(split_state_fixed   == GGML_BACKEND_SPLIT_STATE_MIRRORED);
+
             for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
                 auto & bcj = backend_ctx->backend_configs[j];
-                bcj.cgraphs.push_back(*cgraph);
-                bcj.cgraphs.back().nodes = bcj.nodes.data() + i_start;
-                bcj.cgraphs.back().n_nodes = i_stop + 1 - i_start;
+                bcj.cgraphs.emplace_back(*cgraph, i_start);
+                bcj.cgraphs.back().cgraph.nodes = bcj.nodes.data() + i_start;
+                bcj.cgraphs.back().cgraph.n_nodes = i_stop + 1 - i_start;
             }
+            max_tmp_size = std::max(max_tmp_size, ggml_nbytes(node));
             i_start = i_stop + 1;
         }
         if (i_start != i_stop) {
             for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
                 auto & bcj = backend_ctx->backend_configs[j];
-                bcj.cgraphs.push_back(*cgraph);
-                bcj.cgraphs.back().nodes = bcj.nodes.data() + i_start;
-                bcj.cgraphs.back().n_nodes = i_stop - i_start;
+                bcj.cgraphs.emplace_back(*cgraph, i_start);
+                bcj.cgraphs.back().cgraph.nodes = bcj.nodes.data() + i_start;
+                bcj.cgraphs.back().cgraph.n_nodes = i_stop - i_start;
             }
         }
+    }
+
+    ggml_init_params params = {
+        /*.mem_size   =*/ backend_ctx->backend_configs[0].cgraphs.size()*ggml_tensor_overhead(),
+        /*.mem_buffer =*/ nullptr,
+        /*.no_alloc   =*/ true,
+    };
+    for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
+        auto & bcj = backend_ctx->backend_configs[j];
+        if (bcj.ctx != nullptr) {
+            ggml_free(bcj.ctx);
+        }
+        bcj.ctx = ggml_init(params);
+        if (bcj.buf != nullptr) {
+            ggml_backend_buffer_free(bcj.buf);
+        }
+        bcj.buf = ggml_backend_alloc_buffer(bcj.backend, max_tmp_size);
     }
 
     for (size_t i = 0; i < backend_ctx->backend_configs[0].cgraphs.size(); i++) {
         for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
             auto & bcj = backend_ctx->backend_configs[j];
-            const ggml_status status = ggml_backend_graph_compute_async(bcj.backend, &bcj.cgraphs[i]);
+            const ggml_status status = ggml_backend_graph_compute_async(bcj.backend, &bcj.cgraphs[i].cgraph);
             if (status != GGML_STATUS_SUCCESS) {
                 return status;
+            }
+            // bcj.cgraphs[i].tmp = ggml_dup_tensor(bcj.ctx, bcj.cgraphs[i].cgraph.nodes[]);
+            ggml_backend_synchronize(bcj.backend);
+        }
+        for (size_t offset_j = 1; offset_j < backend_ctx->backend_configs.size(); offset_j *= 2) {
+            for (size_t j = 0; j < backend_ctx->backend_configs.size(); j++) {
+                // const size_t j_other = j ^ offset_j;
+                GGML_ASSERT(false);
             }
         }
     }
@@ -778,6 +837,10 @@ enum ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struc
             if (src_split_states[0] == GGML_BACKEND_SPLIT_STATE_BY_NE1 && src_split_states[1] == GGML_BACKEND_SPLIT_STATE_MIRRORED) {
                 return GGML_BACKEND_SPLIT_STATE_BY_NE0;
             }
+            if (src_split_states[0] == GGML_BACKEND_SPLIT_STATE_BY_NE0 && src_split_states[1] == GGML_BACKEND_SPLIT_STATE_BY_NE0) {
+                return GGML_BACKEND_SPLIT_STATE_PARTIAL;
+            }
+            return assume_fix_via_sync ? GGML_BACKEND_SPLIT_STATE_MIRRORED : GGML_BACKEND_SPLIT_STATE_UNKNOWN;
         }
 
         ggml_backend_meta_split_state homogeneous_src_split_state = GGML_BACKEND_SPLIT_STATE_NONE;
