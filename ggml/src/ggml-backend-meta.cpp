@@ -789,7 +789,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                     bcj.cgraphs[i].nodes_aux.push_back(node_red);
 
                     bcj.cgraphs[i].cgraphs_aux.push_back(*cgraph);
-                    bcj.cgraphs[i].cgraphs_aux.back().nodes = bcj.cgraphs[i].nodes_aux.data() + bcj.cgraphs[i].nodes_aux.size() - 1;
+                    bcj.cgraphs[i].cgraphs_aux.back().nodes = &bcj.cgraphs[i].nodes_aux.back();
                     bcj.cgraphs[i].cgraphs_aux.back().n_nodes = 1;
 
                     const ggml_status status = ggml_backend_graph_compute_async(bcj.backend, &bcj.cgraphs[i].cgraphs_aux.back());
