@@ -895,6 +895,12 @@ static enum ggml_backend_meta_split_state llama_meta_device_get_tensor_split(con
         return GGML_BACKEND_SPLIT_STATE_BY_NE0;
     }
 
+    // output
+    const std::regex pattern_output("output");
+    if (std::regex_match(tensor->name, pattern_output)) {
+        return GGML_BACKEND_SPLIT_STATE_BY_NE1;
+    }
+
     // everything else
     return GGML_BACKEND_SPLIT_STATE_MIRRORED;
     GGML_UNUSED(userdata);
