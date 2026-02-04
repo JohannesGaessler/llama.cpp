@@ -811,6 +811,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
 
                     ggml_tensor * node_red = ggml_add_inplace(bcj.ctx, node, node_tmp);
                     node_red->buffer = bcj.buf;
+                    node_red->flags |= GGML_TENSOR_FLAG_COMPUTE;
                     bcj.cgraphs[i].nodes_aux.push_back(node_red);
 
                     bcj.cgraphs[i].cgraphs_aux.push_back(*cgraph);
