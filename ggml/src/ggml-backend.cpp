@@ -388,7 +388,7 @@ ggml_backend_dev_t ggml_backend_get_device(ggml_backend_t backend) {
 
 // backend copy
 
-void ggml_backend_tensor_copy(struct ggml_tensor * src, struct ggml_tensor * dst) {
+void ggml_backend_tensor_copy(const struct ggml_tensor * src, struct ggml_tensor * dst) {
     GGML_ASSERT(ggml_are_same_layout(src, dst) && "cannot copy tensors with different layouts");
 
     if (src == dst) {
@@ -402,7 +402,7 @@ void ggml_backend_tensor_copy(struct ggml_tensor * src, struct ggml_tensor * dst
     } else if (!ggml_backend_buffer_copy_tensor(src, dst)) {
 #ifndef NDEBUG
         GGML_LOG_DEBUG("%s: warning: slow copy from %s to %s\n", __func__, ggml_backend_buffer_name(src->buffer), ggml_backend_buffer_name(dst->buffer));
-#endif
+#endif // NDEBUG
         size_t nbytes = ggml_nbytes(src);
         void * data = malloc(nbytes);
         ggml_backend_tensor_get(src, data, 0, nbytes);
@@ -411,7 +411,7 @@ void ggml_backend_tensor_copy(struct ggml_tensor * src, struct ggml_tensor * dst
     }
 }
 
-void ggml_backend_tensor_copy_async(ggml_backend_t backend_src, ggml_backend_t backend_dst, struct ggml_tensor * src, struct ggml_tensor * dst) {
+void ggml_backend_tensor_copy_async(ggml_backend_t backend_src, ggml_backend_t backend_dst, const struct ggml_tensor * src, struct ggml_tensor * dst) {
     GGML_ASSERT(ggml_are_same_layout(src, dst) && "cannot copy tensors with different layouts");
 
     if (src == dst) {
@@ -432,6 +432,20 @@ void ggml_backend_tensor_copy_async(ggml_backend_t backend_src, ggml_backend_t b
     ggml_backend_tensor_copy(src, dst);
 }
 
+void ggml_backend_tensor_shfl_async(
+        ggml_backend_t backend_1, ggml_backend_t backend_2,
+        const struct ggml_tensor * src1, const struct ggml_tensor * src2,
+        struct ggml_tensor * dst1, struct ggml_tensor * dst2) {
+    GGML_ASSERT(ggml_are_same_layout(src1, dst1) && "cannot shuffle tensors with different layouts");
+    GGML_ASSERT(ggml_are_same_layout(src2, dst2) && "cannot shuffle tensors with different layouts");
+    if (backend_1->iface.shfl_tensor_async != NULL) {
+        if (backend_1->iface.shfl_tensor_async(backend_1, backend_2, src1, src2, dst1, dst2)) {
+            return;
+        }
+    }
+    ggml_backend_tensor_copy_async(backend_1, backend_2, src1, dst2);
+    ggml_backend_tensor_copy_async(backend_2, backend_1, src2, dst1);
+}
 // events
 
 ggml_backend_event_t ggml_backend_event_new(ggml_backend_dev_t device) {

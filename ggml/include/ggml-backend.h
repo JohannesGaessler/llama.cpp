@@ -68,7 +68,7 @@ extern "C" {
     GGML_API void                           ggml_backend_buffer_reset         (ggml_backend_buffer_t buffer);
 
     // tensor copy between different backends
-    GGML_API void ggml_backend_tensor_copy(struct ggml_tensor * src, struct ggml_tensor * dst);
+    GGML_API void ggml_backend_tensor_copy(const struct ggml_tensor * src, struct ggml_tensor * dst);
 
     //
     // Backend (stream)
@@ -109,7 +109,12 @@ extern "C" {
     // the copy is performed after all the currently queued operations in backend_src
     // backend_dst will wait for the copy to complete before performing other operations
     // automatic fallback to sync copy if async is not supported
-    GGML_API void ggml_backend_tensor_copy_async(ggml_backend_t backend_src, ggml_backend_t backend_dst, struct ggml_tensor * src, struct ggml_tensor * dst);
+    GGML_API void ggml_backend_tensor_copy_async(ggml_backend_t backend_src, ggml_backend_t backend_dst, const struct ggml_tensor * src, struct ggml_tensor * dst);
+
+    GGML_API void ggml_backend_tensor_shfl_async(
+        ggml_backend_t backend_1, ggml_backend_t backend_2,
+        const struct ggml_tensor * src1, const struct ggml_tensor * src2,
+        struct ggml_tensor * dst1, struct ggml_tensor * dst2);
 
     GGML_API ggml_backend_dev_t ggml_backend_get_device(ggml_backend_t backend);
 
