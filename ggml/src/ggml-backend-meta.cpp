@@ -265,8 +265,8 @@ ggml_backend_buffer_type_t ggml_backend_meta_buffer_type_simple_buft(ggml_backen
 }
 
 struct ggml_backend_meta_buffer_context {
-    std::map<const ggml_tensor *, ggml_backend_meta_split_state> split_state_cache;
-    std::map<const ggml_tensor *, std::vector<ggml_tensor *>>    simple_tensors;
+    std::map<std::pair<const ggml_tensor *, bool>, ggml_backend_meta_split_state> split_state_cache;
+    std::map<          const ggml_tensor *,        std::vector<ggml_tensor *>>    simple_tensors;
 
     struct buffer_config {
         ggml_context          * ctx;
@@ -1003,11 +1003,13 @@ enum ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struc
         return homogeneous_src_split_state;
     };
 
-    if (force_recalc || buf_ctx->split_state_cache.find(tensor) == buf_ctx->split_state_cache.end()) {
-        buf_ctx->split_state_cache[tensor] = calculate_split_state();
+    const std::pair key = std::make_pair(tensor, assume_fix_via_sync);
+
+    if (force_recalc || buf_ctx->split_state_cache.find(key) == buf_ctx->split_state_cache.end()) {
+        buf_ctx->split_state_cache[key] = calculate_split_state();
     }
 
-    ggml_backend_meta_split_state ret = buf_ctx->split_state_cache[tensor];
+    ggml_backend_meta_split_state ret = buf_ctx->split_state_cache[key];
     GGML_ASSERT(ret != GGML_BACKEND_SPLIT_STATE_NONE);
     if (assume_fix_via_sync && ret == GGML_BACKEND_SPLIT_STATE_UNKNOWN) {
         GGML_ABORT("fatal error");
