@@ -834,8 +834,7 @@ static int llama_model_load(const std::string & fname, std::vector<std::string> 
 
     model.t_start_us = tm.t_start_us;
 
-    // try {
-    {
+    try {
         llama_model_loader ml(fname, splits, params.use_mmap, params.use_direct_io, params.check_tensors, params.no_alloc, params.kv_overrides, params.tensor_buft_overrides);
 
         ml.print_info();
@@ -873,11 +872,10 @@ static int llama_model_load(const std::string & fname, std::vector<std::string> 
         if (!model.load_tensors(ml)) {
             return -2;
         }
+    } catch (const std::exception & err) {
+        LLAMA_LOG_ERROR("%s: error loading model: %s\n", __func__, err.what());
+        return -1;
     }
-    // } catch (const std::exception & err) {
-    //     LLAMA_LOG_ERROR("%s: error loading model: %s\n", __func__, err.what());
-    //     return -1;
-    // }
 
     return 0;
 }
@@ -979,49 +977,49 @@ static struct llama_model * llama_model_load_from_file_impl(
             GGML_ASSERT(ggml_backend_dev_buffer_type(devs.back()) == ggml_backend_cpu_buffer_type());
             gpus.push_back(ggml_backend_meta_device(devs.data(), devs.size() - 1, llama_meta_device_get_tensor_split, nullptr));
         } else {
-        for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
-            ggml_backend_dev_t dev = ggml_backend_dev_get(i);
-            switch (ggml_backend_dev_type(dev)) {
-                case GGML_BACKEND_DEVICE_TYPE_CPU:
-                case GGML_BACKEND_DEVICE_TYPE_ACCEL:
-                    // skip CPU backends since they are handled separately
-                    break;
+            for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+                ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+                switch (ggml_backend_dev_type(dev)) {
+                    case GGML_BACKEND_DEVICE_TYPE_CPU:
+                    case GGML_BACKEND_DEVICE_TYPE_ACCEL:
+                        // skip CPU backends since they are handled separately
+                        break;
 
-                case GGML_BACKEND_DEVICE_TYPE_GPU: {
-                    ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(dev);
-                    if (ggml_backend_reg_name(reg) == std::string("RPC")) {
-                        rpc_servers.push_back(dev);
-                    } else {
-                        // check if there is already a GPU with the same device id
-                        ggml_backend_dev_props props;
-                        ggml_backend_dev_get_props(dev, &props);
-                        auto it = std::find_if(gpus.begin(), gpus.end(), [&props](ggml_backend_dev_t d) {
-                            ggml_backend_dev_props d_props;
-                            ggml_backend_dev_get_props(d, &d_props);
-                            if (props.device_id && d_props.device_id) {
-                                return strcmp(props.device_id, d_props.device_id) == 0;
-                            }
-                            return false;
-                        });
-
-                        if (it != gpus.end()) {
-                            LLAMA_LOG_INFO("%s: skipping device %s (%s) with id %s - already using device %s (%s) with the same id\n",
-                                    __func__,
-                                    ggml_backend_dev_name(dev), ggml_backend_dev_description(dev),
-                                    props.device_id ? props.device_id : "unknown id",
-                                    ggml_backend_dev_name(*it), ggml_backend_dev_description(*it));
+                    case GGML_BACKEND_DEVICE_TYPE_GPU: {
+                        ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(dev);
+                        if (ggml_backend_reg_name(reg) == std::string("RPC")) {
+                            rpc_servers.push_back(dev);
                         } else {
-                            gpus.push_back(dev);
-                        }
-                    }
-                    break;
-                }
+                            // check if there is already a GPU with the same device id
+                            ggml_backend_dev_props props;
+                            ggml_backend_dev_get_props(dev, &props);
+                            auto it = std::find_if(gpus.begin(), gpus.end(), [&props](ggml_backend_dev_t d) {
+                                ggml_backend_dev_props d_props;
+                                ggml_backend_dev_get_props(d, &d_props);
+                                if (props.device_id && d_props.device_id) {
+                                    return strcmp(props.device_id, d_props.device_id) == 0;
+                                }
+                                return false;
+                            });
 
-                case GGML_BACKEND_DEVICE_TYPE_IGPU:
-                    igpus.push_back(dev);
-                    break;
+                            if (it != gpus.end()) {
+                                LLAMA_LOG_INFO("%s: skipping device %s (%s) with id %s - already using device %s (%s) with the same id\n",
+                                        __func__,
+                                        ggml_backend_dev_name(dev), ggml_backend_dev_description(dev),
+                                        props.device_id ? props.device_id : "unknown id",
+                                        ggml_backend_dev_name(*it), ggml_backend_dev_description(*it));
+                            } else {
+                                gpus.push_back(dev);
+                            }
+                        }
+                        break;
+                    }
+
+                    case GGML_BACKEND_DEVICE_TYPE_IGPU:
+                        igpus.push_back(dev);
+                        break;
+                }
             }
-        }
         }
 
         // add RPC servers at the front of the list to minimize network transfers
