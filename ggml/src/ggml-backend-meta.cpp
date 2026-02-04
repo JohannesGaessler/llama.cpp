@@ -892,7 +892,7 @@ enum ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struc
             }
             if (src_split_states[0] == GGML_BACKEND_SPLIT_STATE_BY_NE0 && src_split_states[1] == GGML_BACKEND_SPLIT_STATE_BY_NE0) {
                 GGML_ASSERT(!force_recalc);
-                return GGML_BACKEND_SPLIT_STATE_PARTIAL;
+                return assume_fix_via_sync ? GGML_BACKEND_SPLIT_STATE_MIRRORED : GGML_BACKEND_SPLIT_STATE_PARTIAL;
             }
             GGML_ABORT("fatal error");
             GGML_ASSERT(!force_recalc);
@@ -961,6 +961,14 @@ enum ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struc
             }
         }
 
+        if (tensor->op == GGML_OP_SET_ROWS) {
+            GGML_ASSERT(src_split_states[0] == GGML_BACKEND_SPLIT_STATE_BY_NE0);
+            GGML_ASSERT(src_split_states[1] == GGML_BACKEND_SPLIT_STATE_MIRRORED);
+            GGML_ASSERT(src_split_states[0] == GGML_BACKEND_SPLIT_STATE_BY_NE0);
+            GGML_ASSERT(!force_recalc);
+            return src_split_states[0];
+        }
+
         if (tensor->op == GGML_OP_ROPE) {
             GGML_ASSERT(src_split_states[1] == GGML_BACKEND_SPLIT_STATE_MIRRORED);
             GGML_ASSERT(!force_recalc);
@@ -972,7 +980,7 @@ enum ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struc
             GGML_ASSERT(src_split_states[1] == GGML_BACKEND_SPLIT_STATE_BY_NE2);
             GGML_ASSERT(src_split_states[2] == GGML_BACKEND_SPLIT_STATE_BY_NE2);
             GGML_ASSERT(!force_recalc);
-            return src_split_states[0];
+            return GGML_BACKEND_SPLIT_STATE_BY_NE1;
         }
 
         ggml_backend_meta_split_state homogeneous_src_split_state = GGML_BACKEND_SPLIT_STATE_NONE;

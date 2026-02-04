@@ -878,7 +878,7 @@ static enum ggml_backend_meta_split_state llama_meta_device_get_tensor_split(con
     }
     const std::regex pattern_kv_cache("cache_(k|v)_l\\d*");
     if (std::regex_match(tensor->name, pattern_kv_cache)) {
-        return GGML_BACKEND_SPLIT_STATE_BY_NE1;
+        return GGML_BACKEND_SPLIT_STATE_BY_NE0;
     }
     const std::regex pattern_attn_out("blk\\.\\d*\\.attn_output.*");
     if (std::regex_match(tensor->name, pattern_attn_out)) {
