@@ -871,14 +871,31 @@ static int llama_model_load(const std::string & fname, std::vector<std::string> 
 }
 
 static enum ggml_backend_meta_split_state llama_meta_device_get_tensor_split(const struct ggml_tensor * tensor, void * userdata) {
-    const std::regex pattern_ne0("blk\\.\\d*\\.ffn_down.*");
-    if (std::regex_match(tensor->name, pattern_ne0)) {
-        return GGML_BACKEND_SPLIT_STATE_BY_NE0;
-    }
-    const std::regex pattern_ne1("blk\\.\\d*\\.ffn_(up|gate).*");
-    if (std::regex_match(tensor->name, pattern_ne1)) {
+    // attention
+    const std::regex pattern_qkv_weight("blk\\.\\d*\\.attn_(q|k|v).*");
+    if (std::regex_match(tensor->name, pattern_qkv_weight)) {
         return GGML_BACKEND_SPLIT_STATE_BY_NE1;
     }
+    const std::regex pattern_kv_cache("cache_(k|v)_l\\d*");
+    if (std::regex_match(tensor->name, pattern_kv_cache)) {
+        return GGML_BACKEND_SPLIT_STATE_BY_NE1;
+    }
+    const std::regex pattern_attn_out("blk\\.\\d*\\.attn_output.*");
+    if (std::regex_match(tensor->name, pattern_attn_out)) {
+        return GGML_BACKEND_SPLIT_STATE_BY_NE0;
+    }
+
+    // FFN
+    const std::regex pattern_ffn_up_gate("blk\\.\\d*\\.ffn_(up|gate).*");
+    if (std::regex_match(tensor->name, pattern_ffn_up_gate)) {
+        return GGML_BACKEND_SPLIT_STATE_BY_NE1;
+    }
+    const std::regex pattern_ffn_down("blk\\.\\d*\\.ffn_down.*");
+    if (std::regex_match(tensor->name, pattern_ffn_down)) {
+        return GGML_BACKEND_SPLIT_STATE_BY_NE0;
+    }
+
+    // everything else
     return GGML_BACKEND_SPLIT_STATE_MIRRORED;
     GGML_UNUSED(userdata);
 }
