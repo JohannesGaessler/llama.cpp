@@ -386,7 +386,6 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
 static void ggml_backend_meta_buffer_set_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
     GGML_ASSERT(ggml_backend_buffer_is_meta(buffer));
     GGML_ASSERT(offset == 0);
-    GGML_ASSERT(size == ggml_nbytes(tensor));
     GGML_ASSERT(ggml_is_contiguous(tensor));
     const ggml_backend_meta_buffer_context * buf_ctx = (const ggml_backend_meta_buffer_context *) buffer->context;
 
@@ -403,10 +402,14 @@ static void ggml_backend_meta_buffer_set_tensor(ggml_backend_buffer_t buffer, gg
             GGML_ASSERT(tensor->ne[2] == 1);
             GGML_ASSERT(tensor->ne[3] == 1);
             const size_t row_size_full = ggml_row_size(tensor->type, tensor->ne[0]);
+            GGML_ASSERT(offset % row_size_full == 0);
+            GGML_ASSERT(size   % row_size_full == 0);
+            const int64_t i1_start =  offset        /row_size_full;
+            const int64_t i1_stop  = (offset + size)/row_size_full;
             size_t row_offset_j = 0;
             for (ggml_tensor * t : simple_tensors) {
                 const size_t row_size_j = ggml_row_size(tensor->type, t->ne[0]);
-                for (int64_t i1 = 0; i1 < tensor->ne[1]; i1++) {
+                for (int64_t i1 = i1_start; i1 < i1_stop; i1++) {
                     ggml_backend_tensor_set(t, (const char *) data + i1*row_size_full + row_offset_j, i1*row_size_j, row_size_j);
                 }
                 row_offset_j += row_size_j;
@@ -414,6 +417,7 @@ static void ggml_backend_meta_buffer_set_tensor(ggml_backend_buffer_t buffer, gg
             GGML_ASSERT(row_offset_j == row_size_full);
         } break;
         case GGML_BACKEND_SPLIT_STATE_BY_NE1: {
+            GGML_ASSERT(size == ggml_nbytes(tensor));
             GGML_ASSERT(tensor->ne[2] == 1);
             GGML_ASSERT(tensor->ne[3] == 1);
             size_t data_offset_j = 0;
@@ -438,7 +442,7 @@ static void ggml_backend_meta_buffer_set_tensor(ggml_backend_buffer_t buffer, gg
 static void ggml_backend_meta_buffer_get_tensor(ggml_backend_buffer_t buffer, const ggml_tensor * tensor, void * data, size_t offset, size_t size) {
     GGML_ASSERT(ggml_backend_buffer_is_meta(buffer));
     GGML_ASSERT(offset == 0);
-    GGML_ASSERT(size == ggml_nbytes(tensor));
+    GGML_ASSERT(ggml_is_contiguous(tensor));
     const ggml_backend_meta_buffer_context * buf_ctx = (const ggml_backend_meta_buffer_context *) buffer->context;
 
     const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor, /*assume_fix_via_sync =*/ false, false);
@@ -450,6 +454,24 @@ static void ggml_backend_meta_buffer_get_tensor(ggml_backend_buffer_t buffer, co
     }
 
     switch (split_state) {
+        case GGML_BACKEND_SPLIT_STATE_BY_NE0: {
+            GGML_ASSERT(tensor->ne[2] == 1);
+            GGML_ASSERT(tensor->ne[3] == 1);
+            const size_t row_size_full = ggml_row_size(tensor->type, tensor->ne[0]);
+            GGML_ASSERT(offset % row_size_full == 0);
+            GGML_ASSERT(size   % row_size_full == 0);
+            const int64_t i1_start =  offset        /row_size_full;
+            const int64_t i1_stop  = (offset + size)/row_size_full;
+            size_t row_offset_j = 0;
+            for (ggml_tensor * t : simple_tensors) {
+                const size_t row_size_j = ggml_row_size(tensor->type, t->ne[0]);
+                for (int64_t i1 = i1_start; i1 < i1_stop; i1++) {
+                    ggml_backend_tensor_set(t, (const char *) data + i1*row_size_full + row_offset_j, i1*row_size_j, row_size_j);
+                }
+                row_offset_j += row_size_j;
+            }
+            GGML_ASSERT(row_offset_j == row_size_full);
+        } break;
         case GGML_BACKEND_SPLIT_STATE_MIRRORED: {
             // TODO other simple backend may be better
             ggml_backend_tensor_get(simple_tensors[0], data, offset, size);
