@@ -1,6 +1,5 @@
 #include "ggml-alloc.h"
 #include "ggml-backend-impl.h"
-#include "ggml-backend.h"
 #include "ggml.h"
 #include "ggml-impl.h"
 #include <assert.h>
@@ -364,7 +363,7 @@ static void ggml_dyn_tallocr_reset(struct ggml_dyn_tallocr * alloc) {
     for (int i = 0; i < 1024; i++) {
         alloc->allocated_tensors[i].tensor = NULL;
     }
-#endif // GGML_ALLOCATOR_DEBUG
+#endif
 }
 
 static struct ggml_dyn_tallocr * ggml_dyn_tallocr_new(size_t alignment, size_t max_buffer_size) {
@@ -1058,14 +1057,14 @@ bool ggml_gallocr_alloc_graph(ggml_gallocr_t galloc, struct ggml_cgraph * graph)
         if (galloc->n_buffers == 1) {
 #ifndef NDEBUG
             GGML_LOG_DEBUG("%s: reallocating buffers automatically\n", __func__);
-#endif // NDEBUG
+#endif
             if (!ggml_gallocr_reserve(galloc, graph)) {
                 return false;
             }
         } else {
 #ifndef NDEBUG
             GGML_LOG_DEBUG("%s: cannot reallocate multi buffer graph automatically, call reserve\n", __func__);
-#endif // NDEBUG
+#endif
             return false;
         }
     }

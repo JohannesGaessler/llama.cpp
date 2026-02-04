@@ -1,7 +1,5 @@
 // Note: porting this file to C++ is a work in progress
 
-#include "ggml.h"
-#include <cstdint>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #ifndef NOMINMAX
