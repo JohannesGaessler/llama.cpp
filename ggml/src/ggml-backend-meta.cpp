@@ -221,6 +221,9 @@ struct ggml_backend_meta_buffer_type_context {
     ggml_backend_meta_buffer_type_context(std::vector<ggml_backend_buffer_type_t> simple_bufts) : simple_bufts(std::move(simple_bufts)) {
         name = "Meta(";
         for (size_t i = 0; i < simple_bufts.size(); i++) {
+            if (i > 0) {
+                name += ",";
+            }
             name += ggml_backend_buft_name(simple_bufts[i]);
         }
         name += ")";
@@ -411,14 +414,14 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
         t_ij->view_offs = tensor->view_offs;
         t_ij->view_src = tensor->view_src;
         if (t_ij->view_src != nullptr && ggml_backend_buffer_is_meta(t_ij->view_src->buffer)) {
-            t_ij->view_src = ggml_backend_meta_buffer_simple_tensor(tensor->view_src->buffer, tensor->view_src, j);
+            t_ij->view_src = ggml_backend_meta_buffer_simple_tensor(tensor->view_src, j);
         }
         for (int i = 0; i < GGML_MAX_SRC; i++) {
             t_ij->src[i] = tensor->src[i];
             if (tensor->src[i] == tensor) {
                 t_ij->src[i] = t_ij;
             } else if (t_ij->src[i] != nullptr && ggml_backend_buffer_is_meta(t_ij->src[i]->buffer)) {
-                t_ij->src[i] = ggml_backend_meta_buffer_simple_tensor(tensor->src[i]->buffer, tensor->src[i], j);
+                t_ij->src[i] = ggml_backend_meta_buffer_simple_tensor(tensor->src[i], j);
             }
         }
 
@@ -535,16 +538,23 @@ static void ggml_backend_meta_buffer_clear(ggml_backend_buffer_t buffer, uint8_t
     }
 }
 
+static void ggml_backend_meta_buffer_reset(ggml_backend_buffer_t buffer) {
+    const size_t n_buffers = ggml_backend_meta_buffer_n_bufs(buffer);
+    for (size_t i = 0; i < n_buffers; i++) {
+        ggml_backend_buffer_reset(ggml_backend_meta_buffer_simple_buffer(buffer, i));
+    }
+}
+
 static const ggml_backend_buffer_i ggml_backend_meta_buffer_iface = {
     /* .free_buffer     = */ ggml_backend_meta_buffer_free_buffer,
     /* .get_base        = */ ggml_backend_meta_buffer_get_base,
     /* .init_tensor     = */ ggml_backend_meta_buffer_init_tensor,
-    /* .memset_tensor   = */ nullptr,
+    /* .memset_tensor   = */ nullptr, // TODO implement
     /* .set_tensor      = */ ggml_backend_meta_buffer_set_tensor,
     /* .get_tensor      = */ ggml_backend_meta_buffer_get_tensor,
     /* .cpy_tensor      = */ nullptr,
     /* .clear           = */ ggml_backend_meta_buffer_clear,
-    /* .reset           = */ nullptr,
+    /* .reset           = */ ggml_backend_meta_buffer_reset,
 };
 
 bool ggml_backend_buffer_is_meta(ggml_backend_buffer_t buf) {
@@ -564,9 +574,9 @@ ggml_backend_buffer_t ggml_backend_meta_buffer_simple_buffer(ggml_backend_buffer
     return buf_ctx->buf_configs[index].buf;
 }
 
-struct ggml_tensor * ggml_backend_meta_buffer_simple_tensor(ggml_backend_buffer_t buf, const struct ggml_tensor * tensor, size_t index) {
-    GGML_ASSERT(ggml_backend_buffer_is_meta(buf));
-    ggml_backend_meta_buffer_context * buf_ctx = (ggml_backend_meta_buffer_context *) buf->context;
+struct ggml_tensor * ggml_backend_meta_buffer_simple_tensor(const struct ggml_tensor * tensor, size_t index) {
+    GGML_ASSERT(ggml_backend_buffer_is_meta(tensor->buffer));
+    ggml_backend_meta_buffer_context * buf_ctx = (ggml_backend_meta_buffer_context *) tensor->buffer->context;
     GGML_ASSERT(index < buf_ctx->buf_configs.size());
 
     auto it = buf_ctx->simple_tensors.find(tensor);
@@ -597,6 +607,10 @@ static ggml_backend_buffer_t ggml_backend_meta_buffer_type_alloc_buffer(ggml_bac
     return ggml_backend_buffer_init(buft, ggml_backend_meta_buffer_iface, buf_ctx, max_size);
 }
 
+//
+// meta backend
+//
+
 static ggml_guid_t ggml_backend_meta_guid() {
     static ggml_guid guid = {0xf1, 0x0e, 0x34, 0xcf, 0x9c, 0x6f, 0x43, 0xcb, 0x96, 0x92, 0xbe, 0x8e, 0xbb, 0x71, 0x3f, 0xda};
     return &guid;
@@ -605,7 +619,7 @@ static ggml_guid_t ggml_backend_meta_guid() {
 struct ggml_backend_meta_context {
     struct cgraph_config {
         ggml_cgraph cgraph_main;
-        int         offset;
+        int         offset; // Node offset vs. original graph, only used for debugging.
 
         std::vector<ggml_cgraph>   cgraphs_aux;
         std::vector<ggml_tensor *> nodes_aux;
@@ -613,22 +627,49 @@ struct ggml_backend_meta_context {
         cgraph_config(ggml_cgraph cgraph_main, int offset) : cgraph_main(cgraph_main), offset(offset) {}
     };
     struct backend_config {
-        ggml_backend_t             backend;
-        std::vector<cgraph_config> cgraphs;
-        std::vector<ggml_tensor *> nodes;
+        ggml_backend_t backend;
 
-        ggml_context          * ctx = nullptr;
-        ggml_backend_buffer_t   buf = nullptr;
+        std::vector<cgraph_config>   cgraphs;
+        std::vector<ggml_tensor *>   nodes;
+        ggml_context               * ctx = nullptr;
+        ggml_backend_buffer_t        buf = nullptr;
 
         backend_config(ggml_backend_t backend) : backend(backend) {}
+
+        ~backend_config() {
+            ggml_backend_buffer_free(buf);
+            ggml_free(ctx);
+        }
     };
+    std::string                 name;
     std::vector<backend_config> backend_configs;
+
+    ggml_backend_meta_context(ggml_backend_dev_t meta_dev, const char * params) {
+        const size_t n_devs = ggml_backend_meta_device_n_devs(meta_dev);
+        name = "Meta(";
+        backend_configs.reserve(n_devs);
+        for (size_t i = 0; i < n_devs; i++) {
+            ggml_backend_dev_t simple_dev = ggml_backend_meta_device_simple_dev(meta_dev, i);
+            if (i > 0) {
+                name += ",";
+            }
+            name += ggml_backend_dev_name(simple_dev);
+            backend_configs.emplace_back(ggml_backend_dev_init(simple_dev, params));
+        }
+        name += ")";
+    }
+
+    ~ggml_backend_meta_context() {
+        for (auto & bc : backend_configs) {
+            ggml_backend_free(bc.backend);
+        }
+    }
 };
 
 static const char * ggml_backend_meta_get_name(ggml_backend_t backend) {
-    return "Meta";
-
-    GGML_UNUSED(backend);
+    GGML_ASSERT(ggml_backend_is_meta(backend));
+    const ggml_backend_meta_context * backend_ctx = (const ggml_backend_meta_context *) backend->context;
+    return backend_ctx->name.c_str();
 }
 
 static void ggml_backend_meta_free(ggml_backend_t backend) {
@@ -643,7 +684,7 @@ static void ggml_backend_meta_set_tensor_async(ggml_backend_t backend, ggml_tens
     const size_t n_backends = ggml_backend_meta_n_backends(backend);
     for (size_t i = 0; i < n_backends; i++) {
         ggml_backend_tensor_set_async(
-            ggml_backend_meta_simple_backend(backend, i), ggml_backend_meta_buffer_simple_tensor(tensor->buffer, tensor, i), data, offset, size);
+            ggml_backend_meta_simple_backend(backend, i), ggml_backend_meta_buffer_simple_tensor(tensor, i), data, offset, size);
     }
 }
 
@@ -652,7 +693,7 @@ static void ggml_backend_meta_get_tensor_async(ggml_backend_t backend, const ggm
     const size_t n_backends = ggml_backend_meta_n_backends(backend);
     GGML_ASSERT(n_backends >= 1);
     ggml_backend_tensor_get_async( // TODO other backends may be more optimal
-        ggml_backend_meta_simple_backend(backend, 0), ggml_backend_meta_buffer_simple_tensor(tensor->buffer, tensor, 0), data, offset, size);
+        ggml_backend_meta_simple_backend(backend, 0), ggml_backend_meta_buffer_simple_tensor(tensor, 0), data, offset, size);
 }
 
 static void ggml_backend_meta_synchronize(ggml_backend_t backend) {
@@ -662,122 +703,31 @@ static void ggml_backend_meta_synchronize(ggml_backend_t backend) {
     }
 }
 
-// static ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const ggml_tensor * t) {
-//     auto get_split_state = [&](const size_t i) -> ggml_backend_meta_split_state {
-//         if (t->src[i] == nullptr) {
-//             return GGML_BACKEND_SPLIT_STATE_UNKNOWN;
-//         }
-//         return ggml_backend_meta_buffer_type_split_state(ggml_backend_buffer_get_type(t->src[i]->buffer));
-//     };
-//     switch (t->op) {
-//         case GGML_OP_MUL_MAT: {
-//             if (get_split_state(0) == GGML_BACKEND_SPLIT_STATE_BY_NE1 && get_split_state(1) == GGML_BACKEND_SPLIT_STATE_MIRRORED) {
-//                 return GGML_BACKEND_SPLIT_STATE_BY_NE0;
-//             }
-//             if (get_split_state(0) == GGML_BACKEND_SPLIT_STATE_BY_NE0 && get_split_state(1) == GGML_BACKEND_SPLIT_STATE_BY_NE0) {
-//                 return GGML_BACKEND_SPLIT_STATE_PARTIAL;
-//             }
-//             if (get_split_state(0) == GGML_BACKEND_SPLIT_STATE_BY_NE2 && get_split_state(1) == GGML_BACKEND_SPLIT_STATE_BY_NE2) {
-//                 return GGML_BACKEND_SPLIT_STATE_BY_NE2;
-//             }
-//         } break;
-//         default: {
-//         } break;
-//     }
-//     return GGML_BACKEND_SPLIT_STATE_UNKNOWN;
-// }
-
-static ggml_tensor * map_tensor(std::map<ggml_tensor *, ggml_tensor *> & tensor_map, ggml_context * ctx, ggml_tensor * tensor) {
-    if (!tensor) {
-        return nullptr;
-    }
-
-    if (tensor_map.find(tensor) != tensor_map.end()) {
-        return tensor_map[tensor];
-    }
-
-    ggml_tensor * new_tensor = ggml_dup_tensor(ctx, tensor);
-    tensor_map[tensor] = new_tensor;
-
-    new_tensor->op = tensor->op;
-    for (int i = 0; i < GGML_MAX_DIMS; i++) {
-        new_tensor->nb[i] = tensor->nb[i];
-    }
-    new_tensor->flags = tensor->flags;
-    memcpy(new_tensor->op_params, tensor->op_params, sizeof(tensor->op_params));
-    strcpy(new_tensor->name, tensor->name);
-    new_tensor->data = tensor->data;
-    new_tensor->buffer = tensor->buffer;
-    new_tensor->extra = tensor->extra;
-    new_tensor->view_offs = tensor->view_offs;
-    new_tensor->view_src = map_tensor(tensor_map, ctx, tensor->view_src);
-    for (int i = 0; i < GGML_MAX_SRC; i++) {
-        new_tensor->src[i] = map_tensor(tensor_map, ctx, tensor->src[i]);
-    }
-
-    return new_tensor;
-}
-
-static ggml_cgraph * dup_graph(ggml_context * ctx, ggml_cgraph * src) {
-    std::map<ggml_tensor *, ggml_tensor *> tensor_map;
-
-    ggml_cgraph * dst = ggml_new_graph_custom(ctx, src->size, /*grads =*/ true);
-
-    for (int i = 0; i < src->n_leafs; i++) {
-        ggml_build_forward_expand(dst, map_tensor(tensor_map, ctx, src->leafs[i]));
-    }
-    GGML_ASSERT(dst->n_leafs == src->n_leafs);
-    for (int i = 0; i < src->n_nodes; i++) {
-        ggml_build_forward_expand(dst, map_tensor(tensor_map, ctx, src->nodes[i]));
-    }
-    GGML_ASSERT(dst->n_nodes == src->n_nodes);
-    for (int i = 0; i < src->n_nodes; ++i) {
-        const size_t igrad_src = ggml_hash_find(&src->visited_hash_set, src->nodes[i]);
-        const size_t igrad_dst = ggml_hash_find(&dst->visited_hash_set, dst->nodes[i]);
-
-        GGML_ASSERT(igrad_src != GGML_HASHSET_FULL);
-        GGML_ASSERT(ggml_bitset_get(src->visited_hash_set.used, igrad_src));
-        GGML_ASSERT(igrad_dst != GGML_HASHSET_FULL);
-        GGML_ASSERT(ggml_bitset_get(dst->visited_hash_set.used, igrad_dst));
-
-        dst->grads[igrad_dst]     = src->grads[igrad_src];
-        dst->grad_accs[igrad_dst] = src->grad_accs[igrad_src];
-    }
-
-    return dst;
-}
-
 static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
     const size_t n_backends = ggml_backend_meta_n_backends(backend);
     ggml_backend_meta_context * backend_ctx = (ggml_backend_meta_context *) backend->context;
+    const size_t n_reduce_steps = std::ceilf(std::log2(n_backends));
 
     for (size_t j = 0; j < n_backends; j++) {
         auto & bcj = backend_ctx->backend_configs[j];
         bcj.cgraphs.clear();
         bcj.nodes.clear();
-        bcj.nodes.reserve(2*cgraph->n_nodes);
+        bcj.nodes.reserve(cgraph->n_nodes*n_reduce_steps);
 
         for (int i = 0; i < cgraph->n_nodes; i++) {
-            bcj.nodes.push_back(ggml_backend_meta_buffer_simple_tensor(cgraph->nodes[i]->buffer, cgraph->nodes[i], j));
+            bcj.nodes.push_back(ggml_backend_meta_buffer_simple_tensor(cgraph->nodes[i], j));
             GGML_ASSERT(bcj.nodes[i]);
         }
     }
 
+    size_t n_subgraphs  = 0;
     size_t max_tmp_size = 0;
     {
         int i_start = 0;
         for (int i = 0; i < cgraph->n_nodes; i++) {
             ggml_tensor * node = cgraph->nodes[i];
-            bool new_subgraph = false;
-            if (i + 1 == cgraph->n_nodes) {
-                new_subgraph = true;
-            } else {
-                const ggml_backend_meta_split_state split_state_unfixed = ggml_backend_meta_get_split_state(node, false, false);
-                // const ggml_backend_meta_split_state split_state_fixed   = ggml_backend_meta_get_split_state(node, true);
-                // GGML_ASSERT(split_state_unfixed == GGML_BACKEND_SPLIT_STATE_PARTIAL);
-                // GGML_ASSERT(split_state_fixed   == GGML_BACKEND_SPLIT_STATE_MIRRORED);
-                new_subgraph = split_state_unfixed == GGML_BACKEND_SPLIT_STATE_PARTIAL;
-            }
+            const bool new_subgraph = i + 1 == cgraph->n_nodes ||
+                ggml_backend_meta_get_split_state(node, false, false) == GGML_BACKEND_SPLIT_STATE_PARTIAL;
             if (!new_subgraph) {
                 continue;
             }
@@ -788,13 +738,12 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 bcj.cgraphs.back().cgraph_main.nodes = bcj.nodes.data() + i_start;
                 bcj.cgraphs.back().cgraph_main.n_nodes = i + 1 - i_start;
             }
+            n_subgraphs++;
             max_tmp_size = std::max(max_tmp_size, ggml_nbytes(node));
             i_start = i + 1;
         }
         GGML_ASSERT(i_start == cgraph->n_nodes);
     }
-    const size_t n_subgraphs = backend_ctx->backend_configs[0].cgraphs.size();
-    const size_t n_reduce_steps = std::ceilf(std::log2(n_backends));
 
     ggml_init_params params = {
         /*.mem_size   =*/ n_subgraphs*2*ggml_tensor_overhead(),
@@ -802,18 +751,15 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
         /*.no_alloc   =*/ true,
     };
 
+    // Preferentially use backend-specific allreduce_tensor_async (e.g. NCCL for CUDA), use a generic fallback if unavailable:
     bool tmp_buffers_initialized = false;
     auto allreduce_fallback = [&](size_t i) -> ggml_status {
         if (!tmp_buffers_initialized) {
             for (size_t j = 0; j < n_backends; j++) {
                 auto & bcj = backend_ctx->backend_configs[j];
-                if (bcj.ctx != nullptr) {
-                    ggml_free(bcj.ctx);
-                }
+                ggml_backend_buffer_free(bcj.buf);
+                ggml_free(bcj.ctx);
                 bcj.ctx = ggml_init(params);
-                if (bcj.buf != nullptr) {
-                    ggml_backend_buffer_free(bcj.buf);
-                }
                 bcj.buf = ggml_backend_alloc_buffer(bcj.backend, max_tmp_size);
             }
             tmp_buffers_initialized = true;
@@ -944,14 +890,7 @@ bool ggml_backend_is_meta(ggml_backend_t backend) {
 }
 
 static ggml_backend_t ggml_backend_meta_device_init_backend(ggml_backend_dev_t dev, const char * params) {
-    const size_t n_devs = ggml_backend_meta_device_n_devs(dev);
-
-    ggml_backend_meta_context * backend_ctx = new ggml_backend_meta_context;
-    backend_ctx->backend_configs.reserve(n_devs);
-    for (size_t i = 0; i < n_devs; i++) {
-        backend_ctx->backend_configs.emplace_back(
-            ggml_backend_dev_init(ggml_backend_meta_device_simple_dev(dev, i), params));
-    }
+    ggml_backend_meta_context * backend_ctx = new ggml_backend_meta_context(dev, params);
 
     ggml_backend_t backend = new struct ggml_backend;
     backend->guid    = ggml_backend_meta_guid();
@@ -963,13 +902,13 @@ static ggml_backend_t ggml_backend_meta_device_init_backend(ggml_backend_dev_t d
 
 size_t ggml_backend_meta_n_backends(ggml_backend_t meta_backend) {
     GGML_ASSERT(ggml_backend_is_meta(meta_backend));
-    ggml_backend_meta_context * backend_ctx = (ggml_backend_meta_context *) meta_backend->context;
+    const ggml_backend_meta_context * backend_ctx = (const ggml_backend_meta_context *) meta_backend->context;
     return backend_ctx->backend_configs.size();
 }
 
 ggml_backend_t ggml_backend_meta_simple_backend(ggml_backend_t meta_backend, size_t index) {
     GGML_ASSERT(ggml_backend_is_meta(meta_backend));
-    ggml_backend_meta_context * backend_ctx = (ggml_backend_meta_context *) meta_backend->context;
+    const ggml_backend_meta_context * backend_ctx = (const ggml_backend_meta_context *) meta_backend->context;
     return backend_ctx->backend_configs[index].backend;
 }
 
@@ -978,7 +917,6 @@ enum ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struc
     ggml_backend_meta_buffer_context * buf_ctx = (ggml_backend_meta_buffer_context *) tensor->buffer->context;
 
     auto calculate_split_state = [&]() -> ggml_backend_meta_split_state {
-
         if (ggml_backend_buffer_get_usage(tensor->buffer) != GGML_BACKEND_BUFFER_USAGE_COMPUTE && tensor->view_src == nullptr) {
             ggml_backend_dev_t dev = ggml_backend_buft_get_device(ggml_backend_buffer_get_type(tensor->buffer));
             const ggml_backend_meta_device_context * dev_ctx = (const ggml_backend_meta_device_context *) dev->context;
