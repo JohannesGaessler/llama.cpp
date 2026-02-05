@@ -408,14 +408,18 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
         memcpy(t_ij->op_params, tensor->op_params, sizeof(tensor->op_params));
         ggml_set_name(t_ij, tensor->name);
         t_ij->buffer = simple_buf;
-        t_ij->data   = (char *) ggml_backend_buffer_get_base(simple_buf)
-            + size_t(tensor->data) - size_t(ggml_backend_buffer_get_base(buffer));
-        t_ij->extra = tensor->extra;
         t_ij->view_offs = tensor->view_offs;
         t_ij->view_src = tensor->view_src;
         if (t_ij->view_src != nullptr && ggml_backend_buffer_is_meta(t_ij->view_src->buffer)) {
             t_ij->view_src = ggml_backend_meta_buffer_simple_tensor(tensor->view_src, j);
         }
+        if (t_ij->view_src != nullptr) {
+            t_ij->data = (char *) t_ij->view_src->data + t_ij->view_offs;
+        } else if (simple_buf != nullptr) {
+            t_ij->data = (char *) ggml_backend_buffer_get_base(simple_buf)
+                + size_t(tensor->data) - size_t(ggml_backend_buffer_get_base(buffer));
+        }
+        t_ij->extra = tensor->extra;
         for (int i = 0; i < GGML_MAX_SRC; i++) {
             t_ij->src[i] = tensor->src[i];
             if (tensor->src[i] == tensor) {
@@ -605,6 +609,35 @@ static ggml_backend_buffer_t ggml_backend_meta_buffer_type_alloc_buffer(ggml_bac
     }
 
     return ggml_backend_buffer_init(buft, ggml_backend_meta_buffer_iface, buf_ctx, max_size);
+}
+
+struct ggml_backend_buffer * ggml_backend_meta_alloc_ctx_tensors_from_buft(struct ggml_context * ctx, ggml_backend_buffer_type_t buft) {
+    const size_t n_simple_bufts = ggml_backend_meta_buffer_type_n_bufts(buft);
+
+    ggml_init_params params = {
+        /*.mem_size   =*/ 1024*1024*1024, // FIXME
+        /*.mem_buffer =*/ nullptr,
+        /*.no_alloc   =*/ true,
+    };
+
+    ggml_backend_meta_buffer_context * meta_buf_ctx = new ggml_backend_meta_buffer_context;
+    meta_buf_ctx->buf_configs.reserve(n_simple_bufts);
+    for (size_t i = 0; i < n_simple_bufts; i++) {
+        meta_buf_ctx->buf_configs.emplace_back(ggml_init(params), nullptr);
+    }
+
+    ggml_backend_buffer_t meta_buf = ggml_backend_buffer_init(buft, ggml_backend_meta_buffer_iface, meta_buf_ctx, 0);
+    for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != nullptr; t = ggml_get_next_tensor(ctx, t)) {
+        t->buffer = meta_buf;
+        ggml_backend_meta_buffer_init_tensor(meta_buf, t);
+        t->data = (void *) 0x2000000000000000; // FIXME
+    }
+    for (size_t i = 0; i < n_simple_bufts; i++) {
+        meta_buf_ctx->buf_configs[i].buf = ggml_backend_alloc_ctx_tensors_from_buft(
+            meta_buf_ctx->buf_configs[i].ctx, ggml_backend_meta_buffer_type_simple_buft(buft, i));
+        meta_buf->size = std::max(meta_buf->size, ggml_backend_buffer_get_size(meta_buf_ctx->buf_configs[i].buf));
+    }
+    return meta_buf;
 }
 
 //
@@ -1042,7 +1075,7 @@ enum ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struc
                 src_split_states[i] = GGML_BACKEND_SPLIT_STATE_UNKNOWN;
                 continue;
             }
-            src_split_states[i] = ggml_backend_meta_get_split_state(tensor->src[i], /*assume_fix_via_sync =*/ true);
+            src_split_states[i] = ggml_backend_meta_get_split_state(tensor->src[i], /*assume_sync =*/ true);
         }
 
         switch (tensor->op) {
