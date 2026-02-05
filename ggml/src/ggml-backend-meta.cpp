@@ -372,7 +372,7 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
     ggml_backend_meta_buffer_context * buf_ctx = (ggml_backend_meta_buffer_context *) buffer->context;
     const size_t n_simple_bufs = ggml_backend_meta_buffer_n_bufs(buffer);
 
-    const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor, /*assume_fix_via_sync =*/ true, false);
+    const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor, /*assume_sync =*/ true);
     GGML_ASSERT(split_state != GGML_BACKEND_SPLIT_STATE_UNKNOWN);
 
     int split_dim = split_state;
@@ -438,7 +438,7 @@ static void ggml_backend_meta_buffer_set_tensor(ggml_backend_buffer_t buffer, gg
     GGML_ASSERT(ggml_is_contiguous(tensor));
     const ggml_backend_meta_buffer_context * buf_ctx = (const ggml_backend_meta_buffer_context *) buffer->context;
 
-    const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor, /*assume_fix_via_sync =*/ false, false);
+    const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor, /*assume_sync =*/ false);
     std::vector<ggml_tensor *> simple_tensors;
     {
         auto it = buf_ctx->simple_tensors.find(tensor);
@@ -494,7 +494,7 @@ static void ggml_backend_meta_buffer_get_tensor(ggml_backend_buffer_t buffer, co
     GGML_ASSERT(ggml_is_contiguous(tensor));
     const ggml_backend_meta_buffer_context * buf_ctx = (const ggml_backend_meta_buffer_context *) buffer->context;
 
-    const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor, /*assume_fix_via_sync =*/ false, false);
+    const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor, /*assume_sync =*/ false);
     std::vector<ggml_tensor *> simple_tensors;
     {
         auto it = buf_ctx->simple_tensors.find(tensor);
@@ -680,7 +680,7 @@ static void ggml_backend_meta_free(ggml_backend_t backend) {
 }
 
 static void ggml_backend_meta_set_tensor_async(ggml_backend_t backend, ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
-    GGML_ASSERT(ggml_backend_meta_get_split_state(tensor, false, false) == GGML_BACKEND_SPLIT_STATE_MIRRORED);
+    GGML_ASSERT(ggml_backend_meta_get_split_state(tensor, false) == GGML_BACKEND_SPLIT_STATE_MIRRORED);
     const size_t n_backends = ggml_backend_meta_n_backends(backend);
     for (size_t i = 0; i < n_backends; i++) {
         ggml_backend_tensor_set_async(
@@ -689,7 +689,7 @@ static void ggml_backend_meta_set_tensor_async(ggml_backend_t backend, ggml_tens
 }
 
 static void ggml_backend_meta_get_tensor_async(ggml_backend_t backend, const ggml_tensor * tensor, void * data, size_t offset, size_t size) {
-    GGML_ASSERT(ggml_backend_meta_get_split_state(tensor, false, false) == GGML_BACKEND_SPLIT_STATE_MIRRORED);
+    GGML_ASSERT(ggml_backend_meta_get_split_state(tensor, false) == GGML_BACKEND_SPLIT_STATE_MIRRORED);
     const size_t n_backends = ggml_backend_meta_n_backends(backend);
     GGML_ASSERT(n_backends >= 1);
     ggml_backend_tensor_get_async( // TODO other backends may be more optimal
@@ -727,7 +727,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
         for (int i = 0; i < cgraph->n_nodes; i++) {
             ggml_tensor * node = cgraph->nodes[i];
             const bool new_subgraph = i + 1 == cgraph->n_nodes ||
-                ggml_backend_meta_get_split_state(node, false, false) == GGML_BACKEND_SPLIT_STATE_PARTIAL;
+                ggml_backend_meta_get_split_state(node, /*assume_sync =*/ false) == GGML_BACKEND_SPLIT_STATE_PARTIAL;
             if (!new_subgraph) {
                 continue;
             }
@@ -912,129 +912,11 @@ ggml_backend_t ggml_backend_meta_simple_backend(ggml_backend_t meta_backend, siz
     return backend_ctx->backend_configs[index].backend;
 }
 
-enum ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struct ggml_tensor * tensor, bool assume_fix_via_sync, bool force_recalc) {
+enum ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struct ggml_tensor * tensor, bool assume_sync) {
     GGML_ASSERT(ggml_backend_buffer_is_meta(tensor->buffer));
     ggml_backend_meta_buffer_context * buf_ctx = (ggml_backend_meta_buffer_context *) tensor->buffer->context;
 
-    auto calculate_split_state = [&]() -> ggml_backend_meta_split_state {
-        if (ggml_backend_buffer_get_usage(tensor->buffer) != GGML_BACKEND_BUFFER_USAGE_COMPUTE && tensor->view_src == nullptr) {
-            ggml_backend_dev_t dev = ggml_backend_buft_get_device(ggml_backend_buffer_get_type(tensor->buffer));
-            const ggml_backend_meta_device_context * dev_ctx = (const ggml_backend_meta_device_context *) dev->context;
-            GGML_ASSERT(!force_recalc);
-            return dev_ctx->get_split_state(tensor, dev_ctx->get_split_state_ud);
-        }
-
-        std::vector<ggml_backend_meta_split_state> src_split_states(GGML_MAX_SRC, GGML_BACKEND_SPLIT_STATE_NONE);
-        for (size_t i = 0; i < GGML_MAX_SRC; i++) {
-            if (tensor->src[i] == nullptr || tensor->src[i] == tensor) {
-                src_split_states[i] = GGML_BACKEND_SPLIT_STATE_UNKNOWN;
-                continue;
-            }
-            src_split_states[i] = ggml_backend_meta_get_split_state(tensor->src[i], /*assume_fix_via_sync =*/ true, false);
-        }
-
-        if (tensor->op == GGML_OP_MUL_MAT) {
-            if (src_split_states[0] == GGML_BACKEND_SPLIT_STATE_MIRRORED && src_split_states[1] == GGML_BACKEND_SPLIT_STATE_MIRRORED) {
-                GGML_ASSERT(!force_recalc);
-                return GGML_BACKEND_SPLIT_STATE_MIRRORED;
-            }
-            if (src_split_states[0] == GGML_BACKEND_SPLIT_STATE_BY_NE1 && src_split_states[1] == GGML_BACKEND_SPLIT_STATE_MIRRORED) {
-                GGML_ASSERT(!force_recalc);
-                return GGML_BACKEND_SPLIT_STATE_BY_NE0;
-            }
-            if (src_split_states[0] == GGML_BACKEND_SPLIT_STATE_BY_NE0 && src_split_states[1] == GGML_BACKEND_SPLIT_STATE_BY_NE0) {
-                GGML_ASSERT(!force_recalc);
-                return assume_fix_via_sync ? GGML_BACKEND_SPLIT_STATE_MIRRORED : GGML_BACKEND_SPLIT_STATE_PARTIAL;
-            }
-            GGML_ABORT("fatal error");
-            GGML_ASSERT(!force_recalc);
-            return GGML_BACKEND_SPLIT_STATE_UNKNOWN;
-        }
-
-        if (tensor->op == GGML_OP_RESHAPE || (tensor->op == GGML_OP_VIEW && ggml_is_contiguous(tensor))) {
-            switch (src_split_states[0]) {
-                case GGML_BACKEND_SPLIT_STATE_BY_NE0:
-                case GGML_BACKEND_SPLIT_STATE_BY_NE1:
-                case GGML_BACKEND_SPLIT_STATE_BY_NE2:
-                case GGML_BACKEND_SPLIT_STATE_BY_NE3: {
-                    GGML_ASSERT(ggml_is_contiguous(tensor));
-                    int64_t base_ne_in = 1;
-                    for (int dim = 0; dim <= int(src_split_states[0]); dim++) {
-                        base_ne_in *= tensor->src[0]->ne[dim];
-                    }
-                    int64_t base_ne_out = 1;
-                    for (int dim = 0; dim < GGML_MAX_DIMS; dim++) {
-                        const int64_t base_ne_out_next = base_ne_out *= tensor->ne[dim];
-                        if (base_ne_out_next == base_ne_in) {
-                            GGML_ASSERT(!force_recalc);
-                            return ggml_backend_meta_split_state(dim);
-                        }
-                        base_ne_out = base_ne_out_next;
-                    }
-                    GGML_ABORT("shape mismatch for GGML_OP_RESHAPE");
-                }
-                case GGML_BACKEND_SPLIT_STATE_MIRRORED:
-                case GGML_BACKEND_SPLIT_STATE_PARTIAL: {
-                    GGML_ABORT("fatal error");
-                    GGML_ASSERT(!force_recalc);
-                    return src_split_states[0];
-                }
-                default: {
-                    GGML_ABORT("fatal error");
-                    GGML_ASSERT(!force_recalc);
-                    return GGML_BACKEND_SPLIT_STATE_UNKNOWN;
-                }
-            }
-        }
-
-        if (tensor->op == GGML_OP_VIEW) {
-            GGML_ABORT("fatal error");
-        }
-
-        if (tensor->op == GGML_OP_PERMUTE) {
-            switch (src_split_states[0]) {
-                case GGML_BACKEND_SPLIT_STATE_BY_NE0:
-                case GGML_BACKEND_SPLIT_STATE_BY_NE1:
-                case GGML_BACKEND_SPLIT_STATE_BY_NE2:
-                case GGML_BACKEND_SPLIT_STATE_BY_NE3: {
-                    GGML_ASSERT(!force_recalc);
-                    return ggml_backend_meta_split_state(tensor->op_params[int(src_split_states[0])]);
-                }
-                case GGML_BACKEND_SPLIT_STATE_MIRRORED:
-                case GGML_BACKEND_SPLIT_STATE_PARTIAL: {
-                    GGML_ASSERT(!force_recalc);
-                    return src_split_states[0];
-                }
-                default: {
-                    GGML_ABORT("fatal error");
-                    GGML_ASSERT(!force_recalc);
-                    return GGML_BACKEND_SPLIT_STATE_UNKNOWN;
-                }
-            }
-        }
-
-        if (tensor->op == GGML_OP_SET_ROWS) {
-            GGML_ASSERT(src_split_states[0] == GGML_BACKEND_SPLIT_STATE_BY_NE0);
-            GGML_ASSERT(src_split_states[1] == GGML_BACKEND_SPLIT_STATE_MIRRORED);
-            GGML_ASSERT(src_split_states[0] == GGML_BACKEND_SPLIT_STATE_BY_NE0);
-            GGML_ASSERT(!force_recalc);
-            return src_split_states[0];
-        }
-
-        if (tensor->op == GGML_OP_ROPE) {
-            GGML_ASSERT(src_split_states[1] == GGML_BACKEND_SPLIT_STATE_MIRRORED);
-            GGML_ASSERT(!force_recalc);
-            return src_split_states[0];
-        }
-
-        if (tensor->op == GGML_OP_FLASH_ATTN_EXT) {
-            GGML_ASSERT(src_split_states[0] == GGML_BACKEND_SPLIT_STATE_BY_NE2);
-            GGML_ASSERT(src_split_states[1] == GGML_BACKEND_SPLIT_STATE_BY_NE2);
-            GGML_ASSERT(src_split_states[2] == GGML_BACKEND_SPLIT_STATE_BY_NE2);
-            GGML_ASSERT(!force_recalc);
-            return GGML_BACKEND_SPLIT_STATE_BY_NE1;
-        }
-
+    auto handle_generic = [&](const std::vector<ggml_backend_meta_split_state> & src_split_states, bool scalar_only) -> ggml_backend_meta_split_state {
         ggml_backend_meta_split_state homogeneous_src_split_state = GGML_BACKEND_SPLIT_STATE_NONE;
         for (size_t i = 0; i < GGML_MAX_SRC; i++) {
             if (tensor->src[i] == nullptr || tensor->src[i] == tensor) {
@@ -1047,23 +929,307 @@ enum ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struc
             }
         }
         if (homogeneous_src_split_state == GGML_BACKEND_SPLIT_STATE_NONE) {
-            GGML_ASSERT(!force_recalc);
-            homogeneous_src_split_state = GGML_BACKEND_SPLIT_STATE_MIRRORED;
+            homogeneous_src_split_state = GGML_BACKEND_SPLIT_STATE_UNKNOWN;
+        }
+        if (scalar_only && homogeneous_src_split_state >= 0 && homogeneous_src_split_state < GGML_MAX_DIMS) {
+            homogeneous_src_split_state = GGML_BACKEND_SPLIT_STATE_UNKNOWN;
         }
         GGML_ASSERT(homogeneous_src_split_state != GGML_BACKEND_SPLIT_STATE_UNKNOWN);
-        GGML_ASSERT(!force_recalc);
         return homogeneous_src_split_state;
     };
 
-    const std::pair key = std::make_pair(tensor, assume_fix_via_sync);
+    // Some ops process data on a per-row bases:
+    auto handle_per_row = [&](const std::vector<ggml_backend_meta_split_state> & src_split_states) -> ggml_backend_meta_split_state {
+        GGML_ASSERT(src_split_states[0] != GGML_BACKEND_SPLIT_STATE_BY_NE0);
+        return src_split_states[0];
+    };
 
-    if (force_recalc || buf_ctx->split_state_cache.find(key) == buf_ctx->split_state_cache.end()) {
+    auto handle_mul_mat = [&](const std::vector<ggml_backend_meta_split_state> & src_split_states) -> ggml_backend_meta_split_state {
+        if (src_split_states[0] == GGML_BACKEND_SPLIT_STATE_MIRRORED && src_split_states[1] == GGML_BACKEND_SPLIT_STATE_MIRRORED) {
+            return GGML_BACKEND_SPLIT_STATE_MIRRORED;
+        }
+        if (src_split_states[0] == GGML_BACKEND_SPLIT_STATE_BY_NE1 && src_split_states[1] == GGML_BACKEND_SPLIT_STATE_MIRRORED) {
+            return GGML_BACKEND_SPLIT_STATE_BY_NE0;
+        }
+        if (src_split_states[0] == GGML_BACKEND_SPLIT_STATE_BY_NE0 && src_split_states[1] == GGML_BACKEND_SPLIT_STATE_BY_NE0) {
+            return assume_sync ? GGML_BACKEND_SPLIT_STATE_MIRRORED : GGML_BACKEND_SPLIT_STATE_PARTIAL;
+        }
+        GGML_ABORT("fatal error");
+        return GGML_BACKEND_SPLIT_STATE_UNKNOWN;
+    };
+
+    auto handle_reshape = [&](const std::vector<ggml_backend_meta_split_state> & src_split_states) -> ggml_backend_meta_split_state {
+        switch (src_split_states[0]) {
+            case GGML_BACKEND_SPLIT_STATE_BY_NE0:
+            case GGML_BACKEND_SPLIT_STATE_BY_NE1:
+            case GGML_BACKEND_SPLIT_STATE_BY_NE2:
+            case GGML_BACKEND_SPLIT_STATE_BY_NE3: {
+                GGML_ASSERT(ggml_is_contiguous(tensor));
+                int64_t base_ne_in = 1;
+                for (int dim = 0; dim <= int(src_split_states[0]); dim++) {
+                    base_ne_in *= tensor->src[0]->ne[dim];
+                }
+                int64_t base_ne_out = 1;
+                for (int dim = 0; dim < GGML_MAX_DIMS; dim++) {
+                    const int64_t base_ne_out_next = base_ne_out *= tensor->ne[dim];
+                    if (base_ne_out_next == base_ne_in) {
+                        return ggml_backend_meta_split_state(dim);
+                    }
+                    base_ne_out = base_ne_out_next;
+                }
+                GGML_ABORT("shape mismatch for %s", ggml_op_name(tensor->op));
+            }
+            case GGML_BACKEND_SPLIT_STATE_MIRRORED:
+            case GGML_BACKEND_SPLIT_STATE_PARTIAL: {
+                GGML_ABORT("reshape not implemented for MIRRORED/PARTIAL");
+                return GGML_BACKEND_SPLIT_STATE_UNKNOWN;
+            }
+            default: {
+                GGML_ABORT("fatal error");
+                return GGML_BACKEND_SPLIT_STATE_UNKNOWN;
+            }
+        }
+    };
+
+    auto handle_permute = [&](const std::vector<ggml_backend_meta_split_state> & src_split_states) -> ggml_backend_meta_split_state {
+        switch (src_split_states[0]) {
+            case GGML_BACKEND_SPLIT_STATE_BY_NE0:
+            case GGML_BACKEND_SPLIT_STATE_BY_NE1:
+            case GGML_BACKEND_SPLIT_STATE_BY_NE2:
+            case GGML_BACKEND_SPLIT_STATE_BY_NE3: {
+                return ggml_backend_meta_split_state(tensor->op_params[int(src_split_states[0])]);
+            }
+            case GGML_BACKEND_SPLIT_STATE_MIRRORED:
+            case GGML_BACKEND_SPLIT_STATE_PARTIAL: {
+                return src_split_states[0];
+            }
+            default: {
+                GGML_ABORT("fatal error");
+                return GGML_BACKEND_SPLIT_STATE_UNKNOWN;
+            }
+        }
+    };
+
+    auto handle_set_rows = [&](const std::vector<ggml_backend_meta_split_state> & src_split_states) -> ggml_backend_meta_split_state {
+        GGML_ASSERT(src_split_states[0] == GGML_BACKEND_SPLIT_STATE_BY_NE0);
+        GGML_ASSERT(src_split_states[1] == GGML_BACKEND_SPLIT_STATE_MIRRORED);
+        GGML_ASSERT(src_split_states[0] == GGML_BACKEND_SPLIT_STATE_BY_NE0);
+        return src_split_states[0];
+    };
+
+    auto handle_rope = [&](const std::vector<ggml_backend_meta_split_state> & src_split_states) -> ggml_backend_meta_split_state {
+        GGML_ASSERT(src_split_states[1] == GGML_BACKEND_SPLIT_STATE_MIRRORED);
+        return src_split_states[0];
+    };
+
+    auto handle_flash_attn_ext = [&](const std::vector<ggml_backend_meta_split_state> & src_split_states) -> ggml_backend_meta_split_state {
+        GGML_ASSERT(src_split_states[0] == GGML_BACKEND_SPLIT_STATE_BY_NE2);
+        GGML_ASSERT(src_split_states[1] == GGML_BACKEND_SPLIT_STATE_BY_NE2);
+        GGML_ASSERT(src_split_states[2] == GGML_BACKEND_SPLIT_STATE_BY_NE2);
+        return GGML_BACKEND_SPLIT_STATE_BY_NE1;
+    };
+
+    auto calculate_split_state = [&]() -> ggml_backend_meta_split_state {
+        if (ggml_backend_buffer_get_usage(tensor->buffer) != GGML_BACKEND_BUFFER_USAGE_COMPUTE && tensor->view_src == nullptr) {
+            ggml_backend_dev_t dev = ggml_backend_buft_get_device(ggml_backend_buffer_get_type(tensor->buffer));
+            const ggml_backend_meta_device_context * dev_ctx = (const ggml_backend_meta_device_context *) dev->context;
+            return dev_ctx->get_split_state(tensor, dev_ctx->get_split_state_ud);
+        }
+
+        std::vector<ggml_backend_meta_split_state> src_split_states(GGML_MAX_SRC, GGML_BACKEND_SPLIT_STATE_NONE);
+        for (size_t i = 0; i < GGML_MAX_SRC; i++) {
+            if (tensor->src[i] == nullptr || tensor->src[i] == tensor) {
+                src_split_states[i] = GGML_BACKEND_SPLIT_STATE_UNKNOWN;
+                continue;
+            }
+            src_split_states[i] = ggml_backend_meta_get_split_state(tensor->src[i], /*assume_fix_via_sync =*/ true);
+        }
+
+        switch (tensor->op) {
+            case GGML_OP_NONE: {
+                return GGML_BACKEND_SPLIT_STATE_MIRRORED;
+            }
+            case GGML_OP_DUP: {
+                return handle_generic(src_split_states, /*scalar_only =*/ true);
+            }
+            case GGML_OP_ADD: {
+                return handle_generic(src_split_states, /*scalar_only =*/ false);
+            }
+            case GGML_OP_ADD_ID: {
+                return handle_generic(src_split_states, /*scalar_only =*/ true);
+            }
+            case GGML_OP_ADD1:
+            case GGML_OP_ACC:
+            case GGML_OP_SUB:
+            case GGML_OP_MUL:
+            case GGML_OP_DIV:
+            case GGML_OP_SQR:
+            case GGML_OP_SQRT:
+            case GGML_OP_LOG:
+            case GGML_OP_SIN:
+            case GGML_OP_COS: {
+                return handle_generic(src_split_states, /*scalar_only =*/ false);
+            }
+            case GGML_OP_SUM: {
+                return handle_generic(src_split_states, /*scalar_only =*/ true);
+            }
+            case GGML_OP_SUM_ROWS:
+            case GGML_OP_CUMSUM:
+            case GGML_OP_MEAN:
+            case GGML_OP_ARGMAX:
+            case GGML_OP_COUNT_EQUAL: {
+                return handle_per_row(src_split_states);
+            }
+            case GGML_OP_REPEAT:
+            case GGML_OP_REPEAT_BACK:
+            case GGML_OP_CONCAT: {
+                return handle_generic(src_split_states, /*scalar_only =*/ true);
+            }
+            case GGML_OP_SILU_BACK: {
+                return handle_generic(src_split_states, /*scalar_only =*/ false);
+            }
+            case GGML_OP_NORM:
+            case GGML_OP_RMS_NORM:
+            case GGML_OP_RMS_NORM_BACK:
+            case GGML_OP_GROUP_NORM:
+            case GGML_OP_L2_NORM: {
+                return handle_per_row(src_split_states);
+            }
+            case GGML_OP_MUL_MAT: {
+                return handle_mul_mat(src_split_states);
+            }
+            case GGML_OP_MUL_MAT_ID:
+            case GGML_OP_OUT_PROD: {
+                return handle_generic(src_split_states, /*scalar_only =*/ true);
+            }
+            case GGML_OP_SCALE: {
+                return handle_generic(src_split_states, /*scalar_only =*/ false);
+            }
+            case GGML_OP_SET:
+            case GGML_OP_CPY:
+            case GGML_OP_CONT: {
+                return handle_generic(src_split_states, /*scalar_only =*/ true);
+            }
+            case GGML_OP_RESHAPE: {
+                return handle_reshape(src_split_states);
+            }
+            case GGML_OP_VIEW: {
+                if (ggml_is_contiguous(tensor)) {
+                    return handle_reshape(src_split_states);
+                }
+                GGML_ABORT("non-contioguos view not implemented");
+                return GGML_BACKEND_SPLIT_STATE_UNKNOWN;
+            }
+            case GGML_OP_PERMUTE: {
+                return handle_permute(src_split_states);
+            }
+            case GGML_OP_TRANSPOSE:
+            case GGML_OP_GET_ROWS:
+            case GGML_OP_GET_ROWS_BACK: {
+                return handle_generic(src_split_states, /*scalar_only =*/ true);
+            }
+            case GGML_OP_SET_ROWS: {
+                return handle_set_rows(src_split_states);
+            }
+            case GGML_OP_DIAG:
+            case GGML_OP_DIAG_MASK_INF:
+            case GGML_OP_DIAG_MASK_ZERO: {
+                return handle_generic(src_split_states, /*scalar_only =*/ true);
+            }
+            case GGML_OP_SOFT_MAX:
+            case GGML_OP_SOFT_MAX_BACK: {
+                return handle_generic(src_split_states, /*scalar_only =*/ false);
+            }
+            case GGML_OP_ROPE: {
+                return handle_rope(src_split_states);
+            }
+            case GGML_OP_ROPE_BACK: {
+                return handle_generic(src_split_states, /*scalar_only =*/ true);
+            }
+            case GGML_OP_CLAMP: {
+                return handle_generic(src_split_states, /*scalar_only =*/ false);
+            }
+            case GGML_OP_CONV_TRANSPOSE_1D:
+            case GGML_OP_IM2COL:
+            case GGML_OP_IM2COL_BACK:
+            case GGML_OP_IM2COL_3D:
+            case GGML_OP_CONV_2D:
+            case GGML_OP_CONV_3D:
+            case GGML_OP_CONV_2D_DW:
+            case GGML_OP_CONV_TRANSPOSE_2D:
+            case GGML_OP_POOL_1D:
+            case GGML_OP_POOL_2D:
+            case GGML_OP_POOL_2D_BACK:
+            case GGML_OP_UPSCALE:
+            case GGML_OP_PAD:
+            case GGML_OP_PAD_REFLECT_1D:
+            case GGML_OP_ROLL:
+            case GGML_OP_ARANGE:
+            case GGML_OP_TIMESTEP_EMBEDDING: {
+                return handle_generic(src_split_states, /*scalar_only =*/ true);
+            }
+            case GGML_OP_ARGSORT:
+            case GGML_OP_TOP_K: {
+                return handle_per_row(src_split_states);
+            }
+            case GGML_OP_LEAKY_RELU: {
+                return handle_generic(src_split_states, /*scalar_only =*/ false);
+            }
+            case GGML_OP_TRI:
+            case GGML_OP_FILL: {
+                return handle_generic(src_split_states, /*scalar_only =*/ true);
+            }
+            case GGML_OP_FLASH_ATTN_EXT: {
+                return handle_flash_attn_ext(src_split_states);
+            }
+            case GGML_OP_FLASH_ATTN_BACK:
+            case GGML_OP_SSM_CONV:
+            case GGML_OP_SSM_SCAN:
+            case GGML_OP_WIN_PART:
+            case GGML_OP_WIN_UNPART:
+            case GGML_OP_GET_REL_POS:
+            case GGML_OP_ADD_REL_POS:
+            case GGML_OP_RWKV_WKV6:
+            case GGML_OP_GATED_LINEAR_ATTN:
+            case GGML_OP_RWKV_WKV7:
+            case GGML_OP_SOLVE_TRI: {
+                return handle_generic(src_split_states, /*scalar_only =*/ true);
+            }
+            case GGML_OP_UNARY: {
+                return handle_generic(src_split_states, /*scalar_only =*/ false);
+            }
+            case GGML_OP_MAP_CUSTOM1:
+            case GGML_OP_MAP_CUSTOM2:
+            case GGML_OP_MAP_CUSTOM3:
+            case GGML_OP_CUSTOM: {
+                return handle_generic(src_split_states, /*scalar_only =*/ true);
+            }
+            case GGML_OP_CROSS_ENTROPY_LOSS:
+            case GGML_OP_CROSS_ENTROPY_LOSS_BACK: {
+                return handle_per_row(src_split_states);
+            }
+            case GGML_OP_OPT_STEP_ADAMW:
+            case GGML_OP_OPT_STEP_SGD:
+            case GGML_OP_GLU: {
+                return handle_generic(src_split_states, /*scalar_only =*/ false);
+            }
+            default: {
+                GGML_ABORT("ggml op not implemented: %s", ggml_op_name(tensor->op));
+                return GGML_BACKEND_SPLIT_STATE_UNKNOWN;
+            }
+        }
+
+    };
+
+    const std::pair key = std::make_pair(tensor, assume_sync);
+
+    if (buf_ctx->split_state_cache.find(key) == buf_ctx->split_state_cache.end()) {
         buf_ctx->split_state_cache[key] = calculate_split_state();
     }
 
     ggml_backend_meta_split_state ret = buf_ctx->split_state_cache[key];
     GGML_ASSERT(ret != GGML_BACKEND_SPLIT_STATE_NONE);
-    if (assume_fix_via_sync && ret == GGML_BACKEND_SPLIT_STATE_UNKNOWN) {
+    if (assume_sync && ret == GGML_BACKEND_SPLIT_STATE_UNKNOWN) {
         GGML_ABORT("fatal error");
         ret = GGML_BACKEND_SPLIT_STATE_MIRRORED;
     }

@@ -254,7 +254,7 @@ extern "C" {
     GGML_API size_t ggml_backend_meta_n_backends(ggml_backend_t meta_backend);
     GGML_API ggml_backend_t ggml_backend_meta_simple_backend(ggml_backend_t meta_backend, size_t index);
 
-    GGML_API enum ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struct ggml_tensor * tensor, bool assume_fix_via_sync, bool force_recalc);
+    GGML_API enum ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struct ggml_tensor * tensor, bool assume_sync);
 
     //
     // Backend registry

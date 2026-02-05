@@ -1022,6 +1022,9 @@ static struct llama_model * llama_model_load_from_file_impl(
                     case GGML_BACKEND_DEVICE_TYPE_IGPU:
                         igpus.push_back(dev);
                         break;
+                    case GGML_BACKEND_DEVICE_TYPE_META:
+                        GGML_ABORT("fatal error");
+                        break;
                 }
             }
         }
