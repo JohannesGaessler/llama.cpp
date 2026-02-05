@@ -664,13 +664,14 @@ struct ggml_backend_meta_context {
 
         std::vector<cgraph_config>   cgraphs;
         std::vector<ggml_tensor *>   nodes;
-        ggml_context               * ctx = nullptr;
-        ggml_backend_buffer_t        buf = nullptr;
+        ggml_context               * ctx     = nullptr;
+        ggml_backend_buffer_t        bufs[2] = {nullptr, nullptr}; // Double-buffered to reduce synchronizations.
 
         backend_config(ggml_backend_t backend) : backend(backend) {}
 
         ~backend_config() {
-            ggml_backend_buffer_free(buf);
+            ggml_backend_buffer_free(bufs[1]);
+            ggml_backend_buffer_free(bufs[0]);
             ggml_free(ctx);
         }
     };
@@ -759,8 +760,11 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
         int i_start = 0;
         for (int i = 0; i < cgraph->n_nodes; i++) {
             ggml_tensor * node = cgraph->nodes[i];
-            const bool new_subgraph = i + 1 == cgraph->n_nodes ||
-                ggml_backend_meta_get_split_state(node, /*assume_sync =*/ false) == GGML_BACKEND_SPLIT_STATE_PARTIAL;
+            const bool partial = ggml_backend_meta_get_split_state(node, /*assume_sync =*/ false) == GGML_BACKEND_SPLIT_STATE_PARTIAL;
+            if (partial) {
+                max_tmp_size = std::max(max_tmp_size, ggml_nbytes(node));
+            }
+            const bool new_subgraph = i + 1 == cgraph->n_nodes || partial;
             if (!new_subgraph) {
                 continue;
             }
@@ -772,7 +776,6 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 bcj.cgraphs.back().cgraph_main.n_nodes = i + 1 - i_start;
             }
             n_subgraphs++;
-            max_tmp_size = std::max(max_tmp_size, ggml_nbytes(node));
             i_start = i + 1;
         }
         GGML_ASSERT(i_start == cgraph->n_nodes);
@@ -784,16 +787,20 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
         /*.no_alloc   =*/ true,
     };
 
+
     // Preferentially use backend-specific allreduce_tensor_async (e.g. NCCL for CUDA), use a generic fallback if unavailable:
     bool tmp_buffers_initialized = false;
     auto allreduce_fallback = [&](size_t i) -> ggml_status {
+        size_t i_buf = i % 2; // Alternate between the two tmp buffers per simple backends to reduce synchronizations.
         if (!tmp_buffers_initialized) {
             for (size_t j = 0; j < n_backends; j++) {
                 auto & bcj = backend_ctx->backend_configs[j];
-                ggml_backend_buffer_free(bcj.buf);
+                ggml_backend_buffer_free(bcj.bufs[1]);
+                ggml_backend_buffer_free(bcj.bufs[0]);
                 ggml_free(bcj.ctx);
                 bcj.ctx = ggml_init(params);
-                bcj.buf = ggml_backend_alloc_buffer(bcj.backend, max_tmp_size);
+                bcj.bufs[0] = ggml_backend_alloc_buffer(bcj.backend, max_tmp_size);
+                bcj.bufs[1] = ggml_backend_alloc_buffer(bcj.backend, max_tmp_size);
             }
             tmp_buffers_initialized = true;
         }
@@ -823,10 +830,10 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
 
                 ggml_tensor * node_tmp_1 = ggml_dup_tensor(bcj1.ctx, node1);
                 ggml_tensor * node_tmp_2 = ggml_dup_tensor(bcj2.ctx, node2);
-                node_tmp_1->buffer = bcj1.buf;
-                node_tmp_2->buffer = bcj2.buf;
-                node_tmp_1->data = ggml_backend_buffer_get_base(bcj1.buf);
-                node_tmp_2->data = ggml_backend_buffer_get_base(bcj2.buf);
+                node_tmp_1->buffer = bcj1.bufs[i_buf];
+                node_tmp_2->buffer = bcj2.bufs[i_buf];
+                node_tmp_1->data = ggml_backend_buffer_get_base(bcj1.bufs[i_buf]);
+                node_tmp_2->data = ggml_backend_buffer_get_base(bcj2.bufs[i_buf]);
                 bcj1.cgraphs[i].nodes_aux.push_back(node_tmp_1);
                 bcj2.cgraphs[i].nodes_aux.push_back(node_tmp_2);
 
@@ -834,8 +841,8 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
 
                 ggml_tensor * node_red_1 = ggml_add_inplace(bcj1.ctx, node1, node_tmp_1);
                 ggml_tensor * node_red_2 = ggml_add_inplace(bcj2.ctx, node2, node_tmp_2);
-                node_red_1->buffer = bcj1.buf;
-                node_red_2->buffer = bcj2.buf;
+                node_red_1->buffer = bcj1.bufs[i_buf];
+                node_red_2->buffer = bcj2.bufs[i_buf];
                 node_red_1->flags |= GGML_TENSOR_FLAG_COMPUTE;
                 node_red_2->flags |= GGML_TENSOR_FLAG_COMPUTE;
                 bcj1.cgraphs[i].nodes_aux.push_back(node_red_1);
