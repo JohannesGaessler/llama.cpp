@@ -391,11 +391,10 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
             nb[k] = tensor->nb[k];
         }
         if (split_dim >= 0 && split_dim < GGML_MAX_DIMS) {
-            GGML_ASSERT(ne[split_dim] %  n_simple_bufs == 0);
             ne[split_dim] = (ne[split_dim] + n_simple_bufs - 1) / n_simple_bufs;
-            if ((split_dim == 0 || split_dim == 1) && ne[split_dim] % 128 != 0) {
-                ne[split_dim] += 128 - ne[split_dim] % 128;
-            }
+            // if ((split_dim == 0 || split_dim == 1) && ne[split_dim] % 128 != 0) {
+            //     ne[split_dim] += 128 - ne[split_dim] % 128;
+            // }
             ne[split_dim] = std::min(ne[split_dim], tensor->ne[split_dim] - ne_assigned);
             GGML_ASSERT(ne[split_dim] > 0);
             for (int i = 0; i < GGML_MAX_DIMS; i++) {
