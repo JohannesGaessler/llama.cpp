@@ -374,6 +374,8 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
     const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor, /*assume_sync =*/ true);
     GGML_ASSERT(split_state != GGML_BACKEND_SPLIT_STATE_UNKNOWN);
 
+    const int64_t bs = ggml_blck_size(tensor->type);
+
     int split_dim = split_state;
 
     int64_t ne_assigned = 0;
@@ -392,9 +394,9 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
         }
         if (split_dim >= 0 && split_dim < GGML_MAX_DIMS) {
             ne[split_dim] = (ne[split_dim] + n_simple_bufs - 1) / n_simple_bufs;
-            // if ((split_dim == 0 || split_dim == 1) && ne[split_dim] % 128 != 0) {
-            //     ne[split_dim] += 128 - ne[split_dim] % 128;
-            // }
+            if (split_dim == 0 && ne[split_dim] % bs != 0) {
+                ne[split_dim] += bs - ne[split_dim] % bs;
+            }
             ne[split_dim] = std::min(ne[split_dim], tensor->ne[split_dim] - ne_assigned);
             GGML_ASSERT(ne[split_dim] > 0);
             for (int i = 0; i < GGML_MAX_DIMS; i++) {
