@@ -180,7 +180,6 @@ ggml_backend_dev_t ggml_backend_meta_dev_simple_dev(ggml_backend_dev_t meta_dev,
 
 ggml_backend_dev_t ggml_backend_meta_device(
         ggml_backend_dev_t * devs, size_t n_devs, ggml_backend_meta_get_split_state_t get_split_state, void * get_split_state_ud) {
-    GGML_ASSERT(n_devs <= 2);
     static std::vector<std::unique_ptr<ggml_backend_meta_device_context>>         ctxs;
     static std::map<ggml_backend_meta_device_context, struct ggml_backend_device> meta_devs;
 
@@ -376,28 +375,36 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
     GGML_ASSERT(split_state != GGML_BACKEND_SPLIT_STATE_UNKNOWN);
 
     int split_dim = split_state;
-    int64_t ne[GGML_MAX_DIMS];
-    size_t  nb[GGML_MAX_DIMS];
-    for (size_t k = 0; k < GGML_MAX_DIMS; k++) {
-        ne[k] = tensor->ne[k];
-        nb[k] = tensor->nb[k];
-    }
-    if (split_dim >= 0 && split_dim < GGML_MAX_DIMS) {
-        GGML_ASSERT(ne[split_dim] %  n_simple_bufs == 0);
-        ne[split_dim] /= n_simple_bufs;
-        for (int i = 0; i < GGML_MAX_DIMS; i++) {
-            if (tensor->nb[i] > tensor->nb[split_dim]) {
-                GGML_ASSERT(nb[i] % (n_simple_bufs*ggml_element_size(tensor)) == 0);
-                nb[i] /= n_simple_bufs;
-            }
-        }
-    }
+
+    int64_t ne_assigned = 0;
 
     std::vector<ggml_tensor *> simple_tensors;
-    simple_tensors.reserve(buf_ctx->buf_configs.size());
-    for (size_t j = 0; j < buf_ctx->buf_configs.size(); j++) {
+    simple_tensors.reserve(n_simple_bufs);
+    for (size_t j = 0; j < n_simple_bufs; j++) {
         ggml_context          * simple_ctx = buf_ctx->buf_configs[j].ctx;
         ggml_backend_buffer_t   simple_buf = buf_ctx->buf_configs[j].buf;
+
+        int64_t ne[GGML_MAX_DIMS];
+        size_t  nb[GGML_MAX_DIMS];
+        for (size_t k = 0; k < GGML_MAX_DIMS; k++) {
+            ne[k] = tensor->ne[k];
+            nb[k] = tensor->nb[k];
+        }
+        if (split_dim >= 0 && split_dim < GGML_MAX_DIMS) {
+            GGML_ASSERT(ne[split_dim] %  n_simple_bufs == 0);
+            ne[split_dim] = (ne[split_dim] + n_simple_bufs - 1) / n_simple_bufs;
+            if ((split_dim == 0 || split_dim == 1) && ne[split_dim] % 128 != 0) {
+                ne[split_dim] += 128 - ne[split_dim] % 128;
+            }
+            ne[split_dim] = std::min(ne[split_dim], tensor->ne[split_dim] - ne_assigned);
+            GGML_ASSERT(ne[split_dim] > 0);
+            for (int i = 0; i < GGML_MAX_DIMS; i++) {
+                if (tensor->nb[i] > tensor->nb[split_dim]) {
+                    GGML_ASSERT(nb[i] % (n_simple_bufs*ggml_element_size(tensor)) == 0);
+                    nb[i] = nb[i] * ne[split_dim]/tensor->ne[split_dim];
+                }
+            }
+        }
 
         ggml_tensor * t_ij = ggml_new_tensor(simple_ctx, tensor->type, GGML_MAX_DIMS, ne);
         t_ij->op = tensor->op;
@@ -430,8 +437,12 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
         }
 
         simple_tensors.push_back(t_ij);
+        if (split_dim >= 0 && split_dim < GGML_MAX_DIMS) {
+            ne_assigned += ne[split_dim];
+        }
     }
     buf_ctx->simple_tensors[tensor] = simple_tensors;
+    GGML_ASSERT(split_dim < 0 || split_dim >= GGML_MAX_DIMS || ne_assigned == tensor->ne[split_dim]);
 
     return GGML_STATUS_SUCCESS;
 }
