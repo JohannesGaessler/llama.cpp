@@ -399,7 +399,6 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
             GGML_ASSERT(ne[split_dim] > 0);
             for (int i = 0; i < GGML_MAX_DIMS; i++) {
                 if (tensor->nb[i] > tensor->nb[split_dim]) {
-                    GGML_ASSERT(nb[i] % (n_simple_bufs*ggml_element_size(tensor)) == 0);
                     nb[i] = nb[i] * ne[split_dim]/tensor->ne[split_dim];
                 }
             }
