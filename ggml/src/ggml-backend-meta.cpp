@@ -788,7 +788,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
     }
 
     ggml_init_params params = {
-        /*.mem_size   =*/ n_subgraphs*(n_reduce_steps + 1)*ggml_tensor_overhead(),
+        /*.mem_size   =*/ n_subgraphs*n_reduce_steps*2*ggml_tensor_overhead(),
         /*.mem_buffer =*/ nullptr,
         /*.no_alloc   =*/ true,
     };
