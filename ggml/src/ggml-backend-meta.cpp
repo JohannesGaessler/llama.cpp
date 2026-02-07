@@ -663,16 +663,17 @@ struct ggml_backend_meta_context {
     struct backend_config {
         ggml_backend_t backend;
 
-        std::vector<cgraph_config>   cgraphs;
-        std::vector<ggml_tensor *>   nodes;
-        ggml_context               * ctx     = nullptr;
-        ggml_backend_buffer_t        bufs[2] = {nullptr, nullptr}; // Double-buffered to reduce synchronizations.
+        std::vector<cgraph_config>           cgraphs;
+        std::vector<ggml_tensor *>           nodes;
+        ggml_context                       * ctx = nullptr;
+        std::vector<ggml_backend_buffer_t>   bufs; // Multiple buffers to reduce synchronizations.
 
         backend_config(ggml_backend_t backend) : backend(backend) {}
 
         ~backend_config() {
-            ggml_backend_buffer_free(bufs[1]);
-            ggml_backend_buffer_free(bufs[0]);
+            for (ggml_backend_buffer_t buf : bufs) {
+                ggml_backend_buffer_free(buf);
+            }
             ggml_free(ctx);
         }
     };
@@ -698,6 +699,10 @@ struct ggml_backend_meta_context {
         for (auto & bc : backend_configs) {
             ggml_backend_free(bc.backend);
         }
+    }
+
+    size_t n_reduce_steps() const {
+        return std::ceil(std::log2(backend_configs.size()));
     }
 };
 
@@ -741,7 +746,7 @@ static void ggml_backend_meta_synchronize(ggml_backend_t backend) {
 static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
     const size_t n_backends = ggml_backend_meta_n_backends(backend);
     ggml_backend_meta_context * backend_ctx = (ggml_backend_meta_context *) backend->context;
-    const size_t n_reduce_steps = std::ceilf(std::log2(n_backends));
+    const size_t n_reduce_steps = backend_ctx->n_reduce_steps();
 
     for (size_t j = 0; j < n_backends; j++) {
         auto & bcj = backend_ctx->backend_configs[j];
@@ -783,25 +788,28 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
     }
 
     ggml_init_params params = {
-        /*.mem_size   =*/ n_subgraphs*2*ggml_tensor_overhead(),
+        /*.mem_size   =*/ n_subgraphs*(n_reduce_steps + 1)*ggml_tensor_overhead(),
         /*.mem_buffer =*/ nullptr,
         /*.no_alloc   =*/ true,
     };
 
+    size_t i_buf = 0; // Alternate between tmp buffers per simple backend to reduce synchronizations.
 
     // Preferentially use backend-specific allreduce_tensor_async (e.g. NCCL for CUDA), use a generic fallback if unavailable:
     bool tmp_buffers_initialized = false;
     auto allreduce_fallback = [&](size_t i) -> ggml_status {
-        size_t i_buf = i % 2; // Alternate between the two tmp buffers per simple backends to reduce synchronizations.
         if (!tmp_buffers_initialized) {
             for (size_t j = 0; j < n_backends; j++) {
                 auto & bcj = backend_ctx->backend_configs[j];
-                ggml_backend_buffer_free(bcj.bufs[1]);
-                ggml_backend_buffer_free(bcj.bufs[0]);
+                for (ggml_backend_buffer_t buf : bcj.bufs) {
+                    ggml_backend_buffer_free(buf);
+                }
+                bcj.bufs.clear();
                 ggml_free(bcj.ctx);
                 bcj.ctx = ggml_init(params);
-                bcj.bufs[0] = ggml_backend_alloc_buffer(bcj.backend, max_tmp_size);
-                bcj.bufs[1] = ggml_backend_alloc_buffer(bcj.backend, max_tmp_size);
+                for (size_t k = 0; k < n_reduce_steps + 1; k++) {
+                    bcj.bufs.push_back(ggml_backend_alloc_buffer(bcj.backend, max_tmp_size));
+                }
             }
             tmp_buffers_initialized = true;
         }
@@ -855,6 +863,8 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 bcj2.cgraphs[i].cgraphs_aux.back().nodes = &bcj2.cgraphs[i].nodes_aux.back();
                 bcj1.cgraphs[i].cgraphs_aux.back().n_nodes = 1;
                 bcj2.cgraphs[i].cgraphs_aux.back().n_nodes = 1;
+
+                i_buf = (i_buf + 1) % (n_reduce_steps + 1);
             }
 
             for (size_t j = 0; j < n_backends; j++) {
