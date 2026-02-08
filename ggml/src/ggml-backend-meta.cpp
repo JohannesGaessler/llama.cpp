@@ -780,11 +780,11 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
         /*.no_alloc   =*/ true,
     };
 
-    size_t i_buf = 0; // Alternate between tmp buffers per simple backend to reduce synchronizations.
 
     // Preferentially use backend-specific allreduce_tensor_async (e.g. NCCL for CUDA), use a generic fallback if unavailable:
     bool tmp_buffers_initialized = false;
     auto allreduce_fallback = [&](size_t i) -> ggml_status {
+        const size_t i_buf = i % 2; // Alternate between tmp buffers per simple backend to reduce synchronizations.
         if (!tmp_buffers_initialized) {
             for (size_t j = 0; j < n_backends; j++) {
                 auto & bcj = backend_ctx->backend_configs[j];
@@ -838,7 +838,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 bcj.cgraphs[i].nodes_aux.push_back(node_red);
             }
 
-            bcj.cgraphs[i].cgraph_aux = *cgraph;
+            bcj.cgraphs[i].cgraph_aux         = *cgraph;
             bcj.cgraphs[i].cgraph_aux.nodes   = bcj.cgraphs[i].nodes_aux.data();
             bcj.cgraphs[i].cgraph_aux.n_nodes = bcj.cgraphs[i].nodes_aux.size();
 
