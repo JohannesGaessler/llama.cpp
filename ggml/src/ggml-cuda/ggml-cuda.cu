@@ -2801,73 +2801,80 @@ static bool ggml_backend_cuda_cpy_tensor_async(ggml_backend_t backend_src, ggml_
     return true;
 }
 
-static bool ggml_backend_cuda_shfl_tensor_async(
-        ggml_backend_t backend_1, ggml_backend_t backend_2, const ggml_tensor * src1, const ggml_tensor * src2, ggml_tensor * dst1, ggml_tensor * dst2) {
-    ggml_backend_buffer_t buf_src1 = src1->view_src ? src1->view_src->buffer : src1->buffer;
-    ggml_backend_buffer_t buf_src2 = src2->view_src ? src2->view_src->buffer : src2->buffer;
-    ggml_backend_buffer_t buf_dst1 = dst1->view_src ? dst1->view_src->buffer : dst1->buffer;
-    ggml_backend_buffer_t buf_dst2 = dst2->view_src ? dst2->view_src->buffer : dst2->buffer;
-
-    if (!ggml_backend_is_cuda(backend_1) || !ggml_backend_is_cuda(backend_2)) {
-        return false;
+static bool ggml_backend_cuda_allgather_tensor_async(ggml_backend_t * backends, struct ggml_tensor ** tensors, size_t n_backends) {
+    std::vector<ggml_backend_buffer_t> bufs;
+    bufs.reserve(n_backends*n_backends);
+    for (size_t i = 0; i < n_backends; i++) {
+        for (size_t j = 0; j < n_backends; j++) {
+            ggml_tensor * t = tensors[i*n_backends + j];
+            bufs.push_back(t->view_src ? t->view_src->buffer : t->buffer);
+        }
     }
 
-    if (!ggml_backend_buffer_is_cuda(buf_src1) || !ggml_backend_buffer_is_cuda(buf_src2) ||
-            !ggml_backend_buffer_is_cuda(buf_dst1) || !ggml_backend_buffer_is_cuda(buf_dst2)) {
-        return false;
-    }
-
-    // device -> device copy
-    ggml_backend_cuda_context * cuda_ctx_1 = (ggml_backend_cuda_context *) backend_1->context;
-    ggml_backend_cuda_context * cuda_ctx_2 = (ggml_backend_cuda_context *) backend_2->context;
-
-    ggml_backend_cuda_buffer_context * buf_ctx_src1 = (ggml_backend_cuda_buffer_context *) buf_src1->context;
-    ggml_backend_cuda_buffer_context * buf_ctx_src2 = (ggml_backend_cuda_buffer_context *) buf_src2->context;
-    ggml_backend_cuda_buffer_context * buf_ctx_dst1 = (ggml_backend_cuda_buffer_context *) buf_dst1->context;
-    ggml_backend_cuda_buffer_context * buf_ctx_dst2 = (ggml_backend_cuda_buffer_context *) buf_dst2->context;
-
-    if (cuda_ctx_1->device != buf_ctx_src1->device || cuda_ctx_2->device != buf_ctx_src2->device ||
-            cuda_ctx_1->device != buf_ctx_dst1->device || cuda_ctx_2->device != buf_ctx_dst2->device) {
-#ifndef NDEBUG
-        GGML_LOG_DEBUG("%s: backend and buffer devices do not match\n", __func__);
-#endif // NDEBUG
-        return false;
-    }
-
-    if (backend_1 != backend_2) {
-        // Copies under control of src streams:
-        if (cuda_ctx_1->device == cuda_ctx_2->device) {
-            CUDA_CHECK(cudaMemcpyAsync(dst2->data, src1->data, ggml_nbytes(dst2), cudaMemcpyDeviceToDevice, cuda_ctx_1->stream()));
-            CUDA_CHECK(cudaMemcpyAsync(dst1->data, src2->data, ggml_nbytes(dst1), cudaMemcpyDeviceToDevice, cuda_ctx_2->stream()));
-        } else {
-#ifdef GGML_CUDA_NO_PEER_COPY
+    for (size_t i = 0; i < n_backends; i++) {
+        if (!ggml_backend_is_cuda(backends[i])) {
             return false;
+        }
+        for (size_t j = 0; j < n_backends; j++) {
+            if (!ggml_backend_buffer_is_cuda(bufs[i*n_backends + j])) {
+                return false;
+            }
+        }
+    }
+
+    std::vector<ggml_backend_cuda_context *>        cuda_ctxs;
+    std::vector<ggml_backend_cuda_buffer_context *> buf_ctxs;
+    cuda_ctxs.reserve(n_backends);
+    buf_ctxs.reserve(n_backends);
+    for (size_t i = 0; i < n_backends; i++) {
+        cuda_ctxs.push_back((ggml_backend_cuda_context *) backends[i]->context);
+        for (size_t j = 0; j < n_backends; j++) {
+            buf_ctxs.push_back((ggml_backend_cuda_buffer_context *) bufs[i*n_backends + j]->context);
+            if (cuda_ctxs.back()->device != buf_ctxs.back()->device) {
+#ifndef NDEBUG
+                GGML_LOG_DEBUG("%s: backend and buffer devices do not match\n", __func__);
+#endif // NDEBUG
+                return false;
+            }
+        }
+    }
+
+    for (size_t i = 0; i < n_backends; i++) {
+        // Record event on src streams before the copy:
+        if (!cuda_ctxs[i]->copy_event) {
+            ggml_cuda_set_device(cuda_ctxs[i]->device);
+            CUDA_CHECK(cudaEventCreateWithFlags(&cuda_ctxs[i]->copy_event, cudaEventDisableTiming));
+        }
+        CUDA_CHECK(cudaEventRecord(cuda_ctxs[i]->copy_event, cuda_ctxs[i]->stream()));
+    }
+
+    for (size_t i = 0; i < n_backends; i++) {
+        for (size_t j = 0; j < n_backends; j++) {
+            if (i == j) {
+                continue;
+            }
+
+            if (backends[i] != backends[j]) {
+                // Wait on dst stream for data to be ready:
+                CUDA_CHECK(cudaStreamWaitEvent(cuda_ctxs[i]->stream(), cuda_ctxs[j]->copy_event, 0));
+
+                // Copies under control of src streams:
+                if (cuda_ctxs[i]->device == cuda_ctxs[j]->device) {
+                    CUDA_CHECK(cudaMemcpyAsync(tensors[j*n_backends + j]->data, tensors[i*n_backends + j]->data,
+                        ggml_nbytes(tensors[i*n_backends + j]), cudaMemcpyDeviceToDevice, cuda_ctxs[j]->stream()));
+                } else {
+#ifdef GGML_CUDA_NO_PEER_COPY
+                    return false;
 #else
-            CUDA_CHECK(cudaMemcpyPeerAsync(dst2->data, cuda_ctx_2->device, src1->data, cuda_ctx_1->device, ggml_nbytes(dst2), cuda_ctx_1->stream()));
-            CUDA_CHECK(cudaMemcpyPeerAsync(dst1->data, cuda_ctx_1->device, src2->data, cuda_ctx_2->device, ggml_nbytes(dst1), cuda_ctx_2->stream()));
+                    CUDA_CHECK(cudaMemcpyPeerAsync(tensors[j*n_backends + j]->data, cuda_ctxs[j]->device, tensors[i*n_backends + j]->data, cuda_ctxs[i]->device,
+                        ggml_nbytes(tensors[i*n_backends + j]), cuda_ctxs[j]->stream()));
 #endif // GGML_CUDA_NO_PEER_COPY
+                }
+            } else {
+                CUDA_CHECK(cudaMemcpyAsync(tensors[j*n_backends + j]->data, tensors[i*n_backends + j]->data,
+                    ggml_nbytes(tensors[i*n_backends + j]), cudaMemcpyDeviceToDevice, cuda_ctxs[j]->stream()));
+            }
         }
-
-        // Record event on src streams after the copy:
-        if (!cuda_ctx_1->copy_event) {
-            ggml_cuda_set_device(cuda_ctx_1->device);
-            CUDA_CHECK(cudaEventCreateWithFlags(&cuda_ctx_1->copy_event, cudaEventDisableTiming));
-        }
-        if (!cuda_ctx_2->copy_event) {
-            ggml_cuda_set_device(cuda_ctx_2->device);
-            CUDA_CHECK(cudaEventCreateWithFlags(&cuda_ctx_2->copy_event, cudaEventDisableTiming));
-        }
-
-        CUDA_CHECK(cudaEventRecord(cuda_ctx_1->copy_event, cuda_ctx_1->stream()));
-        CUDA_CHECK(cudaEventRecord(cuda_ctx_2->copy_event, cuda_ctx_2->stream()));
-
-        // Wait on dst stream for the copies to complete:
-        CUDA_CHECK(cudaStreamWaitEvent(cuda_ctx_2->stream(), cuda_ctx_1->copy_event, 0));
-        CUDA_CHECK(cudaStreamWaitEvent(cuda_ctx_1->stream(), cuda_ctx_2->copy_event, 0));
-    } else {
-        // srcs and dsts are on the same backend:
-        CUDA_CHECK(cudaMemcpyAsync(dst2->data, src1->data, ggml_nbytes(dst2), cudaMemcpyDeviceToDevice, cuda_ctx_1->stream()));
-        CUDA_CHECK(cudaMemcpyAsync(dst1->data, src2->data, ggml_nbytes(dst1), cudaMemcpyDeviceToDevice, cuda_ctx_2->stream()));
     }
     return true;
 }
@@ -4275,7 +4282,7 @@ static const ggml_backend_i ggml_backend_cuda_interface = {
     /* .get_tensor_2d_async     = */ NULL,
     /* .set_tensor_2d_async     = */ NULL,
     /* .cpy_tensor_async        = */ ggml_backend_cuda_cpy_tensor_async,
-    /* .shfl_tensor_async       = */ ggml_backend_cuda_shfl_tensor_async,
+    /* .allgather_tensor_async  = */ ggml_backend_cuda_allgather_tensor_async,
     /* .allreduce_tensor_async  = */ NULL,
     /* .synchronize             = */ ggml_backend_cuda_synchronize,
     /* .graph_plan_create       = */ NULL,

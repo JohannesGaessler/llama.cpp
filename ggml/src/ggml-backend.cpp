@@ -432,20 +432,22 @@ void ggml_backend_tensor_copy_async(ggml_backend_t backend_src, ggml_backend_t b
     ggml_backend_tensor_copy(src, dst);
 }
 
-void ggml_backend_tensor_shfl_async(
-        ggml_backend_t backend_1, ggml_backend_t backend_2,
-        const struct ggml_tensor * src1, const struct ggml_tensor * src2,
-        struct ggml_tensor * dst1, struct ggml_tensor * dst2) {
-    GGML_ASSERT(ggml_are_same_layout(src1, dst1) && "cannot shuffle tensors with different layouts");
-    GGML_ASSERT(ggml_are_same_layout(src2, dst2) && "cannot shuffle tensors with different layouts");
-    if (backend_1->iface.shfl_tensor_async != NULL) {
-        if (backend_1->iface.shfl_tensor_async(backend_1, backend_2, src1, src2, dst1, dst2)) {
+void ggml_backend_tensor_allgather_async(ggml_backend_t * backends, struct ggml_tensor ** tensors, size_t n_backends) {
+    if (backends[0]->iface.allgather_tensor_async != NULL) {
+        if (backends[0]->iface.allgather_tensor_async(backends, tensors, n_backends)) {
             return;
         }
     }
-    ggml_backend_tensor_copy_async(backend_1, backend_2, src1, dst2);
-    ggml_backend_tensor_copy_async(backend_2, backend_1, src2, dst1);
+    for (size_t i = 0; i < n_backends; i++) {
+        for (size_t j = 0; j < n_backends; j++) {
+            if (i == j) {
+                continue;
+            }
+            ggml_backend_tensor_copy_async(backends[j], backends[i], tensors[j*n_backends + j], tensors[i*n_backends + j]);
+        }
+    }
 }
+
 // events
 
 ggml_backend_event_t ggml_backend_event_new(ggml_backend_dev_t device) {
