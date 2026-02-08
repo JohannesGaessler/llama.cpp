@@ -2846,6 +2846,7 @@ static bool ggml_backend_cuda_allgather_tensor_async(ggml_backend_t * backends, 
             CUDA_CHECK(cudaEventCreateWithFlags(&cuda_ctxs[i]->copy_event, cudaEventDisableTiming));
         }
         CUDA_CHECK(cudaEventRecord(cuda_ctxs[i]->copy_event, cuda_ctxs[i]->stream()));
+        CUDA_CHECK(cudaStreamSynchronize(cuda_ctxs[i]->stream()));
     }
 
     for (size_t i = 0; i < n_backends; i++) {
@@ -2855,10 +2856,10 @@ static bool ggml_backend_cuda_allgather_tensor_async(ggml_backend_t * backends, 
             }
 
             if (backends[i] != backends[j]) {
-                // Wait on dst stream for data to be ready:
+                // Wait with dst stream for data to be ready:
                 CUDA_CHECK(cudaStreamWaitEvent(cuda_ctxs[i]->stream(), cuda_ctxs[j]->copy_event, 0));
 
-                // Copies under control of src streams:
+                // Copies under control of dst streams:
                 if (cuda_ctxs[i]->device == cuda_ctxs[j]->device) {
                     CUDA_CHECK(cudaMemcpyAsync(tensors[j*n_backends + j]->data, tensors[i*n_backends + j]->data,
                         ggml_nbytes(tensors[i*n_backends + j]), cudaMemcpyDeviceToDevice, cuda_ctxs[i]->stream()));
