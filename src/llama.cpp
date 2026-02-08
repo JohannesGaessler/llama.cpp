@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <numeric>
 #include <regex>
 #include <stdexcept>
 #include <vector>
@@ -885,27 +886,53 @@ static int llama_model_load(const std::string & fname, std::vector<std::string> 
 }
 
 static struct ggml_backend_meta_split_state llama_meta_device_get_tensor_split(const struct ggml_tensor * tensor, void * userdata) {
+    const struct llama_model * model = (const struct llama_model *) userdata;
+
+    constexpr int64_t ggml_max_blck_size = 256; // all ggml quantization cleanly divide this number
+
+    const uint32_t il = 0; // FIXME
+    const int64_t granularity_kv = model->hparams.n_embd / model->hparams.n_head_kv(il) ;
+    const int64_t granularity_q  = std::lcm(ggml_max_blck_size, granularity_kv * model->hparams.n_gqa(il));
+
     // attention
-    const std::regex pattern_qkv_weight("blk\\.\\d*\\.attn_(q|k|v).weight");
-    if (std::regex_match(tensor->name, pattern_qkv_weight)) {
-        return {GGML_BACKEND_SPLIT_AXIS_1, 1};
+    const std::regex pattern_q_weight("blk\\.\\d*\\.attn_q.weight");
+    if (std::regex_match(tensor->name, pattern_q_weight)) {
+        return {GGML_BACKEND_SPLIT_AXIS_1, granularity_q};
     }
-    const std::regex pattern_qkv_bias("blk\\.\\d*\\.attn_(q|k|v)\\.bias");
-    if (std::regex_match(tensor->name, pattern_qkv_bias)) {
-        return {GGML_BACKEND_SPLIT_AXIS_0, 1};
+    const std::regex pattern_q_bias("blk\\.\\d*\\.attn_q\\.bias");
+    if (std::regex_match(tensor->name, pattern_q_bias)) {
+        return {GGML_BACKEND_SPLIT_AXIS_0, granularity_q};
     }
-    const std::regex pattern_qk_norm("blk\\.\\d*\\.attn_(q|k)_norm\\.weight");
-    if (std::regex_match(tensor->name, pattern_qk_norm)) {
-        return {tensor->ne[1] == 1 ? GGML_BACKEND_SPLIT_AXIS_MIRRORED : GGML_BACKEND_SPLIT_AXIS_1, 1};
+    const std::regex pattern_q_norm("blk\\.\\d*\\.attn_q_norm\\.weight");
+    if (std::regex_match(tensor->name, pattern_q_norm)) {
+        if (tensor->ne[1] == 1) {
+            return {GGML_BACKEND_SPLIT_AXIS_MIRRORED, 1};
+        }
+        return {GGML_BACKEND_SPLIT_AXIS_1, granularity_q};
+    }
+    const std::regex pattern_kv_weight("blk\\.\\d*\\.attn_(k|v).weight");
+    if (std::regex_match(tensor->name, pattern_kv_weight)) {
+        return {GGML_BACKEND_SPLIT_AXIS_1, granularity_kv};
+    }
+    const std::regex pattern_kv_bias("blk\\.\\d*\\.attn_(k|v)\\.bias");
+    if (std::regex_match(tensor->name, pattern_kv_bias)) {
+        return {GGML_BACKEND_SPLIT_AXIS_0, granularity_kv};
+    }
+    const std::regex pattern_k_norm("blk\\.\\d*\\.attn_k_norm\\.weight");
+    if (std::regex_match(tensor->name, pattern_k_norm)) {
+        if (tensor->ne[1] == 1) {
+            return {GGML_BACKEND_SPLIT_AXIS_MIRRORED, 1};
+        }
+        return {GGML_BACKEND_SPLIT_AXIS_1, granularity_kv};
     }
     const std::regex pattern_kv_cache("cache_(k|v)_l\\d*");
     const std::regex pattern_attn_sinks("blk\\.\\d*\\.attn_sinks.weight");
     if (std::regex_match(tensor->name, pattern_kv_cache) || std::regex_match(tensor->name, pattern_attn_sinks)) {
-        return {GGML_BACKEND_SPLIT_AXIS_0, 1};
+        return {GGML_BACKEND_SPLIT_AXIS_0, granularity_kv};
     }
     const std::regex pattern_attn_out_weight("blk\\.\\d*\\.attn_output.weight");
     if (std::regex_match(tensor->name, pattern_attn_out_weight)) {
-        return {GGML_BACKEND_SPLIT_AXIS_0, 1};
+        return {GGML_BACKEND_SPLIT_AXIS_0, granularity_q};
     }
     const std::regex pattern_attn_out_bias("blk\\.\\d*\\.attn_output.bias");
     if (std::regex_match(tensor->name, pattern_attn_out_bias)) {
@@ -915,15 +942,15 @@ static struct ggml_backend_meta_split_state llama_meta_device_get_tensor_split(c
     // FFN
     const std::regex pattern_ffn_up_gate_weight("blk\\.\\d*\\.ffn_(up|gate)(_exps)?.weight");
     if (std::regex_match(tensor->name, pattern_ffn_up_gate_weight)) {
-        return {GGML_BACKEND_SPLIT_AXIS_1, 1};
+        return {GGML_BACKEND_SPLIT_AXIS_1, ggml_max_blck_size};
     }
     const std::regex pattern_ffn_up_gate_bias("blk\\.\\d*\\.ffn_(up|gate)(_exps)?.bias");
     if (std::regex_match(tensor->name, pattern_ffn_up_gate_bias)) {
-        return {GGML_BACKEND_SPLIT_AXIS_0, 1};
+        return {GGML_BACKEND_SPLIT_AXIS_0, ggml_max_blck_size};
     }
     const std::regex pattern_ffn_down_weight("blk\\.\\d*\\.ffn_down(_exps)?.weight");
     if (std::regex_match(tensor->name, pattern_ffn_down_weight)) {
-        return {GGML_BACKEND_SPLIT_AXIS_0, 1};
+        return {GGML_BACKEND_SPLIT_AXIS_0, ggml_max_blck_size};
     }
     const std::regex pattern_ffn_down_bias("blk\\.\\d*\\.ffn_down(_exps)?.bias");
     if (std::regex_match(tensor->name, pattern_ffn_down_bias)) {
@@ -933,7 +960,7 @@ static struct ggml_backend_meta_split_state llama_meta_device_get_tensor_split(c
     // output
     const std::regex pattern_output("output");
     if (std::regex_match(tensor->name, pattern_output)) {
-        return {GGML_BACKEND_SPLIT_AXIS_1, 1};
+        return {GGML_BACKEND_SPLIT_AXIS_1, ggml_max_blck_size};
     }
 
     // everything else
@@ -978,7 +1005,7 @@ static struct llama_model * llama_model_load_from_file_impl(
             while (params.devices[n_devs]) {
                 n_devs++;
             }
-            model->devices.push_back(ggml_backend_meta_device(params.devices, n_devs, llama_meta_device_get_tensor_split, nullptr));
+            model->devices.push_back(ggml_backend_meta_device(params.devices, n_devs, llama_meta_device_get_tensor_split, model));
         } else {
             for (ggml_backend_dev_t * dev = params.devices; *dev; ++dev) {
                 model->devices.push_back(*dev);
@@ -1000,7 +1027,7 @@ static struct llama_model * llama_model_load_from_file_impl(
             }
             GGML_ASSERT(devs.size() >= 2);
             GGML_ASSERT(ggml_backend_dev_buffer_type(devs.back()) == ggml_backend_cpu_buffer_type());
-            gpus.push_back(ggml_backend_meta_device(devs.data(), devs.size() - 1, llama_meta_device_get_tensor_split, nullptr));
+            gpus.push_back(ggml_backend_meta_device(devs.data(), devs.size() - 1, llama_meta_device_get_tensor_split, model));
         } else {
             for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
                 ggml_backend_dev_t dev = ggml_backend_dev_get(i);

@@ -245,7 +245,7 @@ extern "C" {
 
     struct ggml_backend_meta_split_state {
         enum ggml_backend_meta_split_axis axis;
-        size_t                            granularity;
+        int64_t                           granularity;
     };
 
     // function to assign split states for statically allocated tensors, compute tensor split states will be assigned to be compatible:

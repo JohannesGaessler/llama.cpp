@@ -960,13 +960,15 @@ struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const str
 
     auto handle_generic = [&](const std::vector<ggml_backend_meta_split_state> & src_split_states, bool scalar_only) -> ggml_backend_meta_split_state {
         ggml_backend_meta_split_axis homogeneous_src_split_axis = GGML_BACKEND_SPLIT_AXIS_NONE;
+        int64_t homogeneous_granularity = -1;
         for (size_t i = 0; i < GGML_MAX_SRC; i++) {
             if (tensor->src[i] == nullptr || tensor->src[i] == tensor) {
                 continue;
             }
             if (homogeneous_src_split_axis == GGML_BACKEND_SPLIT_AXIS_NONE) {
                 homogeneous_src_split_axis = src_split_states[i].axis;
-            } else if (src_split_states[i].axis != homogeneous_src_split_axis) {
+                homogeneous_granularity    = src_split_states[i].granularity;
+            } else if (src_split_states[i].axis != homogeneous_src_split_axis || src_split_states[i].granularity != homogeneous_granularity) {
                 homogeneous_src_split_axis = GGML_BACKEND_SPLIT_AXIS_UNKNOWN;
             }
         }
@@ -1004,7 +1006,7 @@ struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const str
             return {GGML_BACKEND_SPLIT_AXIS_MIRRORED, 1};
         }
         if (src_split_states[0].axis == GGML_BACKEND_SPLIT_AXIS_1 && src_split_states[1].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED) {
-            return {GGML_BACKEND_SPLIT_AXIS_0, 1};
+            return {GGML_BACKEND_SPLIT_AXIS_0, src_split_states[0].granularity};
         }
         if (src_split_states[0].axis == GGML_BACKEND_SPLIT_AXIS_0 && src_split_states[1].axis == GGML_BACKEND_SPLIT_AXIS_0) {
             return {assume_sync ? GGML_BACKEND_SPLIT_AXIS_MIRRORED : GGML_BACKEND_SPLIT_AXIS_PARTIAL, 1};
@@ -1020,15 +1022,21 @@ struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const str
             case GGML_BACKEND_SPLIT_AXIS_2:
             case GGML_BACKEND_SPLIT_AXIS_3: {
                 GGML_ASSERT(ggml_is_contiguous(tensor));
-                int64_t base_ne_in = 1;
-                for (int dim = 0; dim <= int(src_split_states[0].axis); dim++) {
-                    base_ne_in *= tensor->src[0]->ne[dim];
+                int64_t base_ne_in      = 1;
+                int64_t base_ne_in_next = 1;
+                {
+                    int dim = 0;
+                    for (; dim < int(src_split_states[0].axis); dim++) {
+                        base_ne_in *= tensor->src[0]->ne[dim];
+                    }
+                    base_ne_in_next = base_ne_in * tensor->src[0]->ne[dim];
                 }
                 int64_t base_ne_out = 1;
                 for (int dim = 0; dim < GGML_MAX_DIMS; dim++) {
                     const int64_t base_ne_out_next = base_ne_out *= tensor->ne[dim];
-                    if (base_ne_out_next == base_ne_in) {
-                        return {ggml_backend_meta_split_axis(dim), 1};
+                    if (base_ne_out_next == base_ne_in_next) {
+                        const int64_t granularity = src_split_states[0].granularity * base_ne_out/base_ne_in;
+                        return {ggml_backend_meta_split_axis(dim), granularity};
                     }
                     base_ne_out = base_ne_out_next;
                 }
@@ -1062,7 +1070,7 @@ struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const str
             case GGML_BACKEND_SPLIT_AXIS_1:
             case GGML_BACKEND_SPLIT_AXIS_2:
             case GGML_BACKEND_SPLIT_AXIS_3: {
-                return {ggml_backend_meta_split_axis(tensor->op_params[int(src_split_states[0].axis)]), 1};
+                return {ggml_backend_meta_split_axis(tensor->op_params[int(src_split_states[0].axis)]), src_split_states[0].granularity};
             }
             case GGML_BACKEND_SPLIT_AXIS_MIRRORED:
             case GGML_BACKEND_SPLIT_AXIS_PARTIAL: {
@@ -1078,7 +1086,7 @@ struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const str
     auto handle_set_rows = [&](const std::vector<ggml_backend_meta_split_state> & src_split_states) -> ggml_backend_meta_split_state {
         GGML_ASSERT(src_split_states[0].axis == GGML_BACKEND_SPLIT_AXIS_0);
         GGML_ASSERT(src_split_states[1].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED);
-        GGML_ASSERT(src_split_states[0].axis == GGML_BACKEND_SPLIT_AXIS_0);
+        GGML_ASSERT(src_split_states[2].axis == GGML_BACKEND_SPLIT_AXIS_0);
         return src_split_states[0];
     };
 
@@ -1093,7 +1101,7 @@ struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const str
         GGML_ASSERT(                             src_split_states[2].axis == GGML_BACKEND_SPLIT_AXIS_2);
         GGML_ASSERT(tensor->src[4] == nullptr || src_split_states[3].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED);
         GGML_ASSERT(tensor->src[4] == nullptr || src_split_states[4].axis == GGML_BACKEND_SPLIT_AXIS_0);
-        return {GGML_BACKEND_SPLIT_AXIS_1, 1};
+        return {GGML_BACKEND_SPLIT_AXIS_1, src_split_states[0].granularity};
     };
 
     auto calculate_split_state = [&]() -> ggml_backend_meta_split_state {
