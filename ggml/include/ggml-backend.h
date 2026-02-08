@@ -228,8 +228,8 @@ extern "C" {
     // Meta backend
     //
 
-    enum ggml_backend_meta_split_state {
-        // tensor split by tensor dimensions:
+    enum ggml_backend_meta_split_axis {
+        // tensor split by ggml tensor dimensions:
         GGML_BACKEND_SPLIT_STATE_BY_NE0   =  0,
         GGML_BACKEND_SPLIT_STATE_BY_NE1   =  1,
         GGML_BACKEND_SPLIT_STATE_BY_NE2   =  2,
@@ -243,8 +243,13 @@ extern "C" {
         GGML_BACKEND_SPLIT_STATE_UNKNOWN  = 99,
     };
 
+    struct ggml_backend_meta_split_state {
+        enum ggml_backend_meta_split_axis axis;
+        size_t                            granularity;
+    };
+
     // function to assign split states for statically allocated tensors, compute tensor split states will be assigned to be compatible:
-    typedef enum ggml_backend_meta_split_state (*ggml_backend_meta_get_split_state_t)(const struct ggml_tensor * tensor, void * userdata);
+    typedef struct ggml_backend_meta_split_state (*ggml_backend_meta_get_split_state_t)(const struct ggml_tensor * tensor, void * userdata);
 
 
     GGML_API bool ggml_backend_dev_is_meta(ggml_backend_dev_t dev);
@@ -268,7 +273,7 @@ extern "C" {
     GGML_API size_t ggml_backend_meta_n_backends(ggml_backend_t meta_backend);
     GGML_API ggml_backend_t ggml_backend_meta_simple_backend(ggml_backend_t meta_backend, size_t index);
 
-    GGML_API enum ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struct ggml_tensor * tensor, bool assume_sync);
+    GGML_API struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const struct ggml_tensor * tensor, bool assume_sync);
 
     //
     // Backend registry
