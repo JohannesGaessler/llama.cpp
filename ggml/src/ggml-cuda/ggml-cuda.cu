@@ -2861,18 +2861,18 @@ static bool ggml_backend_cuda_allgather_tensor_async(ggml_backend_t * backends, 
 
                 // Copies under control of dst streams:
                 if (cuda_ctxs[i]->device == cuda_ctxs[j]->device) {
-                    CUDA_CHECK(cudaMemcpyAsync(tensors[j*n_backends + j]->data, tensors[i*n_backends + j]->data,
+                    CUDA_CHECK(cudaMemcpyAsync(tensors[i*n_backends + j]->data, tensors[j*n_backends + j]->data,
                         ggml_nbytes(tensors[i*n_backends + j]), cudaMemcpyDeviceToDevice, cuda_ctxs[i]->stream()));
                 } else {
 #ifdef GGML_CUDA_NO_PEER_COPY
                     return false;
 #else
-                    CUDA_CHECK(cudaMemcpyPeerAsync(tensors[j*n_backends + j]->data, cuda_ctxs[j]->device, tensors[i*n_backends + j]->data, cuda_ctxs[i]->device,
+                    CUDA_CHECK(cudaMemcpyPeerAsync(tensors[i*n_backends + j]->data, cuda_ctxs[i]->device, tensors[j*n_backends + j]->data, cuda_ctxs[j]->device,
                         ggml_nbytes(tensors[i*n_backends + j]), cuda_ctxs[i]->stream()));
 #endif // GGML_CUDA_NO_PEER_COPY
                 }
             } else {
-                CUDA_CHECK(cudaMemcpyAsync(tensors[j*n_backends + j]->data, tensors[i*n_backends + j]->data,
+                CUDA_CHECK(cudaMemcpyAsync(tensors[i*n_backends + j]->data, tensors[j*n_backends + j]->data,
                     ggml_nbytes(tensors[i*n_backends + j]), cudaMemcpyDeviceToDevice, cuda_ctxs[i]->stream()));
             }
         }
