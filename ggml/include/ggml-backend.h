@@ -230,17 +230,17 @@ extern "C" {
 
     enum ggml_backend_meta_split_axis {
         // tensor split by ggml tensor dimensions:
-        GGML_BACKEND_SPLIT_STATE_BY_NE0   =  0,
-        GGML_BACKEND_SPLIT_STATE_BY_NE1   =  1,
-        GGML_BACKEND_SPLIT_STATE_BY_NE2   =  2,
-        GGML_BACKEND_SPLIT_STATE_BY_NE3   =  3,
+        GGML_BACKEND_SPLIT_AXIS_0        =  0,
+        GGML_BACKEND_SPLIT_AXIS_1        =  1,
+        GGML_BACKEND_SPLIT_AXIS_2        =  2,
+        GGML_BACKEND_SPLIT_AXIS_3        =  3,
 
-        GGML_BACKEND_SPLIT_STATE_MIRRORED = 10, // all values on all backends
-        GGML_BACKEND_SPLIT_STATE_PARTIAL  = 11, // each backend has a partial sum
+        GGML_BACKEND_SPLIT_AXIS_MIRRORED = 10, // all values on all backends
+        GGML_BACKEND_SPLIT_AXIS_PARTIAL  = 11, // each backend has a partial sum
 
         // for internal bookkeeping only:
-        GGML_BACKEND_SPLIT_STATE_NONE     = 98,
-        GGML_BACKEND_SPLIT_STATE_UNKNOWN  = 99,
+        GGML_BACKEND_SPLIT_AXIS_NONE     = 98,
+        GGML_BACKEND_SPLIT_AXIS_UNKNOWN  = 99,
     };
 
     struct ggml_backend_meta_split_state {
