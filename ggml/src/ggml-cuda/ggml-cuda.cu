@@ -2846,7 +2846,6 @@ static bool ggml_backend_cuda_allgather_tensor_async(ggml_backend_t * backends, 
             CUDA_CHECK(cudaEventCreateWithFlags(&cuda_ctxs[i]->copy_event, cudaEventDisableTiming));
         }
         CUDA_CHECK(cudaEventRecord(cuda_ctxs[i]->copy_event, cuda_ctxs[i]->stream()));
-        CUDA_CHECK(cudaStreamSynchronize(cuda_ctxs[i]->stream()));
     }
 
     for (size_t i = 0; i < n_backends; i++) {
