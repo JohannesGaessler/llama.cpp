@@ -820,7 +820,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 auto & bcj = backend_ctx->backend_configs[j];
                 bcj.cgraphs.emplace_back(*cgraph, i_start);
                 const size_t n_nodes_main = i + 1 - i_start;
-                const size_t n_nodes_aux  = n_reduce_steps*2;
+                const size_t n_nodes_aux  = n_reduce_steps*3;
                 bcj.cgraphs.back().nodes.reserve(n_nodes_main + n_nodes_aux);
                 for (int i_node = i_start; i_node <= i; i_node++) {
                     bcj.cgraphs.back().nodes.push_back(bcj.nodes[i_node]);
@@ -849,7 +849,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
     }
     if (n_subgraphs > backend_ctx->max_subgraphs) {
         ggml_init_params params = {
-            /*.mem_size   =*/ n_subgraphs*n_reduce_steps*2*ggml_tensor_overhead(),
+            /*.mem_size   =*/ n_subgraphs*n_reduce_steps*3*ggml_tensor_overhead(),
             /*.mem_buffer =*/ nullptr,
             /*.no_alloc   =*/ true,
         };
@@ -892,7 +892,26 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 bcj1.cgraphs[i].cgraph.n_nodes++;
                 bcj2.cgraphs[i].cgraph.n_nodes++;
 
-                ggml_backend_tensor_shfl_async(bcj1.backend, bcj2.backend, node1, node2, node_tmp_1, node_tmp_2);
+                ggml_tensor * node_cpy_1 = backend_ctx->get_next_tensor(j,       tensors, node1);
+                ggml_tensor * node_cpy_2 = backend_ctx->get_next_tensor(j_other, tensors, node2);
+                node_cpy_1->view_src = node_tmp_1;
+                node_cpy_2->view_src = node_tmp_2;
+                node_cpy_1->view_offs = 0;
+                node_cpy_2->view_offs = 0;
+                node_cpy_1->op = GGML_OP_CPY;
+                node_cpy_2->op = GGML_OP_CPY;
+                node_cpy_1->src[0] = node2;
+                node_cpy_2->src[0] = node1;
+                node_cpy_1->src[1] = node_tmp_1;
+                node_cpy_2->src[1] = node_tmp_2;
+                node_cpy_1->flags |= GGML_TENSOR_FLAG_COMPUTE;
+                node_cpy_2->flags |= GGML_TENSOR_FLAG_COMPUTE;
+                ggml_backend_view_init(node_cpy_1);
+                ggml_backend_view_init(node_cpy_2);
+                bcj1.cgraphs[i].nodes.insert(bcj1.cgraphs[i].nodes.begin(), node_cpy_1);
+                bcj2.cgraphs[i].nodes.insert(bcj2.cgraphs[i].nodes.begin(), node_cpy_2);
+                bcj1.cgraphs[i].cgraph.n_nodes++;
+                bcj2.cgraphs[i].cgraph.n_nodes++;
 
                 ggml_tensor * node_red_1 = backend_ctx->get_next_tensor(j,       tensors, node1);
                 ggml_tensor * node_red_2 = backend_ctx->get_next_tensor(j_other, tensors, node2);
@@ -904,8 +923,8 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 node_red_2->op = GGML_OP_ADD;
                 node_red_1->src[0] = node1;
                 node_red_2->src[0] = node2;
-                node_red_1->src[1] = node_tmp_1;
-                node_red_2->src[1] = node_tmp_2;
+                node_red_1->src[1] = node_cpy_1;
+                node_red_2->src[1] = node_cpy_2;
                 node_red_1->flags |= GGML_TENSOR_FLAG_COMPUTE;
                 node_red_2->flags |= GGML_TENSOR_FLAG_COMPUTE;
                 ggml_backend_view_init(node_red_1);
