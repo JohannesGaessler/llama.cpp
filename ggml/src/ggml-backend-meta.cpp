@@ -888,7 +888,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 node_tmp_1->data = ggml_backend_buffer_get_base(bcj1.bufs[i_buf]);
                 node_tmp_2->data = ggml_backend_buffer_get_base(bcj2.bufs[i_buf]);
                 bcj1.cgraphs[i].nodes.insert(bcj1.cgraphs[i].nodes.begin(), node_tmp_1);
-                bcj2.cgraphs[i].nodes.insert(bcj1.cgraphs[i].nodes.begin(), node_tmp_2);
+                bcj2.cgraphs[i].nodes.insert(bcj2.cgraphs[i].nodes.begin(), node_tmp_2);
                 bcj1.cgraphs[i].cgraph.n_nodes++;
                 bcj2.cgraphs[i].cgraph.n_nodes++;
 
