@@ -889,6 +889,8 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 node_tmp_2->data = ggml_backend_buffer_get_base(bcj2.bufs[i_buf]);
                 bcj1.cgraphs[i].nodes.insert(bcj1.cgraphs[i].nodes.begin(), node_tmp_1);
                 bcj2.cgraphs[i].nodes.insert(bcj1.cgraphs[i].nodes.begin(), node_tmp_2);
+                bcj1.cgraphs[i].cgraph.n_nodes++;
+                bcj2.cgraphs[i].cgraph.n_nodes++;
 
                 ggml_backend_tensor_shfl_async(bcj1.backend, bcj2.backend, node1, node2, node_tmp_1, node_tmp_2);
 
@@ -910,6 +912,8 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 ggml_backend_view_init(node_red_2);
                 bcj1.cgraphs[i].nodes.insert(bcj1.cgraphs[i].nodes.begin(), node_red_1);
                 bcj2.cgraphs[i].nodes.insert(bcj2.cgraphs[i].nodes.begin(), node_red_2);
+                bcj1.cgraphs[i].cgraph.n_nodes++;
+                bcj2.cgraphs[i].cgraph.n_nodes++;
 
                 i_buf = (i_buf + 1) % (n_reduce_steps + 1);
             }
