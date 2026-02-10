@@ -1004,6 +1004,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
             if (status != GGML_STATUS_SUCCESS) {
                 return status;
             }
+            ggml_backend_synchronize(bcj.backend);
         }
     }
     return GGML_STATUS_SUCCESS;
