@@ -975,38 +975,37 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
     };
 
 
+    for (size_t i = 0; i < n_subgraphs - 1; i++) {
+        bool backend_allreduce_success = false;
+        if (backend_ctx->backend_configs[0].backend->iface.allreduce_tensor_async) {
+            std::vector<ggml_backend_t> backends;
+            backends.reserve(n_backends);
+            std::vector<ggml_tensor *> nodes;
+            nodes.reserve(n_backends);
+            for (size_t j = 0; j < n_backends; j++) {
+                auto & bcj = backend_ctx->backend_configs[j];
+                backends.push_back(bcj.backend);
+                nodes.push_back(bcj.cgraphs[i-1].cgraph.nodes[bcj.cgraphs[i-1].cgraph.n_nodes-1]);
+                GGML_ASSERT(nodes.back()->type == GGML_TYPE_F32);
+                GGML_ASSERT(ggml_is_contiguous(nodes.back()));
+            }
+            backend_allreduce_success = backend_ctx->backend_configs[0].backend->iface.allreduce_tensor_async(
+                backends.data(), nodes.data(), n_backends);
+        }
+
+        if (!backend_allreduce_success) {
+            const ggml_status status = allreduce_fallback(i);
+            if (status != GGML_STATUS_SUCCESS) {
+                return status;
+            }
+        }
+    }
     for (size_t i = 0; i < n_subgraphs; i++) {
         for (size_t j = 0; j < n_backends; j++) {
             auto & bcj = backend_ctx->backend_configs[j];
             const ggml_status status = ggml_backend_graph_compute_async(bcj.backend, &bcj.cgraphs[i].cgraph);
             if (status != GGML_STATUS_SUCCESS) {
                 return status;
-            }
-        }
-
-        if (i < n_subgraphs - 1) {
-            bool backend_allreduce_success = false;
-            if (backend_ctx->backend_configs[0].backend->iface.allreduce_tensor_async) {
-                std::vector<ggml_backend_t> backends;
-                backends.reserve(n_backends);
-                std::vector<ggml_tensor *> nodes;
-                nodes.reserve(n_backends);
-                for (size_t j = 0; j < n_backends; j++) {
-                    auto & bcj = backend_ctx->backend_configs[j];
-                    backends.push_back(bcj.backend);
-                    nodes.push_back(bcj.cgraphs[i-1].cgraph.nodes[bcj.cgraphs[i-1].cgraph.n_nodes-1]);
-                    GGML_ASSERT(nodes.back()->type == GGML_TYPE_F32);
-                    GGML_ASSERT(ggml_is_contiguous(nodes.back()));
-                }
-                backend_allreduce_success = backend_ctx->backend_configs[0].backend->iface.allreduce_tensor_async(
-                    backends.data(), nodes.data(), n_backends);
-            }
-
-            if (!backend_allreduce_success) {
-                const ggml_status status = allreduce_fallback(i);
-                if (status != GGML_STATUS_SUCCESS) {
-                    return status;
-                }
             }
         }
     }
