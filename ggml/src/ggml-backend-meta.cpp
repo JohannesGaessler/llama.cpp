@@ -900,16 +900,31 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 bcj1.cgraphs[i].cgraph.n_nodes++;
                 bcj2.cgraphs[i].cgraph.n_nodes++;
 
+                ggml_tensor * node_wait_1 = backend_ctx->get_next_tensor(j,       tensors, node1);
+                ggml_tensor * node_wait_2 = backend_ctx->get_next_tensor(j_other, tensors, node2);
+                node_wait_1->buffer = bcj1.bufs[i_buf];
+                node_wait_2->buffer = bcj2.bufs[i_buf];
+                node_wait_1->op = GGML_OP_EVENT_WAIT;
+                node_wait_2->op = GGML_OP_EVENT_WAIT;
+                node_wait_1->extra = bcj2.event;
+                node_wait_2->extra = bcj1.event;
+                node_wait_1->flags |= GGML_TENSOR_FLAG_COMPUTE;
+                node_wait_2->flags |= GGML_TENSOR_FLAG_COMPUTE;
+                bcj1.cgraphs[i+1].nodes.insert(bcj1.cgraphs[i+1].nodes.begin(), node_wait_1);
+                bcj2.cgraphs[i+1].nodes.insert(bcj2.cgraphs[i+1].nodes.begin(), node_wait_2);
+                bcj1.cgraphs[i+1].cgraph.n_nodes++;
+                bcj2.cgraphs[i+1].cgraph.n_nodes++;
+
                 ggml_tensor * node_tmp_1 = backend_ctx->get_next_tensor(j,       tensors, node1);
                 ggml_tensor * node_tmp_2 = backend_ctx->get_next_tensor(j_other, tensors, node2);
                 node_tmp_1->buffer = bcj1.bufs[i_buf];
                 node_tmp_2->buffer = bcj2.bufs[i_buf];
                 node_tmp_1->data = ggml_backend_buffer_get_base(bcj1.bufs[i_buf]);
                 node_tmp_2->data = ggml_backend_buffer_get_base(bcj2.bufs[i_buf]);
-                bcj1.cgraphs[i].nodes.push_back(node_tmp_1);
-                bcj2.cgraphs[i].nodes.push_back(node_tmp_2);
-                bcj1.cgraphs[i].cgraph.n_nodes++;
-                bcj2.cgraphs[i].cgraph.n_nodes++;
+                bcj1.cgraphs[i+1].nodes.insert(bcj1.cgraphs[i+1].nodes.begin(), node_tmp_1);
+                bcj2.cgraphs[i+1].nodes.insert(bcj2.cgraphs[i+1].nodes.begin(), node_tmp_2);
+                bcj1.cgraphs[i+1].cgraph.n_nodes++;
+                bcj2.cgraphs[i+1].cgraph.n_nodes++;
 
                 ggml_tensor * node_cpy_1 = backend_ctx->get_next_tensor(j,       tensors, node1);
                 ggml_tensor * node_cpy_2 = backend_ctx->get_next_tensor(j_other, tensors, node2);
@@ -927,23 +942,8 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 node_cpy_2->flags |= GGML_TENSOR_FLAG_COMPUTE;
                 ggml_backend_view_init(node_cpy_1);
                 ggml_backend_view_init(node_cpy_2);
-                bcj1.cgraphs[i].nodes.push_back(node_cpy_1);
-                bcj2.cgraphs[i].nodes.push_back(node_cpy_2);
-                bcj1.cgraphs[i].cgraph.n_nodes++;
-                bcj2.cgraphs[i].cgraph.n_nodes++;
-
-                ggml_tensor * node_wait_1 = backend_ctx->get_next_tensor(j,       tensors, node1);
-                ggml_tensor * node_wait_2 = backend_ctx->get_next_tensor(j_other, tensors, node2);
-                node_wait_1->buffer = bcj1.bufs[i_buf];
-                node_wait_2->buffer = bcj2.bufs[i_buf];
-                node_wait_1->op = GGML_OP_EVENT_WAIT;
-                node_wait_2->op = GGML_OP_EVENT_WAIT;
-                node_wait_1->extra = bcj2.event;
-                node_wait_2->extra = bcj1.event;
-                node_wait_1->flags |= GGML_TENSOR_FLAG_COMPUTE;
-                node_wait_2->flags |= GGML_TENSOR_FLAG_COMPUTE;
-                bcj1.cgraphs[i+1].nodes.insert(bcj1.cgraphs[i+1].nodes.begin(), node_wait_1);
-                bcj2.cgraphs[i+1].nodes.insert(bcj2.cgraphs[i+1].nodes.begin(), node_wait_2);
+                bcj1.cgraphs[i+1].nodes.insert(bcj1.cgraphs[i+1].nodes.begin(), node_cpy_1);
+                bcj2.cgraphs[i+1].nodes.insert(bcj2.cgraphs[i+1].nodes.begin(), node_cpy_2);
                 bcj1.cgraphs[i+1].cgraph.n_nodes++;
                 bcj2.cgraphs[i+1].cgraph.n_nodes++;
 
