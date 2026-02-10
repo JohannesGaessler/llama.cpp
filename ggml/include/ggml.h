@@ -572,6 +572,9 @@ extern "C" {
 
         GGML_OP_GLU,
 
+        GGML_OP_EVENT_RECORD,
+        GGML_OP_EVENT_WAIT,
+
         GGML_OP_COUNT,
     };
 

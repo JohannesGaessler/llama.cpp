@@ -2698,6 +2698,17 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
         case GGML_OP_FILL:
             ggml_cuda_op_fill(ctx, dst);
             break;
+        case GGML_OP_EVENT_RECORD:
+            if (!ctx.copy_event) {
+                ggml_cuda_set_device(ctx.device);
+                CUDA_CHECK(cudaEventCreateWithFlags(&ctx.copy_event, cudaEventDisableTiming));
+            }
+            CUDA_CHECK(cudaEventRecord(ctx.copy_event, ctx.stream()));
+            dst->extra = ctx.copy_event;
+            break;
+        case GGML_OP_EVENT_WAIT:
+            CUDA_CHECK(cudaStreamWaitEvent(ctx.stream(), (cudaEvent_t) dst->src[0]->extra, 0));
+            break;
         default:
             return false;
     }
