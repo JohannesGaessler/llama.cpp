@@ -2699,11 +2699,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
             ggml_cuda_op_fill(ctx, dst);
             break;
         case GGML_OP_EVENT_RECORD:
-            ggml_cuda_set_device(ctx.device);
             CUDA_CHECK(cudaEventRecordWithFlags((cudaEvent_t) ((ggml_backend_event_t) dst->extra)->context, ctx.stream(), 0));
             break;
         case GGML_OP_EVENT_WAIT:
-            ggml_cuda_set_device(ctx.device);
             CUDA_CHECK(cudaStreamWaitEvent(ctx.stream(), (cudaEvent_t) ((ggml_backend_event_t) dst->extra)->context, 0));
             break;
         default:
@@ -3087,7 +3085,6 @@ static bool ggml_cuda_graph_update_required(ggml_backend_cuda_context * cuda_ctx
 }
 
 static void ggml_cuda_graph_update_executable(ggml_backend_cuda_context * cuda_ctx, const void * graph_key) {
-    ggml_cuda_set_device(cuda_ctx->device);
     ggml_cuda_graph * graph = cuda_ctx->cuda_graph(graph_key);
 
 #if CUDART_VERSION >= 12000
@@ -3423,7 +3420,6 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph *                cgraph,
 }
 
 static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph * cgraph, const bool use_cuda_graph, const bool cuda_graph_update_required, const void * graph_key) {
-    ggml_cuda_set_device(cuda_ctx->device);
     bool graph_evaluated_or_captured = false;
 
     // flag used to determine whether it is an integrated_gpu
