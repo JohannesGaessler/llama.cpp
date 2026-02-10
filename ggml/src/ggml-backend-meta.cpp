@@ -656,10 +656,14 @@ struct ggml_backend_meta_context {
         std::vector<ggml_tensor *>           nodes;
         ggml_context                       * ctx = nullptr;
         std::vector<ggml_backend_buffer_t>   bufs; // Multiple buffers to reduce synchronizations.
+        ggml_backend_event_t                 event;
 
-        backend_config(ggml_backend_t backend) : backend(backend) {}
+        backend_config(ggml_backend_t backend) : backend(backend) {
+            event = ggml_backend_event_new(ggml_backend_get_device(backend));
+        }
 
         ~backend_config() {
+            ggml_backend_event_free(event);
             for (ggml_backend_buffer_t buf : bufs) {
                 ggml_backend_buffer_free(buf);
             }
@@ -883,8 +887,12 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
 
                 ggml_tensor * node_record_1 = backend_ctx->get_next_tensor(j,       tensors, node1);
                 ggml_tensor * node_record_2 = backend_ctx->get_next_tensor(j_other, tensors, node2);
+                node_record_1->buffer = bcj1.bufs[i_buf];
+                node_record_2->buffer = bcj2.bufs[i_buf];
                 node_record_1->op = GGML_OP_EVENT_RECORD;
                 node_record_2->op = GGML_OP_EVENT_RECORD;
+                node_record_1->extra = bcj1.event;
+                node_record_2->extra = bcj2.event;
                 node_record_1->flags |= GGML_TENSOR_FLAG_COMPUTE;
                 node_record_2->flags |= GGML_TENSOR_FLAG_COMPUTE;
                 bcj1.cgraphs[i].nodes.insert(bcj1.cgraphs[i].nodes.begin(), node_record_1);
@@ -926,10 +934,12 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
 
                 ggml_tensor * node_wait_1 = backend_ctx->get_next_tensor(j,       tensors, node1);
                 ggml_tensor * node_wait_2 = backend_ctx->get_next_tensor(j_other, tensors, node2);
+                node_wait_1->buffer = bcj1.bufs[i_buf];
+                node_wait_2->buffer = bcj2.bufs[i_buf];
                 node_wait_1->op = GGML_OP_EVENT_WAIT;
                 node_wait_2->op = GGML_OP_EVENT_WAIT;
-                node_wait_1->src[0] = node_record_2;
-                node_wait_2->src[0] = node_record_1;
+                node_wait_1->extra = bcj2.event;
+                node_wait_2->extra = bcj1.event;
                 node_wait_1->flags |= GGML_TENSOR_FLAG_COMPUTE;
                 node_wait_2->flags |= GGML_TENSOR_FLAG_COMPUTE;
                 bcj1.cgraphs[i].nodes.insert(bcj1.cgraphs[i].nodes.begin(), node_wait_1);

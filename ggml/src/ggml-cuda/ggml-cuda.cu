@@ -2699,15 +2699,11 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
             ggml_cuda_op_fill(ctx, dst);
             break;
         case GGML_OP_EVENT_RECORD:
-            if (!ctx.copy_event) {
-                ggml_cuda_set_device(ctx.device);
-                CUDA_CHECK(cudaEventCreateWithFlags(&ctx.copy_event, cudaEventDisableTiming));
-            }
-            CUDA_CHECK(cudaEventRecord(ctx.copy_event, ctx.stream()));
+            CUDA_CHECK(cudaEventRecord((cudaEvent_t) ((ggml_backend_event_t) dst->extra)->context, ctx.stream()));
             dst->extra = ctx.copy_event;
             break;
         case GGML_OP_EVENT_WAIT:
-            CUDA_CHECK(cudaStreamWaitEvent(ctx.stream(), (cudaEvent_t) dst->src[0]->extra, 0));
+            CUDA_CHECK(cudaStreamWaitEvent(ctx.stream(), (cudaEvent_t) ((ggml_backend_event_t) dst->extra)->context, 0));
             break;
         default:
             return false;
@@ -3897,7 +3893,7 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
                 for (int j = 0; j < GGML_MAX_SRC; j++) {
                     if (node->src[j] != nullptr) {
                         assert(node->src[j]->buffer);
-                        assert(node->src[j]->buffer->buft == ggml_backend_cuda_buffer_type(cuda_ctx->device) ||
+                        assert(node->op == GGML_OP_CPY || node->src[j]->buffer->buft == ggml_backend_cuda_buffer_type(cuda_ctx->device) ||
                                ggml_backend_buft_is_cuda_split(node->src[j]->buffer->buft) || (integrated && ggml_backend_buft_is_cuda_host(node->src[j]->buffer->buft)));
                     }
                 }
