@@ -880,8 +880,8 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 auto & bcj1 = backend_ctx->backend_configs[j];
                 auto & bcj2 = backend_ctx->backend_configs[j_other];
 
-                ggml_tensor * node1 = bcj1.cgraphs[i-1].cgraph.nodes[bcj1.cgraphs[i-1].cgraph.n_nodes-1];
-                ggml_tensor * node2 = bcj2.cgraphs[i-1].cgraph.nodes[bcj2.cgraphs[i-1].cgraph.n_nodes-1];
+                ggml_tensor * node1 = bcj1.cgraphs[i].cgraph.nodes[bcj1.cgraphs[i].cgraph.n_nodes-1];
+                ggml_tensor * node2 = bcj2.cgraphs[i].cgraph.nodes[bcj2.cgraphs[i].cgraph.n_nodes-1];
                 GGML_ASSERT(ggml_is_contiguous(node1));
                 GGML_ASSERT(ggml_is_contiguous(node2));
 
@@ -895,8 +895,8 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 node_record_2->extra = bcj2.event;
                 node_record_1->flags |= GGML_TENSOR_FLAG_COMPUTE;
                 node_record_2->flags |= GGML_TENSOR_FLAG_COMPUTE;
-                bcj1.cgraphs[i].nodes.insert(bcj1.cgraphs[i].nodes.begin(), node_record_1);
-                bcj2.cgraphs[i].nodes.insert(bcj2.cgraphs[i].nodes.begin(), node_record_2);
+                bcj1.cgraphs[i].nodes.push_back(node_record_1);
+                bcj2.cgraphs[i].nodes.push_back(node_record_2);
                 bcj1.cgraphs[i].cgraph.n_nodes++;
                 bcj2.cgraphs[i].cgraph.n_nodes++;
 
@@ -906,8 +906,8 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 node_tmp_2->buffer = bcj2.bufs[i_buf];
                 node_tmp_1->data = ggml_backend_buffer_get_base(bcj1.bufs[i_buf]);
                 node_tmp_2->data = ggml_backend_buffer_get_base(bcj2.bufs[i_buf]);
-                bcj1.cgraphs[i].nodes.insert(bcj1.cgraphs[i].nodes.begin(), node_tmp_1);
-                bcj2.cgraphs[i].nodes.insert(bcj2.cgraphs[i].nodes.begin(), node_tmp_2);
+                bcj1.cgraphs[i].nodes.push_back(node_tmp_1);
+                bcj2.cgraphs[i].nodes.push_back(node_tmp_2);
                 bcj1.cgraphs[i].cgraph.n_nodes++;
                 bcj2.cgraphs[i].cgraph.n_nodes++;
 
@@ -927,8 +927,8 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 node_cpy_2->flags |= GGML_TENSOR_FLAG_COMPUTE;
                 ggml_backend_view_init(node_cpy_1);
                 ggml_backend_view_init(node_cpy_2);
-                bcj1.cgraphs[i].nodes.insert(bcj1.cgraphs[i].nodes.begin(), node_cpy_1);
-                bcj2.cgraphs[i].nodes.insert(bcj2.cgraphs[i].nodes.begin(), node_cpy_2);
+                bcj1.cgraphs[i].nodes.push_back(node_cpy_1);
+                bcj2.cgraphs[i].nodes.push_back(node_cpy_2);
                 bcj1.cgraphs[i].cgraph.n_nodes++;
                 bcj2.cgraphs[i].cgraph.n_nodes++;
 
@@ -942,10 +942,10 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 node_wait_2->extra = bcj1.event;
                 node_wait_1->flags |= GGML_TENSOR_FLAG_COMPUTE;
                 node_wait_2->flags |= GGML_TENSOR_FLAG_COMPUTE;
-                bcj1.cgraphs[i].nodes.insert(bcj1.cgraphs[i].nodes.begin(), node_wait_1);
-                bcj2.cgraphs[i].nodes.insert(bcj2.cgraphs[i].nodes.begin(), node_wait_2);
-                bcj1.cgraphs[i].cgraph.n_nodes++;
-                bcj2.cgraphs[i].cgraph.n_nodes++;
+                bcj1.cgraphs[i+1].nodes.insert(bcj1.cgraphs[i].nodes.begin(), node_wait_1);
+                bcj2.cgraphs[i+1].nodes.insert(bcj2.cgraphs[i].nodes.begin(), node_wait_2);
+                bcj1.cgraphs[i+1].cgraph.n_nodes++;
+                bcj2.cgraphs[i+1].cgraph.n_nodes++;
 
                 ggml_tensor * node_red_1 = backend_ctx->get_next_tensor(j,       tensors, node1);
                 ggml_tensor * node_red_2 = backend_ctx->get_next_tensor(j_other, tensors, node2);
@@ -963,10 +963,10 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 node_red_2->flags |= GGML_TENSOR_FLAG_COMPUTE;
                 ggml_backend_view_init(node_red_1);
                 ggml_backend_view_init(node_red_2);
-                bcj1.cgraphs[i].nodes.insert(bcj1.cgraphs[i].nodes.begin(), node_red_1);
-                bcj2.cgraphs[i].nodes.insert(bcj2.cgraphs[i].nodes.begin(), node_red_2);
-                bcj1.cgraphs[i].cgraph.n_nodes++;
-                bcj2.cgraphs[i].cgraph.n_nodes++;
+                bcj1.cgraphs[i+1].nodes.insert(bcj1.cgraphs[i].nodes.begin(), node_red_1);
+                bcj2.cgraphs[i+1].nodes.insert(bcj2.cgraphs[i].nodes.begin(), node_red_2);
+                bcj1.cgraphs[i+1].cgraph.n_nodes++;
+                bcj2.cgraphs[i+1].cgraph.n_nodes++;
 
                 i_buf = (i_buf + 1) % (n_reduce_steps + 1);
             }
@@ -976,7 +976,15 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
 
 
     for (size_t i = 0; i < n_subgraphs; i++) {
-        if (i > 0) {
+        for (size_t j = 0; j < n_backends; j++) {
+            auto & bcj = backend_ctx->backend_configs[j];
+            const ggml_status status = ggml_backend_graph_compute_async(bcj.backend, &bcj.cgraphs[i].cgraph);
+            if (status != GGML_STATUS_SUCCESS) {
+                return status;
+            }
+        }
+
+        if (i < n_subgraphs - 1) {
             bool backend_allreduce_success = false;
             if (backend_ctx->backend_configs[0].backend->iface.allreduce_tensor_async) {
                 std::vector<ggml_backend_t> backends;
@@ -999,14 +1007,6 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 if (status != GGML_STATUS_SUCCESS) {
                     return status;
                 }
-            }
-        }
-
-        for (size_t j = 0; j < n_backends; j++) {
-            auto & bcj = backend_ctx->backend_configs[j];
-            const ggml_status status = ggml_backend_graph_compute_async(bcj.backend, &bcj.cgraphs[i].cgraph);
-            if (status != GGML_STATUS_SUCCESS) {
-                return status;
             }
         }
     }
