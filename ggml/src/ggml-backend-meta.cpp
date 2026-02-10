@@ -942,8 +942,8 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 node_wait_2->extra = bcj1.event;
                 node_wait_1->flags |= GGML_TENSOR_FLAG_COMPUTE;
                 node_wait_2->flags |= GGML_TENSOR_FLAG_COMPUTE;
-                bcj1.cgraphs[i+1].nodes.insert(bcj1.cgraphs[i].nodes.begin(), node_wait_1);
-                bcj2.cgraphs[i+1].nodes.insert(bcj2.cgraphs[i].nodes.begin(), node_wait_2);
+                bcj1.cgraphs[i+1].nodes.insert(bcj1.cgraphs[i+1].nodes.begin(), node_wait_1);
+                bcj2.cgraphs[i+1].nodes.insert(bcj2.cgraphs[i+1].nodes.begin(), node_wait_2);
                 bcj1.cgraphs[i+1].cgraph.n_nodes++;
                 bcj2.cgraphs[i+1].cgraph.n_nodes++;
 
@@ -963,8 +963,8 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 node_red_2->flags |= GGML_TENSOR_FLAG_COMPUTE;
                 ggml_backend_view_init(node_red_1);
                 ggml_backend_view_init(node_red_2);
-                bcj1.cgraphs[i+1].nodes.insert(bcj1.cgraphs[i].nodes.begin(), node_red_1);
-                bcj2.cgraphs[i+1].nodes.insert(bcj2.cgraphs[i].nodes.begin(), node_red_2);
+                bcj1.cgraphs[i+1].nodes.insert(bcj1.cgraphs[i+1].nodes.begin(), node_red_1);
+                bcj2.cgraphs[i+1].nodes.insert(bcj2.cgraphs[i+1].nodes.begin(), node_red_2);
                 bcj1.cgraphs[i+1].cgraph.n_nodes++;
                 bcj2.cgraphs[i+1].cgraph.n_nodes++;
 
