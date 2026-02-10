@@ -2703,6 +2703,7 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
             CUDA_CHECK(cudaEventRecord((cudaEvent_t) ((ggml_backend_event_t) dst->extra)->context, ctx.stream()));
             break;
         case GGML_OP_EVENT_WAIT:
+            ggml_cuda_set_device(ctx.device);
             CUDA_CHECK(cudaStreamWaitEvent(ctx.stream(), (cudaEvent_t) ((ggml_backend_event_t) dst->extra)->context, 0));
             break;
         default:
