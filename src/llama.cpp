@@ -982,6 +982,8 @@ static struct llama_model * llama_model_load_from_file_impl(
             while (params.devices[n_devs]) {
                 n_devs++;
             }
+            // pipeline two meta devices to hide latencies
+            model->devices.push_back(ggml_backend_meta_device(params.devices, n_devs, llama_meta_device_get_tensor_split, nullptr));
             model->devices.push_back(ggml_backend_meta_device(params.devices, n_devs, llama_meta_device_get_tensor_split, nullptr));
         } else {
             for (ggml_backend_dev_t * dev = params.devices; *dev; ++dev) {
@@ -1004,6 +1006,8 @@ static struct llama_model * llama_model_load_from_file_impl(
             }
             GGML_ASSERT(devs.size() >= 2);
             GGML_ASSERT(ggml_backend_dev_buffer_type(devs.back()) == ggml_backend_cpu_buffer_type());
+            // pipeline two meta devices to hide latencies
+            gpus.push_back(ggml_backend_meta_device(devs.data(), devs.size() - 1, llama_meta_device_get_tensor_split, nullptr));
             gpus.push_back(ggml_backend_meta_device(devs.data(), devs.size() - 1, llama_meta_device_get_tensor_split, nullptr));
         } else {
             for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {

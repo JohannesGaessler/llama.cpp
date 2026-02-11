@@ -35,8 +35,9 @@ struct ggml_backend_meta_device_context {
     ggml_backend_meta_device_context(
             std::vector<ggml_backend_dev_t> simple_devs, ggml_backend_meta_get_split_state_t get_splite_state, void * get_split_state_ud) :
             simple_devs(std::move(simple_devs)), get_split_state(get_splite_state), get_split_state_ud(get_split_state_ud) {
-        name        = std::string("Meta(");
-        description = std::string("Meta(");
+        static int index = 0;
+        name        = std::string("Meta") + std::to_string(index) + "(";
+        description = std::string("Meta") + std::to_string(index) + "(";
         for (size_t i = 0; i < simple_devs.size(); i++) {
             if (i > 0) {
                 name        += ",";
@@ -47,6 +48,7 @@ struct ggml_backend_meta_device_context {
         }
         name        += ")";
         description += ")";
+        index++;
     }
 
     bool operator<(const ggml_backend_meta_device_context & other) const {
@@ -182,8 +184,7 @@ ggml_backend_dev_t ggml_backend_meta_dev_simple_dev(ggml_backend_dev_t meta_dev,
 ggml_backend_dev_t ggml_backend_meta_device(
         ggml_backend_dev_t * devs, size_t n_devs, ggml_backend_meta_get_split_state_t get_split_state, void * get_split_state_ud) {
     GGML_ASSERT(n_devs == 1 || n_devs == 2 || n_devs == 4 || n_devs == 8);
-    static std::vector<std::unique_ptr<ggml_backend_meta_device_context>>         ctxs;
-    static std::map<ggml_backend_meta_device_context, struct ggml_backend_device> meta_devs;
+    static std::vector<std::unique_ptr<ggml_backend_meta_device_context>> ctxs;
 
     std::vector<ggml_backend_dev_t> simple_devs;
     simple_devs.reserve(n_devs);
@@ -191,23 +192,13 @@ ggml_backend_dev_t ggml_backend_meta_device(
         simple_devs.push_back(devs[i]);
     }
     ggml_backend_meta_device_context ctx(simple_devs, get_split_state, get_split_state_ud);
-
-    {
-        auto it = meta_devs.find(ctx);
-        if (it != meta_devs.end()) {
-            return &it->second;
-        }
-    }
     ctxs.push_back(std::make_unique<ggml_backend_meta_device_context>(ctx));
 
-    struct ggml_backend_device meta_dev = {
-        /*iface  =*/ ggml_backend_meta_device_iface,
-        /*reg    =*/ nullptr,
-        /*ctx    =*/ ctxs.back().get(),
-    };
-
-    auto result = meta_devs.emplace(*ctxs.back(), meta_dev);
-    return &result.first->second;
+    struct ggml_backend_device * meta_dev = new struct ggml_backend_device;
+    meta_dev->iface   = ggml_backend_meta_device_iface;
+    meta_dev->reg     = nullptr;
+    meta_dev->context = ctxs.back().get();
+    return meta_dev;
 }
 
 //
@@ -220,7 +211,8 @@ struct ggml_backend_meta_buffer_type_context {
     std::string name;
 
     ggml_backend_meta_buffer_type_context(std::vector<ggml_backend_buffer_type_t> simple_bufts) : simple_bufts(std::move(simple_bufts)) {
-        name = "Meta(";
+        static int index = 0;
+        name        = std::string("Meta") + std::to_string(index) + "(";
         for (size_t i = 0; i < simple_bufts.size(); i++) {
             if (i > 0) {
                 name += ",";
@@ -228,6 +220,7 @@ struct ggml_backend_meta_buffer_type_context {
             name += ggml_backend_buft_name(simple_bufts[i]);
         }
         name += ")";
+        index++;
     }
 
     bool operator<(const ggml_backend_meta_buffer_type_context & other) const {
@@ -673,8 +666,9 @@ struct ggml_backend_meta_context {
     size_t                      max_subgraphs = 0;
 
     ggml_backend_meta_context(ggml_backend_dev_t meta_dev, const char * params) {
+        static int index = 0;
         const size_t n_devs = ggml_backend_meta_dev_n_devs(meta_dev);
-        name = "Meta(";
+        name = std::string("Meta") + std::to_string(index) + "(";
         backend_configs.reserve(n_devs);
         for (size_t i = 0; i < n_devs; i++) {
             ggml_backend_dev_t simple_dev = ggml_backend_meta_dev_simple_dev(meta_dev, i);
@@ -685,6 +679,7 @@ struct ggml_backend_meta_context {
             backend_configs.emplace_back(ggml_backend_dev_init(simple_dev, params));
         }
         name += ")";
+        index++;
     }
 
     ~ggml_backend_meta_context() {
