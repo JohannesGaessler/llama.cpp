@@ -591,12 +591,28 @@ struct ggml_backend_cuda_multi_graph_context {
     }
 
     bool disable_due_to_gpu_arch = false;
+    bool disable_due_to_first_call = true;
 
     // Context-level enabled check (GPU arch + env). Per-graph checks
     // (too many updates) happen via ggml_cuda_graph::is_enabled().
-    bool is_enabled() const {
-        static const bool disable_env = (getenv("GGML_CUDA_DISABLE_GRAPHS") != nullptr);
-        return !(disable_due_to_gpu_arch || disable_env);
+    bool is_enabled() {
+#ifdef GGML_USE_NCCL
+    // NCCL CUDA graph capture doesn't work on the first NCCL call, 
+    // so we disable graphs for the first call to avoid errors, and then re-enable them afterwards. 
+    // This is a workaround for the NCCL issue.
+    if(disable_due_to_first_call)
+    {
+        disable_due_to_first_call = false;
+        return false;
+    }
+    
+    static const bool disable_env = (getenv("GGML_CUDA_DISABLE_GRAPHS") != nullptr);
+    return !(disable_due_to_gpu_arch || disable_env);
+#else
+    // the fallback allreduce is not compatible with CUDA graphs 
+    // as cudaMemcpyPeerAsync cannot be captured in a graph, so we disable graphs when NCCL is not available
+    return false;
+#endif // GGML_USE_NCCL
     }
 
     ~ggml_backend_cuda_multi_graph_context() {
@@ -1345,13 +1361,7 @@ static bool ggml_backend_cuda_multi_graph_is_enabled(ggml_backend_multi_graph_t 
     if (!ctx) {
         return false;
     }
-#ifdef GGML_USE_NCCL
     return ctx->is_enabled();
-#else
-    // the fallback allreduce is not compatible with CUDA graphs 
-    // as cudaMemcpyPeerAsync cannot be captured in a graph, so we disable graphs when NCCL is not available
-    return false;
-#endif // GGML_USE_NCCL
 }
 
 // Per-call compatibility check — mirrors single-device ggml_cuda_graph_set_enabled +
