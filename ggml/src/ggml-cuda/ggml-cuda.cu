@@ -1347,7 +1347,18 @@ static bool ggml_backend_cuda_multi_graph_launch(ggml_backend_multi_graph_t hand
     }
 
     ggml_cuda_set_device(ctx->cuda_ctxs[0]->device);
-    CUDA_CHECK(cudaGraphLaunch(graph->instance, ctx->cuda_ctxs[0]->stream()));
+    cudaStream_t stream0 = ctx->cuda_ctxs[0]->stream();
+    CUDA_CHECK(cudaGraphLaunch(graph->instance, stream0));
+
+    // As graph is launched on device 0, all other devices' streams must wait on it
+    // before any other work can be submitted to these devices
+    CUDA_CHECK(cudaEventRecord(ctx->fork_event, stream0));
+
+    for (size_t i = 1; i < ctx->n_backends; i++) {
+        ggml_cuda_set_device(ctx->cuda_ctxs[i]->device);
+        cudaStream_t stream_i = ctx->cuda_ctxs[i]->stream();
+        CUDA_CHECK(cudaStreamWaitEvent(stream_i, ctx->fork_event, 0));
+    }
     return true;
 }
 
