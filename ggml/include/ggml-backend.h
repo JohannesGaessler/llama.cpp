@@ -219,6 +219,22 @@ extern "C" {
     };
     typedef struct ggml_backend_feature * (*ggml_backend_get_features_t)(ggml_backend_reg_t reg);
 
+    // Multi-device graph capture extensions (for meta backend tensor parallelism)
+    typedef void * ggml_backend_multi_graph_t; // opaque handle
+    typedef ggml_backend_multi_graph_t (*ggml_backend_multi_graph_create_t)(
+        ggml_backend_t * backends, size_t n_backends);
+    typedef bool (*ggml_backend_multi_graph_capture_begin_t)(ggml_backend_multi_graph_t handle, struct ggml_cgraph * cgraph);
+    typedef bool (*ggml_backend_multi_graph_capture_end_t)(ggml_backend_multi_graph_t handle, struct ggml_cgraph * cgraph);
+    typedef bool (*ggml_backend_multi_graph_launch_t)(ggml_backend_multi_graph_t handle, struct ggml_cgraph * cgraph);
+    typedef void (*ggml_backend_multi_graph_free_t)(ggml_backend_multi_graph_t handle);
+    typedef bool (*ggml_backend_multi_graph_is_enabled_t)(ggml_backend_multi_graph_t handle);
+    typedef bool (*ggml_backend_multi_graph_update_required_t)(
+        ggml_backend_multi_graph_t handle,
+        struct ggml_cgraph * cgraph);
+    typedef bool (*ggml_backend_multi_graph_check_compat_t)(
+        ggml_backend_multi_graph_t handle,
+        struct ggml_cgraph * cgraph);
+
     //
     // Meta backend
     //
