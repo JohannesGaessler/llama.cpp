@@ -1211,18 +1211,18 @@ struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const str
 
     auto handle_view = [&](const std::vector<ggml_backend_meta_split_state> & src_split_states) -> ggml_backend_meta_split_state {
         const int axis = src_split_states[0].axis;
-        bool single_view_along_non_split_dim = true;
+        bool only_views_of_non_split_dim = true;
         for (int dim = 0; dim < GGML_MAX_DIMS; dim++) {
             if (tensor->nb[dim] != tensor->view_src->nb[dim]) {
-                single_view_along_non_split_dim = false;
+                only_views_of_non_split_dim = false;
                 break;
             }
-            if (dim != axis && tensor->ne[dim] != tensor->view_src->ne[dim]) {
-                single_view_along_non_split_dim = false;
+            if (dim == axis && tensor->ne[dim] != tensor->view_src->ne[dim]) {
+                only_views_of_non_split_dim = false;
                 break;
             }
         }
-        if (single_view_along_non_split_dim) {
+        if (only_views_of_non_split_dim) {
             return src_split_states[0];
         }
         if (!ggml_is_permuted(tensor) && !ggml_is_permuted(tensor->view_src)) {
