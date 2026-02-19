@@ -872,7 +872,14 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
         bcj.nodes.reserve(cgraph->n_nodes*n_reduce_steps);
 
         for (int i = 0; i < cgraph->n_nodes; i++) {
-            bcj.nodes.push_back(ggml_backend_meta_buffer_simple_tensor(cgraph->nodes[i], j));
+            ggml_tensor * node = cgraph->nodes[i];
+            if (node->view_src != nullptr && node->view_src->op == GGML_OP_NONE && ggml_backend_buffer_is_host(node->view_src->buffer)) {
+                // FIXME s_copy_main is on the CPU and its view seems to be incorrectly added to the graph nodes.
+                // For regular usage this doesn't matter since it's a noop but trying to call ggml_backend_meta_buffer_simple_tensor results in a crash.
+                bcj.nodes.push_back(node);
+                continue;
+            }
+            bcj.nodes.push_back(ggml_backend_meta_buffer_simple_tensor(node, j));
             GGML_ASSERT(bcj.nodes[i]);
         }
     }
@@ -883,6 +890,9 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
         int i_start = 0;
         for (int i = 0; i < cgraph->n_nodes; i++) {
             ggml_tensor * node = cgraph->nodes[i];
+            if (node->view_src != nullptr && node->view_src->op == GGML_OP_NONE && ggml_backend_buffer_is_host(node->view_src->buffer)) {
+                continue;
+            }
             const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(node, /*assume_sync =*/ false);
             if (split_state.axis == GGML_BACKEND_SPLIT_AXIS_PARTIAL) {
                 max_tmp_size = std::max(max_tmp_size, ggml_nbytes(node));
