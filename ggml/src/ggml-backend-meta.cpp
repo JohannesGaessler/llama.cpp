@@ -1179,7 +1179,7 @@ struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const str
             case GGML_BACKEND_SPLIT_AXIS_1:
             case GGML_BACKEND_SPLIT_AXIS_2:
             case GGML_BACKEND_SPLIT_AXIS_3: {
-                GGML_ASSERT(!ggml_is_permuted(tensor) && !ggml_is_permuted(tensor->view_src));
+                GGML_ASSERT(!ggml_is_permuted(tensor) && !ggml_is_permuted(tensor->src[0]));
                 int64_t base_ne_in = 1;
                 for (int dim = 0; dim <= src_split_states[0].axis; dim++) {
                     base_ne_in *= tensor->src[0]->ne[dim];
@@ -1213,11 +1213,11 @@ struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const str
         const int axis = src_split_states[0].axis;
         bool only_views_of_non_split_dim = true;
         for (int dim = 0; dim < GGML_MAX_DIMS; dim++) {
-            if (tensor->nb[dim] != tensor->view_src->nb[dim]) {
+            if (tensor->nb[dim] != tensor->src[0]->nb[dim]) {
                 only_views_of_non_split_dim = false;
                 break;
             }
-            if (dim == axis && tensor->ne[dim] != tensor->view_src->ne[dim]) {
+            if (dim == axis && tensor->ne[dim] != tensor->src[0]->ne[dim]) {
                 only_views_of_non_split_dim = false;
                 break;
             }
@@ -1225,7 +1225,7 @@ struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const str
         if (only_views_of_non_split_dim) {
             return src_split_states[0];
         }
-        if (!ggml_is_permuted(tensor) && !ggml_is_permuted(tensor->view_src)) {
+        if (!ggml_is_permuted(tensor) && !ggml_is_permuted(tensor->src[0])) {
             return handle_reshape(src_split_states);
         }
         if (src_split_states[0].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED || src_split_states[0].axis == GGML_BACKEND_SPLIT_AXIS_PARTIAL) {
