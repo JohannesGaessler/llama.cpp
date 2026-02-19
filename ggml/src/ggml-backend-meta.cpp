@@ -1368,9 +1368,7 @@ struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const str
             case GGML_OP_CPY: {
                 split_state = handle_generic(src_split_states, /*scalar_only =*/ true);
             } break;
-            case GGML_OP_CONT: {
-                split_state = handle_generic(src_split_states, /*scalar_only =*/ false);
-            } break;
+            case GGML_OP_CONT:
             case GGML_OP_RESHAPE: {
                 split_state = handle_reshape(src_split_states);
             } break;
