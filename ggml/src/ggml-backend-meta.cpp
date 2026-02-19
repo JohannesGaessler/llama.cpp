@@ -1179,7 +1179,7 @@ struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const str
             case GGML_BACKEND_SPLIT_AXIS_1:
             case GGML_BACKEND_SPLIT_AXIS_2:
             case GGML_BACKEND_SPLIT_AXIS_3: {
-                GGML_ASSERT(ggml_is_contiguous(tensor));
+                GGML_ASSERT(!ggml_is_permuted(tensor) && !ggml_is_permuted(tensor->view_src));
                 int64_t base_ne_in = 1;
                 for (int dim = 0; dim <= src_split_states[0].axis; dim++) {
                     base_ne_in *= tensor->src[0]->ne[dim];
