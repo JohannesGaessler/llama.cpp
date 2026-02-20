@@ -111,7 +111,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
         if (std::regex_match(tensor->name, pattern_q_weight) || std::regex_match(tensor->name, pattern_q_bias) ||
                 std::regex_match(tensor->name, pattern_attn_out_weight)) {
             const uint32_t n_gqa    = ud->model->hparams.n_gqa();
-            const uint32_t n_embd_q = n_gqa * ud->model->hparams.n_embd_head_v;
+            const uint32_t n_embd_q = n_gqa * ud->model->hparams.n_embd_head_k_mla();
             return std::lcm(n_embd_q, blck_size);
         }
         if (std::regex_match(tensor->name, pattern_kv_weight) || std::regex_match(tensor->name, pattern_kv_bias) ||
