@@ -73,9 +73,10 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
         }
 
         // Qwen 3 Next
-        if (std::regex_match(tensor->name, pattern_qkv_weight) || std::regex_match(tensor->name, pattern_attn_gate_weight)) {
-            return GGML_BACKEND_SPLIT_AXIS_1;
-        }
+        // TODO: cache_r and cache_s need different shapes
+        // if (std::regex_match(tensor->name, pattern_qkv_weight) || std::regex_match(tensor->name, pattern_attn_gate_weight)) {
+        //     return GGML_BACKEND_SPLIT_AXIS_1;
+        // }
 
         // FFN
         if (std::regex_match(tensor->name, pattern_ffn_up_gate_weight)) {
