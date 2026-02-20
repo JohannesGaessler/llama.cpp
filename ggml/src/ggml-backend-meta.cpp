@@ -1164,6 +1164,18 @@ struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const str
         return handle_generic(src_split_states, /*scalar_only =*/ false);
     };
 
+    auto handle_concat = [&](const std::vector<ggml_backend_meta_split_state> & src_split_states) -> ggml_backend_meta_split_state {
+        if (src_split_states[0].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED && src_split_states[1].axis >= 0 && src_split_states[1].axis < GGML_MAX_DIMS) {
+            GGML_ASSERT(ggml_get_op_params_i32(tensor, 0) != src_split_states[1].axis);
+            return src_split_states[1];
+        }
+        if (src_split_states[1].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED && src_split_states[0].axis >= 0 && src_split_states[0].axis < GGML_MAX_DIMS) {
+            GGML_ASSERT(ggml_get_op_params_i32(tensor, 0) != src_split_states[0].axis);
+            return src_split_states[0];
+        }
+        return handle_generic(src_split_states, /*scalar_only =*/ true);
+    };
+
     auto handle_mul_mat = [&](const std::vector<ggml_backend_meta_split_state> & src_split_states) -> ggml_backend_meta_split_state {
         if (src_split_states[0].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED && src_split_states[1].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED) {
             return {GGML_BACKEND_SPLIT_AXIS_MIRRORED, {0}};
@@ -1350,9 +1362,11 @@ struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(const str
                 split_state = handle_per_row(src_split_states);
             } break;
             case GGML_OP_REPEAT:
-            case GGML_OP_REPEAT_BACK:
-            case GGML_OP_CONCAT: {
+            case GGML_OP_REPEAT_BACK: {
                 split_state = handle_generic(src_split_states, /*scalar_only =*/ true);
+            } break;
+            case GGML_OP_CONCAT: {
+                split_state = handle_concat(src_split_states);
             } break;
             case GGML_OP_SILU_BACK: {
                 split_state = handle_generic(src_split_states, /*scalar_only =*/ false);
