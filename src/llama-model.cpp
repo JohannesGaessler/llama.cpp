@@ -41,8 +41,8 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
     const std::regex pattern_attn_out_weight("blk\\.\\d*\\.attn_output.weight");
     const std::regex pattern_attn_out_bias("blk\\.\\d*\\.attn_output.bias");
 
-    const std::regex pattern_qkv_weight("blk\\.\\d*\\.attn_qkv.weight");
-    const std::regex pattern_attn_gate_weight("blk\\.\\d*\\.attn_gate.weight");
+    // const std::regex pattern_qkv_weight("blk\\.\\d*\\.attn_qkv.weight");
+    // const std::regex pattern_attn_gate_weight("blk\\.\\d*\\.attn_gate.weight");
 
     const std::regex pattern_ffn_up_gate_weight("blk\\.\\d*\\.ffn_(up|gate)(_exps)?.weight");
     const std::regex pattern_ffn_up_gate_bias("blk\\.\\d*\\.ffn_(up|gate)(_exps)?.bias");
@@ -111,18 +111,18 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
         if (std::regex_match(tensor->name, pattern_q_weight) || std::regex_match(tensor->name, pattern_q_bias) ||
                 std::regex_match(tensor->name, pattern_attn_out_weight)) {
             const uint32_t n_gqa    = ud->model->hparams.n_gqa();
-            const uint32_t n_embd_q = n_gqa * ud->model->hparams.n_embd_head_k;
+            const uint32_t n_embd_q = n_gqa * ud->model->hparams.n_embd_head_v;
             return std::lcm(n_embd_q, blck_size);
         }
         if (std::regex_match(tensor->name, pattern_kv_weight) || std::regex_match(tensor->name, pattern_kv_bias) ||
                 std::regex_match(tensor->name, pattern_kv_cache)) {
             const uint32_t n_gqa    = ud->model->hparams.n_gqa();
-            const uint32_t n_embd_q = n_gqa * ud->model->hparams.n_embd_head_k;
+            const uint32_t n_embd_q = n_gqa * ud->model->hparams.n_embd_head_v;
             return std::lcm(n_embd_q, blck_size) / n_gqa;
         }
         if (std::regex_match(tensor->name, pattern_attn_sinks)) {
             const uint32_t n_gqa    = ud->model->hparams.n_gqa();
-            const uint32_t n_embd_q = n_gqa * ud->model->hparams.n_embd_head_k;
+            const uint32_t n_embd_q = n_gqa * ud->model->hparams.n_embd_head_v;
             return std::lcm(n_embd_q, blck_size)/n_embd_q * n_gqa;
         }
 
