@@ -717,6 +717,83 @@ struct ggml_backend_meta_context {
     size_t                      max_tmp_size  = 0;
     size_t                      max_subgraphs = 0;
 
+    // Multi-device graph capture state (lazily initialized via proc_address)
+    bool                                        multi_graph_queried = false;
+    ggml_backend_multi_graph_t                  multi_graph_handle  = nullptr;
+    ggml_backend_multi_graph_create_t           mg_create           = nullptr;
+    ggml_backend_multi_graph_capture_begin_t    mg_begin            = nullptr;
+    ggml_backend_multi_graph_capture_end_t      mg_end              = nullptr;
+    ggml_backend_multi_graph_launch_t           mg_launch           = nullptr;
+    ggml_backend_multi_graph_free_t             mg_free             = nullptr;
+    ggml_backend_multi_graph_is_enabled_t       mg_enabled          = nullptr;
+    ggml_backend_multi_graph_update_required_t  mg_update           = nullptr;
+    ggml_backend_multi_graph_check_compat_t     mg_compat           = nullptr;
+
+    void query_multi_graph_extensions() {
+        if (multi_graph_queried) {
+            return;
+        }
+        multi_graph_queried = true;
+
+        if (backend_configs.empty()) {
+            return;
+        }
+
+        ggml_backend_dev_t dev = ggml_backend_get_device(backend_configs[0].backend);
+        if (!dev) {
+            return;
+        }
+        ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(dev);
+        if (!reg) {
+            return;
+        }
+
+        // All backends must be homogeneous (same backend type) for multi-device graph capture
+        for (size_t i = 1; i < backend_configs.size(); i++) {
+            ggml_backend_dev_t dev_i = ggml_backend_get_device(backend_configs[i].backend);
+            if (!dev_i) {
+                return;
+            }
+            ggml_backend_reg_t reg_i = ggml_backend_dev_backend_reg(dev_i);
+            if (reg_i != reg) {
+                return;
+            }
+        }
+
+        mg_create  = (ggml_backend_multi_graph_create_t)
+            ggml_backend_reg_get_proc_address(reg, "ggml_backend_multi_graph_create");
+        mg_begin   = (ggml_backend_multi_graph_capture_begin_t)
+            ggml_backend_reg_get_proc_address(reg, "ggml_backend_multi_graph_capture_begin");
+        mg_end     = (ggml_backend_multi_graph_capture_end_t)
+            ggml_backend_reg_get_proc_address(reg, "ggml_backend_multi_graph_capture_end");
+        mg_launch  = (ggml_backend_multi_graph_launch_t)
+            ggml_backend_reg_get_proc_address(reg, "ggml_backend_multi_graph_launch");
+        mg_free    = (ggml_backend_multi_graph_free_t)
+            ggml_backend_reg_get_proc_address(reg, "ggml_backend_multi_graph_free");
+        mg_enabled = (ggml_backend_multi_graph_is_enabled_t)
+            ggml_backend_reg_get_proc_address(reg, "ggml_backend_multi_graph_is_enabled");
+        mg_update  = (ggml_backend_multi_graph_update_required_t)
+            ggml_backend_reg_get_proc_address(reg, "ggml_backend_multi_graph_update_required");
+        mg_compat  = (ggml_backend_multi_graph_check_compat_t)
+            ggml_backend_reg_get_proc_address(reg, "ggml_backend_multi_graph_check_compat");
+
+        // All core functions AND allreduce must be available to use multi-graph.
+        // Multi-device graph capture requires the NCCL-based allreduce path;
+        // the fallback tree-reduction allreduce is not compatible with stream capture.
+        if (mg_create && mg_begin && mg_end && mg_launch && mg_free && mg_enabled) {
+            std::vector<ggml_backend_t> backends;
+            backends.reserve(backend_configs.size());
+            for (auto & bc : backend_configs) {
+                backends.push_back(bc.backend);
+            }
+            multi_graph_handle = mg_create(backends.data(), backends.size());
+        }
+    }
+
+    bool multi_graph_available() const {
+        return multi_graph_handle != nullptr && mg_enabled && mg_enabled(multi_graph_handle);
+    }
+
     ggml_backend_meta_context(ggml_backend_dev_t meta_dev, const char * params) {
         const size_t n_devs = ggml_backend_meta_dev_n_devs(meta_dev);
         name = "Meta(";
@@ -733,6 +810,10 @@ struct ggml_backend_meta_context {
     }
 
     ~ggml_backend_meta_context() {
+        if (multi_graph_handle && mg_free) {
+            mg_free(multi_graph_handle);
+            multi_graph_handle = nullptr;
+        }
         for (auto & bc : backend_configs) {
             ggml_backend_free(bc.backend);
         }
@@ -1023,6 +1104,36 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
     };
 
 
+    // Query multi-device graph capture extensions on first call
+    backend_ctx->query_multi_graph_extensions();
+
+    bool use_multi_graph = backend_ctx->multi_graph_available() && n_backends > 1;
+
+    // Multi-device graph capture decision (mirrors single-device flow in ggml_backend_cuda_graph_compute):
+    //   1. check_compat — per-call gate
+    //   2. update_required — property comparison
+    //   3. decide: replay / capture / direct execution
+    if (use_multi_graph && backend_ctx->mg_compat && backend_ctx->mg_update) {
+        bool use_graph       = backend_ctx->mg_compat(backend_ctx->multi_graph_handle, cgraph);
+
+        if(use_graph) {
+            bool update_required = backend_ctx->mg_update(backend_ctx->multi_graph_handle, cgraph);
+            if (!update_required) {
+                // Replay: launch the cached graph and return
+                backend_ctx->mg_launch(backend_ctx->multi_graph_handle, cgraph);
+                return GGML_STATUS_SUCCESS;
+            }
+            else{
+                backend_ctx->mg_begin(backend_ctx->multi_graph_handle, cgraph);
+            }
+        }
+        else {
+            // Incompatible graph — fall through to non-graph path
+            use_multi_graph = false;
+        }
+    }
+
+    // Execute all subgraphs (kernels are captured into the multi-graph if capture is active)
     for (size_t i = 0; i < n_subgraphs; i++) {
         for (size_t j = 0; j < n_backends; j++) {
             auto & bcj = backend_ctx->backend_configs[j];
@@ -1057,6 +1168,15 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
             }
         }
     }
+
+    if (use_multi_graph) {
+        // End capture (join all streams, instantiate graph) and launch
+        bool end_ok = backend_ctx->mg_end(backend_ctx->multi_graph_handle, cgraph);
+        if (end_ok) {
+            backend_ctx->mg_launch(backend_ctx->multi_graph_handle, cgraph);
+        }
+    }
+
     return GGML_STATUS_SUCCESS;
 }
 
