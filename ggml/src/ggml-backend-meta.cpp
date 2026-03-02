@@ -688,12 +688,49 @@ static ggml_guid_t ggml_backend_meta_guid() {
 struct ggml_backend_meta_context {
     struct cgraph_config {
         ggml_cgraph cgraph_main;
-        int         offset; // Node offset vs. original graph, only used for debugging.
+        int         offset;     // Node offset vs. original graph, only used for debugging.
+        bool        owns_hash;  // True if cgraph_main's visited_hash_set and use_counts are owned by this struct.
 
         std::vector<ggml_cgraph>   cgraphs_aux;
         std::vector<ggml_tensor *> nodes_aux;
 
-        cgraph_config(ggml_cgraph cgraph_main, int offset) : cgraph_main(cgraph_main), offset(offset) {}
+        cgraph_config(ggml_cgraph cgraph_main, int offset)
+            : cgraph_main(cgraph_main), offset(offset), owns_hash(false) {}
+
+        ~cgraph_config() {
+            if (owns_hash) {
+                ggml_hash_set_free(&cgraph_main.visited_hash_set);
+                free(cgraph_main.use_counts);
+            }
+        }
+
+        // move constructor: transfer ownership
+        cgraph_config(cgraph_config && other) noexcept
+            : cgraph_main(other.cgraph_main), offset(other.offset), owns_hash(other.owns_hash),
+              cgraphs_aux(std::move(other.cgraphs_aux)), nodes_aux(std::move(other.nodes_aux)) {
+            other.owns_hash = false;
+        }
+
+        // move assignment: transfer ownership
+        cgraph_config & operator=(cgraph_config && other) noexcept {
+            if (this != &other) {
+                if (owns_hash) {
+                    ggml_hash_set_free(&cgraph_main.visited_hash_set);
+                    free(cgraph_main.use_counts);
+                }
+                cgraph_main  = other.cgraph_main;
+                offset       = other.offset;
+                owns_hash    = other.owns_hash;
+                cgraphs_aux  = std::move(other.cgraphs_aux);
+                nodes_aux    = std::move(other.nodes_aux);
+                other.owns_hash = false;
+            }
+            return *this;
+        }
+
+        // prevent accidental copies
+        cgraph_config(const cgraph_config &) = delete;
+        cgraph_config & operator=(const cgraph_config &) = delete;
     };
     struct backend_config {
         ggml_backend_t backend;
@@ -711,6 +748,11 @@ struct ggml_backend_meta_context {
             }
             ggml_free(ctx);
         }
+
+        backend_config(backend_config && other) noexcept = default;
+        backend_config & operator=(backend_config && other) noexcept = default;
+        backend_config(const backend_config &) = delete;
+        backend_config & operator=(const backend_config &) = delete;
     };
     std::string                 name;
     std::vector<backend_config> backend_configs;
@@ -860,6 +902,38 @@ static void ggml_backend_meta_synchronize(ggml_backend_t backend) {
     }
 }
 
+// Rebuild the visited_hash_set and use_counts for a cgraph based on its current nodes.
+// Allocates a new hash set and use_counts array that the caller must eventually free
+// via ggml_hash_set_free() and free() respectively.
+// NOTE: does not free the old hash set/use_counts - the caller must ensure cgraph
+// does not own them, or free them beforehand.
+static void ggml_graph_rehash(struct ggml_cgraph * cgraph) {
+    struct ggml_hash_set hash_set = ggml_hash_set_new(cgraph->n_nodes);
+    int32_t * use_counts = (int32_t *) calloc(hash_set.size, sizeof(int32_t));
+    GGML_ASSERT(use_counts && "failed to allocate use_counts");
+
+    // insert all nodes into the new hash set
+    for (int i = 0; i < cgraph->n_nodes; i++) {
+        ggml_hash_find_or_insert(&hash_set, cgraph->nodes[i]);
+    }
+
+    // compute use counts by scanning src pointers
+    for (int i = 0; i < cgraph->n_nodes; i++) {
+        struct ggml_tensor * node = cgraph->nodes[i];
+        for (int k = 0; k < GGML_MAX_SRC; k++) {
+            if (node->src[k]) {
+                size_t src_pos = ggml_hash_find(&hash_set, node->src[k]);
+                if (ggml_bitset_get(hash_set.used, src_pos)) {
+                    use_counts[src_pos]++;
+                }
+            }
+        }
+    }
+
+    cgraph->visited_hash_set = hash_set;
+    cgraph->use_counts = use_counts;
+}
+
 static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
     const size_t n_backends = ggml_backend_meta_n_backends(backend);
     ggml_backend_meta_context * backend_ctx = (ggml_backend_meta_context *) backend->context;
@@ -907,6 +981,10 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 bcj.cgraphs.emplace_back(*cgraph, i_start);
                 bcj.cgraphs.back().cgraph_main.nodes = bcj.nodes.data() + i_start;
                 bcj.cgraphs.back().cgraph_main.n_nodes = i + 1 - i_start;
+                // rebuild hash set and use_counts for the simple tensors so that
+                // fusion detection (ggml_node_get_use_count) works correctly
+                ggml_graph_rehash(&bcj.cgraphs.back().cgraph_main);
+                bcj.cgraphs.back().owns_hash = true;
             }
             n_subgraphs++;
             i_start = i + 1;
