@@ -444,6 +444,8 @@ extern "C" {
     typedef void (*llama_model_set_tensor_data_t)(struct ggml_tensor * tensor, void * userdata);
 
     // Create a new model from GGUF metadata as well as a function to set the tensor data
+    //   - tensors are created as GGML_TYPE_F32 by default,
+    //     override by adding a tensor with the same name but a different name to the context
     LLAMA_API struct llama_model * llama_model_init_from_user(
                     struct gguf_context * metadata,
           llama_model_set_tensor_data_t   set_tensor_data,    // function to initialize tensor data with
