@@ -104,12 +104,13 @@ static gguf_context_ptr get_gguf_ctx(const llm_arch arch, const bool moe) {
 
     const uint32_t n_embd_head = n_embd / n_head;
 
-    ms.add_kv(LLM_KV_GENERAL_ARCHITECTURE, llm_arch_name(arch));
-    ms.add_kv(LLM_KV_VOCAB_SIZE,           n_vocab);
-    ms.add_kv(LLM_KV_CONTEXT_LENGTH,       n_ctx);
-    ms.add_kv(LLM_KV_EMBEDDING_LENGTH,     n_embd);
-    ms.add_kv(LLM_KV_FEATURES_LENGTH,      n_embd);
-    ms.add_kv(LLM_KV_BLOCK_COUNT,          n_layer);
+    ms.add_kv(LLM_KV_GENERAL_ARCHITECTURE,      llm_arch_name(arch));
+    ms.add_kv(LLM_KV_VOCAB_SIZE,                n_vocab);
+    ms.add_kv(LLM_KV_CONTEXT_LENGTH,            n_ctx);
+    ms.add_kv(LLM_KV_EMBEDDING_LENGTH,          n_embd);
+    ms.add_kv(LLM_KV_FEATURES_LENGTH,           n_embd);
+    ms.add_kv(LLM_KV_BLOCK_COUNT,               n_layer);
+    ms.add_kv(LLM_KV_LEADING_DENSE_BLOCK_COUNT, uint32_t(1));
 
     if (arch == LLM_ARCH_NEMOTRON_H || arch == LLM_ARCH_NEMOTRON_H_MOE) {
         std::vector<uint32_t> n_ff_per_layer;
