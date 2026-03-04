@@ -1023,7 +1023,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 for (size_t k = 1; k < GGML_MAX_DIMS; k++) {
                     view_dst->nb[k] = view_dst->ne[k - 1] * view_dst->nb[k - 1];
                 }
-                view_dst->data = (char *) ggml_backend_buffer_get_base(bcj_dst.buf.get()) + ggml_row_size(view_dst->type, j_src*ne_diff);
+                view_dst->data = (char *) ggml_backend_buffer_get_base(bcj_dst.buf.get()) + ggml_row_size(view_dst->type, j_src_0*ne_diff);
                 view_dst->buffer = node_dst->buffer;
                 dst_views.push_back(view_dst);
 
