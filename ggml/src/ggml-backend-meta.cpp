@@ -712,6 +712,7 @@ struct ggml_backend_meta_context {
     };
     std::string                 name;
     std::vector<backend_config> backend_configs;
+    int                         max_nnodes    = 0;
     size_t                      max_tmp_size  = 0;
     size_t                      max_subgraphs = 0;
 
@@ -863,14 +864,16 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
     ggml_backend_meta_context * backend_ctx = (ggml_backend_meta_context *) backend->context;
     const size_t n_reduce_steps = backend_ctx->n_reduce_steps();
 
-    for (size_t j = 0; j < n_backends; j++) {
-        auto & bcj = backend_ctx->backend_configs[j];
-        if (int(bcj.nodes.size()) < cgraph->n_nodes) {
+    if (cgraph->n_nodes > backend_ctx->max_nnodes) {
+        for (size_t j = 0; j < n_backends; j++) {
+            auto & bcj = backend_ctx->backend_configs[j];
             bcj.nodes.resize(cgraph->n_nodes);
-        }
-        if (int(bcj.cgraphs.size()) < cgraph->n_nodes) {
             bcj.cgraphs.resize(cgraph->n_nodes);
         }
+        backend_ctx->max_nnodes = cgraph->n_nodes;
+    }
+    for (size_t j = 0; j < n_backends; j++) {
+        auto & bcj = backend_ctx->backend_configs[j];
 
         for (int i = 0; i < cgraph->n_nodes; i++) {
             ggml_tensor * node = cgraph->nodes[i];
