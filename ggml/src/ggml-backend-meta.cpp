@@ -999,7 +999,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 const size_t j_src = j_src_0 == 0 ? j_dst : (j_src_0 - (j_src_0 < j_dst ? 1 : 0));
 
                 auto & bcj_src = backend_ctx->backend_configs[j_src];
-                ggml_tensor * node_src = bcj_dst.cgraphs[i].cgraph_main->nodes[bcj_src.cgraphs[i].cgraph_main->n_nodes-1];
+                ggml_tensor * node_src = bcj_src.cgraphs[i].cgraph_main->nodes[bcj_src.cgraphs[i].cgraph_main->n_nodes-1];
 
                 ggml_tensor * view_src = get_node_aux(node_src);
                 view_src->ne[0] = ne_diff;
