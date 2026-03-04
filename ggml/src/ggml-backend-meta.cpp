@@ -1017,6 +1017,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                     view_src->nb[k] = view_src->ne[k - 1] * view_src->nb[k - 1];
                 }
                 view_src->data = (char *) node_src->data + ggml_row_size(view_src->type, ne_low);
+                view_src->buffer = node_src->buffer;
                 src_views.push_back(view_src);
 
                 ggml_tensor * view_dst = get_node_aux(node_dst);
@@ -1029,6 +1030,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                     view_dst->nb[k] = view_dst->ne[k - 1] * view_dst->nb[k - 1];
                 }
                 view_dst->data = (char *) ggml_backend_buffer_get_base(bcj_dst.bufs[i_buf].get()) + ggml_row_size(view_dst->type, j_src*ne_diff);
+                view_dst->buffer = node_dst->buffer;
                 dst_views.push_back(view_dst);
 
                 ggml_backend_tensor_copy_async(bcj_src.backend, bcj_dst.backend, view_src, view_dst);
@@ -1042,8 +1044,10 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 add->op = GGML_OP_ADD;
                 add->src[0] = dst_views[j_dst*n_backends];
                 add->src[1] = dst_views[j_dst*n_backends + j_src_0];
+
                 add->data     = dst_views[j_dst*n_backends]->data;
                 add->view_src = dst_views[j_dst*n_backends];
+                add->buffer   = dst_views[j_dst*n_backends]->buffer;
             }
             ggml_cgraph * cgraph_aux = get_cgraph_aux();
             cgraph_aux->nodes = backend_ctx->nodes_aux.data() + ina_0;
