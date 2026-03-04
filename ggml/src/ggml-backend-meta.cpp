@@ -996,7 +996,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
 
             for (size_t j_src_0 = 0; j_src_0 < n_backends; j_src_0++) {
                 // Backends need to copy to themselves first to ensure correct synchronization:
-                const size_t j_src = j_src_0 == 0 ? j_dst : (j_src_0 - (j_src_0 < j_dst ? 1 : 0));
+                const size_t j_src = j_src_0 == 0 ? j_dst : (j_src_0 - (j_src_0 <= j_dst ? 1 : 0));
 
                 auto & bcj_src = backend_ctx->backend_configs[j_src];
                 ggml_tensor * node_src = bcj_src.cgraphs[i].cgraph_main->nodes[bcj_src.cgraphs[i].cgraph_main->n_nodes-1];
@@ -1059,7 +1059,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
             auto & bcj_dst = backend_ctx->backend_configs[j_dst];
 
             for (size_t j_src_0 = 0; j_src_0 < n_backends; j_src_0++) {
-                const size_t j_src = j_src_0 == 0 ? j_dst : (j_src_0 - (j_src_0 < j_dst ? 1 : 0));
+                const size_t j_src = j_src_0 == 0 ? j_dst : (j_src_0 - (j_src_0 <= j_dst ? 1 : 0));
                 auto & bcj_src = backend_ctx->backend_configs[j_src];
 
                 ggml_backend_tensor_copy_async(bcj_dst.backend, bcj_src.backend, dst_views[j_dst*n_backends], src_views[j_dst*n_backends + j_src]);
