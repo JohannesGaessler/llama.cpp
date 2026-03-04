@@ -1038,6 +1038,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                 add->op = GGML_OP_ADD;
                 add->src[0] = dst_views[j_dst*n_backends];
                 add->src[1] = dst_views[j_dst*n_backends + j_src_0];
+                add->flags |= GGML_TENSOR_FLAG_COMPUTE;
 
                 add->data     = dst_views[j_dst*n_backends]->data;
                 add->view_src = dst_views[j_dst*n_backends];
