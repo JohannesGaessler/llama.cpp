@@ -954,10 +954,9 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
     size_t iga = 0; // i graph aux
     size_t ina = 0; // i node aux
 
-    // TODO usage_counts
+    // FIXME usage_counts
     auto get_cgraph_aux = [&]() -> ggml_cgraph * {
         ggml_cgraph * ret = backend_ctx->cgraphs_aux[iga++];
-        *ret = *cgraph;
         return ret;
     };
     auto get_node_aux = [&](ggml_tensor * t) -> ggml_tensor * {
