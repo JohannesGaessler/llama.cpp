@@ -985,7 +985,7 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
         std::vector<int64_t> ne_bounds;
         ne_bounds.reserve(n_backends + 1);
         for (size_t j = 0; j < n_backends + 1; j++) {
-            ne_bounds.push_back((ne + j - 1) / n_backends);
+            ne_bounds.push_back(ne * j/n_backends);
         }
         std::vector<ggml_tensor *> dst_views;
         dst_views.reserve(n_backends*n_backends);
