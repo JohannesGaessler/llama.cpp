@@ -1159,7 +1159,7 @@ bool ggml_backend_cuda_allreduce_tensor(ggml_backend_t * backends, struct ggml_t
     for (int i = 0; i < GGML_MAX_DIMS; ++i) {
         props.ne[i] = tensors[0]->ne[i];
     }
-    for (int i = 0; i < GGML_CUDA_MAX_DEVICES; ++i) {
+    for (int i = 0; i < n_backends; ++i) {
         props.data[i] = tensors[i]->data;
     }
     {
