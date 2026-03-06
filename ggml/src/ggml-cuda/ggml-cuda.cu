@@ -566,6 +566,69 @@ static std::mutex ggml_cuda_lock;
 static std::condition_variable ggml_cuda_lock_cv;
 static std::atomic<int> ggml_cuda_lock_counter;
 
+#ifdef USE_CUDA_GRAPH
+struct ggml_backend_cuda_multi_graph_context {
+    std::vector<ggml_backend_t>              backends;
+    std::vector<ggml_backend_cuda_context *> cuda_ctxs;
+    size_t n_backends = 0;
+
+    cudaEvent_t              fork_event = nullptr;  // recorded on stream 0 of device 0
+    std::vector<cudaEvent_t> join_events;           // one per device 1..n-1
+
+    // Per-graph state keyed by first node pointer, same as single-device
+    // (ggml_backend_cuda_context::cuda_graphs in common.cuh).
+    std::unordered_map<const void *, std::unique_ptr<ggml_cuda_graph>> cuda_graphs;
+
+    ggml_cuda_graph * cuda_graph(const void * key) {
+        auto it = cuda_graphs.find(key);
+        if (it == cuda_graphs.end()) {
+            auto g = std::make_unique<ggml_cuda_graph>();
+            g->disable_due_to_gpu_arch = disable_due_to_gpu_arch;
+            cuda_graphs[key] = std::move(g);
+            return cuda_graphs[key].get();
+        }
+        return it->second.get();
+    }
+
+    bool disable_due_to_gpu_arch = false;
+    bool disable_due_to_first_call = true;
+
+    // Context-level enabled check (GPU arch + env). Per-graph checks
+    // (too many updates) happen via ggml_cuda_graph::is_enabled().
+    bool is_enabled() {
+#ifdef GGML_USE_NCCL
+    // NCCL CUDA graph capture doesn't work on the first NCCL call, 
+    // so we disable graphs for the first call to avoid errors, and then re-enable them afterwards. 
+    // This is a workaround for the NCCL issue.
+    if(disable_due_to_first_call)
+    {
+        disable_due_to_first_call = false;
+        return false;
+    }
+    
+    static const bool disable_env = (getenv("GGML_CUDA_DISABLE_GRAPHS") != nullptr);
+    return !(disable_due_to_gpu_arch || disable_env);
+#else
+    // the fallback allreduce is not compatible with CUDA graphs 
+    // as cudaMemcpyPeerAsync cannot be captured in a graph, so we disable graphs when NCCL is not available
+    return false;
+#endif // GGML_USE_NCCL
+    }
+
+    ~ggml_backend_cuda_multi_graph_context() {
+        // Per-graph cudaGraph_t/cudaGraphExec_t cleaned up by ggml_cuda_graph destructors.
+        if (fork_event != nullptr) {
+            CUDA_CHECK(cudaEventDestroy(fork_event));
+        }
+        for (cudaEvent_t e : join_events) {
+            if (e != nullptr) {
+                CUDA_CHECK(cudaEventDestroy(e));
+            }
+        }
+    }
+};
+#endif // USE_CUDA_GRAPH
+
 ggml_backend_cuda_context::~ggml_backend_cuda_context() {
     std::unique_lock<std::mutex> lock(ggml_cuda_lock);
     ggml_cuda_lock_cv.wait(lock, []{ return ggml_cuda_lock_counter.load(std::memory_order_relaxed) == 0; });
@@ -1140,6 +1203,228 @@ bool ggml_backend_cuda_allreduce_tensor(ggml_backend_t * backends, struct ggml_t
     return false;
 #endif // GGML_USE_NCCL
 }
+
+#ifdef USE_CUDA_GRAPH
+// Forward declarations for functions defined later in this file
+static bool ggml_cuda_graph_check_compability(ggml_cgraph * cgraph);
+static void ggml_cuda_graph_node_set_properties(ggml_cuda_graph_node_properties * props, ggml_tensor * node);
+static bool ggml_cuda_graph_node_properties_match(ggml_tensor * node, ggml_cuda_graph_node_properties * props);
+static void ggml_cuda_graph_update_or_instantiate(cudaGraphExec_t * instance, cudaGraph_t graph);
+static bool ggml_cuda_graph_compare_properties(
+        std::vector<ggml_cuda_graph_node_properties> & props,
+        std::vector<ggml_cuda_graph_node_properties> & extra,
+        ggml_cgraph * cgraph);
+static const void * ggml_cuda_graph_get_key(ggml_cgraph * cgraph);
+
+static ggml_backend_multi_graph_t ggml_backend_cuda_multi_graph_create(
+        ggml_backend_t * backends, size_t n_backends) {
+    auto * ctx = new ggml_backend_cuda_multi_graph_context();
+    ctx->n_backends = n_backends;
+    ctx->backends.assign(backends, backends + n_backends);
+    ctx->cuda_ctxs.resize(n_backends);
+    ctx->join_events.resize(n_backends > 1 ? n_backends - 1 : 0, nullptr);
+
+    for (size_t i = 0; i < n_backends; i++) {
+        ctx->cuda_ctxs[i] = (ggml_backend_cuda_context *) backends[i]->context;
+    }
+
+    // Check GPU arch for all devices
+    for (size_t i = 0; i < n_backends; i++) {
+        int device = ctx->cuda_ctxs[i]->device;
+        if (ggml_cuda_info().devices[device].cc < GGML_CUDA_CC_AMPERE) {
+            ctx->disable_due_to_gpu_arch = true;
+            GGML_LOG_DEBUG("%s: disabling multi-device CUDA graphs due to GPU architecture on device %d\n",
+                           __func__, device);
+            break;
+        }
+    }
+
+    // Create fork event on device 0
+    ggml_cuda_set_device(ctx->cuda_ctxs[0]->device);
+    CUDA_CHECK(cudaEventCreateWithFlags(&ctx->fork_event, cudaEventDisableTiming));
+
+    // Create join events on each other device
+    for (size_t i = 1; i < n_backends; i++) {
+        ggml_cuda_set_device(ctx->cuda_ctxs[i]->device);
+        CUDA_CHECK(cudaEventCreateWithFlags(&ctx->join_events[i - 1], cudaEventDisableTiming));
+    }
+
+    // Pre-create copy_event on each backend context to avoid host-side allocation during capture.
+    // ggml_backend_cuda_cpy_tensor_async lazily creates copy_event on first use; doing it here
+    // ensures all subsequent cross-device copies are fully capturable in a CUDA graph.
+    for (size_t i = 0; i < n_backends; i++) {
+        if (!ctx->cuda_ctxs[i]->copy_event) {
+            ggml_cuda_set_device(ctx->cuda_ctxs[i]->device);
+            CUDA_CHECK(cudaEventCreateWithFlags(&ctx->cuda_ctxs[i]->copy_event, cudaEventDisableTiming));
+        }
+    }
+
+    return (ggml_backend_multi_graph_t) ctx;
+}
+
+static bool ggml_backend_cuda_multi_graph_capture_begin(ggml_backend_multi_graph_t handle, ggml_cgraph * cgraph) {
+    auto * ctx = (ggml_backend_cuda_multi_graph_context *) handle;
+    if (!ctx || ctx->n_backends == 0) {
+        return false;
+    }
+    GGML_UNUSED(cgraph);
+
+    // Acquire the global lock to prevent concurrent graph captures and cuBLAS handle destruction
+    {
+        std::lock_guard<std::mutex> lock(ggml_cuda_lock);
+        ggml_cuda_lock_counter.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Begin capture on device 0's stream with GLOBAL mode (required for cross-device capture)
+    ggml_cuda_set_device(ctx->cuda_ctxs[0]->device);
+    cudaStream_t stream0 = ctx->cuda_ctxs[0]->stream();
+    CUDA_CHECK(cudaStreamBeginCapture(stream0, cudaStreamCaptureModeGlobal));
+
+    // Fork: record event on stream 0, all other devices' streams wait on it
+    CUDA_CHECK(cudaEventRecord(ctx->fork_event, stream0));
+
+    for (size_t i = 1; i < ctx->n_backends; i++) {
+        ggml_cuda_set_device(ctx->cuda_ctxs[i]->device);
+        cudaStream_t stream_i = ctx->cuda_ctxs[i]->stream();
+        CUDA_CHECK(cudaStreamWaitEvent(stream_i, ctx->fork_event, 0));
+    }
+
+    return true;
+}
+
+static bool ggml_backend_cuda_multi_graph_capture_end(ggml_backend_multi_graph_t handle, ggml_cgraph * cgraph) {
+    auto * ctx = (ggml_backend_cuda_multi_graph_context *) handle;
+    if (!ctx || ctx->n_backends == 0) {
+        return false;
+    }
+
+    // Join: record events on other devices' streams, device 0 waits on all of them
+    for (size_t i = 1; i < ctx->n_backends; i++) {
+        ggml_cuda_set_device(ctx->cuda_ctxs[i]->device);
+        cudaStream_t stream_i = ctx->cuda_ctxs[i]->stream();
+        CUDA_CHECK(cudaEventRecord(ctx->join_events[i - 1], stream_i));
+    }
+
+    ggml_cuda_set_device(ctx->cuda_ctxs[0]->device);
+    cudaStream_t stream0 = ctx->cuda_ctxs[0]->stream();
+    for (size_t i = 1; i < ctx->n_backends; i++) {
+        CUDA_CHECK(cudaStreamWaitEvent(stream0, ctx->join_events[i - 1], 0));
+    }
+
+    // End capture on device 0's stream into per-key graph (same as single-device path)
+    const void * graph_key = ggml_cuda_graph_get_key(cgraph);
+    ggml_cuda_graph * graph = ctx->cuda_graph(graph_key);
+    if (graph->graph != nullptr) {
+        CUDA_CHECK(cudaGraphDestroy(graph->graph));
+        graph->graph = nullptr;
+    }
+    CUDA_CHECK(cudaStreamEndCapture(stream0, &graph->graph));
+
+    // Release the lock
+    {
+        std::lock_guard<std::mutex> lock(ggml_cuda_lock);
+        if (ggml_cuda_lock_counter.fetch_sub(1, std::memory_order_relaxed) == 1) {
+            ggml_cuda_lock_cv.notify_all();
+        }
+    }
+
+    // Instantiate or update the graph executable (shared with single-device path)
+    ggml_cuda_graph_update_or_instantiate(&graph->instance, graph->graph);
+
+    return true;
+}
+
+static bool ggml_backend_cuda_multi_graph_launch(ggml_backend_multi_graph_t handle, ggml_cgraph * cgraph) {
+    auto * ctx = (ggml_backend_cuda_multi_graph_context *) handle;
+    if (!ctx) {
+        return false;
+    }
+
+    const void * graph_key = ggml_cuda_graph_get_key(cgraph);
+    ggml_cuda_graph * graph = ctx->cuda_graph(graph_key);
+    if (!graph->instance) {
+        return false;
+    }
+
+    ggml_cuda_set_device(ctx->cuda_ctxs[0]->device);
+    cudaStream_t stream0 = ctx->cuda_ctxs[0]->stream();
+    CUDA_CHECK(cudaGraphLaunch(graph->instance, stream0));
+
+    // As graph is launched on device 0, all other devices' streams must wait on it
+    // before any other work can be submitted to these devices
+    CUDA_CHECK(cudaEventRecord(ctx->fork_event, stream0));
+
+    for (size_t i = 1; i < ctx->n_backends; i++) {
+        ggml_cuda_set_device(ctx->cuda_ctxs[i]->device);
+        cudaStream_t stream_i = ctx->cuda_ctxs[i]->stream();
+        CUDA_CHECK(cudaStreamWaitEvent(stream_i, ctx->fork_event, 0));
+    }
+    return true;
+}
+
+static void ggml_backend_cuda_multi_graph_free(ggml_backend_multi_graph_t handle) {
+    auto * ctx = (ggml_backend_cuda_multi_graph_context *) handle;
+    delete ctx;
+}
+
+static bool ggml_backend_cuda_multi_graph_is_enabled(ggml_backend_multi_graph_t handle) {
+    auto * ctx = (ggml_backend_cuda_multi_graph_context *) handle;
+    if (!ctx) {
+        return false;
+    }
+    return ctx->is_enabled();
+}
+
+// Per-call compatibility check — mirrors single-device ggml_cuda_graph_set_enabled +
+// ggml_cuda_graph_check_compability in ggml_backend_cuda_graph_compute.
+// Extracts graph key, checks per-graph enabled state, and gates on compatibility.
+static bool ggml_backend_cuda_multi_graph_check_compat(
+        ggml_backend_multi_graph_t handle,
+        struct ggml_cgraph * cgraph) {
+    auto * ctx = (ggml_backend_cuda_multi_graph_context *) handle;
+    if (!ctx) {
+        return false;
+    }
+
+    const void * graph_key = ggml_cuda_graph_get_key(cgraph);
+    ggml_cuda_graph * graph = ctx->cuda_graph(graph_key);
+
+    // Per-graph enabled check (mirrors single-device ggml_cuda_graph_set_enabled)
+    if (!graph->is_enabled()) {
+        return false;
+    }
+
+    bool use_graph = ggml_cuda_graph_check_compability(cgraph);
+
+    if (!use_graph) {
+        graph->record_update(false, false);
+    }
+    return use_graph;
+}
+
+// Per-call update detection — mirrors single-device ggml_cuda_graph_update_required.
+// Uses per-key graph for property comparison and consecutive update tracking.
+static bool ggml_backend_cuda_multi_graph_update_required(
+        ggml_backend_multi_graph_t handle,
+        struct ggml_cgraph * cgraph) {
+    auto * ctx = (ggml_backend_cuda_multi_graph_context *) handle;
+    if (!ctx) {
+        return true;
+    }
+
+    const void * graph_key = ggml_cuda_graph_get_key(cgraph);
+    ggml_cuda_graph * graph = ctx->cuda_graph(graph_key);
+
+    bool res = (graph->instance == nullptr);
+
+    // Reuse shared property comparison (same logic as single-device, including extra tensor tracking)
+    res = ggml_cuda_graph_compare_properties(graph->props, graph->extra, cgraph) || res;
+
+    graph->record_update(true, res);
+
+    return res;
+}
+#endif // USE_CUDA_GRAPH
 
 ggml_backend_buffer_type_t ggml_backend_cuda_split_buffer_type(int main_device, const float * tensor_split) {
     static std::mutex mutex;
@@ -3026,42 +3311,30 @@ static bool ggml_cuda_graph_node_properties_match(ggml_tensor * node, ggml_cuda_
     return true;
 }
 
-static const void * ggml_cuda_graph_get_key(ggml_cgraph * cgraph) {
-    return cgraph->nodes[0];
-}
-
-static bool ggml_cuda_graph_update_required(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph * cgraph) {
+// Shared node property comparison for graph update detection.
+// Compares cgraph nodes against stored properties (props) and extra input tensors (extra).
+// Returns true if any property mismatch is detected (graph needs re-capture).
+// Used by both single-device and multi-device graph capture paths.
+static bool ggml_cuda_graph_compare_properties(
+        std::vector<ggml_cuda_graph_node_properties> & props,
+        std::vector<ggml_cuda_graph_node_properties> & extra,
+        ggml_cgraph * cgraph) {
     bool res = false;
 
-    const void * graph_key = ggml_cuda_graph_get_key(cgraph);
-    ggml_cuda_graph * graph = cuda_ctx->cuda_graph(graph_key);
-
-    if (graph->instance == nullptr) {
+    if (props.size() != (size_t)cgraph->n_nodes) {
         res = true;
+        props.resize(cgraph->n_nodes);
     }
 
-    // Check if the graph size has changed
-    if (graph->props.size() != (size_t)cgraph->n_nodes) {
-        res = true;
-        graph->props.resize(cgraph->n_nodes);
-    }
-
-    // Loop over nodes in GGML graph to determine if CUDA graph update is required
-    // and store properties to allow this comparison for the next token
     std::unordered_set<ggml_tensor *> seen_node;
     std::vector<ggml_tensor *> srcs_extra;
     for (int i = 0; i < cgraph->n_nodes; i++) {
-        bool props_match = true;
-
         seen_node.insert(cgraph->nodes[i]);
 
-        if (!res) {
-            props_match = ggml_cuda_graph_node_properties_match(cgraph->nodes[i], &graph->props[i]);
-        }
-        if (!props_match) {
+        if (!res && !ggml_cuda_graph_node_properties_match(cgraph->nodes[i], &props[i])) {
             res = true;
         }
-        ggml_cuda_graph_node_set_properties(&graph->props[i], cgraph->nodes[i]);
+        ggml_cuda_graph_node_set_properties(&props[i], cgraph->nodes[i]);
 
         for (int src_idx = 0; src_idx < GGML_MAX_SRC; ++src_idx) {
             ggml_tensor * src = cgraph->nodes[i]->src[src_idx];
@@ -3071,53 +3344,70 @@ static bool ggml_cuda_graph_update_required(ggml_backend_cuda_context * cuda_ctx
         }
     }
 
-    if (graph->extra.size() != (size_t) srcs_extra.size()) {
+    if (extra.size() != srcs_extra.size()) {
         res = true;
-        graph->extra.resize(srcs_extra.size());
+        extra.resize(srcs_extra.size());
     }
 
     for (size_t i = 0; i < srcs_extra.size(); ++i) {
-        bool props_match = true;
-
-        if (!res) {
-            props_match = ggml_cuda_graph_node_properties_match(srcs_extra[i], &graph->extra[i]);
-        }
-
-        if (!props_match) {
+        if (!res && !ggml_cuda_graph_node_properties_match(srcs_extra[i], &extra[i])) {
             res = true;
         }
-        ggml_cuda_graph_node_set_properties(&graph->extra[i], srcs_extra[i]);
+        ggml_cuda_graph_node_set_properties(&extra[i], srcs_extra[i]);
     }
 
     return res;
 }
 
-static void ggml_cuda_graph_update_executable(ggml_backend_cuda_context * cuda_ctx, const void * graph_key) {
+static const void * ggml_cuda_graph_get_key(ggml_cgraph * cgraph) {
+    return cgraph->nodes[0];
+}
+
+static bool ggml_cuda_graph_update_required(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph * cgraph) {
+    const void * graph_key = ggml_cuda_graph_get_key(cgraph);
     ggml_cuda_graph * graph = cuda_ctx->cuda_graph(graph_key);
+
+    bool res = (graph->instance == nullptr);
+
+    res = ggml_cuda_graph_compare_properties(graph->props, graph->extra, cgraph) || res;
+
+    return res;
+}
+
+// Shared graph instantiation/update logic used by both single-device and multi-device graph capture.
+// If *instance is null, instantiates a new executable graph from the captured graph.
+// Otherwise, attempts in-place update; falls back to destroy + re-instantiate on failure.
+static void ggml_cuda_graph_update_or_instantiate(cudaGraphExec_t * instance, cudaGraph_t graph) {
+    if (*instance == nullptr) {
+        CUDA_CHECK(cudaGraphInstantiate(instance, graph, NULL, NULL, 0));
+        return;
+    }
 
 #if CUDART_VERSION >= 12000
     cudaGraphExecUpdateResultInfo result_info;
-    cudaError_t stat = cudaGraphExecUpdate(graph->instance, graph->graph, &result_info);
+    cudaError_t stat = cudaGraphExecUpdate(*instance, graph, &result_info);
 #else
     cudaGraphNode_t errorNode;
     cudaGraphExecUpdateResult result_info;
-    cudaError_t stat = cudaGraphExecUpdate(graph->instance, graph->graph, &errorNode, &result_info);
-#endif // CUDART_VERSION >= 12000
+    cudaError_t stat = cudaGraphExecUpdate(*instance, graph, &errorNode, &result_info);
+#endif
 
     if (stat == cudaErrorGraphExecUpdateFailure) {
 #ifndef NDEBUG
         GGML_LOG_DEBUG("%s: CUDA graph update failed\n", __func__);
 #endif
-
-        // The pre-existing graph exec cannot be updated due to violated constraints
-        // so instead clear error and re-instantiate
         (void)cudaGetLastError();
-        CUDA_CHECK(cudaGraphExecDestroy(graph->instance));
-        graph->instance = nullptr;
-        CUDA_CHECK(cudaGraphInstantiate(&graph->instance, graph->graph, NULL, NULL, 0));
+        CUDA_CHECK(cudaGraphExecDestroy(*instance));
+        *instance = nullptr;
+        CUDA_CHECK(cudaGraphInstantiate(instance, graph, NULL, NULL, 0));
     } else {
         GGML_ASSERT(stat == cudaSuccess);
     }
+}
+
+static void ggml_cuda_graph_update_executable(ggml_backend_cuda_context * cuda_ctx, const void * graph_key) {
+    ggml_cuda_graph * graph = cuda_ctx->cuda_graph(graph_key);
+    ggml_cuda_graph_update_or_instantiate(&graph->instance, graph->graph);
 }
 #endif // USE_CUDA_GRAPH
 
@@ -3979,6 +4269,20 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, 
 
     ggml_cuda_set_device(cuda_ctx->device);
 
+#ifdef USE_CUDA_GRAPH
+    // If this stream is already being captured externally (e.g., by multi-device graph capture),
+    // skip internal graph management and just evaluate kernels directly.
+    {
+        cudaStreamCaptureStatus capture_status;
+        CUDA_CHECK(cudaStreamIsCapturing(cuda_ctx->stream(), &capture_status));
+        if (capture_status == cudaStreamCaptureStatusActive) {
+            ggml_cuda_graph_evaluate_and_capture(cuda_ctx, cgraph,
+                /*use_cuda_graph=*/false, /*cuda_graph_update_required=*/false, /*graph_key=*/nullptr);
+            return GGML_STATUS_SUCCESS;
+        }
+    }
+#endif // USE_CUDA_GRAPH
+
     bool use_cuda_graph             = false;
     bool cuda_graph_update_required = false;
     const void * graph_key = nullptr;
@@ -3990,8 +4294,9 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, 
 
     ggml_cuda_graph * graph = cuda_ctx->cuda_graph(graph_key);
     if (graph->is_enabled()) {
-        cuda_graph_update_required = ggml_cuda_graph_update_required(cuda_ctx, cgraph);
         use_cuda_graph             = ggml_cuda_graph_check_compability(cgraph);
+
+        cuda_graph_update_required = use_cuda_graph ? ggml_cuda_graph_update_required(cuda_ctx, cgraph) : false;
 
         graph->record_update(use_cuda_graph, cuda_graph_update_required);
     }
@@ -5077,6 +5382,32 @@ static void * ggml_backend_cuda_reg_get_proc_address(ggml_backend_reg_t reg, con
     if (strcmp(name, "ggml_backend_get_features") == 0) {
         return (void *)ggml_backend_cuda_get_features;
     }
+#ifdef USE_CUDA_GRAPH
+    if (strcmp(name, "ggml_backend_multi_graph_create") == 0) {
+        return (void *)ggml_backend_cuda_multi_graph_create;
+    }
+    if (strcmp(name, "ggml_backend_multi_graph_capture_begin") == 0) {
+        return (void *)ggml_backend_cuda_multi_graph_capture_begin;
+    }
+    if (strcmp(name, "ggml_backend_multi_graph_capture_end") == 0) {
+        return (void *)ggml_backend_cuda_multi_graph_capture_end;
+    }
+    if (strcmp(name, "ggml_backend_multi_graph_launch") == 0) {
+        return (void *)ggml_backend_cuda_multi_graph_launch;
+    }
+    if (strcmp(name, "ggml_backend_multi_graph_free") == 0) {
+        return (void *)ggml_backend_cuda_multi_graph_free;
+    }
+    if (strcmp(name, "ggml_backend_multi_graph_is_enabled") == 0) {
+        return (void *)ggml_backend_cuda_multi_graph_is_enabled;
+    }
+    if (strcmp(name, "ggml_backend_multi_graph_update_required") == 0) {
+        return (void *)ggml_backend_cuda_multi_graph_update_required;
+    }
+    if (strcmp(name, "ggml_backend_multi_graph_check_compat") == 0) {
+        return (void *)ggml_backend_cuda_multi_graph_check_compat;
+    }
+#endif // USE_CUDA_GRAPH
     return nullptr;
 }
 
