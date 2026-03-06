@@ -81,6 +81,7 @@
 #include <cstdlib>
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include <unordered_set>
 
 static_assert(sizeof(half) == sizeof(ggml_fp16_t), "wrong fp16 size");
@@ -1111,10 +1112,67 @@ static const ggml_backend_buffer_type_i ggml_backend_cuda_split_buffer_type_inte
 };
 
 bool ggml_backend_cuda_allreduce_tensor(ggml_backend_t * backends, struct ggml_tensor ** tensors, size_t n_backends) {
+    ggml_backend_cuda_context * cuda_ctx_0 = (ggml_backend_cuda_context *) backends[0]->context;
+
+    struct tensor_properties {
+        int64_t ne[GGML_MAX_DIMS];
+        void * data[GGML_CUDA_MAX_DEVICES] = {nullptr};
+
+        bool operator==(const tensor_properties & other) const {
+            for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+                if (other.ne[i] != ne[i]) {
+                    return false;
+                }
+            }
+            for (int i = 0; i < GGML_CUDA_MAX_DEVICES; ++i) {
+                if (other.data[i] != data[i]) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    };
+    struct tensor_properties_hash_function {
+        size_t operator()(const tensor_properties & props) const {
+            size_t hash = std::hash<int64_t>{}(props.ne[0]);
+            for (int i = 1; i < GGML_MAX_DIMS; ++i) {
+                hash ^= std::hash<int64_t>{}(props.ne[i]);
+            }
+            for (int i = 0; i < GGML_CUDA_MAX_DEVICES; ++i) {
+                hash ^= std::hash<void *>{}(props.data[i]);
+            }
+            return hash;
+        }
+    };
+    struct graph_and_exec {
+        cudaGraph_t graph;
+        cudaGraphExec_t graph_exec;
+    };
+    static std::unordered_map<tensor_properties, graph_and_exec, tensor_properties_hash_function> cuda_graphs;
+
 #ifdef GGML_USE_NCCL
     const ggml_cuda_device_info info = ggml_cuda_info();
 
     const size_t ne = ggml_nelements(tensors[0]);
+
+    tensor_properties props;
+    for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+        props.ne[i] = tensors[0]->ne[i];
+    }
+    for (int i = 0; i < GGML_CUDA_MAX_DEVICES; ++i) {
+        props.data[i] = tensors[i]->data;
+    }
+    {
+        auto it = cuda_graphs.find(props);
+        if (it != cuda_graphs.end()) {
+            ggml_cuda_set_device(0);
+            CUDA_CHECK(cudaGraphLaunch(it->second.graph_exec, cuda_ctx_0->stream()));
+            return true;
+        }
+    }
+    graph_and_exec gae;
+    ggml_cuda_set_device(0);
+    CUDA_CHECK(cudaStreamBeginCapture(cuda_ctx_0->stream(), cudaStreamCaptureModeGlobal));
 
     NCCL_CHECK(ncclGroupStart());
     for (size_t i = 0; i < n_backends; ++i) {
@@ -1122,6 +1180,9 @@ bool ggml_backend_cuda_allreduce_tensor(ggml_backend_t * backends, struct ggml_t
         NCCL_CHECK(ncclAllReduce(tensors[i]->data, tensors[i]->data, ne, ncclFloat, ncclSum, info.comms[cuda_ctx->device], cuda_ctx->stream()));
     }
     NCCL_CHECK(ncclGroupEnd());
+
+    CUDA_CHECK(cudaStreamEndCapture(cuda_ctx_0->stream(), &gae.graph));
+    CUDA_CHECK(cudaGraphInstantiate(&gae.graph_exec, gae.graph, nullptr, nullptr, 0));
 
     return true;
 #else
