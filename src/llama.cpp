@@ -925,6 +925,7 @@ static struct llama_model * llama_model_load_from_file_impl(
             model->get_split_state_ud.model = model;
             model->devices.push_back(ggml_backend_meta_device(
                 params.devices, n_devs, llama_meta_device_get_split_state, &model->get_split_state_ud));
+            model->devices.push_back(model->devices.back());
         } else {
             for (ggml_backend_dev_t * dev = params.devices; *dev; ++dev) {
                 model->devices.push_back(*dev);
@@ -950,6 +951,7 @@ static struct llama_model * llama_model_load_from_file_impl(
             model->get_split_state_ud.model     = model;
             gpus.push_back(ggml_backend_meta_device(
                 devs.data(), devs.size() - 1, llama_meta_device_get_split_state, &model->get_split_state_ud));
+            gpus.push_back(gpus.back());
         } else {
             for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
                 ggml_backend_dev_t dev = ggml_backend_dev_get(i);
