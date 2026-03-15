@@ -433,7 +433,7 @@ static void mul_mat_vec_q_switch_ncols_dst(
         // Multi-token MUL_MAT_ID path only - single-token goes through regular path below
         constexpr int c_ncols_dst = 1;
         const int nwarps = calc_nwarps(c_ncols_dst, table_id);
-        const bool use_small_k = nwarps > 1 && blocks_per_row_x <= nwarps * blocks_per_iter_1warp;
+        const bool use_small_k = nwarps > 1 && blocks_per_row_x < nwarps * blocks_per_iter_1warp;
         if (use_small_k) {
             std::pair<dim3, dim3> dims = calc_launch_params(c_ncols_dst, nrows_x, nchannels_dst, ncols_dst, warp_size, table_id, true);
             mul_mat_vec_q_switch_fusion<type, c_ncols_dst, true, true>(vx, vy, ids, fusion, dst, ncols_x, nchannels_y_fd, stride_row_x, stride_col_y, stride_col_dst,
@@ -454,7 +454,7 @@ static void mul_mat_vec_q_switch_ncols_dst(
     {                                                                                                                            \
         constexpr int c_ncols_dst = C_NCOLS_DST;                                                                                \
         const int nwarps = calc_nwarps(c_ncols_dst, table_id);                                                                  \
-        const bool use_small_k = nwarps > 1 && blocks_per_row_x <= nwarps * blocks_per_iter_1warp;                              \
+        const bool use_small_k = nwarps > 1 && blocks_per_row_x < nwarps * blocks_per_iter_1warp;                              \
         if (use_small_k) {                                                                                                       \
             std::pair<dim3, dim3> dims = calc_launch_params(c_ncols_dst, nrows_x, nchannels_dst, nsamples_dst,                   \
                                                             warp_size, table_id, true);                                          \
