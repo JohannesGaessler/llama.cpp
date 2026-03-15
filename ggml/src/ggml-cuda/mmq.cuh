@@ -137,7 +137,11 @@ static int get_mmq_y_host(const int cc) {
         ((GGML_CUDA_CC_IS_NVIDIA(cc) && ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_VOLTA) ? 128 : 64);
 }
 
-static constexpr __device__ int get_iter_k([[maybe_unused]] const ggml_type type) {
+static __host__ int get_iter_k_host(const int cc, const ggml_type type) {
+    return blackwell_mma_available(cc) && type == GGML_TYPE_MXFP4 ? MMQ_ITER_K_MXFP4_FP4 : MMQ_ITER_K;
+}
+
+static constexpr __device__ int get_iter_k_device([[maybe_unused]] const ggml_type type) {
 #if defined(BLACKWELL_MMA_AVAILABLE)
     return type == GGML_TYPE_MXFP4 ? MMQ_ITER_K_MXFP4_FP4 : MMQ_ITER_K;
 #else
@@ -796,7 +800,7 @@ static __device__ __forceinline__ void load_tiles_mxfp4_fp4(const char * __restr
 
     const int txi = threadIdx.x;
 
-    constexpr int iter_k = get_iter_k(GGML_TYPE_MXFP4);
+    constexpr int iter_k = get_iter_k_device(GGML_TYPE_MXFP4);
 
     constexpr int threads_per_row = iter_k / QK_MXFP4;  // each thread processes 1 block
     constexpr int rows_per_warp   = warp_size / threads_per_row;
@@ -3397,7 +3401,7 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
     constexpr int ne_block = 4 * QK8_1;
 #endif  // defined(BLACKWELL_MMA_AVAILABLE)
 
-    constexpr int ITER_K          = get_iter_k(type);
+    constexpr int ITER_K          = get_iter_k_device(type);
     constexpr int blocks_per_iter = ITER_K / qk;
 
     float sum[mmq_x*mmq_y / (nwarps*warp_size)] = {0.0f};
@@ -3557,7 +3561,7 @@ static __global__ void mul_mat_q(
     }
 #endif // (defined(GGML_USE_HIP) && !defined(CDNA3)) || __CUDA_ARCH__ < GGML_CUDA_CC_VOLTA
 
-    constexpr int ITER_K = get_iter_k(type);
+    constexpr int ITER_K = get_iter_k_device(type);
 
     const     int64_t blocks_per_ne00 = ncols_x / qk;
     constexpr int     blocks_per_iter = ITER_K / qk;
@@ -3718,7 +3722,7 @@ static __global__ void mul_mat_q_stream_k_fixup(const int32_t * ids_dst,
                                                 const int    ncols_max) {
     constexpr int     mmq_y           = get_mmq_y_device();
     constexpr int     qk              = ggml_cuda_type_traits<type>::qk;
-    constexpr int     ITER_K          = get_iter_k(type);
+    constexpr int     ITER_K          = get_iter_k_device(type);
 
     constexpr int     blocks_per_iter = ITER_K / qk;
     const     int64_t blocks_per_ne00 = ncols_x / qk;
@@ -3929,8 +3933,23 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
         return;
     }
 
-    const dim3 block_nums_stream_k(nsm, 1, 1);
-    const bool fixup_needed = ntx*nty*ntzw % nsm != 0;
+    int max_blocks_per_sm = 1; // Max. number of active blocks limited by occupancy.
+    if (args.nrows_x % mmq_y == 0) {
+        constexpr bool need_check = false;
+        CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &max_blocks_per_sm, mul_mat_q<type, mmq_x, need_check>, block_dims.x * block_dims.y * block_dims.z, nbytes_shared));
+    } else {
+        constexpr bool need_check = true;
+        CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &max_blocks_per_sm, mul_mat_q<type, mmq_x, need_check>, block_dims.x * block_dims.y * block_dims.z, nbytes_shared));
+    }
+    GGML_ASSERT(max_blocks_per_sm > 0);
+
+    const int ntiles = ntx*nty*ntzw;
+    const int iter_k = get_iter_k_host(cc, args.type_x);
+    const int niter = (args.ncols_x + iter_k - 1) / iter_k;
+    const dim3 block_nums_stream_k(std::min(ntiles*niter, nsm*max_blocks_per_sm), 1, 1);
+    const bool fixup_needed = ntiles % block_nums_stream_k.x != 0;
 
     ggml_cuda_pool & pool = ctx.pool(id);
     ggml_cuda_pool_alloc<float> tmp_fixup(pool);
