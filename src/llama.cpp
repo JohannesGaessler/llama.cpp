@@ -1018,7 +1018,6 @@ static struct llama_model * llama_model_load_from_file_impl(
                         break;
                     case GGML_BACKEND_DEVICE_TYPE_META:
                         GGML_ABORT("fatal error");
-                        break;
                 }
             }
         }
