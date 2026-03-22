@@ -1125,12 +1125,8 @@ static std::pair<int, int> test_roundtrip(ggml_backend_dev_t dev, const unsigned
     GGML_ASSERT(file);
 #endif // _WIN32
 
-    {
-        std::vector<int8_t> buf;
-        gguf_write_to_buf(gguf_ctx_0, buf, only_meta);
-        GGML_ASSERT(fwrite(buf.data(), 1, buf.size(), file) == buf.size());
-        rewind(file);
-    }
+    gguf_write_to_file_ptr(gguf_ctx_0, file, only_meta);
+    rewind(file);
 
     struct ggml_context * ctx_1 = nullptr;
     struct gguf_init_params gguf_params = {

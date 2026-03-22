@@ -1,5 +1,6 @@
 #include "llama-model-saver.h"
 
+#include "ggml.h"
 #include "gguf.h"
 
 #include "llama-arch.h"
@@ -11,8 +12,33 @@
 #include <cstdint>
 #include <string>
 
+bool llama_model_saver_supports_arch(llm_arch arch) {
+    switch (arch) {
+        case LLM_ARCH_QWEN3NEXT:
+        case LLM_ARCH_QWEN35:
+        case LLM_ARCH_QWEN35MOE:
+        case LLM_ARCH_PLAMO3:
+        case LLM_ARCH_GEMMA3:
+        case LLM_ARCH_GEMMA3N:
+        case LLM_ARCH_COHERE2:
+        case LLM_ARCH_OLMO2:
+        case LLM_ARCH_BITNET:
+        case LLM_ARCH_T5:
+        case LLM_ARCH_EXAONE_MOE:
+        case LLM_ARCH_AFMOE:
+        case LLM_ARCH_APERTUS:
+        case LLM_ARCH_MIMO2:
+        case LLM_ARCH_STEP35:
+            return false;
+        default:
+            return true;
+    }
+}
+
 llama_model_saver::llama_model_saver(const struct llama_model * model) :
-    gguf_ctx(gguf_init_empty()), gguf_ctx_owned(true), model(model), llm_kv(model->arch) {}
+        gguf_ctx(gguf_init_empty()), gguf_ctx_owned(true), model(model), llm_kv(model->arch) {
+    GGML_ASSERT(llama_model_saver_supports_arch(model->arch));
+}
 
 llama_model_saver::llama_model_saver(enum llm_arch arch, struct gguf_context * gguf_ctx) :
         gguf_ctx(gguf_ctx == nullptr ? gguf_init_empty() : gguf_ctx), gguf_ctx_owned(gguf_ctx == nullptr), model(nullptr), llm_kv(arch) {}
@@ -383,3 +409,6 @@ void llama_model_saver::save(const std::string & path_model) {
     gguf_write_to_file(gguf_ctx, path_model.c_str(), false);
 }
 
+void llama_model_saver::save(FILE * file) {
+    gguf_write_to_file_ptr(gguf_ctx, file, false);
+}

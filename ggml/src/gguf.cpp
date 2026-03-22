@@ -1520,16 +1520,25 @@ bool gguf_write_to_file(const struct gguf_context * ctx, const char * fname, boo
         return false;
     }
 
+    const bool success = gguf_write_to_file_ptr(ctx, file, only_meta);
+    if (!success) {
+        GGML_LOG_ERROR("%s: failed to write GGUF data into '%s'\n", __func__, fname);
+    }
+
+    fclose(file);
+    return success;
+}
+
+bool gguf_write_to_file_ptr(const struct gguf_context * ctx, FILE * file, bool only_meta) {
+    GGML_ASSERT(file);
+
     try {
         gguf_writer_file gw(file);
         gguf_write_out(ctx, gw, only_meta);
     } catch (const std::runtime_error& ex) {
-        GGML_LOG_ERROR("%s: failed to write GGUF data into '%s': %s\n", __func__, fname, ex.what());
-        fclose(file);
+        GGML_LOG_ERROR("%s: failed to write GGUF data: %s\n", __func__, ex.what());
         return false;
     }
-
-    fclose(file);
     return true;
 }
 
