@@ -659,7 +659,7 @@ llama_model_loader::llama_model_loader(
 
             LLAMA_LOG_INFO("%s: additional %d GGUFs metadata loaded.\n",  __func__, n_split - 1);
         }
-    } else if (file) {
+    } else if (file != nullptr) {
         struct ggml_context * ctx = NULL;
         struct gguf_init_params params = {
             /*.no_alloc = */ true,

@@ -891,9 +891,21 @@ static struct llama_model * llama_model_load_from_file_impl(
         std::vector<std::string> & splits,
         FILE * file,
         struct llama_model_params params) {
-    if (metadata == nullptr && path_model.empty() && !file) {
-        LLAMA_LOG_ERROR("%s: no model source provided\n", __func__);
-        return nullptr;
+    {
+        int n_sources_defined = 0;
+        if (metadata != nullptr) {
+            n_sources_defined++;
+        }
+        if (!path_model.empty()) {
+            n_sources_defined++;
+        }
+        if (file != nullptr) {
+            n_sources_defined++;
+        }
+        if (n_sources_defined != 1) {
+            LLAMA_LOG_ERROR("%s: exactly one out metadata, path_model, and file must be defined\n", __func__);
+            return nullptr;
+        }
     }
     ggml_time_init();
 
