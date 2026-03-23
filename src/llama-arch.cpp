@@ -2757,7 +2757,7 @@ std::string LLM_TN_IMPL::str() const {
     if (model_tensors.find(tensor) == model_tensors.end()) {
         const char * name = LLM_TENSOR_NAMES.at(tensor);
         if (suffix != nullptr || bid != -1 || xid != -1) {
-            LLAMA_LOG_ERROR("%s: cannot properly format tensor name %s with suffix=%s bid=%d xid=%d\n",
+            LLAMA_LOG_WARN("%s: cannot properly format tensor name %s with suffix=%s bid=%d xid=%d\n",
                 __func__, name, suffix, bid, xid);
         }
         return name;

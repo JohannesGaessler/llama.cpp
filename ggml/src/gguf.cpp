@@ -1512,6 +1512,19 @@ void gguf_write_to_buf(const struct gguf_context * ctx, std::vector<int8_t> & bu
     gguf_write_out(ctx, gw, only_meta);
 }
 
+bool gguf_write_to_file_ptr(const struct gguf_context * ctx, FILE * file, bool only_meta) {
+    GGML_ASSERT(file);
+
+    try {
+        gguf_writer_file gw(file);
+        gguf_write_out(ctx, gw, only_meta);
+    } catch (const std::runtime_error& ex) {
+        GGML_LOG_ERROR("%s: failed to write GGUF data: %s\n", __func__, ex.what());
+        return false;
+    }
+    return true;
+}
+
 bool gguf_write_to_file(const struct gguf_context * ctx, const char * fname, bool only_meta) {
     FILE * file = ggml_fopen(fname, "wb");
 
@@ -1527,19 +1540,6 @@ bool gguf_write_to_file(const struct gguf_context * ctx, const char * fname, boo
 
     fclose(file);
     return success;
-}
-
-bool gguf_write_to_file_ptr(const struct gguf_context * ctx, FILE * file, bool only_meta) {
-    GGML_ASSERT(file);
-
-    try {
-        gguf_writer_file gw(file);
-        gguf_write_out(ctx, gw, only_meta);
-    } catch (const std::runtime_error& ex) {
-        GGML_LOG_ERROR("%s: failed to write GGUF data: %s\n", __func__, ex.what());
-        return false;
-    }
-    return true;
 }
 
 size_t gguf_get_meta_size(const struct gguf_context * ctx) {
