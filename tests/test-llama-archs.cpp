@@ -399,6 +399,10 @@ static int save_models(const llm_arch target_arch, const size_t seed, const ggml
             if (!moe && moe_mandatory(arch)) {
                 continue;
             }
+            if (!llama_model_saver_supports_arch(arch)) {
+                LOG_INF("%s: %s model (%s) is unsupported, skipping\n", __func__, llm_arch_name(arch), moe ? "MoE" : "dense");
+                continue;
+            }
             gguf_context_ptr gguf_ctx = get_gguf_ctx(arch, moe);
             auto model_and_ctx = get_model_and_ctx(gguf_ctx.get(), nullptr, seed, {});
             const std::string path = dir + "/" + llm_arch_name(arch) + (moe ? "-moe.gguf" : "-dense.gguf");
