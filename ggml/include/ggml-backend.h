@@ -274,8 +274,6 @@ extern "C" {
     GGML_API ggml_backend_dev_t ggml_backend_dev_by_name(const char * name);
     GGML_API ggml_backend_dev_t ggml_backend_dev_by_type(enum ggml_backend_dev_type type);
 
-    GGML_API bool ggml_backend_dev_is_meta(ggml_backend_dev_t dev);
-
     // Direct backend (stream) initialization
     // = ggml_backend_dev_init(ggml_backend_dev_by_name(name), params)
     GGML_API ggml_backend_t ggml_backend_init_by_name(const char * name, const char * params);

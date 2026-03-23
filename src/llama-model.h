@@ -452,6 +452,12 @@ struct llama_layer {
     struct llama_layer_nextn nextn;
 };
 
+struct llama_device {
+    bool is_meta;
+
+    ggml_backend_dev_t dev;
+};
+
 struct llama_meta_device_get_split_state_userdata {
     size_t                     n_devices;
     const struct llama_model * model;
@@ -513,7 +519,7 @@ struct llama_model {
     std::unordered_map<std::string, std::string> gguf_kv;
 
     // list of devices used in this model
-    std::vector<ggml_backend_dev_t> devices;
+    std::vector<llama_device> devices;
 
     // for quantize-stats only
     std::vector<std::pair<std::string, struct ggml_tensor *>> tensors_by_name;

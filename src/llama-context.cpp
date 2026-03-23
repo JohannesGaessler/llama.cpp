@@ -215,10 +215,10 @@ llama_context::llama_context(
 
     if (!hparams.vocab_only) {
         // GPU backends
-        for (auto * dev : model.devices) {
-            ggml_backend_t backend = ggml_backend_dev_init(dev, nullptr);
+        for (const auto & dev : model.devices) {
+            ggml_backend_t backend = ggml_backend_dev_init(dev.dev, nullptr);
             if (backend == nullptr) {
-                throw std::runtime_error(format("failed to initialize %s backend", ggml_backend_dev_name(dev)));
+                throw std::runtime_error(format("failed to initialize %s backend", ggml_backend_dev_name(dev.dev)));
             }
             backends.emplace_back(backend);
         }
@@ -293,8 +293,8 @@ llama_context::llama_context(
 
             if (backend_type == GGML_BACKEND_DEVICE_TYPE_CPU && !model.devices.empty()) {
                 // use the host buffer of the first device CPU for faster transfer of the intermediate state
-                auto * dev = model.devices[0];
-                auto * host_buft = ggml_backend_dev_host_buffer_type(dev);
+                const auto & dev = model.devices[0];
+                auto * host_buft = ggml_backend_dev_host_buffer_type(dev.dev);
                 if (host_buft) {
                     buft = host_buft;
                 }
@@ -3392,7 +3392,7 @@ void llama_perf_context_reset(llama_context * ctx) {
 }
 
 void llama_memory_breakdown_print(const struct llama_context * ctx) {
-    const std::vector<ggml_backend_dev_t> & devices = ctx->get_model().devices;
+    const auto & devices = ctx->get_model().devices;
 
     std::map<ggml_backend_buffer_type_t, llama_memory_breakdown_data> memory_breakdown = ctx->memory_breakdown();
 
@@ -3428,7 +3428,7 @@ void llama_memory_breakdown_print(const struct llama_context * ctx) {
         if (dev) {
             int i_dev = -1;
             for (size_t i = 0; i < devices.size(); i++) {
-                if (devices[i] == dev) {
+                if (devices[i].dev == dev) {
                     i_dev = i;
                     break;
                 }
@@ -3445,7 +3445,7 @@ void llama_memory_breakdown_print(const struct llama_context * ctx) {
 
     // print memory breakdown for each device:
     for (size_t i = 0; i < devices.size(); i++) {
-        ggml_backend_dev_t          dev = devices[i];
+        ggml_backend_dev_t          dev = devices[i].dev;
         llama_memory_breakdown_data mb  = mb_dev[i];
 
         const std::string name = ggml_backend_dev_name(dev);
