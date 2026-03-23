@@ -230,10 +230,15 @@ static gguf_context_ptr get_gguf_ctx(const llm_arch arch, const bool moe) {
     return ret;
 }
 
+static bool silent_model_load_progress(float /*progress*/, void * /*user_data*/) {
+    return true;
+}
+
 static std::pair<llama_model_ptr, llama_context_ptr> get_model_and_ctx(
         struct gguf_context * gguf_ctx, FILE * file, const size_t seed, const std::vector<ggml_backend_dev_t> & devs) {
     GGML_ASSERT((gguf_ctx == nullptr) != (file == nullptr));
     llama_model_params model_params = llama_model_default_params();
+    model_params.progress_callback = silent_model_load_progress;
     std::vector<ggml_backend_dev_t> devs_copy = devs;
     devs_copy.push_back(nullptr);
     model_params.devices = devs_copy.data();
@@ -427,8 +432,8 @@ static int test_backends(const llm_arch target_arch, const size_t seed, const gg
 
     bool all_ok = true;
     common_log_flush(common_log_main());
-    printf("|%15s|%30s|%16s|%15s|%9s|\n", "Model arch.", "Device", "Config", "NMSE vs. CPU", "Roundtrip");
-    printf("|---------------|------------------------------|----------------|---------------|---------|\n");
+    printf("|%15s|%30s|%6s|%15s|%9s|\n", "Model arch.", "Device", "Config", "NMSE vs. CPU", "Roundtrip");
+    printf("|---------------|------------------------------|------|---------------|---------|\n");
     for (const llm_arch & arch : llm_arch_all()) {
         if (target_arch != LLM_ARCH_UNKNOWN && arch != target_arch) {
             continue;
@@ -511,7 +516,7 @@ static int test_backends(const llm_arch target_arch, const size_t seed, const gg
                     }
                 }
 
-                printf("|%15s|%30s|%16s|%15s (%8s)|%20s|\n", llm_arch_name(arch), ggml_backend_dev_description(dev),
+                printf("|%15s|%30s|%6s|%15s (%8s)|%20s|\n", llm_arch_name(arch), ggml_backend_dev_description(dev),
                     config_name.c_str(), status_nmse.c_str(), nmse_str, status_roundtrip.c_str());
             }
         }
