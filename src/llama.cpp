@@ -23,7 +23,6 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
-#include <regex>
 #include <stdexcept>
 #include <vector>
 
