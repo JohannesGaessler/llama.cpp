@@ -1,6 +1,5 @@
 #include "llama-model.h"
 
-#include "ggml.h"
 #include "llama-arch.h"
 #include "llama-impl.h"
 #include "llama-mmap.h"
@@ -13,9 +12,13 @@
 #include "llama-memory-hybrid-iswa.h"
 #include "llama-memory-recurrent.h"
 
+#include "models/models.h"
+
+#include "ggml.h"
 #include "ggml-cpp.h"
 
-#include "models/models.h"
+// TODO: tmp until the ggml meta backend matures and becomes public
+#include "../src/ggml-ext.h"
 
 #include <algorithm>
 #include <cassert>
