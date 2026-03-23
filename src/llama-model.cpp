@@ -367,7 +367,7 @@ static llama_rope_scaling_type llama_rope_scaling_type_from_string(const std::st
 }
 
 // CPU: ACCEL -> GPU host -> CPU extra -> CPU
-static buft_list_t make_cpu_buft_list(const std::vector<ggml_backend_dev_t> & devices, bool use_extra_bufts, bool no_host) {
+static buft_list_t make_cpu_buft_list(const std::vector<llama_device> & devices, bool use_extra_bufts, bool no_host) {
     buft_list_t buft_list;
 
     // add ACCEL buffer types
@@ -389,10 +389,10 @@ static buft_list_t make_cpu_buft_list(const std::vector<ggml_backend_dev_t> & de
     // a better approach would be to handle this on a weight-by-weight basis using the offload_op
     // function of the device to determine if it would benefit from being stored in a host buffer
     if (!no_host) {
-        for (auto * dev : devices) {
-            ggml_backend_buffer_type_t buft = ggml_backend_dev_host_buffer_type(dev);
+        for (const auto & dev : devices) {
+            ggml_backend_buffer_type_t buft = ggml_backend_dev_host_buffer_type(dev.dev);
             if (buft) {
-                buft_list.emplace_back(dev, buft);
+                buft_list.emplace_back(dev.dev, buft);
                 break;
             }
         }
@@ -530,7 +530,7 @@ void llama_model::load_arch(llama_model_loader & ml) {
     if (arch == LLM_ARCH_UNKNOWN) {
         throw std::runtime_error("unknown model architecture: '" + ml.get_arch_name() + "'");
     }
-    if (!devices.empty() && ggml_backend_dev_is_meta(devices[0]) && !llm_arch_supports_sm_tensor(arch)) {
+    if (!devices.empty() && devices[0].is_meta && !llm_arch_supports_sm_tensor(arch)) {
         throw std::runtime_error(std::string("LLAMA_SPLIT_MODE_TENSOR not implemented for architecture '") + llm_arch_name(arch) + "'");
     }
 }
@@ -2815,11 +2815,11 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
 
     // build a list of buffer types for the CPU and GPU devices
     pimpl->cpu_buft_list = make_cpu_buft_list(devices, params.use_extra_bufts, params.no_host);
-    for (auto * dev : devices) {
-        buft_list_t buft_list = make_gpu_buft_list(dev, split_mode, tensor_split);
+    for (const auto & dev : devices) {
+        buft_list_t buft_list = make_gpu_buft_list(dev.dev, split_mode, tensor_split);
         // add CPU buffer types as a fallback
         buft_list.insert(buft_list.end(), pimpl->cpu_buft_list.begin(), pimpl->cpu_buft_list.end());
-        pimpl->gpu_buft_list.emplace(dev, std::move(buft_list));
+        pimpl->gpu_buft_list.emplace(dev.dev, std::move(buft_list));
     }
 
     ggml_backend_dev_t cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
@@ -2833,7 +2833,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
     if (all_zero) {
         // default split, by free memory
         for (size_t i = 0; i < n_devices(); ++i) {
-            ggml_backend_dev_t dev = devices[i];
+            ggml_backend_dev_t dev = devices[i].dev;
             size_t total;
             size_t free;
             ggml_backend_dev_memory(dev, &free, &total);
@@ -2869,7 +2869,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
             return {cpu_dev, &pimpl->cpu_buft_list};
         }
         const int layer_gpu = std::upper_bound(splits.begin(), splits.begin() + n_devices(), float(il - i_gpu_start)/act_gpu_layers) - splits.begin();
-        auto * dev = devices.at(layer_gpu);
+        auto * dev = devices.at(layer_gpu).dev;
         LLAMA_LOG_DEBUG("load_tensors: layer %3d assigned to device %s, is_swa = %d\n", il, ggml_backend_dev_name(dev), is_swa);
         return {dev, &pimpl->gpu_buft_list.at(dev)};
     };
