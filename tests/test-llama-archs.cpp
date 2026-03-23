@@ -231,7 +231,8 @@ static gguf_context_ptr get_gguf_ctx(const llm_arch arch, const bool moe) {
 }
 
 static std::pair<llama_model_ptr, llama_context_ptr> get_model_and_ctx(
-        struct gguf_context * gguf_ctx, const size_t seed, const std::vector<ggml_backend_dev_t> & devs) {
+        struct gguf_context * gguf_ctx, FILE * file, const size_t seed, const std::vector<ggml_backend_dev_t> & devs) {
+    GGML_ASSERT((gguf_ctx == nullptr) != (file == nullptr));
     llama_model_params model_params = llama_model_default_params();
     std::vector<ggml_backend_dev_t> devs_copy = devs;
     devs_copy.push_back(nullptr);
@@ -243,7 +244,9 @@ static std::pair<llama_model_ptr, llama_context_ptr> get_model_and_ctx(
     ctx_params.n_threads_batch = 4;
 
     size_t tmp = seed;
-    llama_model_ptr model(llama_model_init_from_user(gguf_ctx, set_tensor_data, &tmp, model_params));
+    llama_model_ptr model(gguf_ctx != nullptr ?
+        llama_model_init_from_user(gguf_ctx, set_tensor_data, &tmp, model_params) :
+        llama_model_load_from_file_ptr(file, model_params));
     if (!model) {
         throw std::runtime_error("failed to create llama model");
     }
@@ -392,7 +395,7 @@ static int save_models(const llm_arch target_arch, const size_t seed, const ggml
                 continue;
             }
             gguf_context_ptr gguf_ctx = get_gguf_ctx(arch, moe);
-            auto model_and_ctx = get_model_and_ctx(gguf_ctx.get(), seed, {});
+            auto model_and_ctx = get_model_and_ctx(gguf_ctx.get(), nullptr, seed, {});
             const std::string path = dir + "/" + llm_arch_name(arch) + (moe ? "-moe.gguf" : "-dense.gguf");
             LOG_INF("%s: Saving %s model (%s) to %s...\n", __func__, llm_arch_name(arch), moe ? "MoE" : "dense", path.c_str());
             llama_model_save_to_file(model_and_ctx.first.get(), path.c_str());
@@ -424,8 +427,8 @@ static int test_backends(const llm_arch target_arch, const size_t seed, const gg
 
     bool all_ok = true;
     common_log_flush(common_log_main());
-    printf("|%15s|%30s|%16s|%8s|%6s|\n", "Model arch.", "Device", "Config", "NMSE", "Status");
-    printf("|---------------|------------------------------|----------------|--------|------|\n");
+    printf("|%15s|%30s|%16s|%15s|%9s|\n", "Model arch.", "Device", "Config", "NMSE vs. CPU", "Roundtrip");
+    printf("|---------------|------------------------------|----------------|---------------|---------|\n");
     for (const llm_arch & arch : llm_arch_all()) {
         if (target_arch != LLM_ARCH_UNKNOWN && arch != target_arch) {
             continue;
@@ -466,65 +469,50 @@ static int test_backends(const llm_arch target_arch, const size_t seed, const gg
                 continue;
             }
             gguf_context_ptr gguf_ctx = get_gguf_ctx(arch, moe);
-            auto model_and_ctx_cpu = get_model_and_ctx(gguf_ctx.get(), seed, {});
+            auto model_and_ctx_cpu = get_model_and_ctx(gguf_ctx.get(), nullptr, seed, {});
             const std::vector<float> logits_cpu = get_logits(model_and_ctx_cpu.first.get(), model_and_ctx_cpu.second.get(), tokens, encode);
             for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
                 ggml_backend_dev_t dev = ggml_backend_dev_get(i);
                 if (ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_CPU) {
                     continue;
                 }
-                auto model_and_ctx_dev = get_model_and_ctx(gguf_ctx.get(), seed, {dev});
+                auto model_and_ctx_dev = get_model_and_ctx(gguf_ctx.get(), nullptr, seed, {dev});
                 std::string config_name = moe ? "MoE" : "Dense";
-                {
-                    const std::vector<float> logits_dev = get_logits(model_and_ctx_dev.first.get(), model_and_ctx_dev.second.get(), tokens, encode);
-                    const double nmse_val = nmse(logits_cpu, logits_dev);
-                    const bool ok = nmse_val <= 1e-4;
-                    all_ok = all_ok && ok;
-                    char nmse_str[10];
-                    snprintf(nmse_str, sizeof(nmse_str), "%.2e", nmse_val);
-                    printf("|%15s|%30s|%16s|%8s|%17s|\n", llm_arch_name(arch), ggml_backend_dev_description(dev),
-                        config_name.c_str(), nmse_str, ok ? "\033[1;32mOK\033[0m" : "\033[1;31mFAIL\033[0m");
+                const std::vector<float> logits_dev = get_logits(model_and_ctx_dev.first.get(), model_and_ctx_dev.second.get(), tokens, encode);
+                const double nmse_val = nmse(logits_cpu, logits_dev);
+                char nmse_str[10];
+                snprintf(nmse_str, sizeof(nmse_str), "%.2e", nmse_val);
+                std::string status_nmse = "\033[1;32mOK\033[0m";
+                if (nmse_val > 1e-4) {
+                    all_ok = false;
+                    status_nmse = "\033[1;31mFAIL\033[0m";
                 }
-                if (llama_model_saver_supports_arch(arch)) {
-                    FILE * file = tmpfile();
-#ifdef _WIN32
-                    if (!file) {
-                        continue;
-                    }
-#else
-                    GGML_ASSERT(file);
-#endif // _WIN32
+
+                std::string status_roundtrip = "\033[1;33mSKIP\033[0m";
+                FILE * file = tmpfile(); // Can be null on Windows without administrator privileges.
+                if (file != nullptr && llama_model_saver_supports_arch(arch)) {
                     llama_model_saver ms = llama_model_saver(model_and_ctx_dev.first.get());
                     ms.add_kv_from_model();
                     ms.add_tensors_from_model();
                     ms.save(file);
                     rewind(file);
-                    llama_model_params model_params = llama_model_default_params();
-                    std::vector<ggml_backend_dev_t> devs_copy = {dev};
-                    devs_copy.push_back(nullptr);
-                    model_params.devices = devs_copy.data();
-                    llama_model_ptr model_roundtrip(llama_model_load_from_file_ptr(file, model_params));
-                    GGML_ASSERT(model_roundtrip);
-                    config_name += ",roundtrip";
 
-                    llama_context_params ctx_params = llama_context_default_params();
-                    ctx_params.n_ctx = 0;
-                    ctx_params.n_threads = 4;
-                    ctx_params.n_threads_batch = 4;
-                    llama_context_ptr lctx_roundtrip(llama_init_from_model(model_roundtrip.get(), ctx_params));
-                    if (!lctx_roundtrip) {
-                        throw std::runtime_error("failed to create llama context");
+                    auto model_and_ctx_roundtrip = get_model_and_ctx(nullptr, file, seed, {dev});
+                    const std::vector<float> logits_roundtrip = get_logits(
+                        model_and_ctx_roundtrip.first.get(), model_and_ctx_roundtrip.second.get(), tokens, encode);
+                    status_roundtrip = "\033[1;32mOK\033[0m";
+                    GGML_ASSERT(logits_roundtrip.size() == logits_dev.size());
+                    for (size_t i = 0; i < logits_roundtrip.size(); i++) {
+                        if (logits_roundtrip[i] != logits_dev[i]) {
+                            all_ok = false;
+                            status_roundtrip = "\033[1;31mFAIL\033[0m";
+                            break;
+                        }
                     }
-
-                    const std::vector<float> logits_dev = get_logits(model_roundtrip.get(), lctx_roundtrip.get(), tokens, encode);
-                    const double nmse_val = nmse(logits_cpu, logits_dev);
-                    const bool ok = nmse_val <= 1e-4;
-                    all_ok = all_ok && ok;
-                    char nmse_str[10];
-                    snprintf(nmse_str, sizeof(nmse_str), "%.2e", nmse_val);
-                    printf("|%15s|%30s|%16s|%8s|%17s|\n", llm_arch_name(arch), ggml_backend_dev_description(dev),
-                        config_name.c_str(), nmse_str, ok ? "\033[1;32mOK\033[0m" : "\033[1;31mFAIL\033[0m");
                 }
+
+                printf("|%15s|%30s|%16s|%15s (%8s)|%20s|\n", llm_arch_name(arch), ggml_backend_dev_description(dev),
+                    config_name.c_str(), status_nmse.c_str(), nmse_str, status_roundtrip.c_str());
             }
         }
     }
