@@ -6,6 +6,8 @@
 #include "ggml-cpp.h"
 #include "llama.h"
 #include "llama-cpp.h"
+
+// TODO: replace with #include "llama-ext.h" in the future
 #include "../src/llama-arch.h"
 #include "../src/llama-model-saver.h"
 
