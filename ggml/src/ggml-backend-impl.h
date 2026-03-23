@@ -2,9 +2,7 @@
 
 // ggml-backend internal header
 
-#include "ggml-alloc.h"
 #include "ggml-backend.h"
-#include "ggml.h"
 
 #ifdef  __cplusplus
 extern "C" {
