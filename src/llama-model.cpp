@@ -7607,13 +7607,14 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                 buf_map.emplace(idx, buf);
             }
         }
-        pimpl->ctxs_bufs.emplace_back(std::move(ctx_ptr), std::move(bufs));
 
-        for (auto & buf : buf_map) {
+        for (auto & buf : bufs) {
             // indicate that this buffer contains weights
             // this is used by ggml_backend_sched to improve op scheduling: ops that use a weight are preferably scheduled to the backend that contains the weight
-            ggml_backend_buffer_set_usage(buf.second, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
+            ggml_backend_buffer_set_usage(buf.get(), GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
         }
+
+        pimpl->ctxs_bufs.emplace_back(std::move(ctx_ptr), std::move(bufs));
 
         ctx_buf_maps.emplace_back(ctx, buf_map);
     }
