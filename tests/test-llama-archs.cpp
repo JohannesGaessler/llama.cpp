@@ -580,6 +580,7 @@ int main(int argc, char ** argv) {
             }
         }
     }
+    printf("%s: using seed %zu\n", __func__, seed);
 
     try {
         if (!out.empty()) {
