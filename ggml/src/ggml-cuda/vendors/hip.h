@@ -5,6 +5,7 @@
 #include <hipblas/hipblas.h>
 #include <hip/hip_fp16.h>
 #include <hip/hip_bf16.h>
+#include <hip/hip_fp8.h>
 
 #if defined(GGML_HIP_ROCWMMA_FATTN)
 #include <rocwmma/rocwmma-version.hpp>
@@ -234,6 +235,7 @@
 
 typedef __hip_bfloat16 nv_bfloat16;
 typedef __hip_bfloat162 nv_bfloat162;
+typedef __hip_fp8_e4m3 __nv_fp8_e4m3;
 
 typedef int8_t int8x4_t __attribute__((ext_vector_type(4)));
 typedef uint8_t uint8x4_t __attribute__((ext_vector_type(4)));
