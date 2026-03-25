@@ -152,22 +152,23 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
     };
 
     auto get_split_granularity = [&](int64_t blck_size) -> int64_t {
+        // FIXME layer index not used
         // attention
         if (std::regex_match(tensor_name, pattern_q_weight) || std::regex_match(tensor_name, pattern_q_bias) ||
                 std::regex_match(tensor_name, pattern_attn_out_weight)) {
             const uint32_t n_gqa    = ud->model->hparams.n_gqa();
-            const uint32_t n_embd_q = n_gqa * ud->model->hparams.n_embd_head_k;
+            const uint32_t n_embd_q = n_gqa * ud->model->hparams.n_embd_head_k();
             return std::lcm(n_embd_q, blck_size);
         }
         if (std::regex_match(tensor_name, pattern_kv_weight) || std::regex_match(tensor_name, pattern_kv_bias) ||
                 std::regex_match(tensor_name, pattern_kv_cache)) {
             const uint32_t n_gqa    = ud->model->hparams.n_gqa();
-            const uint32_t n_embd_q = n_gqa * ud->model->hparams.n_embd_head_k;
+            const uint32_t n_embd_q = n_gqa * ud->model->hparams.n_embd_head_k();
             return std::lcm(n_embd_q, blck_size) / n_gqa;
         }
         if (std::regex_match(tensor_name, pattern_attn_sinks)) {
             const uint32_t n_gqa    = ud->model->hparams.n_gqa();
-            const uint32_t n_embd_q = n_gqa * ud->model->hparams.n_embd_head_k;
+            const uint32_t n_embd_q = n_gqa * ud->model->hparams.n_embd_head_k();
             return std::lcm(n_embd_q, blck_size)/n_embd_q * n_gqa;
         }
 
