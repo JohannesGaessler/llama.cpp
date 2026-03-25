@@ -589,8 +589,17 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
         if (only_views_of_non_split_dim) {
             return src_split_states[0];
         }
-        if (!ggml_is_permuted(tensor) && !ggml_is_permuted(tensor->src[0])) {
+        if (ggml_is_contiguously_allocated(tensor) && !ggml_is_permuted(tensor) &&
+                ggml_is_contiguously_allocated(tensor->src[0]) && !ggml_is_permuted(tensor->src[0])) {
             return handle_reshape(src_split_states);
+        }
+        if (!ggml_is_permuted(tensor) && !ggml_is_permuted(tensor->src[0]) && axis >= 0 && axis < GGML_MAX_DIMS-1) {
+            for (int dim = 0; dim < GGML_MAX_DIMS-1; dim++) {
+                if (tensor->nb[dim+1] == tensor->src[0]->nb[axis+1]) {
+                    return {ggml_backend_meta_split_axis(dim), {0}};
+                }
+            }
+            GGML_ABORT("fatal error");
         }
         if (src_split_states[0].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED || src_split_states[0].axis == GGML_BACKEND_SPLIT_AXIS_PARTIAL) {
             return src_split_states[0];
@@ -813,7 +822,8 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
             case GGML_OP_RWKV_WKV6:
             case GGML_OP_GATED_LINEAR_ATTN:
             case GGML_OP_RWKV_WKV7:
-            case GGML_OP_SOLVE_TRI: {
+            case GGML_OP_SOLVE_TRI:
+            case GGML_OP_GATED_DELTA_NET: {
                 split_state = handle_generic(src_split_states, /*scalar_only =*/ true);
             } break;
             case GGML_OP_UNARY: {
