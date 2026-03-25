@@ -445,9 +445,10 @@ static int test_backends(const llm_arch target_arch, const size_t seed, const gg
     struct device_config {
         std::vector<ggml_backend_dev_t> devs;
         std::string                     label;
+        llama_split_mode                split_mode;
 
-        device_config(std::vector<ggml_backend_dev_t> devs, std::string name)
-            : devs(std::move(devs)), label(std::move(name)) {}
+        device_config(std::vector<ggml_backend_dev_t> devs, std::string name, llama_split_mode split_mode)
+            : devs(std::move(devs)), label(std::move(name)), split_mode(split_mode) {}
     };
     std::vector<device_config> dev_configs;
 
@@ -467,9 +468,10 @@ static int test_backends(const llm_arch target_arch, const size_t seed, const gg
 
         dev_configs.reserve((devices.size() + 1));
         for (ggml_backend_dev_t dev : devices) {
-            dev_configs.emplace_back(std::vector<ggml_backend_dev_t>{dev}, ggml_backend_dev_description(dev));
+            dev_configs.emplace_back(
+                std::vector<ggml_backend_dev_t>{dev}, ggml_backend_dev_description(dev), LLAMA_SPLIT_MODE_LAYER);
         }
-        dev_configs.emplace_back(devices, "Meta");
+        dev_configs.emplace_back(devices, "Meta", LLAMA_SPLIT_MODE_TENSOR);
     }
 
     bool all_ok = true;
@@ -525,7 +527,7 @@ static int test_backends(const llm_arch target_arch, const size_t seed, const gg
             auto model_and_ctx_cpu = get_model_and_ctx(gguf_ctx.get(), nullptr, seed, {});
             const std::vector<float> logits_cpu = get_logits(model_and_ctx_cpu.first.get(), model_and_ctx_cpu.second.get(), tokens, encode);
             for (device_config & dc : dev_configs) {
-                auto model_and_ctx_dev = get_model_and_ctx(gguf_ctx.get(), nullptr, seed, dc.devs);
+                auto model_and_ctx_dev = get_model_and_ctx(gguf_ctx.get(), nullptr, seed, dc.devs, dc.split_mode);
                 std::string config_name = moe ? "MoE" : "Dense";
                 const std::vector<float> logits_dev = get_logits(model_and_ctx_dev.first.get(), model_and_ctx_dev.second.get(), tokens, encode);
                 const double nmse_val = nmse(logits_cpu, logits_dev);
@@ -546,7 +548,7 @@ static int test_backends(const llm_arch target_arch, const size_t seed, const gg
                     ms.save(file);
                     rewind(file);
 
-                    auto model_and_ctx_roundtrip = get_model_and_ctx(nullptr, file, seed, dc.devs);
+                    auto model_and_ctx_roundtrip = get_model_and_ctx(nullptr, file, seed, dc.devs, dc.split_mode);
                     const std::vector<float> logits_roundtrip = get_logits(
                         model_and_ctx_roundtrip.first.get(), model_and_ctx_roundtrip.second.get(), tokens, encode);
                     status_roundtrip = "\033[1;32mOK\033[0m";
