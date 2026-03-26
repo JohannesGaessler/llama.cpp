@@ -361,6 +361,40 @@ static bool moe_implemented(const llm_arch arch) {
     }
 }
 
+static bool arch_supported(const llm_arch arch) {
+    if (arch == LLM_ARCH_CLIP || arch == LLM_ARCH_GPTJ || arch == LLM_ARCH_UNKNOWN) {
+        return false; // These models don't have usable implementations.
+    }
+    if (arch == LLM_ARCH_CHAMELEON) {
+        return false; // Only half-implemented and to be removed in the future.
+    }
+    if (arch == LLM_ARCH_WAVTOKENIZER_DEC) {
+        return false; // FIXME CUDA backend crashes.
+    }
+    if (arch == LLM_ARCH_LLAMA_EMBED || arch == LLM_ARCH_GEMMA_EMBEDDING || arch == LLM_ARCH_T5ENCODER) {
+        return false; // FIXME Embedding (?) models produce inconsistent results.
+    }
+    if (arch == LLM_ARCH_RWKV6 || arch == LLM_ARCH_RWKV6QWEN2 || arch == LLM_ARCH_RWKV7 || arch == LLM_ARCH_ARWKV7) {
+        return false; // FIXME RWKV models hang indefinitely.
+    }
+    if (arch == LLM_ARCH_BERT || arch == LLM_ARCH_MODERN_BERT || arch == LLM_ARCH_NOMIC_BERT || arch == LLM_ARCH_NOMIC_BERT_MOE ||
+            arch == LLM_ARCH_NEO_BERT || arch == LLM_ARCH_JINA_BERT_V2 || arch == LLM_ARCH_JINA_BERT_V3 || arch == LLM_ARCH_EUROBERT) {
+        return false; // TODO vocab
+    }
+    if (arch == LLM_ARCH_PLM) {
+        return false; // TODO tensor shapes
+    }
+
+    // FIXME some models are segfaulting with WebGPU:
+#ifdef GGML_USE_WEBGPU
+    if (arch == LLM_ARCH_QWEN3NEXT || arch == LLM_ARCH_QWEN35 || arch == LLM_ARCH_QWEN35MOE || arch == LLM_ARCH_KIMI_LINEAR) {
+        return false;
+    }
+#endif // GGML_USE_WEBGPU
+
+    return true;
+}
+
 static int save_models(const llm_arch target_arch, const size_t seed, const ggml_log_level log_level, const std::string & dir) {
     struct user_data_t {
         struct {
@@ -380,24 +414,14 @@ static int save_models(const llm_arch target_arch, const size_t seed, const ggml
     }, &ud);
 
     for (const llm_arch & arch : llm_arch_all()) {
+        if (arch == LLM_ARCH_UNKNOWN) {
+            continue;
+        }
         if (target_arch != LLM_ARCH_UNKNOWN && arch != target_arch) {
             continue;
         }
-        if (arch == LLM_ARCH_CLIP || arch == LLM_ARCH_GPTJ || arch == LLM_ARCH_UNKNOWN) {
-            continue; // These models don't have usable implementations.
-        }
-        if (arch == LLM_ARCH_CHAMELEON) {
-            continue; // Only half-implemented and to be removed in the future.
-        }
-        if (arch == LLM_ARCH_RWKV6 || arch == LLM_ARCH_RWKV6QWEN2 || arch == LLM_ARCH_RWKV7 || arch == LLM_ARCH_ARWKV7) {
-            continue; // FIXME
-        }
-        if (arch == LLM_ARCH_BERT || arch == LLM_ARCH_MODERN_BERT || arch == LLM_ARCH_NOMIC_BERT || arch == LLM_ARCH_NOMIC_BERT_MOE ||
-                arch == LLM_ARCH_NEO_BERT || arch == LLM_ARCH_JINA_BERT_V2 || arch == LLM_ARCH_JINA_BERT_V3 || arch == LLM_ARCH_EUROBERT) {
-            continue; // TODO vocab
-        }
-        if (arch == LLM_ARCH_PLM) {
-            continue; // TODO tensor shapes
+        if (!arch_supported(arch)) {
+            continue;
         }
         for (bool moe : {false, true}) {
             if (moe && !moe_implemented(arch)) {
@@ -476,41 +500,15 @@ static int test_backends(const llm_arch target_arch, const size_t seed, const gg
 
     bool all_ok = true;
     common_log_flush(common_log_main());
-    printf("|%15s|%30s|%6s|%15s|%9s|\n", "Model arch.", "Device", "Config", "NMSE vs. CPU", "Roundtrip");
-    printf("|---------------|------------------------------|------|---------------|---------|\n");
+    printf("|%16s|%30s|%6s|%15s|%9s|\n", "Model arch.", "Device", "Config", "NMSE vs. CPU", "Roundtrip");
+    printf("|----------------|------------------------------|------|---------------|---------|\n");
     for (const llm_arch & arch : llm_arch_all()) {
+        if (arch == LLM_ARCH_UNKNOWN) {
+            continue;
+        }
         if (target_arch != LLM_ARCH_UNKNOWN && arch != target_arch) {
-            continue;
+            return false;
         }
-        if (arch == LLM_ARCH_CLIP || arch == LLM_ARCH_GPTJ || arch == LLM_ARCH_UNKNOWN) {
-            continue; // These models don't have usable implementations.
-        }
-        if (arch == LLM_ARCH_CHAMELEON) {
-            continue; // Only half-implemented and to be removed in the future.
-        }
-        if (arch == LLM_ARCH_WAVTOKENIZER_DEC) {
-            continue; // FIXME CUDA backend crashes.
-        }
-        if (arch == LLM_ARCH_LLAMA_EMBED || arch == LLM_ARCH_GEMMA_EMBEDDING || arch == LLM_ARCH_T5ENCODER) {
-            continue; // FIXME Embedding (?) models produce inconsistent results.
-        }
-        if (arch == LLM_ARCH_RWKV6 || arch == LLM_ARCH_RWKV6QWEN2 || arch == LLM_ARCH_RWKV7 || arch == LLM_ARCH_ARWKV7) {
-            continue; // FIXME RWKV models hang indefinitely.
-        }
-        if (arch == LLM_ARCH_BERT || arch == LLM_ARCH_MODERN_BERT || arch == LLM_ARCH_NOMIC_BERT || arch == LLM_ARCH_NOMIC_BERT_MOE ||
-                arch == LLM_ARCH_NEO_BERT || arch == LLM_ARCH_JINA_BERT_V2 || arch == LLM_ARCH_JINA_BERT_V3 || arch == LLM_ARCH_EUROBERT) {
-            continue; // TODO vocab
-        }
-        if (arch == LLM_ARCH_PLM) {
-            continue; // TODO tensor shapes
-        }
-
-        // FIXME some models are segfaulting with WebGPU:
-#ifdef GGML_USE_WEBGPU
-        if (arch == LLM_ARCH_QWEN3NEXT || arch == LLM_ARCH_QWEN35 || arch == LLM_ARCH_QWEN35MOE || arch == LLM_ARCH_KIMI_LINEAR) {
-            continue;
-        }
-#endif // GGML_USE_WEBGPU
 
         const bool encode = arch == LLM_ARCH_T5;
         for (bool moe : {false, true}) {
@@ -520,46 +518,60 @@ static int test_backends(const llm_arch target_arch, const size_t seed, const gg
             if (!moe && moe_mandatory(arch)) {
                 continue;
             }
+            const std::string config_name = moe ? "MoE" : "Dense";
             gguf_context_ptr gguf_ctx = get_gguf_ctx(arch, moe);
-            auto model_and_ctx_cpu = get_model_and_ctx(gguf_ctx.get(), nullptr, seed, {});
-            const std::vector<float> logits_cpu = get_logits(model_and_ctx_cpu.first.get(), model_and_ctx_cpu.second.get(), tokens, encode);
+            std::pair<llama_model_ptr, llama_context_ptr> model_and_ctx_cpu;
+            std::vector<float> logits_cpu;
             for (device_config & dc : dev_configs) {
-                auto model_and_ctx_dev = get_model_and_ctx(gguf_ctx.get(), nullptr, seed, dc.devs, dc.split_mode);
-                std::string config_name = moe ? "MoE" : "Dense";
-                const std::vector<float> logits_dev = get_logits(model_and_ctx_dev.first.get(), model_and_ctx_dev.second.get(), tokens, encode);
-                const double nmse_val = nmse(logits_cpu, logits_dev);
-                char nmse_str[10];
-                snprintf(nmse_str, sizeof(nmse_str), "%.2e", nmse_val);
-                std::string status_nmse = "\033[1;32mOK\033[0m";
-                if (nmse_val > 1e-4) {
-                    all_ok = false;
-                    status_nmse = "\033[1;31mFAIL\033[0m";
-                }
-
+                std::pair<llama_model_ptr, llama_context_ptr> model_and_ctx_dev;
+                std::vector<float> logits_dev;
+                std::string status_nmse      = "\033[1;33mSKIP\033[0m";
                 std::string status_roundtrip = "\033[1;33mSKIP\033[0m";
-                FILE * file = tmpfile(); // Can be null on Windows without administrator privileges.
-                if (file != nullptr && llama_model_saver_supports_arch(arch)) {
-                    llama_model_saver ms = llama_model_saver(model_and_ctx_dev.first.get());
-                    ms.add_kv_from_model();
-                    ms.add_tensors_from_model();
-                    ms.save(file);
-                    rewind(file);
-
-                    auto model_and_ctx_roundtrip = get_model_and_ctx(nullptr, file, seed, dc.devs, dc.split_mode);
-                    const std::vector<float> logits_roundtrip = get_logits(
-                        model_and_ctx_roundtrip.first.get(), model_and_ctx_roundtrip.second.get(), tokens, encode);
-                    status_roundtrip = "\033[1;32mOK\033[0m";
-                    GGML_ASSERT(logits_roundtrip.size() == logits_dev.size());
-                    for (size_t i = 0; i < logits_roundtrip.size(); i++) {
-                        if (logits_roundtrip[i] != logits_dev[i]) {
+                char nmse_str[12] = {0};
+                if (arch_supported(arch)) {
+                    if (logits_cpu.empty()) {
+                        model_and_ctx_cpu = get_model_and_ctx(gguf_ctx.get(), nullptr, seed, {});
+                        logits_cpu = get_logits(model_and_ctx_cpu.first.get(), model_and_ctx_cpu.second.get(), tokens, encode);
+                    }
+                    if (dc.split_mode != LLAMA_SPLIT_MODE_TENSOR || llm_arch_supports_sm_tensor(arch)) {
+                        model_and_ctx_dev = get_model_and_ctx(gguf_ctx.get(), nullptr, seed, dc.devs, dc.split_mode);
+                        logits_dev = get_logits(model_and_ctx_dev.first.get(), model_and_ctx_dev.second.get(), tokens, encode);
+                        const double nmse_val = nmse(logits_cpu, logits_dev);
+                        snprintf(nmse_str, sizeof(nmse_str), "(%.2e)", nmse_val);
+                        status_nmse = "\033[1;32mOK\033[0m";
+                        if (nmse_val > 1e-4) {
                             all_ok = false;
-                            status_roundtrip = "\033[1;31mFAIL\033[0m";
-                            break;
+                            status_nmse = "\033[1;31mFAIL\033[0m";
+                        }
+                    }
+
+                    FILE * file = tmpfile(); // Can be null on Windows without administrator privileges.
+                    // FIXME: when adding a tensor to a gguf_context a copy is made, this changes the pointer which the meta backend
+                    //     in turn uses to map the tensors to their simple equivalents - this is fundamentally incompatible
+                    if (file != nullptr && llama_model_saver_supports_arch(arch) && dc.split_mode != LLAMA_SPLIT_MODE_TENSOR) {
+                        GGML_ASSERT(model_and_ctx_dev.first && model_and_ctx_dev.second);
+                        llama_model_saver ms = llama_model_saver(model_and_ctx_dev.first.get());
+                        ms.add_kv_from_model();
+                        ms.add_tensors_from_model();
+                        ms.save(file);
+                        rewind(file);
+
+                        auto model_and_ctx_roundtrip = get_model_and_ctx(nullptr, file, seed, dc.devs, dc.split_mode);
+                        const std::vector<float> logits_roundtrip = get_logits(
+                            model_and_ctx_roundtrip.first.get(), model_and_ctx_roundtrip.second.get(), tokens, encode);
+                        status_roundtrip = "\033[1;32mOK\033[0m";
+                        GGML_ASSERT(logits_roundtrip.size() == logits_dev.size());
+                        for (size_t i = 0; i < logits_roundtrip.size(); i++) {
+                            if (logits_roundtrip[i] != logits_dev[i]) {
+                                all_ok = false;
+                                status_roundtrip = "\033[1;31mFAIL\033[0m";
+                                break;
+                            }
                         }
                     }
                 }
 
-                printf("|%15s|%30s|%6s|%15s (%8s)|%20s|\n", llm_arch_name(arch), dc.label.c_str(),
+                printf("|%16s|%30s|%6s|%15s %10s|%20s|\n", llm_arch_name(arch), dc.label.c_str(),
                     config_name.c_str(), status_nmse.c_str(), nmse_str, status_roundtrip.c_str());
             }
         }
