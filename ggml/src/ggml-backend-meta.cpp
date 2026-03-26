@@ -627,6 +627,25 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
         }
     };
 
+    auto handle_transpose = [&](const std::vector<ggml_backend_meta_split_state> & src_split_states) -> ggml_backend_meta_split_state {
+        switch (src_split_states[0].axis) {
+            case GGML_BACKEND_SPLIT_AXIS_0:
+            case GGML_BACKEND_SPLIT_AXIS_1: {
+                return {ggml_backend_meta_split_axis(int(src_split_states[0].axis) ^ 1), {0}};
+            }
+            case GGML_BACKEND_SPLIT_AXIS_2:
+            case GGML_BACKEND_SPLIT_AXIS_3:
+            case GGML_BACKEND_SPLIT_AXIS_MIRRORED:
+            case GGML_BACKEND_SPLIT_AXIS_PARTIAL: {
+                return src_split_states[0];
+            }
+            default: {
+                GGML_ABORT("fatal error");
+                //return {GGML_BACKEND_SPLIT_AXIS_UNKNOWN, {0}};
+            }
+        }
+    };
+
     auto handle_set_rows = [&](const std::vector<ggml_backend_meta_split_state> & src_split_states) -> ggml_backend_meta_split_state {
         GGML_ASSERT(src_split_states[0].axis != GGML_BACKEND_SPLIT_AXIS_1);
         GGML_ASSERT(src_split_states[1].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED);
@@ -753,7 +772,9 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
             case GGML_OP_PERMUTE: {
                 split_state = handle_permute(src_split_states);
             } break;
-            case GGML_OP_TRANSPOSE:
+            case GGML_OP_TRANSPOSE: {
+                split_state = handle_transpose(src_split_states);
+            } break;
             case GGML_OP_GET_ROWS:
             case GGML_OP_GET_ROWS_BACK: {
                 split_state = handle_generic(src_split_states, /*scalar_only =*/ true);
