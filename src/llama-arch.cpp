@@ -922,6 +922,7 @@ bool llm_arch_supports_sm_tensor(const llm_arch & arch) {
         case LLM_ARCH_MINIMAX_M2:
         case LLM_ARCH_COGVLM:
         case LLM_ARCH_RND1:
+        case LLM_ARCH_MISTRAL4:
         case LLM_ARCH_STEP35:
         case LLM_ARCH_KIMI_LINEAR: // FIXME
             return false;
