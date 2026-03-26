@@ -983,7 +983,7 @@ static struct llama_model * llama_model_load_from_file_impl(
                 LLAMA_LOG_INFO("%s: - device %zu: %s (%s)\n", __func__, i, ggml_backend_dev_name(devs[i]), ggml_backend_dev_description(devs[i]));
             }
 
-            GGML_ASSERT(devs.size() >= 2);
+            GGML_ASSERT(!devs.empty());
             model->get_split_state_ud.n_devices = devs.size();
             model->get_split_state_ud.model     = model;
             gpus.push_back({
