@@ -972,7 +972,7 @@ static struct llama_model * llama_model_load_from_file_impl(
             for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
                 auto * dev = ggml_backend_dev_get(i);
                 if (ggml_backend_dev_buffer_type(dev) == ggml_backend_cpu_buffer_type()) {
-                    LLAMA_LOG_WARN("%s: skipping %s (%s) for tensor parallelism\n", __func__, ggml_backend_dev_name(dev), ggml_backend_dev_description(dev));
+                    LLAMA_LOG_INFO("%s: skipping %s (%s) for tensor parallelism\n", __func__, ggml_backend_dev_name(dev), ggml_backend_dev_description(dev));
                     continue;
                 }
                 devs.push_back(dev);
