@@ -970,15 +970,25 @@ static struct llama_model * llama_model_load_from_file_impl(
             std::vector<ggml_backend_dev_t> devs;
             devs.reserve(ggml_backend_dev_count());
             for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
-                devs.push_back(ggml_backend_dev_get(i));
+                auto * dev = ggml_backend_dev_get(i);
+                if (ggml_backend_dev_buffer_type(dev) == ggml_backend_cpu_buffer_type()) {
+                    LLAMA_LOG_INFO("%s: skipping %s (%s) for tensor parallelism\n", __func__, ggml_backend_dev_name(dev), ggml_backend_dev_description(dev));
+                    continue;
+                }
+                devs.push_back(dev);
             }
-            GGML_ASSERT(devs.size() >= 2);
-            GGML_ASSERT(ggml_backend_dev_buffer_type(devs.back()) == ggml_backend_cpu_buffer_type());
-            model->get_split_state_ud.n_devices = devs.size() - 1;
+
+            LLAMA_LOG_INFO("%s: creating a Meta device for tensor parallelism from %zu devices:\n", __func__, devs.size());
+            for (size_t i = 0; i < devs.size(); ++i) {
+                LLAMA_LOG_INFO("%s: - device %zu: %s (%s)\n", __func__, i, ggml_backend_dev_name(devs[i]), ggml_backend_dev_description(devs[i]));
+            }
+
+            GGML_ASSERT(!devs.empty());
+            model->get_split_state_ud.n_devices = devs.size();
             model->get_split_state_ud.model     = model;
             gpus.push_back({
                 true, ggml_backend_meta_device(
-                devs.data(), devs.size() - 1, llama_meta_device_get_split_state, &model->get_split_state_ud)
+                devs.data(), devs.size(), llama_meta_device_get_split_state, &model->get_split_state_ud)
             });
         } else {
             for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
