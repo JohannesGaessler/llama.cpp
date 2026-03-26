@@ -507,7 +507,7 @@ static int test_backends(const llm_arch target_arch, const size_t seed, const gg
             continue;
         }
         if (target_arch != LLM_ARCH_UNKNOWN && arch != target_arch) {
-            return false;
+            continue;
         }
 
         const bool encode = arch == LLM_ARCH_T5;
