@@ -270,8 +270,9 @@ ggml_tensor * llm_build_qwen35::build_layer_attn_linear(
     cb(last_conv_states, "last_conv_states", il);
 
     ggml_tensor * state_update_target =
-        ggml_view_1d(ctx0, conv_states_all, (conv_kernel_size - 1) * conv_channels * n_seqs,
-                     kv_head * (conv_kernel_size - 1) * conv_channels * ggml_element_size(conv_states_all));
+        ggml_view_2d(ctx0, conv_states_all, (conv_kernel_size - 1) * conv_channels, n_seqs,
+                      (conv_kernel_size - 1) * conv_channels * ggml_element_size(conv_states_all),
+            kv_head * (conv_kernel_size - 1) * conv_channels * ggml_element_size(conv_states_all));
     cb(state_update_target, "state_update_target", il);
 
     ggml_build_forward_expand(gf, ggml_cpy(ctx0, last_conv_states, state_update_target));
