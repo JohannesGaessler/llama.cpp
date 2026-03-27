@@ -595,7 +595,7 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
     };
 
     auto handle_view = [&](const std::vector<ggml_backend_meta_split_state> & src_split_states) -> ggml_backend_meta_split_state {
-        if (ggml_is_contiguous(tensor) && ggml_is_contiguous(tensor->src[0])) {
+        if (ggml_nelements(tensor) > 0 && ggml_is_contiguous(tensor) && ggml_nelements(tensor->src[0]) > 0 && ggml_is_contiguous(tensor->src[0])) {
             return handle_reshape(src_split_states);
         }
         const int axis = src_split_states[0].axis;
