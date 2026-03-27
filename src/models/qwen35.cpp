@@ -347,7 +347,8 @@ ggml_tensor * llm_build_qwen35::build_layer_attn_linear(
     // Update the recurrent states
     ggml_build_forward_expand(gf,
             ggml_cpy(ctx0, new_state,
-                ggml_view_1d(ctx0, ssm_states_all, hparams.n_embd_s() * n_seqs,
+                ggml_view_2d(ctx0, ssm_states_all, hparams.n_embd_s(), n_seqs,
+                              hparams.n_embd_s() * ggml_element_size(ssm_states_all),
                     kv_head * hparams.n_embd_s() * ggml_element_size(ssm_states_all))));
 
     // z: [head_dim, n_heads, n_tokens, n_seqs] -> [n_heads * n_tokens * n_seqs, head_dim]
