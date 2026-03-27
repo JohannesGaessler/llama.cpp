@@ -595,6 +595,9 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
     };
 
     auto handle_view = [&](const std::vector<ggml_backend_meta_split_state> & src_split_states) -> ggml_backend_meta_split_state {
+        if (ggml_is_contiguous(tensor) && ggml_is_contiguous(tensor->src[0])) {
+            return handle_reshape(src_split_states);
+        }
         const int axis = src_split_states[0].axis;
         {
             bool all_strides_the_same = true;
@@ -607,10 +610,6 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
             if (all_strides_the_same) {
                 return src_split_states[0];
             }
-        }
-        if (ggml_is_contiguously_allocated(tensor) && !ggml_is_permuted(tensor) &&
-                ggml_is_contiguously_allocated(tensor->src[0]) && !ggml_is_permuted(tensor->src[0])) {
-            return handle_reshape(src_split_states);
         }
         if (!ggml_is_permuted(tensor) && !ggml_is_permuted(tensor->src[0]) && axis >= 0 && axis < GGML_MAX_DIMS-1) {
             for (int dim = 0; dim < GGML_MAX_DIMS-1; dim++) {
