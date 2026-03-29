@@ -2896,6 +2896,8 @@ bool llm_arch_supports_sm_tensor(const llm_arch & arch) {
         case LLM_ARCH_CHAMELEON:
         case LLM_ARCH_BAILINGMOE2:
         case LLM_ARCH_AFMOE:
+        case LLM_ARCH_LFM2:
+        case LLM_ARCH_LFM2MOE:
         case LLM_ARCH_DREAM:
         case LLM_ARCH_LLADA:
         case LLM_ARCH_LLADA_MOE:
