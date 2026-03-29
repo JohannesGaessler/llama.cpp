@@ -565,6 +565,9 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
             case GGML_BACKEND_SPLIT_AXIS_2:
             case GGML_BACKEND_SPLIT_AXIS_3: {
                 GGML_ASSERT(!ggml_is_permuted(tensor) && !ggml_is_permuted(tensor->src[0]));
+                if (src_split_states[0].axis == ggml_n_dims(tensor->src[0]) - 1) {
+                    return {ggml_backend_meta_split_axis(ggml_n_dims(tensor) - 1), {0}};
+                }
                 int64_t base_ne_in = 1;
                 for (int dim = 0; dim <= src_split_states[0].axis; dim++) {
                     base_ne_in *= tensor->src[0]->ne[dim];
@@ -602,7 +605,10 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
         {
             bool all_strides_the_same = true;
             for (int dim = 0; dim < GGML_MAX_DIMS; dim++) {
-                if (tensor->ne[dim] != 1 && tensor->src[0]->ne[dim] != 1 && tensor->nb[dim] != tensor->src[0]->nb[dim]) {
+                if (tensor->ne[dim] == 1 && tensor->src[0]->ne[dim] == 1) {
+                    continue;
+                }
+                if (tensor->nb[dim] != tensor->src[0]->nb[dim]) {
                     all_strides_the_same = false;
                     break;
                 }
