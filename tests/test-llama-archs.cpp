@@ -251,6 +251,7 @@ static std::pair<llama_model_ptr, llama_context_ptr> get_model_and_ctx(
     ctx_params.n_ctx = 0;
     ctx_params.n_threads = 4;
     ctx_params.n_threads_batch = 4;
+    ctx_params.n_ubatch = 64;
 
     size_t tmp = seed;
     llama_model_ptr model(gguf_ctx != nullptr ?
@@ -467,7 +468,6 @@ static int test_backends(const llm_arch target_arch, const size_t seed, const gg
     }, &ud);
 
     const std::vector<llama_token> tokens = get_tokens(128, 128, seed);
-
 
     struct device_config {
         std::vector<ggml_backend_dev_t> devs;

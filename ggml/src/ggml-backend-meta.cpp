@@ -17,6 +17,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <vector>
 
 struct ggml_backend_meta_device;
@@ -393,7 +394,7 @@ static ggml_backend_buffer_type_t ggml_backend_meta_device_get_host_buffer_type(
 //
 
 struct ggml_backend_meta_buffer_context {
-    std::map<std::pair<const ggml_tensor *, bool>, ggml_backend_meta_split_state> split_state_cache;
+    std::map<std::tuple<const ggml_tensor *, int64_t, int64_t, bool>, ggml_backend_meta_split_state> split_state_cache;
     std::map<          const ggml_tensor *,        std::vector<ggml_tensor *>>    simple_tensors;
 
     struct buffer_config {
@@ -711,6 +712,11 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
     };
 
     auto handle_gated_delta_net = [&](const std::vector<ggml_backend_meta_split_state> & src_split_states) -> ggml_backend_meta_split_state {
+        if (src_split_states[0].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED && src_split_states[1].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED &&
+                src_split_states[2].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED && src_split_states[3].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED &&
+                src_split_states[4].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED && src_split_states[5].axis == GGML_BACKEND_SPLIT_AXIS_MIRRORED) {
+            return src_split_states[0];
+        }
         GGML_ASSERT(src_split_states[0].axis == GGML_BACKEND_SPLIT_AXIS_1);
         GGML_ASSERT(src_split_states[1].axis == GGML_BACKEND_SPLIT_AXIS_1);
         GGML_ASSERT(src_split_states[2].axis == GGML_BACKEND_SPLIT_AXIS_1);
@@ -934,35 +940,37 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
             } break;
         }
         if (split_state.axis >= 0 && split_state.axis < GGML_MAX_DIMS) {
-            bool src_split_by_axis_found = false;
+            bool first_src_split_by_axis = true;
             const size_t n_bufs = ggml_backend_meta_buffer_n_bufs(tensor->buffer);
 
             for (size_t i = 0; i < GGML_MAX_SRC; i++) {
                 if (tensor->src[i] == nullptr || src_split_states[i].axis < 0 || src_split_states[i].axis >= GGML_MAX_DIMS) {
                     continue;
                 }
-                if (src_split_by_axis_found) {
+                if (first_src_split_by_axis) {
+                    for (size_t j = 0; j < n_bufs; j++) {
+                        // Take over ratio from src:
+                        split_state.ne[j] = src_split_states[i].ne[j] * tensor->ne[split_state.axis];
+                        if (split_state.ne[j] != 0 || tensor->src[i]->ne[src_split_states[i].axis] != 0) {
+                            GGML_ASSERT(split_state.ne[j] % tensor->src[i]->ne[src_split_states[i].axis] == 0);
+                            split_state.ne[j] /= tensor->src[i]->ne[src_split_states[i].axis];
+                        }
+                    }
+                } else {
                     for (size_t j = 0; j < n_bufs; j++) {
                         // Assert that ratio is consistent:
                         GGML_ASSERT(   split_state.ne[j] * tensor->src[i]->ne[src_split_states[i].axis]
                             == src_split_states[i].ne[j] *         tensor->ne[split_state.axis]);
                     }
-                } else {
-                    for (size_t j = 0; j < n_bufs; j++) {
-                        // Take over ratio from src:
-                        split_state.ne[j] = src_split_states[i].ne[j] * tensor->ne[split_state.axis];
-                        GGML_ASSERT(split_state.ne[j] % tensor->src[i]->ne[src_split_states[i].axis] == 0);
-                        split_state.ne[j] /= tensor->src[i]->ne[src_split_states[i].axis];
-                    }
                 }
-                src_split_by_axis_found = true;
+                first_src_split_by_axis = false;
             }
-            GGML_ASSERT(src_split_by_axis_found);
+            GGML_ASSERT(!first_src_split_by_axis);
         }
         return split_state;
     };
 
-    const std::pair key = std::make_pair(tensor, assume_sync);
+    const std::tuple<const ggml_tensor *, int64_t, int64_t, bool> key = std::make_tuple(tensor, tensor->ne[0], tensor->ne[1], assume_sync);
 
     if (buf_ctx->split_state_cache.find(key) == buf_ctx->split_state_cache.end()) {
         buf_ctx->split_state_cache[key] = calculate_split_state();
@@ -1000,6 +1008,11 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
 
     ggml_backend_meta_split_state ret = buf_ctx->split_state_cache[key];
     GGML_ASSERT(ret.axis != GGML_BACKEND_SPLIT_AXIS_NONE && ret.axis != GGML_BACKEND_SPLIT_AXIS_UNKNOWN);
+#ifndef NDEBUG
+    if (ret.axis >= 0 && ret.axis < GGML_MAX_DIMS) {
+        assert(ret.ne[n_bufs - 1] == tensor->ne[int(ret.axis)]);
+    }
+#endif // NDEBUG
     return ret;
 }
 
