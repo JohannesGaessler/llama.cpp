@@ -33,6 +33,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const struct ggml_tensor * tensor, void * userdata) {
     const llama_meta_device_get_split_state_userdata * ud = (const llama_meta_device_get_split_state_userdata *) userdata;
@@ -219,20 +220,47 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
                 tensor_split_scan[j] += tensor_split_scan[j - 1];
             }
         }
-        int64_t low = 0;
-        size_t j = 0;
-        for (; j < ud->n_devices - 1; j++) {
-            int64_t high = tensor_split_scan.back() == 0.0f ?
-                ne_full * (j+1)/ud->n_devices : ne_full * tensor_split_scan[j]/tensor_split_scan.back();
-            if (high % granularity != 0) {
-                high -= high % granularity;
+        std::vector<int64_t> segments;
+        if (std::regex_match(tensor_name, pattern_qkv_weight)) {
+            GGML_ASSERT(split_state.axis == GGML_BACKEND_SPLIT_AXIS_1);
+            if (ud->model->arch == LLM_ARCH_QWEN3NEXT || ud->model->arch == LLM_ARCH_QWEN35 || ud->model->arch == LLM_ARCH_QWEN35MOE) {
+                const int64_t head_k_dim = ud->model->hparams.ssm_d_state;
+                const int64_t head_v_dim = ud->model->hparams.ssm_d_state;
+                const int64_t n_k_heads  = ud->model->hparams.ssm_n_group;
+                const int64_t n_v_heads  = ud->model->hparams.ssm_dt_rank;
+                const int64_t key_dim    = head_k_dim * n_k_heads;
+                const int64_t value_dim  = head_v_dim * n_v_heads;
+                GGML_ASSERT(tensor->ne[1] == 2*key_dim + value_dim);
+                segments = {key_dim, key_dim, value_dim};
+            } else {
+                const int64_t n_embd      = ud->model->hparams.n_embd;
+                const int64_t n_embd_gqa  = ud->model->hparams.n_embd_v_gqa();
+                GGML_ASSERT(ud->model->hparams.n_embd_k_gqa() == n_embd_gqa);
+                GGML_ASSERT(tensor->ne[1] == n_embd + 2*n_embd_gqa);
+                segments = {n_embd, n_embd_gqa, n_embd_gqa};
             }
-            split_state.ne[(j + tc.rotation) % ud->n_devices] = high - low;
-            low = high;
+        } else {
+            segments = {ne_full};
         }
-        split_state.ne[(j + tc.rotation) % ud->n_devices] = ne_full - low;
+        for (size_t is = 0; is < segments.size(); is++) {
+            const int64_t ne_s = segments[is];
+            int64_t low = 0;
+            size_t j = 0;
+            for (; j < ud->n_devices - 1; j++) {
+                int64_t high = tensor_split_scan.back() == 0.0f ?
+                    ne_s * (j+1)/ud->n_devices : ne_s * tensor_split_scan[j]/tensor_split_scan.back();
+                if (high % granularity != 0) {
+                    high -= high % granularity;
+                }
+                split_state.ne[is*ud->n_devices + (j + tc.rotation) % ud->n_devices] = high - low;
+                low = high;
+            }
+            split_state.ne[is*ud->n_devices + (j + tc.rotation) % ud->n_devices] = ne_s - low;
+        }
+        split_state.n_segments = segments.size();
     } else {
         memset(split_state.ne, 0, sizeof(split_state.ne));
+        split_state.n_segments = 1;
     }
     return split_state;
     GGML_UNUSED(userdata);
