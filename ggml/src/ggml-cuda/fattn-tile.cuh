@@ -1232,7 +1232,7 @@ static void launch_fattn_tile_switch_ncols2(ggml_backend_cuda_context & ctx, ggm
             return;
         }
 
-        if constexpr (DKQ <= 256) {
+        if constexpr (DV <= 256) {
             if (use_gqa_opt && gqa_ratio % 2 == 0) {
                 launch_fattn_tile_switch_ncols1<DKQ, DV, 2, use_logit_softcap>(ctx, dst);
                 return;
