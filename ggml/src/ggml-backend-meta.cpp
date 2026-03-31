@@ -599,7 +599,7 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
     };
 
     auto handle_view = [&](const std::vector<ggml_backend_meta_split_state> & src_split_states) -> ggml_backend_meta_split_state {
-        if (ggml_is_contiguous(tensor) && ggml_is_contiguous(tensor->src[0]) && ggml_nelements(tensor) > 0 && ggml_nelements(tensor->src[0]) > 0) {
+        if (ggml_is_contiguous(tensor) && ggml_is_contiguous(tensor->src[0])) {
             return handle_reshape(src_split_states);
         }
         const int axis = src_split_states[0].axis;
@@ -727,6 +727,9 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
     };
 
     auto calculate_split_state = [&]() -> ggml_backend_meta_split_state {
+        if (ggml_nelements(tensor) == 0) {
+            return {GGML_BACKEND_SPLIT_AXIS_UNKNOWN, {0}};
+        }
         if (ggml_backend_buffer_get_usage(tensor->buffer) != GGML_BACKEND_BUFFER_USAGE_COMPUTE && tensor->view_src == nullptr) {
             ggml_backend_dev_t dev = ggml_backend_buft_get_device(ggml_backend_buffer_get_type(tensor->buffer));
             const ggml_backend_meta_device_context * dev_ctx = (const ggml_backend_meta_device_context *) dev->context;
@@ -750,6 +753,7 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
                 continue;
             }
             src_split_states[i] = ggml_backend_meta_get_split_state(tensor->src[i], /*assume_sync =*/ true);
+            GGML_ASSERT(src_split_states[i].axis != GGML_BACKEND_SPLIT_AXIS_UNKNOWN);
         }
 
         ggml_backend_meta_split_state split_state;
@@ -970,6 +974,7 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
         return split_state;
     };
 
+    // FIXME
     const std::tuple<const ggml_tensor *, int64_t, int64_t, bool> key = std::make_tuple(tensor, tensor->ne[0], tensor->ne[1], assume_sync);
 
     if (buf_ctx->split_state_cache.find(key) == buf_ctx->split_state_cache.end()) {
@@ -1007,7 +1012,7 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
     }
 
     ggml_backend_meta_split_state ret = buf_ctx->split_state_cache[key];
-    GGML_ASSERT(ret.axis != GGML_BACKEND_SPLIT_AXIS_NONE && ret.axis != GGML_BACKEND_SPLIT_AXIS_UNKNOWN);
+    GGML_ASSERT(ret.axis != GGML_BACKEND_SPLIT_AXIS_NONE);
 #ifndef NDEBUG
     if (ret.axis >= 0 && ret.axis < GGML_MAX_DIMS) {
         assert(ret.ne[n_bufs - 1] == tensor->ne[int(ret.axis)]);
@@ -1027,7 +1032,7 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
     const size_t n_simple_bufs = ggml_backend_meta_buffer_n_bufs(buffer);
 
     const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor, /*assume_sync =*/ true);
-    GGML_ASSERT(split_state.axis != GGML_BACKEND_SPLIT_AXIS_UNKNOWN);
+    GGML_ASSERT(ggml_nelements(tensor) == 0 || split_state.axis != GGML_BACKEND_SPLIT_AXIS_UNKNOWN);
 
     int split_dim = split_state.axis;
     int64_t ne[GGML_MAX_DIMS];
