@@ -221,7 +221,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
             }
         }
         std::vector<int64_t> segments;
-        if (std::regex_match(tensor_name, pattern_qkv_weight)) {
+        if (std::regex_match(tensor_name, pattern_qkv_weight) || std::regex_match(tensor_name, pattern_ssm_conv1d)) {
             GGML_ASSERT(split_state.axis == GGML_BACKEND_SPLIT_AXIS_1);
             if (ud->model->arch == LLM_ARCH_QWEN3NEXT || ud->model->arch == LLM_ARCH_QWEN35 || ud->model->arch == LLM_ARCH_QWEN35MOE) {
                 const int64_t head_k_dim = ud->model->hparams.ssm_d_state;

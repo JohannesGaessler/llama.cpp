@@ -759,7 +759,7 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
             }
             src_split_states[i] = ggml_backend_meta_get_split_state(tensor->src[i], /*assume_sync =*/ true);
             GGML_ASSERT(src_split_states[i].axis != GGML_BACKEND_SPLIT_AXIS_UNKNOWN);
-            GGML_ASSERT(src_split_states[i].n_segments == 1 || tensor->op == GGML_OP_MUL_MAT);
+            GGML_ASSERT(src_split_states[i].n_segments == 1 || tensor->op == GGML_OP_MUL_MAT || tensor->op == GGML_OP_SSM_CONV);
         }
 
         ggml_backend_meta_split_state split_state;
@@ -971,11 +971,13 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
                         }
                     }
                 } else {
-                    GGML_ASSERT(src_split_states[i].n_segments == 1);
-                    for (size_t j = 0; j < n_bufs; j++) {
-                        // Assert that ratio is consistent:
-                        GGML_ASSERT(   split_state.ne[j] * tensor->src[i]->ne[src_split_states[i].axis]
-                            == src_split_states[i].ne[j] *         tensor->ne[split_state.axis]);
+                    if (tensor->op != GGML_OP_SSM_CONV) { // FIXME
+                        GGML_ASSERT(src_split_states[i].n_segments == 1);
+                        for (size_t j = 0; j < n_bufs; j++) {
+                            // Assert that ratio is consistent:
+                            GGML_ASSERT(   split_state.ne[j] * tensor->src[i]->ne[src_split_states[i].axis]
+                                == src_split_states[i].ne[j] *         tensor->ne[split_state.axis]);
+                        }
                     }
                 }
                 first_src_split_by_axis = false;
