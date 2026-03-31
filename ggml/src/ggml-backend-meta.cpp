@@ -486,6 +486,9 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
         if (scalar_only && homogeneous_src_split_state.axis >= 0 && homogeneous_src_split_state.axis < GGML_MAX_DIMS) {
             homogeneous_src_split_state = {GGML_BACKEND_SPLIT_AXIS_UNKNOWN, {0}, 1};
         }
+        if (tensor->op == GGML_OP_ADD && src_split_states[1].n_segments == 3) { // FIXME
+            return src_split_states[0];
+        }
         GGML_ASSERT(homogeneous_src_split_state.axis != GGML_BACKEND_SPLIT_AXIS_UNKNOWN);
         return homogeneous_src_split_state;
     };
@@ -759,7 +762,7 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
             }
             src_split_states[i] = ggml_backend_meta_get_split_state(tensor->src[i], /*assume_sync =*/ true);
             GGML_ASSERT(src_split_states[i].axis != GGML_BACKEND_SPLIT_AXIS_UNKNOWN);
-            GGML_ASSERT(src_split_states[i].n_segments == 1 || tensor->op == GGML_OP_MUL_MAT || tensor->op == GGML_OP_SSM_CONV);
+            GGML_ASSERT(src_split_states[i].n_segments == 1 || tensor->op == GGML_OP_MUL_MAT || tensor->op == GGML_OP_SSM_CONV || tensor->op == GGML_OP_ADD);
         }
 
         ggml_backend_meta_split_state split_state;
@@ -971,7 +974,7 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
                         }
                     }
                 } else {
-                    if (tensor->op != GGML_OP_SSM_CONV) { // FIXME
+                    if (tensor->op != GGML_OP_SSM_CONV && tensor->op != GGML_OP_ADD) { // FIXME
                         GGML_ASSERT(src_split_states[i].n_segments == 1);
                         for (size_t j = 0; j < n_bufs; j++) {
                             // Assert that ratio is consistent:
@@ -1127,7 +1130,7 @@ static void ggml_backend_meta_buffer_set_tensor(ggml_backend_buffer_t buffer, gg
     const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor, /*assume_sync =*/ false);
 
     if (split_state.n_segments != 1) {
-        GGML_ASSERT(split_state.axis == GGML_BACKEND_SPLIT_AXIS_1);
+        GGML_ASSERT(split_state.axis >= 0 && split_state.axis < GGML_MAX_DIMS);
         GGML_ASSERT(offset == 0);
         GGML_ASSERT(size == ggml_nbytes(tensor));
         size_t offset_data = 0;
@@ -1135,7 +1138,7 @@ static void ggml_backend_meta_buffer_set_tensor(ggml_backend_buffer_t buffer, gg
         for (size_t s = 0; s < split_state.n_segments; s++) {
             for (size_t j = 0; j < n_bufs; j++) {
                 ggml_tensor * simple_tensor = ggml_backend_meta_buffer_simple_tensor(tensor, j);
-                const size_t nbytes = split_state.ne[s*n_bufs + j] * tensor->nb[1];
+                const size_t nbytes = split_state.ne[s*n_bufs + j] * tensor->nb[split_state.axis];
                 ggml_backend_tensor_set(simple_tensor, (const char *) data + offset_data, simple_offsets[j], nbytes);
                 offset_data       += nbytes;
                 simple_offsets[j] += nbytes;

@@ -224,8 +224,8 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
             }
         }
         std::vector<int64_t> segments;
-        if (std::regex_match(tensor_name, pattern_qkv_weight) || std::regex_match(tensor_name, pattern_ssm_conv1d)) {
-            GGML_ASSERT(split_state.axis == GGML_BACKEND_SPLIT_AXIS_1);
+        if (std::regex_match(tensor_name, pattern_qkv_weight) || std::regex_match(tensor_name, pattern_qkv_bias) ||
+                std::regex_match(tensor_name, pattern_ssm_conv1d)) {
             if (ud->model->arch == LLM_ARCH_QWEN3NEXT || ud->model->arch == LLM_ARCH_QWEN35 || ud->model->arch == LLM_ARCH_QWEN35MOE) {
                 const int64_t head_k_dim = ud->model->hparams.ssm_d_state;
                 const int64_t head_v_dim = ud->model->hparams.ssm_d_state;
@@ -233,13 +233,13 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
                 const int64_t n_v_heads  = ud->model->hparams.ssm_dt_rank;
                 const int64_t key_dim    = head_k_dim * n_k_heads;
                 const int64_t value_dim  = head_v_dim * n_v_heads;
-                GGML_ASSERT(tensor->ne[1] == 2*key_dim + value_dim);
+                GGML_ASSERT(tensor->ne[split_state.axis] == 2*key_dim + value_dim);
                 segments = {key_dim, key_dim, value_dim};
             } else {
                 const int64_t n_embd      = ud->model->hparams.n_embd;
                 const int64_t n_embd_gqa  = ud->model->hparams.n_embd_v_gqa();
                 GGML_ASSERT(ud->model->hparams.n_embd_k_gqa() == n_embd_gqa);
-                GGML_ASSERT(tensor->ne[1] == n_embd + 2*n_embd_gqa);
+                GGML_ASSERT(tensor->ne[split_state.axis] == n_embd + 2*n_embd_gqa);
                 segments = {n_embd, n_embd_gqa, n_embd_gqa};
             }
         } else {
