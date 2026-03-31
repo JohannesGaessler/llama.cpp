@@ -1093,8 +1093,7 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
         t_ij->buffer = simple_buf;
         t_ij->view_offs = tensor->view_offs;
         if (split_dim >= 0 && split_dim < GGML_MAX_DIMS && t_ij->view_offs > tensor->nb[split_dim]) {
-            t_ij->view_offs = t_ij->view_offs *
-                (ne[split_dim] == 0 && tensor->ne[split_dim] == 0 ? 0 : ne[split_dim]/tensor->ne[split_dim]);
+            t_ij->view_offs = (ne[split_dim] == 0 && tensor->ne[split_dim] == 0 ? 0 : t_ij->view_offs * ne[split_dim]/tensor->ne[split_dim]);
         }
         t_ij->view_src = tensor->view_src;
         if (t_ij->view_src != nullptr && ggml_backend_buffer_is_meta(t_ij->view_src->buffer)) {
