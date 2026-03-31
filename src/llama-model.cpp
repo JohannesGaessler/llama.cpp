@@ -41,15 +41,16 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
 
     const std::regex pattern_q_weight("blk\\.\\d*\\.attn_q.weight");
     const std::regex pattern_kv_weight("blk\\.\\d*\\.attn_(k|v).weight");
+    const std::regex pattern_qkv_weight("blk\\.\\d*\\.attn_qkv.weight");
     const std::regex pattern_q_bias("blk\\.\\d*\\.attn_q\\.bias");
     const std::regex pattern_kv_bias("blk\\.\\d*\\.attn_(k|v)\\.bias");
+    const std::regex pattern_qkv_bias("blk\\.\\d*\\.attn_qkv.bias");
     const std::regex pattern_qk_norm("blk\\.\\d*\\.attn_(q|k)_norm\\.weight");
     const std::regex pattern_kv_cache("cache_(k|v)_l\\d*");
     const std::regex pattern_attn_sinks("blk\\.\\d*\\.attn_sinks.weight");
     const std::regex pattern_attn_out_weight("blk\\.\\d*\\.attn_output.weight");
     const std::regex pattern_attn_out_bias("blk\\.\\d*\\.attn_output.bias");
 
-    const std::regex pattern_qkv_weight("blk\\.\\d*\\.attn_qkv.weight");
     const std::regex pattern_attn_gate_weight("blk\\.\\d*\\.attn_gate.weight");
     const std::regex pattern_ssm_dt("blk\\.\\d*\\.ssm_dt.bias");
     const std::regex pattern_ssm_a("blk\\.\\d*\\.ssm_a");
@@ -103,10 +104,12 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
 
     auto get_tensor_config = [&]() -> tensor_config {
         // standard attention
-        if (std::regex_match(tensor_name, pattern_q_weight) || std::regex_match(tensor_name, pattern_kv_weight)) {
+        if (std::regex_match(tensor_name, pattern_q_weight) || std::regex_match(tensor_name, pattern_kv_weight) ||
+                std::regex_match(tensor_name, pattern_qkv_weight)) {
             return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_1, "attn_output.weight");
         }
-        if (std::regex_match(tensor_name, pattern_q_bias) || std::regex_match(tensor_name, pattern_kv_bias)) {
+        if (std::regex_match(tensor_name, pattern_q_bias) || std::regex_match(tensor_name, pattern_kv_bias) ||
+                std::regex_match(tensor_name, pattern_qkv_bias)) {
             return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_0, "attn_output.weight");
         }
         if (std::regex_match(tensor_name, pattern_qk_norm)) {
@@ -122,7 +125,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
             return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_MIRRORED);
         }
 
-        if (std::regex_match(tensor_name, pattern_qkv_weight) || std::regex_match(tensor_name, pattern_attn_gate_weight)) {
+        if (std::regex_match(tensor_name, pattern_attn_gate_weight)) {
             return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_1);
         }
         if (std::regex_match(tensor_name, pattern_ssm_dt) || std::regex_match(tensor_name, pattern_ssm_a)) {

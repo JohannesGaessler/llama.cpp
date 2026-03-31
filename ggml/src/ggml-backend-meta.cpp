@@ -1131,7 +1131,7 @@ static void ggml_backend_meta_buffer_set_tensor(ggml_backend_buffer_t buffer, gg
         GGML_ASSERT(offset == 0);
         GGML_ASSERT(size == ggml_nbytes(tensor));
         size_t offset_data = 0;
-        std::vector<size_t> simple_offsets(n_bufs);
+        std::vector<size_t> simple_offsets(n_bufs, 0);
         for (size_t s = 0; s < split_state.n_segments; s++) {
             for (size_t j = 0; j < n_bufs; j++) {
                 ggml_tensor * simple_tensor = ggml_backend_meta_buffer_simple_tensor(tensor, j);

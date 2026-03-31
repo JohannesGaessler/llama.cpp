@@ -2867,7 +2867,6 @@ bool llm_arch_supports_sm_tensor(const llm_arch & arch) {
         case LLM_ARCH_QWEN:
         case LLM_ARCH_QWEN3NEXT:
         case LLM_ARCH_QWEN35MOE:
-        case LLM_ARCH_PHI2:
         case LLM_ARCH_PHI3:
         case LLM_ARCH_PHIMOE:
         case LLM_ARCH_PLAMO2:
