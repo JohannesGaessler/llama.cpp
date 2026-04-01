@@ -1062,7 +1062,7 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
     const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor, /*assume_sync =*/ true);
     GGML_ASSERT(ggml_nelements(tensor) == 0 || split_state.axis != GGML_BACKEND_SPLIT_AXIS_UNKNOWN);
 
-    int split_dim = split_state.axis;
+    const int split_dim = split_state.axis;
     int64_t ne[GGML_MAX_DIMS];
     size_t  nb[GGML_MAX_DIMS];
     for (size_t k = 0; k < GGML_MAX_DIMS; k++) {
@@ -1099,13 +1099,14 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
         memcpy(t_ij->op_params, tensor->op_params, sizeof(tensor->op_params));
         ggml_set_name(t_ij, tensor->name);
         t_ij->buffer = simple_buf;
-        t_ij->view_offs = tensor->view_offs;
-        if (split_dim >= 0 && split_dim < GGML_MAX_DIMS && t_ij->view_offs > tensor->nb[split_dim]) {
-            t_ij->view_offs = (ne[split_dim] == 0 && tensor->ne[split_dim] == 0 ? 0 : t_ij->view_offs * ne[split_dim]/tensor->ne[split_dim]);
-        }
         t_ij->view_src = tensor->view_src;
+        t_ij->view_offs = tensor->view_offs;
         if (t_ij->view_src != nullptr && ggml_backend_buffer_is_meta(t_ij->view_src->buffer)) {
             t_ij->view_src = ggml_backend_meta_buffer_simple_tensor(tensor->view_src, j);
+            const int split_dim_view_src = ggml_backend_meta_get_split_state(tensor->view_src, /*assume_sync =*/ true).axis;
+            if (split_dim_view_src >= 0 && split_dim_view_src < GGML_MAX_DIMS && t_ij->view_offs > tensor->view_src->nb[split_dim_view_src]) {
+                t_ij->view_offs = (ne[split_dim] == 0 && tensor->ne[split_dim] == 0 ? 0 : t_ij->view_offs * ne[split_dim]/tensor->ne[split_dim]);
+            }
         }
         if (t_ij->view_src != nullptr) {
             t_ij->data = (char *) t_ij->view_src->data + t_ij->view_offs;
