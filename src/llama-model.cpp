@@ -56,12 +56,14 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
     const std::regex pattern_ssm_a("blk\\.\\d*\\.ssm_a");
     const std::regex pattern_ssm_alpha("blk\\.\\d*\\.ssm_alpha.weight");
     const std::regex pattern_ssm_beta("blk\\.\\d*\\.ssm_beta.weight");
+    const std::regex pattern_ssm_beta_alpha("blk\\.\\d*\\.ssm_ba.weight");
     const std::regex pattern_rs_cache("cache_(r|s)_l\\d*");
     const std::regex pattern_ssm_conv1d("blk\\.\\d*\\.ssm_conv1d.weight");
     const std::regex pattern_ssm_out_weight("blk\\.\\d*\\.ssm_out.weight");
 
     const std::regex pattern_ffn_up_gate_weight("blk\\.\\d*\\.ffn_(up|gate)(_exps)?.weight");
     const std::regex pattern_ffn_up_gate_bias("blk\\.\\d*\\.ffn_(up|gate)(_exps)?.bias");
+    const std::regex pattern_ffn_gate_up_weight("blk\\.\\d*\\.ffn_gate_up(_exps)?.weight");
     const std::regex pattern_ffn_down_weight("blk\\.\\d*\\.ffn_down(_exps)?.weight");
     const std::regex pattern_ffn_down_bias("blk\\.\\d*\\.ffn_down.bias");
     const std::regex pattern_ffn_down_exps_bias("blk\\.\\d*\\.ffn_down_exps.bias");
@@ -135,7 +137,8 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
         if (std::regex_match(tensor_name, pattern_ssm_dt) || std::regex_match(tensor_name, pattern_ssm_a)) {
             return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_0, "ssm_out.weight");
         }
-        if (std::regex_match(tensor_name, pattern_ssm_alpha) || std::regex_match(tensor_name, pattern_ssm_beta)) {
+        if (std::regex_match(tensor_name, pattern_ssm_alpha) || std::regex_match(tensor_name, pattern_ssm_beta) ||
+                std::regex_match(tensor_name, pattern_ssm_beta_alpha)) {
             return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_1, "ssm_out.weight");
         }
         if (std::regex_match(tensor_name, pattern_rs_cache)) {
@@ -154,6 +157,9 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
         }
         if (std::regex_match(tensor_name, pattern_ffn_up_gate_bias)) {
             return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_0, "ffn_down.weight", "ffn_down_exps.weight");
+        }
+        if (std::regex_match(tensor_name, pattern_ffn_gate_up_weight)) {
+            return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_1, "ffn_down.weight", "ffn_down_exps.weight");
         }
         if (std::regex_match(tensor_name, pattern_ffn_down_weight)) {
             return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_0, "ffn_down.weight", "ffn_down_exps.weight");
