@@ -590,6 +590,10 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
                     if (base_ne_out_next == base_ne_in) {
                         return {ggml_backend_meta_split_axis(dim), {0}, 1};
                     }
+                    if (src_split_states[0].axis < GGML_MAX_DIMS - 1 &&
+                            base_ne_out_next == base_ne_in * tensor->src[0]->ne[src_split_states[0].axis + 1]) {
+                        return {ggml_backend_meta_split_axis(dim), {0}, 1};
+                    }
                     if (base_ne_out_next > base_ne_in) {
                         GGML_ASSERT(dim + 1 < GGML_MAX_DIMS);
                         return {ggml_backend_meta_split_axis(dim + 1), {0}, 1};
