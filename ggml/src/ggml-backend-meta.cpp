@@ -752,7 +752,7 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
             if (ret.axis >= 0 && ret.axis <= GGML_MAX_DIMS) {
                 const int64_t granularity = ret.axis == GGML_BACKEND_SPLIT_AXIS_0 ? ggml_blck_size(tensor->type) : 1;
                 int64_t ne_sum = 0;
-                for (size_t sj = 0; sj < n_bufs*ret.n_segments; sj++) {
+                for (size_t sj = 0; sj < ret.n_segments*n_bufs; sj++) {
                     GGML_ASSERT(ret.ne[sj] % granularity == 0);
                     ne_sum += ret.ne[sj];
                 }
@@ -1067,6 +1067,7 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
 
     const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(tensor, /*assume_sync =*/ true);
     GGML_ASSERT(ggml_nelements(tensor) == 0 || split_state.axis != GGML_BACKEND_SPLIT_AXIS_UNKNOWN);
+    GGML_ASSERT(split_state.n_segments <= 3);
 
     int split_dim = split_state.axis;
     int64_t ne[GGML_MAX_DIMS];
