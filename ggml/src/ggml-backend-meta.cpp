@@ -970,8 +970,10 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
                 if (first_src_split_by_axis) {
                     for (size_t j = 0; j < n_bufs; j++) {
                         // Take over ratio from src:
-                        split_state.ne[j] = 0;
-                        for (size_t s = 0; s < src_split_states[0].n_segments; s++) {
+                        for (size_t s = 0; s < src_split_states[i].n_segments; s++) {
+                            split_state.ne[s*n_bufs + j] = 0;
+                        }
+                        for (size_t s = 0; s < src_split_states[i].n_segments; s++) {
                             split_state.ne[j] += src_split_states[i].ne[s*n_bufs + j];
                         }
                         split_state.ne[j] *= tensor->ne[split_state.axis];
