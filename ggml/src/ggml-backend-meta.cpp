@@ -812,7 +812,7 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
             } break;
             case GGML_OP_REPEAT:
             case GGML_OP_REPEAT_BACK: {
-                split_state = handle_generic(src_split_states, /*scalar_only =*/ true);
+                split_state = handle_generic(src_split_states, /*scalar_only =*/ false);
             } break;
             case GGML_OP_CONCAT: {
                 split_state = handle_concat(src_split_states);
