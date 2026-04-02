@@ -217,6 +217,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
     };
 
     ggml_backend_meta_split_state split_state;
+    memset(&split_state, 0, sizeof(split_state));
     tensor_config tc = get_tensor_config();
     split_state.axis = tc.axis;
     if (split_state.axis >= 0 && split_state.axis < GGML_MAX_DIMS) {
