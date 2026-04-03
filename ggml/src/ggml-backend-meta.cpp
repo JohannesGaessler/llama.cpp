@@ -1121,7 +1121,7 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
                 bool split_internal_offset = false;
                 for (int i = 0; i < GGML_MAX_DIMS; i++) {
                     const size_t dim_size = tensor->ne[i] * tensor->nb[i];
-                    if (tensor->view_offs < dim_size && dim_size < tensor->nb[split_dim]) {
+                    if (tensor->view_offs <= dim_size && dim_size < tensor->nb[split_dim]) {
                         split_internal_offset = true;
                         break;
                     }
