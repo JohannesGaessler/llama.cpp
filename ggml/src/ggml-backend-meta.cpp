@@ -1124,7 +1124,7 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
                     t_ij->view_offs = t_ij->view_offs * ne[split_dim]/tensor->ne[split_dim];
                 }
                 if (view_offs_good != t_ij->view_offs) {
-                    fprintf(stderr, "%s: tensor=%s tensor->view_src=%s t_ij->view_offs=%zu view_offs_good=%zu",
+                    fprintf(stderr, "%s: tensor=%s tensor->view_src=%s t_ij->view_offs=%zu view_offs_good=%zu\n",
                         __func__, tensor->name, tensor->view_src->name, t_ij->view_offs, view_offs_good);
                 }
             }
