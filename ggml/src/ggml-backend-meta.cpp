@@ -579,21 +579,27 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
                 if (src_split_states[0].axis == ggml_n_dims(tensor->src[0]) - 1) {
                     return {ggml_backend_meta_split_axis(ggml_n_dims(tensor) - 1), {0}, 1};
                 }
-                int64_t base_ne_in = 1;
-                for (int dim = 0; dim <= src_split_states[0].axis; dim++) {
-                    base_ne_in *= tensor->src[0]->ne[dim];
+                std::vector<int64_t> base_ne_in;
+                base_ne_in.reserve(GGML_MAX_DIMS - src_split_states[0].axis);
+                {
+                    base_ne_in.push_back(1);
+                    int dim = 0;
+                    for (; dim <= src_split_states[0].axis; dim++) {
+                        base_ne_in[0] *= tensor->src[0]->ne[dim];
+                    }
+                    for (; dim <= GGML_MAX_DIMS; dim++) {
+                        base_ne_in.push_back(base_ne_in.back() * tensor->src[0]->ne[dim]);
+                    }
                 }
                 int64_t base_ne_out = 1;
                 for (int dim = 0; dim < GGML_MAX_DIMS; dim++) {
                     const int64_t base_ne_out_next = base_ne_out *= tensor->ne[dim];
-                    if (base_ne_out_next == base_ne_in) {
-                        return {ggml_backend_meta_split_axis(dim), {0}, 1};
+                    for (const int64_t & bni : base_ne_in) {
+                        if (bni == base_ne_out_next) {
+                            return {ggml_backend_meta_split_axis(dim), {0}, 1};
+                        }
                     }
-                    if (src_split_states[0].axis < GGML_MAX_DIMS - 1 &&
-                            base_ne_out_next == base_ne_in * tensor->src[0]->ne[src_split_states[0].axis + 1]) {
-                        return {ggml_backend_meta_split_axis(dim), {0}, 1};
-                    }
-                    if (base_ne_out_next > base_ne_in) {
+                    if (base_ne_out_next > base_ne_in[0]) {
                         GGML_ASSERT(dim + 1 < GGML_MAX_DIMS);
                         return {ggml_backend_meta_split_axis(dim + 1), {0}, 1};
                     }
