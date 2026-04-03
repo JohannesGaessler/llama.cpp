@@ -32,7 +32,7 @@ GGML_API const char * ggml_backend_meta_split_axis_name(enum ggml_backend_meta_s
 
 struct ggml_backend_meta_split_state {
     enum ggml_backend_meta_split_axis axis;
-    int64_t                           ne[3*GGML_BACKEND_META_MAX_DEVICES];
+    int64_t                           ne[16*GGML_BACKEND_META_MAX_DEVICES];
     uint32_t                          n_segments;
 };
 

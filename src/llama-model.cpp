@@ -246,11 +246,10 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
             if (std::regex_match(tensor_name, pattern_qkv_weight) || std::regex_match(tensor_name, pattern_ssm_conv1d)) {
                 GGML_ASSERT(tensor->ne[split_state.axis] == 2*key_dim + value_dim);
                 segments.assign(2 + head_ratio, key_dim);
-            } else if (std::regex_match(tensor_name, pattern_attn_gate_weight) || std::regex_match(tensor_name, pattern_ssm_a) ||
-                    std::regex_match(tensor_name, pattern_ssm_beta) || std::regex_match(tensor_name, pattern_ssm_alpha) ||
-                    std::regex_match(tensor_name, pattern_ssm_out_weight)) {
+            } else if (std::regex_match(tensor_name, pattern_attn_gate_weight) || std::regex_match(tensor_name, pattern_ssm_out_weight)) {
                 segments.assign(head_ratio, key_dim);
-            } else if (std::regex_match(tensor_name, pattern_ssm_dt)) {
+            } else if (std::regex_match(tensor_name, pattern_ssm_dt) || std::regex_match(tensor_name, pattern_ssm_a) ||
+                    std::regex_match(tensor_name, pattern_ssm_alpha) || std::regex_match(tensor_name, pattern_ssm_beta)) {
                 segments.assign(head_ratio, n_k_heads);
             } else {
                 segments = {ne_full};
