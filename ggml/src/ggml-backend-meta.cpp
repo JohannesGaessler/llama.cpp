@@ -1118,10 +1118,18 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
             }
             if (split_dim >= 0 && split_dim < GGML_MAX_DIMS && split_dim_view_src >= 0 && split_dim_view_src < GGML_MAX_DIMS &&
                     t_ij->view_offs > tensor->view_src->nb[split_dim_view_src]) {
-                // const size_t split_dim_stride = tensor->nb[split_dim];
-                // const size_t split_dim_size = split_dim_stride * tensor->ne[split_dim];
+                bool split_internal_offset = false;
+                for (int i = 0; i < GGML_MAX_DIMS; i++) {
+                    const size_t dim_size = tensor->ne[i] * tensor->nb[i];
+                    if (tensor->view_offs < dim_size && dim_size < tensor->nb[split_dim]) {
+                        split_internal_offset = true;
+                        break;
+                    }
+                }
                 GGML_ASSERT(ne[split_dim] != 0 && tensor->ne[split_dim] != 0);
-                t_ij->view_offs = t_ij->view_offs * ne[split_dim]/tensor->ne[split_dim];
+                if (!split_internal_offset) {
+                    t_ij->view_offs = t_ij->view_offs * ne[split_dim]/tensor->ne[split_dim];
+                }
                 if (view_offs_good != t_ij->view_offs) {
                     fprintf(stderr, "%s: tensor=%s tensor->view_src=%s t_ij->view_offs=%zu view_offs_good=%zu\n",
                         __func__, tensor->name, tensor->view_src->name, t_ij->view_offs, view_offs_good);
