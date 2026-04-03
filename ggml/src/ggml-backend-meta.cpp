@@ -1111,8 +1111,13 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
         if (t_ij->view_src != nullptr && ggml_backend_buffer_is_meta(t_ij->view_src->buffer)) {
             t_ij->view_src = ggml_backend_meta_buffer_simple_tensor(tensor->view_src, j);
             const int split_dim_view_src = ggml_backend_meta_get_split_state(tensor->view_src, /*assume_sync =*/ true).axis;
-            if (split_dim_view_src >= 0 && split_dim_view_src < GGML_MAX_DIMS && t_ij->view_offs > tensor->view_src->nb[split_dim_view_src]
-                    && std::string(tensor->name).find("Qcur") == std::string::npos) {
+            if (split_dim_view_src >= 0 && split_dim_view_src < GGML_MAX_DIMS && t_ij->view_offs > tensor->view_src->nb[split_dim_view_src]) {
+                if (tensor->op == GGML_OP_VIEW) {
+                    for (size_t dim = 0; dim < GGML_MAX_DIMS; dim++) {
+                        GGML_ASSERT(tensor->nb[dim] == tensor->src[0]->nb[dim] &&
+                            "reshaping with a simultaneous offset is ambiguous, reshape first and apply the offset afterwards");
+                    }
+                }
                 t_ij->view_offs = (ne[split_dim] == 0 && tensor->ne[split_dim] == 0 ? 0 : t_ij->view_offs * ne[split_dim]/tensor->ne[split_dim]);
             }
         }
