@@ -1119,13 +1119,15 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
         ggml_tensor * view_src_bad = t_ij->view_src;
         size_t view_offs_bad = t_ij->view_offs;
 
-        t_ij->view_offs = tensor->view_offs;
-        if (split_dim >= 0 && split_dim < GGML_MAX_DIMS && t_ij->view_offs > tensor->nb[split_dim]) {
-            t_ij->view_offs = (ne[split_dim] == 0 && tensor->ne[split_dim] == 0 ? 0 : t_ij->view_offs * ne[split_dim]/tensor->ne[split_dim]);
-        }
-        t_ij->view_src = tensor->view_src;
-        if (t_ij->view_src != nullptr && ggml_backend_buffer_is_meta(t_ij->view_src->buffer)) {
-            t_ij->view_src = ggml_backend_meta_buffer_simple_tensor(tensor->view_src, j);
+        if (ggml_nelements(tensor) > 0) {
+            t_ij->view_offs = tensor->view_offs;
+            if (split_dim >= 0 && split_dim < GGML_MAX_DIMS && t_ij->view_offs > tensor->nb[split_dim]) {
+                t_ij->view_offs = (ne[split_dim] == 0 && tensor->ne[split_dim] == 0 ? 0 : t_ij->view_offs * ne[split_dim]/tensor->ne[split_dim]);
+            }
+            t_ij->view_src = tensor->view_src;
+            if (t_ij->view_src != nullptr && ggml_backend_buffer_is_meta(t_ij->view_src->buffer)) {
+                t_ij->view_src = ggml_backend_meta_buffer_simple_tensor(tensor->view_src, j);
+            }
         }
         GGML_ASSERT(t_ij->view_src == view_src_bad);
         if (t_ij->view_offs != view_offs_bad) {
