@@ -1110,11 +1110,11 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
         t_ij->view_offs = tensor->view_offs;
         if (t_ij->view_src != nullptr && ggml_backend_buffer_is_meta(t_ij->view_src->buffer)) {
             t_ij->view_src = ggml_backend_meta_buffer_simple_tensor(tensor->view_src, j);
-            if (split_dim >= 0 && split_dim < GGML_MAX_DIMS) {
+            if (t_ij->view_offs > 0 && split_dim >= 0 && split_dim < GGML_MAX_DIMS) {
                 const size_t nb_split_dim = tensor->nb[split_dim];
                 size_t nb_next_highest = ggml_nbytes(tensor->view_src);
                 for (int i = 0; i < GGML_MAX_DIMS; i++) {
-                    if (i != split_dim && tensor->nb[i] > nb_split_dim && tensor->nb[i] < nb_next_highest) {
+                    if (tensor->nb[i] > nb_split_dim && tensor->nb[i] < nb_next_highest) {
                         nb_next_highest = tensor->nb[i];
                     }
                 }
