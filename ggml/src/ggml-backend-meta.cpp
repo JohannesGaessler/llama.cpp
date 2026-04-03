@@ -774,8 +774,6 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
             }
             src_split_states[i] = ggml_backend_meta_get_split_state(tensor->src[i], /*assume_sync =*/ true);
             GGML_ASSERT(src_split_states[i].axis != GGML_BACKEND_SPLIT_AXIS_UNKNOWN);
-            GGML_ASSERT(src_split_states[i].n_segments == 1 || tensor->op == GGML_OP_MUL_MAT || tensor->op == GGML_OP_SSM_CONV ||
-                tensor->op == GGML_OP_ADD || tensor->op == GGML_OP_MUL);
         }
 
         ggml_backend_meta_split_state split_state;
