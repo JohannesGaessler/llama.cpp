@@ -1119,7 +1119,7 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
             if (t_ij->view_offs > 0 && split_dim >= 0 && split_dim < GGML_MAX_DIMS) {
                 const size_t split_dim_stride = tensor->nb[split_dim];
                 // const size_t split_dim_size = split_dim_stride * tensor->ne[split_dim];
-                if (t_ij->view_offs < split_dim_stride) {
+                if (t_ij->view_offs >= split_dim_stride) {
                     GGML_ASSERT(ne[split_dim] != 0 && tensor->ne[split_dim] != 0);
                     t_ij->view_offs = t_ij->view_offs * ne[split_dim]/tensor->ne[split_dim];
                 }
