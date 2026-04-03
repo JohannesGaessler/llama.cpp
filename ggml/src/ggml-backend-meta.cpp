@@ -1106,6 +1106,19 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
         memcpy(t_ij->op_params, tensor->op_params, sizeof(tensor->op_params));
         ggml_set_name(t_ij, tensor->name);
         t_ij->buffer = simple_buf;
+
+        t_ij->view_src = tensor->view_src;
+        t_ij->view_offs = tensor->view_offs;
+        if (t_ij->view_src != nullptr && ggml_backend_buffer_is_meta(t_ij->view_src->buffer)) {
+            t_ij->view_src = ggml_backend_meta_buffer_simple_tensor(tensor->view_src, j);
+            const int split_dim_view_src = ggml_backend_meta_get_split_state(tensor->view_src, /*assume_sync =*/ true).axis;
+            if (split_dim_view_src >= 0 && split_dim_view_src < GGML_MAX_DIMS && t_ij->view_offs > tensor->view_src->nb[split_dim_view_src]) {
+                t_ij->view_offs = (ne[split_dim] == 0 && tensor->ne[split_dim] == 0 ? 0 : t_ij->view_offs * ne[split_dim]/tensor->ne[split_dim]);
+            }
+        }
+        ggml_tensor * view_src_bad = t_ij->view_src;
+        size_t view_offs_bad = t_ij->view_offs;
+
         t_ij->view_offs = tensor->view_offs;
         if (split_dim >= 0 && split_dim < GGML_MAX_DIMS && t_ij->view_offs > tensor->nb[split_dim]) {
             t_ij->view_offs = (ne[split_dim] == 0 && tensor->ne[split_dim] == 0 ? 0 : t_ij->view_offs * ne[split_dim]/tensor->ne[split_dim]);
@@ -1114,6 +1127,11 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
         if (t_ij->view_src != nullptr && ggml_backend_buffer_is_meta(t_ij->view_src->buffer)) {
             t_ij->view_src = ggml_backend_meta_buffer_simple_tensor(tensor->view_src, j);
         }
+        GGML_ASSERT(t_ij->view_src == view_src_bad);
+        if (t_ij->view_offs != view_offs_bad) {
+            fprintf(stderr, "%s: tensor=%s j=%zu t_ij=%s t_ij->view_offs=%zu view_offs_bad=%zu\n", __func__, tensor->name, j, t_ij->name, t_ij->view_offs, view_offs_bad);
+        }
+
         if (t_ij->view_src != nullptr) {
             t_ij->data = (char *) t_ij->view_src->data + t_ij->view_offs;
         } else if (simple_buf != nullptr) {
