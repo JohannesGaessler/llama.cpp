@@ -1110,15 +1110,11 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
         t_ij->view_offs = tensor->view_offs;
         if (t_ij->view_src != nullptr && ggml_backend_buffer_is_meta(t_ij->view_src->buffer)) {
             t_ij->view_src = ggml_backend_meta_buffer_simple_tensor(tensor->view_src, j);
-            const int split_dim_view_src = ggml_backend_meta_get_split_state(tensor->view_src, /*assume_sync =*/ true).axis;
-            size_t view_offs_good = t_ij->view_offs;
-            if (split_dim_view_src >= 0 && split_dim_view_src < GGML_MAX_DIMS && t_ij->view_offs > tensor->view_src->nb[split_dim_view_src]
-                    && std::string(tensor->name).find("Qcur") == std::string::npos) {
-                view_offs_good = (ne[split_dim] == 0 && tensor->ne[split_dim] == 0 ? 0 : t_ij->view_offs * ne[split_dim]/tensor->ne[split_dim]);
-            }
-            if (split_dim >= 0 && split_dim < GGML_MAX_DIMS && split_dim_view_src >= 0 && split_dim_view_src < GGML_MAX_DIMS &&
-                    t_ij->view_offs > tensor->view_src->nb[split_dim_view_src]) {
-                bool split_internal_offset = false;
+            if (t_ij->view_offs > 0 && split_dim >= 0 && split_dim < GGML_MAX_DIMS) {
+                GGML_ASSERT(ne[split_dim] != 0 && tensor->ne[split_dim] != 0);
+                const int split_dim_view_src = ggml_backend_meta_get_split_state(tensor->view_src, /*assume_sync =*/ true).axis;
+                GGML_ASSERT(split_dim_view_src >= 0 && split_dim_view_src < GGML_MAX_DIMS);
+                bool split_internal_offset = t_ij->view_offs <= tensor->view_src->nb[split_dim_view_src];
                 for (int i = 0; i < GGML_MAX_DIMS; i++) {
                     const size_t dim_size = tensor->ne[i] * tensor->nb[i];
                     if (tensor->view_offs <= dim_size && dim_size < tensor->nb[split_dim]) {
@@ -1126,13 +1122,8 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer
                         break;
                     }
                 }
-                GGML_ASSERT(ne[split_dim] != 0 && tensor->ne[split_dim] != 0);
                 if (!split_internal_offset) {
                     t_ij->view_offs = t_ij->view_offs * ne[split_dim]/tensor->ne[split_dim];
-                }
-                if (view_offs_good != t_ij->view_offs) {
-                    fprintf(stderr, "%s: tensor=%s tensor->view_src=%s t_ij->view_offs=%zu view_offs_good=%zu\n",
-                        __func__, tensor->name, tensor->view_src->name, t_ij->view_offs, view_offs_good);
                 }
             }
         }
