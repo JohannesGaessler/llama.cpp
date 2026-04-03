@@ -236,16 +236,22 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
         }
         std::vector<int64_t> segments;
         if (ud->model->arch == LLM_ARCH_QWEN3NEXT || ud->model->arch == LLM_ARCH_QWEN35 || ud->model->arch == LLM_ARCH_QWEN35MOE) {
-            if (std::regex_match(tensor_name, pattern_qkv_weight) || std::regex_match(tensor_name, pattern_qkv_bias) ||
-                    std::regex_match(tensor_name, pattern_ssm_conv1d)) {
-                const int64_t head_k_dim = ud->model->hparams.ssm_d_state;
-                const int64_t head_v_dim = ud->model->hparams.ssm_d_state;
-                const int64_t n_k_heads  = ud->model->hparams.ssm_n_group;
-                const int64_t n_v_heads  = ud->model->hparams.ssm_dt_rank;
-                const int64_t key_dim    = head_k_dim * n_k_heads;
-                const int64_t value_dim  = head_v_dim * n_v_heads;
+            const int64_t head_k_dim = ud->model->hparams.ssm_d_state;
+            const int64_t head_v_dim = ud->model->hparams.ssm_d_state;
+            const int64_t n_k_heads  = ud->model->hparams.ssm_n_group;
+            const int64_t n_v_heads  = ud->model->hparams.ssm_dt_rank;
+            const int64_t key_dim    = head_k_dim * n_k_heads;
+            const int64_t value_dim  = head_v_dim * n_v_heads;
+            const int64_t head_ratio = n_v_heads / n_k_heads;
+            if (std::regex_match(tensor_name, pattern_qkv_weight) || std::regex_match(tensor_name, pattern_ssm_conv1d)) {
                 GGML_ASSERT(tensor->ne[split_state.axis] == 2*key_dim + value_dim);
-                segments = {key_dim, key_dim, value_dim};
+                segments.assign(2 + head_ratio, key_dim);
+            } else if (std::regex_match(tensor_name, pattern_attn_gate_weight) || std::regex_match(tensor_name, pattern_ssm_a) ||
+                    std::regex_match(tensor_name, pattern_ssm_beta) || std::regex_match(tensor_name, pattern_ssm_alpha) ||
+                    std::regex_match(tensor_name, pattern_ssm_out_weight)) {
+                segments.assign(head_ratio, key_dim);
+            } else if (std::regex_match(tensor_name, pattern_ssm_dt)) {
+                segments.assign(head_ratio, n_k_heads);
             } else {
                 segments = {ne_full};
             }
