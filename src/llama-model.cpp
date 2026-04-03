@@ -246,12 +246,6 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
                 const int64_t value_dim  = head_v_dim * n_v_heads;
                 GGML_ASSERT(tensor->ne[split_state.axis] == 2*key_dim + value_dim);
                 segments = {key_dim, key_dim, value_dim};
-            } else if (std::regex_match(tensor_name, pattern_q_weight)) {
-                const int64_t n_head        = ud->model->hparams.n_head();
-                const int64_t n_embd_head_k = ud->model->hparams.n_embd_head_k();
-                const int64_t n_embd_q      = n_head * n_embd_head_k;
-                GGML_ASSERT(tensor->ne[split_state.axis] == 2*n_embd_q);
-                segments = {n_embd_q, n_embd_q};
             } else {
                 segments = {ne_full};
             }
