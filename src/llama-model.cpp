@@ -57,7 +57,8 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
     const std::regex pattern_ssm_alpha("blk\\.\\d*\\.ssm_alpha.weight");
     const std::regex pattern_ssm_beta("blk\\.\\d*\\.ssm_beta.weight");
     const std::regex pattern_ssm_beta_alpha("blk\\.\\d*\\.ssm_ba.weight");
-    const std::regex pattern_rs_cache("cache_(r|s)_l\\d*");
+    const std::regex pattern_r_cache("cache_r_l\\d*");
+    const std::regex pattern_s_cache("cache_s_l\\d*");
     const std::regex pattern_ssm_conv1d("blk\\.\\d*\\.ssm_conv1d.weight");
     const std::regex pattern_ssm_out_weight("blk\\.\\d*\\.ssm_out.weight");
 
@@ -141,7 +142,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
                 std::regex_match(tensor_name, pattern_ssm_beta_alpha)) {
             return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_1, "ssm_out.weight");
         }
-        if (std::regex_match(tensor_name, pattern_rs_cache)) {
+        if (std::regex_match(tensor_name, pattern_r_cache) || std::regex_match(tensor_name, pattern_s_cache)) {
             return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_0, "ssm_out.weight");
         }
         if (std::regex_match(tensor_name, pattern_ssm_conv1d)) {
@@ -206,11 +207,21 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
             return std::lcm(n_embd_q, blck_size)/n_embd_q * n_gqa;
         }
 
-        // FFN + SSM
+        // FFN
         if (std::regex_match(tensor_name, pattern_ffn_up_gate_weight) || std::regex_match(tensor_name, pattern_ffn_up_gate_bias) ||
-                std::regex_match(tensor_name, pattern_ffn_down_weight) || std::regex_match(tensor_name, pattern_ssm_out_weight) ||
-                std::regex_match(tensor_name, pattern_rs_cache)) {
+                std::regex_match(tensor_name, pattern_ffn_down_weight)) {
             return blck_size;
+        }
+
+        // SSM
+        if (std::regex_match(tensor_name, pattern_ssm_out_weight)) {
+            return blck_size;
+        }
+        if (std::regex_match(tensor_name, pattern_r_cache)) {
+            const int64_t n_embd_r  = ud->model->hparams.n_embd_r();
+            const int64_t n_k_heads = ud->model->hparams.ssm_n_group;
+            GGML_ASSERT(n_embd_r % n_k_heads == 0);
+            return std::lcm(blck_size, n_embd_r/n_k_heads);
         }
 
         // everything else
