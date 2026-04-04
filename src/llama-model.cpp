@@ -263,7 +263,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
                 GGML_ASSERT(segments.size() == 1);
                 // some models have Q gate tensors, for those cases the granularity needs to be doubled:
                 if (ud->model->arch == LLM_ARCH_QWEN3NEXT || ud->model->arch == LLM_ARCH_QWEN35 || ud->model->arch == LLM_ARCH_QWEN35MOE) {
-                    std::lcm(2*n_embd_q, blck_size);
+                    return {std::lcm(2*n_embd_q, blck_size)};
                 }
                 return {granularity_q};
             }
