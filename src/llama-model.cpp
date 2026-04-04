@@ -227,10 +227,6 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
     auto get_split_granularity = [&](int64_t blck_size, uint32_t il, const std::vector<int64_t> & segments) -> std::vector<int64_t> {
         if (hparams.is_recurrent(il)) {
             // linear attention
-            if (std::regex_match(tensor_name, pattern_ssm_out_weight)) {
-                GGML_ASSERT(segments.size() == 1);
-                return {blck_size};
-            }
             const int64_t n_embd_r  = hparams.n_embd_r();
             const int64_t n_k_heads = hparams.ssm_n_group;
             const int64_t n_v_heads = hparams.ssm_dt_rank;
