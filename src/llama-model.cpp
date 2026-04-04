@@ -271,11 +271,13 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
         // FFN
         if (std::regex_match(tensor_name, pattern_ffn_up_gate_weight) || std::regex_match(tensor_name, pattern_ffn_up_gate_bias) ||
                 std::regex_match(tensor_name, pattern_ffn_down_weight)) {
-            return std::vector<int64_t>(segments.size(), blck_size);
+            GGML_ASSERT(segments.size() == 1);
+            return {blck_size};
         }
 
         // everything else
-        return std::vector<int64_t>(segments.size(), 1);
+        GGML_ASSERT(segments.size() == 1);
+        return {1};
     };
 
     ggml_backend_meta_split_state split_state;
