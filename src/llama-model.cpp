@@ -233,10 +233,12 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
             }
             const int64_t n_embd_r  = hparams.n_embd_r();
             const int64_t n_k_heads = hparams.ssm_n_group;
+            const int64_t n_v_heads = hparams.ssm_dt_rank;
             if (std::regex_match(tensor_name, pattern_r_cache)) {
-                GGML_ASSERT(segments.size() == 3);
-                GGML_ASSERT(n_embd_r % n_k_heads == 0);
-                return std::vector<int64_t>(segments.size(), std::lcm(blck_size, n_embd_r/n_k_heads));
+                GGML_ASSERT(segments.size() == 1);
+                const int64_t n_heads = 2*n_k_heads + n_v_heads;
+                GGML_ASSERT(n_embd_r % n_heads == 0);
+                return {std::lcm(blck_size, n_embd_r/n_heads)};
             }
         } else {
             // regular attention
