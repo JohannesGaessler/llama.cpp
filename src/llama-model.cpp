@@ -247,7 +247,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
                     std::regex_match(tensor_name, pattern_ssm_conv1d)) {
                 return std::vector<int64_t>(segments.size(), granularity_qkv);
             }
-            if (std::regex_match(tensor_name, pattern_ssm_dt)) {
+            if (std::regex_match(tensor_name, pattern_ssm_dt) || std::regex_match(tensor_name, pattern_ssm_a)) {
                 return std::vector<int64_t>(segments.size(), granularity_qkv / head_dim);
             }
         } else {
