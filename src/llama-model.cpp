@@ -239,7 +239,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
             }
             if (std::regex_match(tensor_name, pattern_r_cache)) {
                 GGML_ASSERT(segments.size() == 1);
-                return std::vector<int64_t>(segments.size(), granularity_qkv * hparams.ssm_d_inner);
+                return std::vector<int64_t>(segments.size(), granularity_qkv * (hparams.ssm_d_conv - 1));
             }
         } else {
             // regular attention
