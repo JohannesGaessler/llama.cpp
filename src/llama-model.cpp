@@ -214,6 +214,9 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
             if (std::regex_match(tensor_name, pattern_r_cache)) {
                 return std::vector<int64_t>(2 + head_ratio, key_dim * (hparams.ssm_d_conv - 1));
             }
+            if (std::regex_match(tensor_name, pattern_s_cache)) {
+                return std::vector<int64_t>(head_ratio, n_k_heads * head_v_dim * head_v_dim);
+            }
             return {tensor->ne[axis]};
         }
 
@@ -242,6 +245,9 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
             }
             if (std::regex_match(tensor_name, pattern_r_cache)) {
                 return std::vector<int64_t>(segments.size(), granularity_qkv * (hparams.ssm_d_conv - 1));
+            }
+            if (std::regex_match(tensor_name, pattern_s_cache)) {
+                return std::vector<int64_t>(segments.size(), granularity_qkv * head_dim);
             }
         } else {
             // regular attention
