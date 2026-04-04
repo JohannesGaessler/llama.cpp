@@ -208,7 +208,8 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
 
         // FFN + SSM
         if (std::regex_match(tensor_name, pattern_ffn_up_gate_weight) || std::regex_match(tensor_name, pattern_ffn_up_gate_bias) ||
-                std::regex_match(tensor_name, pattern_ffn_down_weight) || std::regex_match(tensor_name, pattern_rs_cache)) {
+                std::regex_match(tensor_name, pattern_ffn_down_weight) || std::regex_match(tensor_name, pattern_ssm_out_weight) ||
+                std::regex_match(tensor_name, pattern_rs_cache)) {
             return blck_size;
         }
 
