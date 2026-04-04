@@ -1173,10 +1173,12 @@ static void ggml_backend_meta_buffer_set_tensor(ggml_backend_buffer_t buffer, gg
         size_t offset_data = 0;
         std::vector<size_t> simple_offsets(n_bufs, 0);
         if (split_state.axis == GGML_BACKEND_SPLIT_AXIS_0) {
+            const int64_t blck_size = ggml_blck_size(tensor->type);
             for (size_t s = 0; s < split_state.n_segments; s++) {
                 for (size_t j = 0; j < n_bufs; j++) {
                     ggml_tensor * simple_tensor = ggml_backend_meta_buffer_simple_tensor(tensor, j);
-                    const size_t nbytes = split_state.ne[s*n_bufs + j] * tensor->nb[0];
+                    GGML_ASSERT(split_state.ne[s*n_bufs + j] % blck_size == 0);
+                    const size_t nbytes = split_state.ne[s*n_bufs + j]/blck_size * tensor->nb[0];
                     ggml_backend_tensor_set_2d(simple_tensor, (const char *) data + offset_data, simple_offsets[j], nbytes,
                         tensor->ne[1], simple_tensor->nb[1], tensor->nb[1]);
                     offset_data       += nbytes;
