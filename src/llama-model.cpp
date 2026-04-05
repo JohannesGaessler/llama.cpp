@@ -99,7 +99,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
             rotation = il % ud->n_devices;
         } else {
             il = 0;
-            rotation = ud->model->hparams.n_layer % ud->n_devices;
+            rotation = hparams.n_layer % ud->n_devices;
         }
         const ggml_tensor * tensor_axis_0 = suffix.empty() ? tensor : ud->model->get_tensor((prefix + suffix).c_str());
         if (tensor_axis_0 == nullptr) {
