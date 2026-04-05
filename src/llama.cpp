@@ -947,6 +947,10 @@ static struct llama_model * llama_model_load_from_file_impl(
             while (params.devices[n_devs]) {
                 n_devs++;
             }
+            if (n_devs == 0) {
+                LLAMA_LOG_ERROR("%s: LLAMA_SPLIT_MODE_TENSOR needs >= 1 devices\n", __func__);
+                return nullptr;
+            }
             model->get_split_state_ud.n_devices = n_devs;
             model->get_split_state_ud.model = model;
             model->devices.push_back({
@@ -976,6 +980,10 @@ static struct llama_model * llama_model_load_from_file_impl(
                     continue;
                 }
                 devs.push_back(dev);
+            }
+            if (devs.empty()) {
+                LLAMA_LOG_ERROR("%s: LLAMA_SPLIT_MODE_TENSOR needs >= 1 devices\n", __func__);
+                return nullptr;
             }
 
             LLAMA_LOG_INFO("%s: creating a Meta device for tensor parallelism from %zu devices:\n", __func__, devs.size());
