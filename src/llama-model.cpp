@@ -191,7 +191,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
         return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_MIRRORED);
     };
 
-    auto get_split_segments = [&](int axis) -> std::vector<int64_t> {
+    auto get_split_segments = [&](int axis, uint32_t il) -> std::vector<int64_t> {
         if (ud->model->arch == LLM_ARCH_QWEN3NEXT || ud->model->arch == LLM_ARCH_QWEN35 || ud->model->arch == LLM_ARCH_QWEN35MOE) {
             const int64_t head_k_dim = hparams.ssm_d_state;
             const int64_t head_v_dim = hparams.ssm_d_state;
@@ -221,11 +221,16 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
         }
 
         if (std::regex_match(tensor_name, pattern_qkv_weight) || std::regex_match(tensor_name, pattern_qkv_bias)) {
-            const int64_t n_embd      = ud->model->hparams.n_embd;
-            const int64_t n_embd_gqa  = ud->model->hparams.n_embd_v_gqa();
-            GGML_ASSERT(ud->model->hparams.n_embd_k_gqa() == n_embd_gqa);
+            const int64_t n_embd      = hparams.n_embd;
+            const int64_t n_embd_gqa  = hparams.n_embd_v_gqa(il);
+            GGML_ASSERT(hparams.n_embd_k_gqa() == n_embd_gqa);
             GGML_ASSERT(tensor->ne[axis] == n_embd + 2*n_embd_gqa);
             return {n_embd, n_embd_gqa, n_embd_gqa};
+        }
+        if (std::regex_match(tensor_name, pattern_ffn_gate_up_weight)) {
+            const int64_t n_ff_exp = hparams.n_ff_exp;
+            GGML_ASSERT(tensor->ne[axis] == 2*n_ff_exp);
+            return {n_ff_exp, n_ff_exp};
         }
         return {tensor->ne[axis]};
     };
@@ -286,9 +291,9 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
 
         // FFN
         if (std::regex_match(tensor_name, pattern_ffn_up_gate_weight) || std::regex_match(tensor_name, pattern_ffn_up_gate_bias) ||
-                std::regex_match(tensor_name, pattern_ffn_down_weight)) {
-            GGML_ASSERT(segments.size() == 1);
-            return {blck_size};
+                std::regex_match(tensor_name, pattern_ffn_gate_up_weight) || std::regex_match(tensor_name, pattern_ffn_down_weight)) {
+            GGML_ASSERT(segments.size() <= 2);
+            return std::vector<int64_t>(segments.size(), blck_size);
         }
 
         // everything else
@@ -312,7 +317,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
                 tensor_split_scan[j] += tensor_split_scan[j - 1];
             }
         }
-        const std::vector<int64_t> segments = get_split_segments(split_state.axis);
+        const std::vector<int64_t> segments = get_split_segments(split_state.axis, tc.il);
         const std::vector<int64_t> granularity = get_split_granularity(blck_size, tc.il, segments);
         for (size_t is = 0; is < segments.size(); is++) {
             const int64_t ne_s = segments[is];
