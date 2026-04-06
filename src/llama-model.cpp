@@ -217,6 +217,11 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
             if (std::regex_match(tensor_name, pattern_s_cache)) {
                 return std::vector<int64_t>(head_ratio, n_k_heads * head_v_dim * head_v_dim);
             }
+            if (std::regex_match(tensor_name, pattern_ffn_gate_up_weight)) {
+                const int64_t n_ff_exp = hparams.n_ff_exp;
+                GGML_ASSERT(tensor->ne[axis] == 2*n_ff_exp);
+                return {n_ff_exp, n_ff_exp};
+            }
             return {tensor->ne[axis]};
         }
 
