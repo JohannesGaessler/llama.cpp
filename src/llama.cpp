@@ -951,6 +951,10 @@ static struct llama_model * llama_model_load_from_file_impl(
                 LLAMA_LOG_ERROR("%s: LLAMA_SPLIT_MODE_TENSOR needs >= 1 devices\n", __func__);
                 return nullptr;
             }
+            LLAMA_LOG_INFO("%s: creating a Meta device with %zu devices\n", __func__, n_devs);
+            for (size_t i = 0; i < n_devs; ++i) {
+                LLAMA_LOG_INFO("%s: - device %zu: %s\n", __func__, i, ggml_backend_dev_name(params.devices[i]));
+            }
             model->get_split_state_ud.n_devices = n_devs;
             model->get_split_state_ud.model = model;
             model->devices.push_back({
