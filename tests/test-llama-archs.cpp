@@ -479,28 +479,24 @@ static int test_backends(const llm_arch target_arch, const size_t seed, const gg
         device_config(std::vector<ggml_backend_dev_t> devs, std::string name, llama_split_mode split_mode)
             : devs(std::move(devs)), label(std::move(name)), split_mode(split_mode) {}
     };
-    std::vector<device_config> dev_configs;
 
+    std::vector<device_config> dev_configs;
     {
-        std::vector<ggml_backend_dev_t> devices;
+        std::vector<ggml_backend_dev_t> devices_meta;
         {
             const size_t device_count = ggml_backend_dev_count();
-            devices.reserve(device_count);
             for (size_t i = 0; i < device_count; i++) {
                 ggml_backend_dev_t dev = ggml_backend_dev_get(i);
-                if (ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_CPU) {
-                    continue;
+                dev_configs.emplace_back(std::vector<ggml_backend_dev_t>{dev}, ggml_backend_dev_description(dev), LLAMA_SPLIT_MODE_LAYER);
+
+                // cpu-based devices cannot be used in tensor split mode
+                if (ggml_backend_dev_buffer_type(dev) != ggml_backend_cpu_buffer_type()) {
+                    devices_meta.push_back(dev);
                 }
-                devices.push_back(dev);
             }
         }
 
-        dev_configs.reserve((devices.size() + 1));
-        for (ggml_backend_dev_t dev : devices) {
-            dev_configs.emplace_back(
-                std::vector<ggml_backend_dev_t>{dev}, ggml_backend_dev_description(dev), LLAMA_SPLIT_MODE_LAYER);
-        }
-        dev_configs.emplace_back(devices, "Meta", LLAMA_SPLIT_MODE_TENSOR);
+        dev_configs.emplace_back(devices_meta, "Meta", LLAMA_SPLIT_MODE_TENSOR);
     }
 
     bool all_ok = true;
