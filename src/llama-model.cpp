@@ -41,43 +41,46 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
     const llama_hparams & hparams = ud->model->hparams;
     const std::string tensor_name = tensor->name;
 
-    const std::regex pattern_q_weight("blk\\.\\d*\\.attn_q.weight");
-    const std::regex pattern_kv_weight("blk\\.\\d*\\.attn_(k|v).weight");
-    const std::regex pattern_qkv_weight("blk\\.\\d*\\.attn_qkv.weight");
-    const std::regex pattern_q_bias("blk\\.\\d*\\.attn_q\\.bias");
-    const std::regex pattern_kv_bias("blk\\.\\d*\\.attn_(k|v)\\.bias");
-    const std::regex pattern_qkv_bias("blk\\.\\d*\\.attn_qkv.bias");
-    const std::regex pattern_qk_norm("blk\\.\\d*\\.attn_(q|k)_norm\\.weight");
-    const std::regex pattern_kv_cache("cache_(k|v)_l\\d*");
-    const std::regex pattern_attn_sinks("blk\\.\\d*\\.attn_sinks.weight");
-    const std::regex pattern_attn_out_weight("blk\\.\\d*\\.attn_output.weight");
-    const std::regex pattern_attn_out_bias("blk\\.\\d*\\.attn_output.bias");
-
+    const std::regex pattern_q_weight        ("blk\\.\\d*\\.attn_q.weight");
+    const std::regex pattern_kv_weight       ("blk\\.\\d*\\.attn_(k|v).weight");
+    const std::regex pattern_qkv_weight      ("blk\\.\\d*\\.attn_qkv.weight");
+    const std::regex pattern_q_bias          ("blk\\.\\d*\\.attn_q\\.bias");
+    const std::regex pattern_kv_bias         ("blk\\.\\d*\\.attn_(k|v)\\.bias");
+    const std::regex pattern_qkv_bias        ("blk\\.\\d*\\.attn_qkv.bias");
+    const std::regex pattern_qk_norm         ("blk\\.\\d*\\.attn_(q|k)_norm\\.weight");
+    const std::regex pattern_kv_cache        ("cache_(k|v)_l\\d*");
+    const std::regex pattern_attn_sinks      ("blk\\.\\d*\\.attn_sinks.weight");
+    const std::regex pattern_attn_out_weight ("blk\\.\\d*\\.attn_output.weight");
+    const std::regex pattern_attn_out_bias   ("blk\\.\\d*\\.attn_output.bias");
     const std::regex pattern_attn_gate_weight("blk\\.\\d*\\.attn_gate.weight");
-    const std::regex pattern_ssm_dt("blk\\.\\d*\\.ssm_dt.bias");
-    const std::regex pattern_ssm_a("blk\\.\\d*\\.ssm_a");
-    const std::regex pattern_ssm_alpha("blk\\.\\d*\\.ssm_alpha.weight");
-    const std::regex pattern_ssm_beta("blk\\.\\d*\\.ssm_beta.weight");
-    const std::regex pattern_ssm_beta_alpha("blk\\.\\d*\\.ssm_ba.weight");
-    const std::regex pattern_r_cache("cache_r_l\\d*");
-    const std::regex pattern_s_cache("cache_s_l\\d*");
-    const std::regex pattern_ssm_conv1d("blk\\.\\d*\\.ssm_conv1d.weight");
-    const std::regex pattern_ssm_out_weight("blk\\.\\d*\\.ssm_out.weight");
+
+    const std::regex pattern_ssm_dt          ("blk\\.\\d*\\.ssm_dt.bias");
+    const std::regex pattern_ssm_a           ("blk\\.\\d*\\.ssm_a");
+    const std::regex pattern_ssm_alpha       ("blk\\.\\d*\\.ssm_alpha.weight");
+    const std::regex pattern_ssm_beta        ("blk\\.\\d*\\.ssm_beta.weight");
+    const std::regex pattern_ssm_beta_alpha  ("blk\\.\\d*\\.ssm_ba.weight");
+    const std::regex pattern_r_cache         ("cache_r_l\\d*");
+    const std::regex pattern_s_cache         ("cache_s_l\\d*");
+    const std::regex pattern_ssm_conv1d      ("blk\\.\\d*\\.ssm_conv1d.weight");
+    const std::regex pattern_ssm_out_weight  ("blk\\.\\d*\\.ssm_out.weight");
 
     const std::regex pattern_ffn_up_gate_weight("blk\\.\\d*\\.ffn_(up|gate)(_exps)?.weight");
-    const std::regex pattern_ffn_up_gate_bias("blk\\.\\d*\\.ffn_(up|gate)(_exps)?.bias");
+    const std::regex pattern_ffn_up_gate_bias  ("blk\\.\\d*\\.ffn_(up|gate)(_exps)?.bias");
     const std::regex pattern_ffn_gate_up_weight("blk\\.\\d*\\.ffn_gate_up(_exps)?.weight");
-    const std::regex pattern_ffn_down_weight("blk\\.\\d*\\.ffn_down(_exps)?.weight");
-    const std::regex pattern_ffn_down_bias("blk\\.\\d*\\.ffn_down.bias");
+    const std::regex pattern_ffn_down_weight   ("blk\\.\\d*\\.ffn_down(_exps)?.weight");
+    const std::regex pattern_ffn_down_bias     ("blk\\.\\d*\\.ffn_down.bias");
     const std::regex pattern_ffn_down_exps_bias("blk\\.\\d*\\.ffn_down_exps.bias");
+
     const std::regex pattern_output_weight("output\\.weight");
-    const std::regex pattern_output_bias("output\\.bias");
+    const std::regex pattern_output_bias  ("output\\.bias");
 
     struct tensor_config {
         ggml_backend_meta_split_axis axis;
-        const ggml_tensor *          tensor_axis_0;
-        uint32_t                     il;
-        size_t                       rotation;
+
+        const ggml_tensor * tensor_axis_0;
+
+        uint32_t il;
+        size_t   rotation;
     };
 
     auto get_tensor_config_impl = [&](
@@ -246,11 +249,11 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
             const int64_t head_dim  = hparams.ssm_d_state;
             const int64_t granularity_qkv = std::lcm(blck_size, head_dim);
             if (std::regex_match(tensor_name, pattern_qkv_weight) || std::regex_match(tensor_name, pattern_attn_gate_weight) ||
-                    std::regex_match(tensor_name, pattern_ssm_conv1d) || std::regex_match(tensor_name, pattern_ssm_out_weight)) {
+                std::regex_match(tensor_name, pattern_ssm_conv1d) || std::regex_match(tensor_name, pattern_ssm_out_weight)) {
                 return std::vector<int64_t>(segments.size(), granularity_qkv);
             }
-            if (std::regex_match(tensor_name, pattern_ssm_dt) || std::regex_match(tensor_name, pattern_ssm_a) ||
-                    std::regex_match(tensor_name, pattern_ssm_alpha) || std::regex_match(tensor_name, pattern_ssm_beta)) {
+            if (std::regex_match(tensor_name, pattern_ssm_dt)    || std::regex_match(tensor_name, pattern_ssm_a) ||
+                std::regex_match(tensor_name, pattern_ssm_alpha) || std::regex_match(tensor_name, pattern_ssm_beta)) {
                 return std::vector<int64_t>(segments.size(), granularity_qkv / head_dim);
             }
             if (std::regex_match(tensor_name, pattern_r_cache)) {
@@ -283,8 +286,9 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
             }
 
             const int64_t granularity_kv = granularity_q / n_gqa;
-            if (std::regex_match(tensor_name, pattern_kv_weight) || std::regex_match(tensor_name, pattern_kv_bias) ||
-                    std::regex_match(tensor_name, pattern_kv_cache)) {
+            if (std::regex_match(tensor_name, pattern_kv_weight) ||
+                std::regex_match(tensor_name, pattern_kv_bias) ||
+                std::regex_match(tensor_name, pattern_kv_cache)) {
                 GGML_ASSERT(segments.size() == 1);
                 return {granularity_kv};
             }
@@ -296,7 +300,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
 
         // FFN
         if (std::regex_match(tensor_name, pattern_ffn_up_gate_weight) || std::regex_match(tensor_name, pattern_ffn_up_gate_bias) ||
-                std::regex_match(tensor_name, pattern_ffn_gate_up_weight) || std::regex_match(tensor_name, pattern_ffn_down_weight)) {
+            std::regex_match(tensor_name, pattern_ffn_gate_up_weight) || std::regex_match(tensor_name, pattern_ffn_down_weight)) {
             GGML_ASSERT(segments.size() <= 2);
             return std::vector<int64_t>(segments.size(), blck_size);
         }
