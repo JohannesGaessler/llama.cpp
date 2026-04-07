@@ -1,5 +1,6 @@
 #include "llama-context.h"
 
+#include "ggml.h"
 #include "llama-arch.h"
 #include "llama-impl.h"
 #include "llama-batch.h"
@@ -8,6 +9,7 @@
 #include "llama-mmap.h"
 #include "llama-model.h"
 #include "llama-ext.h"
+#include "llama.h"
 
 #include <cinttypes>
 #include <cmath>
@@ -2942,6 +2944,21 @@ llama_context * llama_init_from_model(
     if (params.flash_attn_type != LLAMA_FLASH_ATTN_TYPE_DISABLED && model->arch == LLM_ARCH_GROK) {
         LLAMA_LOG_WARN("%s: flash_attn is not compatible with Grok - forcing off\n", __func__);
         params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+    }
+
+    if (model->split_mode() == LLAMA_SPLIT_MODE_TENSOR) {
+        if (params.flash_attn_type == LLAMA_FLASH_ATTN_TYPE_AUTO) {
+            LLAMA_LOG_INFO("%s: enabling flash_attn since it is required for SPLIT_MODE_TENSOR\n", __func__);
+            params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+        }
+        if (params.flash_attn_type != LLAMA_FLASH_ATTN_TYPE_ENABLED) {
+            LLAMA_LOG_ERROR("%s: SPLIT_MODE_TENSOR requires flash_attn to be enabled\n", __func__);
+            return nullptr;
+        }
+        if (ggml_is_quantized(params.type_k) || ggml_is_quantized(params.type_v)) {
+            LLAMA_LOG_ERROR("%s: simultaneous use of SPLIT_MODE_TENSOR and KV cache quantization not implemented\n", __func__);
+            return nullptr;
+        }
     }
 
     if (params.flash_attn_type != LLAMA_FLASH_ATTN_TYPE_DISABLED && ggml_is_quantized(params.type_k)) {
