@@ -711,6 +711,14 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
         return src_ss[0];
     };
 
+    auto handle_pad = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
+        if (src_ss[0].axis >= 0 && src_ss[0].axis < GGML_MAX_DIMS) {
+            GGML_ASSERT(tensor->op_params[2*src_ss[0].axis + 0] == 0);
+            GGML_ASSERT(tensor->op_params[2*src_ss[0].axis + 1] == 0);
+        }
+        return src_ss[0];
+    };
+
     auto handle_flash_attn_ext = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
         GGML_ASSERT(                             src_ss[0].axis == GGML_BACKEND_SPLIT_AXIS_2);
         GGML_ASSERT(                             src_ss[1].axis == GGML_BACKEND_SPLIT_AXIS_2);
@@ -899,8 +907,12 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
             case GGML_OP_POOL_1D:
             case GGML_OP_POOL_2D:
             case GGML_OP_POOL_2D_BACK:
-            case GGML_OP_UPSCALE:
-            case GGML_OP_PAD:
+            case GGML_OP_UPSCALE: {
+                split_state = handle_generic(src_ss, /*scalar_only =*/ true);
+            } break;
+            case GGML_OP_PAD: {
+                split_state = handle_pad(src_ss);
+            } break;
             case GGML_OP_PAD_REFLECT_1D:
             case GGML_OP_ROLL:
             case GGML_OP_ARANGE:
@@ -914,9 +926,11 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(co
             case GGML_OP_LEAKY_RELU: {
                 split_state = handle_generic(src_ss, /*scalar_only =*/ false);
             } break;
-            case GGML_OP_TRI:
-            case GGML_OP_FILL: {
+            case GGML_OP_TRI: {
                 split_state = handle_generic(src_ss, /*scalar_only =*/ true);
+            } break;
+            case GGML_OP_FILL: {
+                split_state = handle_generic(src_ss, /*scalar_only =*/ false);
             } break;
             case GGML_OP_FLASH_ATTN_EXT: {
                 split_state = handle_flash_attn_ext(src_ss);

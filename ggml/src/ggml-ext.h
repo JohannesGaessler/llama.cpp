@@ -33,6 +33,15 @@ GGML_API const char * ggml_backend_meta_split_axis_name(enum ggml_backend_meta_s
 struct ggml_backend_meta_split_state {
     enum ggml_backend_meta_split_axis axis;
 
+    // for tensors with axis >= 0 && axis < GGML_MAX_DIMS:
+    //   - each device has a slice of the tensor along the split axis
+    //   - most tensors have n_segments == 1 and a contiguous slice of the tensor data
+    //   - some tensors have an inhomogenenous data layout along the split axis,
+    //     those tensors are divided into segments which are each individually split across devices
+    //   - ne has one entry per segment and device that add up to ggml_tensor::ne for that axis,
+    //     the outer/inner loops are over segments/devices like [seg0_dev0, seg0_dev1, seg1_dev0, seg1_dev1],
+    //   - for example, a transformer may have a fused QKV matrix rather than 3 matrices, those would be 3 separate segments
+    //     that each need to be split individually across devices so that each device gets a slice of Q, K, and V
     int64_t  ne[16*GGML_BACKEND_META_MAX_DEVICES];
     uint32_t n_segments;
 };
