@@ -1657,9 +1657,6 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
             if (node->view_src != nullptr && node->view_src->op == GGML_OP_NONE && ggml_backend_buffer_is_host(node->view_src->buffer)) {
                 continue;
             }
-            if (node->op == GGML_OP_ADD_ID) {
-                GGML_ASSERT(ggml_backend_meta_get_split_state(node->src[1], /*assume_sync =*/ false).axis != GGML_BACKEND_SPLIT_AXIS_PARTIAL);
-            }
             const ggml_backend_meta_split_state split_state = ggml_backend_meta_get_split_state(node, /*assume_sync =*/ false);
             if (split_state.axis == GGML_BACKEND_SPLIT_AXIS_PARTIAL) {
                 max_tmp_size = std::max(max_tmp_size, ggml_nbytes(node));
