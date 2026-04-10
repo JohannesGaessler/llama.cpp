@@ -25,6 +25,7 @@
 #include <cassert>
 #include <cfloat>
 #include <cstdio>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -1092,10 +1093,6 @@ struct ggml_cuda_device_info {
     cuda_device_info devices[GGML_CUDA_MAX_DEVICES] = {};
 
     std::array<float, GGML_CUDA_MAX_DEVICES> default_tensor_split = {};
-
-#ifdef GGML_USE_NCCL
-    ncclComm_t comms[GGML_CUDA_MAX_DEVICES];
-#endif // GGML_USE_NCCL
 };
 
 const ggml_cuda_device_info & ggml_cuda_info();
@@ -1154,6 +1151,17 @@ struct ggml_cuda_pool_alloc {
     ggml_cuda_pool_alloc& operator=(ggml_cuda_pool_alloc &&) = delete;
 };
 
+#ifdef GGML_USE_NCCL
+static std::map<std::vector<int>, std::vector<ncclComm_t>> comms;
+
+static std::vector<ncclComm_t> ggml_cuda_get_nccl_comms(const std::vector<int> & devs) {
+    if (comms.find(devs) == comms.end()) {
+        comms[devs].resize(devs.size());
+        NCCL_CHECK(ncclCommInitAll(comms[devs].data(), devs.size(), devs.data()));
+    }
+    return comms[devs];
+}
+#endif // GGML_USE_NCCL
 
 // backend interface
 
