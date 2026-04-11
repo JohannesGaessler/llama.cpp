@@ -1142,15 +1142,18 @@ bool ggml_backend_cuda_allreduce_tensor(ggml_backend_t * backends, struct ggml_t
 
     // For small tensors, simply reduce them as FP32.
     // The following heuristic for how "small" a tensor should be is based on RTX 4090s connected via 16x PCIe 4.0.
-    if ((n_backends <= 2 && ne < 32768) || (n_backends == 3 && ne < 131072) || (n_backends >= 4 && ne < 262144)) {
-        NCCL_CHECK(ncclGroupStart());
-        for (size_t i = 0; i < n_backends; ++i) {
-            ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) backends[i]->context;
-            NCCL_CHECK(ncclAllReduce(tensors[i]->data, tensors[i]->data, ne, ncclFloat, ncclSum, comms[i], cuda_ctx->stream()));
-        }
-        NCCL_CHECK(ncclGroupEnd());
+    {
+        std::lock_guard lock(nccl_mutex);
+        if ((n_backends <= 2 && ne < 32768) || (n_backends == 3 && ne < 131072) || (n_backends >= 4 && ne < 262144)) {
+            NCCL_CHECK(ncclGroupStart());
+            for (size_t i = 0; i < n_backends; ++i) {
+                ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) backends[i]->context;
+                NCCL_CHECK(ncclAllReduce(tensors[i]->data, tensors[i]->data, ne, ncclFloat, ncclSum, comms[i], cuda_ctx->stream()));
+            }
+            NCCL_CHECK(ncclGroupEnd());
 
-        return true;
+            return true;
+        }
     }
 
     // For large tensors it's faster to compress them to BF16 for the reduction:
@@ -1168,12 +1171,15 @@ bool ggml_backend_cuda_allreduce_tensor(ggml_backend_t * backends, struct ggml_t
         CUDA_CHECK(cudaGetLastError());
     }
 
-    NCCL_CHECK(ncclGroupStart());
-    for (size_t i = 0; i < n_backends; ++i) {
-        ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) backends[i]->context;
-        NCCL_CHECK(ncclAllReduce(tmp[i].get(), tmp[i].get(), ne, ncclBfloat16, ncclSum, comms[i], cuda_ctx->stream()));
+    {
+        std::lock_guard lock(nccl_mutex);
+        NCCL_CHECK(ncclGroupStart());
+        for (size_t i = 0; i < n_backends; ++i) {
+            ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) backends[i]->context;
+            NCCL_CHECK(ncclAllReduce(tmp[i].get(), tmp[i].get(), ne, ncclBfloat16, ncclSum, comms[i], cuda_ctx->stream()));
+        }
+        NCCL_CHECK(ncclGroupEnd());
     }
-    NCCL_CHECK(ncclGroupEnd());
 
     for (size_t i = 0; i < n_backends; ++i) {
         ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) backends[i]->context;
