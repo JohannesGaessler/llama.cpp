@@ -1144,6 +1144,12 @@ bool ggml_backend_cuda_allreduce_tensor(ggml_backend_t * backends, struct ggml_t
     // For small tensors, simply reduce them as FP32.
     // The following heuristic for how "small" a tensor should be is based on RTX 4090s connected via 16x PCIe 4.0.
     if ((n_backends <= 2 && ne < 32768) || (n_backends == 3 && ne < 131072) || (n_backends >= 4 && ne < 262144)) {
+        for (size_t i = 0; i < n_backends; ++i) {
+            if ((tensors[i]->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) {
+                ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) backends[i]->context;
+                CUDA_CHECK(cudaMemsetAsync(tensors[i]->data, 0, ggml_nbytes(tensors[i]), cuda_ctx->stream()));
+            }
+        }
         NCCL_CHECK(ncclGroupStart());
         for (size_t i = 0; i < n_backends; ++i) {
             ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) backends[i]->context;
@@ -1165,7 +1171,11 @@ bool ggml_backend_cuda_allreduce_tensor(ggml_backend_t * backends, struct ggml_t
         tmp[i].alloc(ne);
 
         ggml_cuda_set_device(i);
-        to_bf16(tensors[i]->data, tmp[i].get(), ne, cuda_ctx->stream());
+        if (tensors[i]->flags & GGML_TENSOR_FLAG_COMPUTE) {
+            to_bf16(tensors[i]->data, tmp[i].get(), ne, cuda_ctx->stream());
+        } else {
+            CUDA_CHECK(cudaMemsetAsync(tmp[i].get(), 0, ne * sizeof(nv_bfloat16), cuda_ctx->stream()));
+        }
         CUDA_CHECK(cudaGetLastError());
     }
 
