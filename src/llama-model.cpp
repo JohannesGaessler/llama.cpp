@@ -85,16 +85,14 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
 
     auto get_tensor_config_impl = [&](
                 const ggml_backend_meta_split_axis axis, const std::string & suffix = "", const std::string & suffix_fallback = "") -> tensor_config {
-        // if memory use for a tensor varies by layer there can be aliasing effects with the number of GPUs,
-        //     therefore count only those previous layers that had the equivalent tensor for the rotation
+        // the layers in a tensor can be inhomogeneous, if the pattern is cleanly divided by the number of GPUs there can be aliasing effects,
+        //     count only the same type of previous layers to avoid this
         auto get_il_eff = [&](const size_t il){
-            const std::string il_str = std::to_string(il);
-            const size_t il_str_index = tensor_name.find(il_str);
-            const std::string prefix = tensor_name.substr(0, il_str_index);
-            const std::string suffix = tensor_name.substr(il_str_index + il_str.length());
             size_t ret = 0;
+            const bool il_is_recurrent = hparams.is_recurrent(il);
+            const bool il_is_swa       = hparams.is_swa(il);
             for (size_t il_prev = 0; il_prev < il; il_prev++) {
-                ret += ud->model->get_tensor((prefix + std::to_string(il_prev) + suffix).c_str()) != nullptr;
+                ret += hparams.is_recurrent(il_prev) == il_is_recurrent && hparams.is_swa(il_prev) == il_is_swa;
             }
             return ret;
         };
