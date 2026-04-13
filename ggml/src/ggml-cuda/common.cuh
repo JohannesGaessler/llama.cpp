@@ -1152,20 +1152,6 @@ struct ggml_cuda_pool_alloc {
     ggml_cuda_pool_alloc& operator=(ggml_cuda_pool_alloc &&) = delete;
 };
 
-#ifdef GGML_USE_NCCL
-static std::map<std::vector<int>, std::vector<ncclComm_t>> nccl_comms;
-static std::mutex nccl_mutex;
-
-static std::vector<ncclComm_t> ggml_cuda_get_nccl_comms(const std::vector<int> & devs) {
-    std::lock_guard lock(nccl_mutex);
-    if (nccl_comms.find(devs) == nccl_comms.end()) {
-        nccl_comms[devs].resize(devs.size());
-        NCCL_CHECK(ncclCommInitAll(nccl_comms[devs].data(), devs.size(), devs.data()));
-    }
-    return nccl_comms[devs];
-}
-#endif // GGML_USE_NCCL
-
 // backend interface
 
 struct ggml_tensor_extra_gpu {

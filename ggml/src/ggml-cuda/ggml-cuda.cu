@@ -566,6 +566,20 @@ std::unique_ptr<ggml_cuda_pool> ggml_backend_cuda_context::new_pool_for_device(i
     return std::unique_ptr<ggml_cuda_pool>(new ggml_cuda_pool_leg(device));
 }
 
+#ifdef GGML_USE_NCCL
+static std::map<std::vector<int>, std::vector<ncclComm_t>> ggml_cuda_nccl_comms;
+static std::mutex ggml_cuda_nccl_mutex;
+
+static std::vector<ncclComm_t> ggml_cuda_get_nccl_comms(const std::vector<int> & devs) {
+    std::lock_guard lock(ggml_cuda_nccl_mutex);
+    if (ggml_cuda_nccl_comms.find(devs) == ggml_cuda_nccl_comms.end()) {
+        ggml_cuda_nccl_comms[devs].resize(devs.size());
+        NCCL_CHECK(ncclCommInitAll(ggml_cuda_nccl_comms[devs].data(), devs.size(), devs.data()));
+    }
+    return ggml_cuda_nccl_comms[devs];
+}
+#endif // GGML_USE_NCCL
+
 // destroying a cuBLAS handle while a graph is being captured in a different thread can result in a CUDA error
 // this lock is used to ensure that no cuBLAS handle is destroyed while a graph is being captured
 
@@ -1143,7 +1157,7 @@ bool ggml_backend_cuda_allreduce_tensor(ggml_backend_t * backends, struct ggml_t
     // For small tensors, simply reduce them as FP32.
     // The following heuristic for how "small" a tensor should be is based on RTX 4090s connected via 16x PCIe 4.0.
     {
-        std::lock_guard lock(nccl_mutex);
+        std::lock_guard lock(ggml_cuda_nccl_mutex);
         if ((n_backends <= 2 && ne < 32768) || (n_backends == 3 && ne < 131072) || (n_backends >= 4 && ne < 262144)) {
             NCCL_CHECK(ncclGroupStart());
             for (size_t i = 0; i < n_backends; ++i) {
@@ -1172,7 +1186,7 @@ bool ggml_backend_cuda_allreduce_tensor(ggml_backend_t * backends, struct ggml_t
     }
 
     {
-        std::lock_guard lock(nccl_mutex);
+        std::lock_guard lock(ggml_cuda_nccl_mutex);
         NCCL_CHECK(ncclGroupStart());
         for (size_t i = 0; i < n_backends; ++i) {
             ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) backends[i]->context;
