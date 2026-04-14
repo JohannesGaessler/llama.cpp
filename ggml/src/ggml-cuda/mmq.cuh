@@ -3815,15 +3815,15 @@ static __global__ void mul_mat_q_stream_k_fixup(
     const int bidx0 = blockIdx.x;
 
     // kbc == k block continuous, current index in continuous ijk space.
-    int64_t kbc0      = fastdiv( blockIdx.x     *nsamples_y.z*nchannels_y.z*ntx.z*nty*blocks_per_ne00.z, nblocks);
-    int64_t kbc0_stop = fastdiv((blockIdx.x + 1)*nsamples_y.z*nchannels_y.z*ntx.z*nty*blocks_per_ne00.z, nblocks);
+    int64_t kbc0      = (int64_t) bidx0     *nsamples_y.z*nchannels_y.z*ntx.z*nty*blocks_per_ne00.z / gridDim.x;
+    int64_t kbc0_stop = (int64_t)(bidx0 + 1)*nsamples_y.z*nchannels_y.z*ntx.z*nty*blocks_per_ne00.z / gridDim.x;
 
-    kbc0      -= fastmodulo(kbc0,      blocks_per_ne00) % blocks_per_iter;
-    kbc0_stop -= fastmodulo(kbc0_stop, blocks_per_ne00) % blocks_per_iter;
+    kbc0      -= (kbc0      % blocks_per_ne00.z) % blocks_per_iter;
+    kbc0_stop -= (kbc0_stop % blocks_per_ne00.z) % blocks_per_iter;
 
     const bool did_not_have_any_data   = kbc0 == kbc0_stop;
-    const bool wrote_beginning_of_tile = fastmodulo(kbc0, blocks_per_ne00) == 0;
-    const bool did_not_write_last      = fastdiv(kbc0, blocks_per_ne00) == fastdiv(kbc0_stop, blocks_per_ne00) && fastmodulo(kbc0_stop, blocks_per_ne00) != 0;
+    const bool wrote_beginning_of_tile = kbc0 % blocks_per_ne00.z == 0;
+    const bool did_not_write_last      = kbc0/blocks_per_ne00.z == kbc0_stop/blocks_per_ne00.z && kbc0_stop % blocks_per_ne00.z != 0;
     if (did_not_have_any_data || wrote_beginning_of_tile || did_not_write_last) {
         return;
     }
@@ -3835,8 +3835,8 @@ static __global__ void mul_mat_q_stream_k_fixup(
     int64_t bidx = bidx0 - 1;
     int64_t kbc_stop = kbc0;
     while(true) {
-        int64_t kbc = fastdiv(bidx*nsamples_y.z*nchannels_y.z*ntx.z*nty*blocks_per_ne00.z, nblocks);
-        kbc -= fastmodulo(kbc, blocks_per_ne00) % blocks_per_iter;
+        int64_t kbc = bidx*nsamples_y.z*nchannels_y.z*ntx.z*nty*blocks_per_ne00.z / gridDim.x;
+        kbc -= (kbc % blocks_per_ne00.z) % blocks_per_iter;
 
         if (kbc == kbc_stop) { // Did not have any data.
             bidx--;
@@ -3859,7 +3859,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
         }
 
         // If this block started in a previous tile we are done and don't need to combine additional partial results.
-        if (fastmodulo(kbc, blocks_per_ne00) == 0 || fastdiv(kbc, blocks_per_ne00) < fastdiv(kbc0, blocks_per_ne00)) {
+        if (kbc % blocks_per_ne00.z == 0 || kbc/blocks_per_ne00.z < kbc0/blocks_per_ne00.z) {
             break;
         }
         bidx--;
