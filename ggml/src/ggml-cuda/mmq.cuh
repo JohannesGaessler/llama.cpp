@@ -3554,10 +3554,10 @@ template <ggml_type type, int mmq_x, bool need_check>
 static __global__ void mul_mat_q(
         const char * __restrict__ x, const int * __restrict__ y, const int32_t * __restrict__ ids_dst,
         const int32_t * __restrict__ expert_bounds, float * __restrict__ dst, float * __restrict__ tmp_fixup,
-        const int ncols_x, const int nrows_x, const int ncols_dst, const int stride_row_x, const int ncols_y, const int stride_col_dst,
-        const int channel_ratio, const int nchannels_y, const int stride_channel_x, const int stride_channel_y, const int stride_channel_dst,
-        const int sample_ratio, const int nsamples_y, const int stride_sample_x, const int stride_sample_y, const int stride_sample_dst,
-        const int ncols_max) {
+        const uint3 blocks_per_ne00, const int nrows_x, const int ncols_dst, const int stride_row_x, const int ncols_y, const int stride_col_dst,
+        const int channel_ratio, const uint3 nchannels_y, const int stride_channel_x, const int stride_channel_y, const int stride_channel_dst,
+        const int sample_ratio, const uint3 nsamples_y, const int stride_sample_x, const int stride_sample_y, const int stride_sample_dst,
+        const uint3 ntx) {
 
     // Skip unused template specializations for faster compilation:
     if (mmq_x > get_mmq_x_max_device() || mmq_x % mmq_get_granularity_device(mmq_x) != 0) {
@@ -3571,8 +3571,7 @@ static __global__ void mul_mat_q(
     constexpr int qk    = ggml_cuda_type_traits<type>::qk;
     constexpr int mmq_y = get_mmq_y_device();
 
-    const int ntx = (ncols_max + mmq_x - 1) / mmq_x; // Number of tiles x
-    const int nty = (nrows_x   + mmq_y - 1) / mmq_y; // Number of tiles y
+    const int nty = (nrows_x + mmq_y - 1) / mmq_y; // Number of tiles y
 
     // Initialize the ids for writing back data with just the index.
     // For regular matrix multiplications this is never changed.
@@ -3591,10 +3590,11 @@ static __global__ void mul_mat_q(
     __syncthreads();
 
     // On non-CDNA AMD or old CUDA the performance with stream-k was worse, use conventional tiling instead:
-#if (defined(GGML_USE_HIP) && !defined(CDNA)) || __CUDA_ARCH__ < GGML_CUDA_CC_VOLTA
+// #if (defined(GGML_USE_HIP) && !defined(CDNA)) || __CUDA_ARCH__ < GGML_CUDA_CC_VOLTA
     {
-        const int wt = blockIdx.z / nchannels_y;
-        const int zt = blockIdx.z - wt*nchannels_y;
+        const uint2 tmp2 = fast_div_modulo(blockIdx.z, nchannels_y);
+        const int wt = tmp2.x;
+        const int zt = tmp2.y;
         const int jt = blockIdx.y;
         const int it = blockIdx.x;
 
@@ -3642,35 +3642,43 @@ static __global__ void mul_mat_q(
         constexpr bool fixup = false;
         mul_mat_q_process_tile<type, mmq_x, need_check, fixup>
             (x, offset_x, y + offset_y, ids_dst_shared, dst + offset_dst, tmp_fixup, stride_row_x, ncols_y, stride_col_dst,
-             tile_x_max_i, tile_y_max_j, 0, ncols_x/qk);
+             tile_x_max_i, tile_y_max_j, 0, blocks_per_ne00.z);
         return;
     }
-#endif // (defined(GGML_USE_HIP) && !defined(CDNA4) && !defined(CDNA3)) || __CUDA_ARCH__ < GGML_CUDA_CC_VOLTA
+// #endif // (defined(GGML_USE_HIP) && !defined(CDNA4) && !defined(CDNA3)) || __CUDA_ARCH__ < GGML_CUDA_CC_VOLTA
 
-    constexpr int ITER_K = get_iter_k(type);
-
-    const     int64_t blocks_per_ne00 = ncols_x / qk;
-    constexpr int     blocks_per_iter = ITER_K / qk;
+    constexpr int ITER_K          = get_iter_k(type);
+    constexpr int blocks_per_iter = ITER_K / qk;
 
     // kbc == k block continuous, current index in continuous ijk space.
-    int64_t kbc      = (int64_t) blockIdx.x     *nsamples_y*nchannels_y*ntx*nty*blocks_per_ne00 / gridDim.x;
-    int64_t kbc_stop = (int64_t)(blockIdx.x + 1)*nsamples_y*nchannels_y*ntx*nty*blocks_per_ne00 / gridDim.x;
+    int64_t kbc      = (int64_t) blockIdx.x     *nsamples_y.z*nchannels_y.z*ntx.z*nty*blocks_per_ne00.z / gridDim.x;
+    int64_t kbc_stop = (int64_t)(blockIdx.x + 1)*nsamples_y.z*nchannels_y.z*ntx.z*nty*blocks_per_ne00.z / gridDim.x;
 
-    kbc      -= (kbc      % blocks_per_ne00) % blocks_per_iter;
-    kbc_stop -= (kbc_stop % blocks_per_ne00) % blocks_per_iter;
+    kbc      -= fastmodulo(kbc,      blocks_per_ne00) % blocks_per_iter;
+    kbc_stop -= fastmodulo(kbc_stop, blocks_per_ne00) % blocks_per_iter;
 
     // kb0 == k index when doing the matrix multiplication for an output tile.
-    int kb0_start = kbc % blocks_per_ne00;
-    int kb0_stop  = min(blocks_per_ne00, kb0_start + kbc_stop - kbc);
-    while (kbc < kbc_stop && kb0_stop == blocks_per_ne00) {
+    int kb0_start = fastmodulo(kbc, blocks_per_ne00);
+    int kb0_stop  = min(blocks_per_ne00.z, uint32_t(kb0_start + kbc_stop - kbc));
+    while (kbc < kbc_stop && kb0_stop == int(blocks_per_ne00.z)) {
+        // int tmp = fastdiv(kbc, blocks_per_ne00);
+        // uint2 tmp2 = fast_div_modulo(tmp, ntx);
+        // const int jt = tmp2.y;
+        // tmp = tmp2.x;
+        // tmp2 = fast_div_modulo(tmp, nchannels_y);
+        // const int zt = tmp2.y;
+        // tmp = tmp2.x;
+        // tmp2 = fast_div_modulo(tmp, nsamples_y);
+        // const int wt = tmp2.y;
+        // const int it = tmp2.x;
         int tmp = kbc;
-        const int it = tmp / (nsamples_y*nchannels_y*ntx*blocks_per_ne00);
-        tmp -= it * (nsamples_y*nchannels_y*ntx*blocks_per_ne00);
-        const int wt = tmp / (nchannels_y*ntx*blocks_per_ne00);
-        tmp -= wt * (nchannels_y*ntx*blocks_per_ne00);
-        const int zt = tmp / (ntx*blocks_per_ne00);
-        tmp -= zt * (ntx*blocks_per_ne00);
-        const int jt = tmp / blocks_per_ne00;
+        const int it = tmp / (nsamples_y.z*nchannels_y.z*ntx.z*blocks_per_ne00.z);
+        tmp -= it * (nsamples_y.z*nchannels_y.z*ntx.z*blocks_per_ne00.z);
+        const int wt = tmp / (nchannels_y.z*ntx.z*blocks_per_ne00.z);
+        tmp -= wt * (nchannels_y.z*ntx.z*blocks_per_ne00.z);
+        const int zt = tmp / (ntx.z*blocks_per_ne00.z);
+        tmp -= zt * (ntx.z*blocks_per_ne00.z);
+        const int jt = tmp / blocks_per_ne00.z;
 
         // Defaults for regular matrix multiplication:
         int col_low    = 0;
@@ -3688,11 +3696,11 @@ static __global__ void mul_mat_q(
             offset_dst = 0;
 
             if (jt*mmq_x >= col_diff) {
-                kbc += blocks_per_ne00;
-                kbc -= kbc % blocks_per_ne00;
+                kbc += blocks_per_ne00.z;
+                kbc -= fastmodulo(kbc, blocks_per_ne00);
 
                 kb0_start = 0;
-                kb0_stop  = min(blocks_per_ne00, kbc_stop - kbc);
+                kb0_stop  = min(blocks_per_ne00.z, uint32_t(kbc_stop - kbc));
 
                 continue;
             }
@@ -3724,25 +3732,35 @@ static __global__ void mul_mat_q(
             (x, offset_x, y + offset_y, ids_dst_shared, dst + offset_dst, tmp_fixup, stride_row_x, ncols_y, stride_col_dst,
              tile_x_max_i, tile_y_max_j, kb0_start, kb0_stop);
 
-        kbc += blocks_per_ne00;
-        kbc -= kbc % blocks_per_ne00;
+        kbc += blocks_per_ne00.z;
+        kbc -= fastmodulo(kbc, blocks_per_ne00);
 
         kb0_start = 0;
-        kb0_stop  = min(blocks_per_ne00, kbc_stop - kbc);
+        kb0_stop  = min(blocks_per_ne00.z, uint32_t(kbc_stop - kbc));
     }
 
     if (kbc >= kbc_stop) {
         return;
     }
 
+    // int tmp = fastdiv(kbc, blocks_per_ne00);
+    // uint2 tmp2 = fast_div_modulo(tmp, ntx);
+    // const int jt = tmp2.y;
+    // tmp = tmp2.x;
+    // tmp2 = fast_div_modulo(tmp, nchannels_y);
+    // const int zt = tmp2.y;
+    // tmp = tmp2.x;
+    // tmp2 = fast_div_modulo(tmp, nsamples_y);
+    // const int wt = tmp2.y;
+    // const int it = tmp2.x;
     int tmp = kbc;
-    const int it = tmp / (nsamples_y*nchannels_y*ntx*blocks_per_ne00);
-    tmp -= it * (nsamples_y*nchannels_y*ntx*blocks_per_ne00);
-    const int wt = tmp / (nchannels_y*ntx*blocks_per_ne00);
-    tmp -= wt * (nchannels_y*ntx*blocks_per_ne00);
-    const int zt = tmp / (ntx*blocks_per_ne00);
-    tmp -= zt * (ntx*blocks_per_ne00);
-    const int jt = tmp / blocks_per_ne00;
+    const int it = tmp / (nsamples_y.z*nchannels_y.z*ntx.z*blocks_per_ne00.z);
+    tmp -= it * (nsamples_y.z*nchannels_y.z*ntx.z*blocks_per_ne00.z);
+    const int wt = tmp / (nchannels_y.z*ntx.z*blocks_per_ne00.z);
+    tmp -= wt * (nchannels_y.z*ntx.z*blocks_per_ne00.z);
+    const int zt = tmp / (ntx.z*blocks_per_ne00.z);
+    tmp -= zt * (ntx.z*blocks_per_ne00.z);
+    const int jt = tmp / blocks_per_ne00.z;
 
     // Defaults for regular matrix multiplication:
     int col_low    = 0;
@@ -3998,23 +4016,28 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     const int channel_ratio = args.nchannels_y / args.nchannels_x;
     const int sample_ratio  = args.nsamples_y  / args.nsamples_x;
 
+    const uint3 blocks_per_ne00_fd = init_fastdiv_values(args.ncols_x / ggml_cuda_type_traits<type>::qk);
+    const uint3 ntx_fd             = init_fastdiv_values(ntx);
+    const uint3 nchannels_y_fd     = init_fastdiv_values(args.nchannels_y);
+    const uint3 nsamples_y_fd      = init_fastdiv_values(args.nsamples_y);
+
     if (!args.use_stream_k) {
         if (args.nrows_x % mmq_y == 0) {
             constexpr bool need_check = false;
             mul_mat_q<type, mmq_x, need_check><<<block_nums_xy_tiling, block_dims, nbytes_shared, stream>>>
                 (args.x, args.y, args.ids_dst, args.expert_bounds, args.dst, nullptr,
-                 args.ncols_x, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
-                 channel_ratio, args.nchannels_y, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
-                 sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst,
-                 args.ncols_max);
+                 blocks_per_ne00_fd, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
+                 channel_ratio, nchannels_y_fd, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
+                 sample_ratio, nsamples_y_fd, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst,
+                 ntx_fd);
         } else {
             constexpr bool need_check = true;
             mul_mat_q<type, mmq_x, need_check><<<block_nums_xy_tiling, block_dims, nbytes_shared, stream>>>
                 (args.x, args.y, args.ids_dst, args.expert_bounds, args.dst, nullptr,
-                 args.ncols_x, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
-                 channel_ratio, args.nchannels_y, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
-                 sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst,
-                 args.ncols_max);
+                 blocks_per_ne00_fd, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
+                 channel_ratio, nchannels_y_fd, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
+                 sample_ratio, nsamples_y_fd, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst,
+                 ntx_fd);
         }
         return;
     }
@@ -4031,11 +4054,11 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     if (args.nrows_x % mmq_y == 0) {
         constexpr bool need_check = false;
         mul_mat_q<type, mmq_x, need_check><<<block_nums_stream_k, block_dims, nbytes_shared, stream>>>
-            (args.x, args.y, args.ids_dst, args.expert_bounds, args.dst, tmp_fixup.ptr,
-             args.ncols_x, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
-             channel_ratio, args.nchannels_y, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
-             sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst,
-             args.ncols_max);
+            (args.x, args.y, args.ids_dst, args.expert_bounds, args.dst, nullptr,
+             blocks_per_ne00_fd, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
+             channel_ratio, nchannels_y_fd, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
+             sample_ratio, nsamples_y_fd, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst,
+             ntx_fd);
 
         if (!fixup_needed) {
             return;
@@ -4048,11 +4071,11 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     } else {
         constexpr bool need_check = true;
         mul_mat_q<type, mmq_x, need_check><<<block_nums_stream_k, block_dims, nbytes_shared, stream>>>
-            (args.x, args.y, args.ids_dst, args.expert_bounds, args.dst, tmp_fixup.ptr,
-             args.ncols_x, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
-             channel_ratio, args.nchannels_y, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
-             sample_ratio, args.nsamples_y, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst,
-             args.ncols_max);
+            (args.x, args.y, args.ids_dst, args.expert_bounds, args.dst, nullptr,
+             blocks_per_ne00_fd, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
+             channel_ratio, nchannels_y_fd, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
+             sample_ratio, nsamples_y_fd, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst,
+             ntx_fd);
 
         if (!fixup_needed) {
             return;
