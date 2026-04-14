@@ -1132,6 +1132,11 @@ struct ggml_backend_cuda_comm_context {
 
 void * ggml_backend_cuda_comm_init(ggml_backend_t * backends, size_t n_backends) {
 #ifdef GGML_USE_NCCL
+    for (size_t i = 0; i < n_backends; i++) {
+        if (!ggml_backend_is_cuda(backends[i])) {
+            return nullptr;
+        }
+    }
     ggml_backend_cuda_comm_context * ret = new ggml_backend_cuda_comm_context;
     std::vector<int> dev_ids;
     ret->backends.reserve(n_backends);
