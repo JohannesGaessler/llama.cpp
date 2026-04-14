@@ -3661,24 +3661,16 @@ static __global__ void mul_mat_q(
     int kb0_start = fastmodulo(kbc, blocks_per_ne00);
     int kb0_stop  = min(blocks_per_ne00.z, uint32_t(kb0_start + kbc_stop - kbc));
     while (kbc < kbc_stop && kb0_stop == int(blocks_per_ne00.z)) {
-        // int tmp = fastdiv(kbc, blocks_per_ne00);
-        // uint2 tmp2 = fast_div_modulo(tmp, ntx);
-        // const int jt = tmp2.y;
-        // tmp = tmp2.x;
-        // tmp2 = fast_div_modulo(tmp, nchannels_y);
-        // const int zt = tmp2.y;
-        // tmp = tmp2.x;
-        // tmp2 = fast_div_modulo(tmp, nsamples_y);
-        // const int wt = tmp2.y;
-        // const int it = tmp2.x;
-        int tmp = kbc;
-        const int it = tmp / (nsamples_y.z*nchannels_y.z*ntx.z*blocks_per_ne00.z);
-        tmp -= it * (nsamples_y.z*nchannels_y.z*ntx.z*blocks_per_ne00.z);
-        const int wt = tmp / (nchannels_y.z*ntx.z*blocks_per_ne00.z);
-        tmp -= wt * (nchannels_y.z*ntx.z*blocks_per_ne00.z);
-        const int zt = tmp / (ntx.z*blocks_per_ne00.z);
-        tmp -= zt * (ntx.z*blocks_per_ne00.z);
-        const int jt = tmp / blocks_per_ne00.z;
+        int tmp = fastdiv(kbc, blocks_per_ne00);
+        uint2 tmp2 = fast_div_modulo(tmp, ntx);
+        const int jt = tmp2.y;
+        tmp = tmp2.x;
+        tmp2 = fast_div_modulo(tmp, nchannels_y);
+        const int zt = tmp2.y;
+        tmp = tmp2.x;
+        tmp2 = fast_div_modulo(tmp, nsamples_y);
+        const int wt = tmp2.y;
+        const int it = tmp2.x;
 
         // Defaults for regular matrix multiplication:
         int col_low    = 0;
@@ -3743,24 +3735,16 @@ static __global__ void mul_mat_q(
         return;
     }
 
-    // int tmp = fastdiv(kbc, blocks_per_ne00);
-    // uint2 tmp2 = fast_div_modulo(tmp, ntx);
-    // const int jt = tmp2.y;
-    // tmp = tmp2.x;
-    // tmp2 = fast_div_modulo(tmp, nchannels_y);
-    // const int zt = tmp2.y;
-    // tmp = tmp2.x;
-    // tmp2 = fast_div_modulo(tmp, nsamples_y);
-    // const int wt = tmp2.y;
-    // const int it = tmp2.x;
-    int tmp = kbc;
-    const int it = tmp / (nsamples_y.z*nchannels_y.z*ntx.z*blocks_per_ne00.z);
-    tmp -= it * (nsamples_y.z*nchannels_y.z*ntx.z*blocks_per_ne00.z);
-    const int wt = tmp / (nchannels_y.z*ntx.z*blocks_per_ne00.z);
-    tmp -= wt * (nchannels_y.z*ntx.z*blocks_per_ne00.z);
-    const int zt = tmp / (ntx.z*blocks_per_ne00.z);
-    tmp -= zt * (ntx.z*blocks_per_ne00.z);
-    const int jt = tmp / blocks_per_ne00.z;
+    int tmp = fastdiv(kbc, blocks_per_ne00);
+    uint2 tmp2 = fast_div_modulo(tmp, ntx);
+    const int jt = tmp2.y;
+    tmp = tmp2.x;
+    tmp2 = fast_div_modulo(tmp, nchannels_y);
+    const int zt = tmp2.y;
+    tmp = tmp2.x;
+    tmp2 = fast_div_modulo(tmp, nsamples_y);
+    const int wt = tmp2.y;
+    const int it = tmp2.x;
 
     // Defaults for regular matrix multiplication:
     int col_low    = 0;
