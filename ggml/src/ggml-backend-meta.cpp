@@ -1442,7 +1442,7 @@ struct ggml_backend_meta_context {
 
         ggml_backend_comm_init_t comm_init = (ggml_backend_comm_init_t) ggml_backend_reg_get_proc_address(
             ggml_backend_dev_backend_reg(ggml_backend_get_device(simple_backends[0])), "ggml_backend_comm_init");
-        comm_ctx = comm_init == nullptr ? nullptr : comm_init(simple_backends.data(), simple_backends.size());
+        comm_ctx = n_devs > 1 && comm_init != nullptr ? comm_init(simple_backends.data(), simple_backends.size()) : nullptr;
     }
 
     ~ggml_backend_meta_context() {
@@ -1867,13 +1867,10 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
                     ggml_backend_reg_get_proc_address(ggml_backend_dev_backend_reg(
                         ggml_backend_get_device(backend_ctx->backend_configs[0].backend)), "ggml_backend_comm_allreduce_tensor");
                 GGML_ASSERT(allreduce_tensor != nullptr);
-                std::vector<ggml_backend_t> backends;
-                backends.reserve(n_backends);
                 std::vector<ggml_tensor *> nodes;
                 nodes.reserve(n_backends);
                 for (size_t j = 0; j < n_backends; j++) {
                     auto & bcj = backend_ctx->backend_configs[j];
-                    backends.push_back(bcj.backend);
                     ggml_cgraph * cgraph_ij = bcj.cgraphs[i].cgraph_main;
                     nodes.push_back(cgraph_ij->nodes[cgraph_ij->n_nodes-1]);
                 }
