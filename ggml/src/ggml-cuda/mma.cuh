@@ -725,27 +725,6 @@ namespace ggml_cuda_mma {
         } else {
             ggml_cuda_memcpy_1<sizeof(t.x)>(t.x, xs0 + t.get_i(0) * stride + t.get_j(0));
         }
-#elif defined(AMD_WMMA_AVAILABLE)
-        // All wmma layout has contiguous data when i-major.
-        if constexpr (is_i_major(dl)) {
-            // the data must be aligned to 16 bytes when bigger than ggml_cuda_get_max_cpy_bytes()
-            constexpr int aligned_copy_bytes = ggml_cuda_get_max_cpy_bytes();
-            if constexpr (sizeof(t.x) > aligned_copy_bytes) {
-                static_assert(sizeof(t.x) % aligned_copy_bytes == 0, "bad type size");
-                constexpr int aligned_copy_count = sizeof(t.x)/aligned_copy_bytes;
-#pragma unroll
-                for (int i = 0; i < aligned_copy_count; ++i) {
-                    ggml_cuda_memcpy_1<aligned_copy_bytes>(t.x + t.ne/aligned_copy_count*i, xs0 + t.get_i(0) * stride + t.get_j(t.ne/aligned_copy_count*i));
-                }
-            } else {
-                ggml_cuda_memcpy_1<sizeof(t.x)>(t.x, xs0 + t.get_i(0) * stride + t.get_j(0));
-            }
-        } else {
-#pragma unroll
-            for (int l = 0; l < t.ne; ++l) {
-                t.x[l] = xs0[t.get_i(l)*stride + t.get_j(l)];
-            }
-        }
 #else
 #pragma unroll
         for (int l = 0; l < t.ne; ++l) {
@@ -798,14 +777,9 @@ namespace ggml_cuda_mma {
             : "l"(xs));
 #else
 #if __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
-#if 1
-        // TODO: more generic handling
         static_assert(sizeof(T) == 4, "bad type size");
         ggml_cuda_memcpy_1<4*sizeof(T)>(t.x + 0, xs0 + t.get_i(0)*stride + 0);
         ggml_cuda_memcpy_1<4*sizeof(T)>(t.x + 4, xs0 + t.get_i(4)*stride + 4);
-#else
-        load_generic(t, xs0, stride);
-#endif // 1
 #else
         load_generic(t, xs0, stride);
 #endif // __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
