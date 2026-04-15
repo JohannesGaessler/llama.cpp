@@ -779,6 +779,11 @@ namespace ggml_cuda_mma {
         static_assert(sizeof(T) == 4, "bad type size");
         ggml_cuda_memcpy_1<4*sizeof(T)>(t.x + 0, xs0 + t.get_i(0)*stride + 0);
         ggml_cuda_memcpy_1<4*sizeof(T)>(t.x + 4, xs0 + t.get_i(4)*stride + 4);
+#elif defined(AMD_WMMA_AVAILABLE)
+        static_assert(sizeof(T) == 4, "bad type size");
+        static_assert(dl == DATA_LAYOUT_I_MAJOR, "bad data layout");
+        static_assert(sizeof(t.x) <= 16, "bad ne");
+        ggml_cuda_memcpy_1<sizeof(t.x)>(t.x, xs0 + t.get_i(0)*stride + t.get_j(0));
 #else
         load_generic(t, xs0, stride);
 #endif // TURING_MMA_AVAILABLE
