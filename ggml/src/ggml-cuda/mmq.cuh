@@ -3733,8 +3733,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
     constexpr int nwarps = mmq_get_nwarps_device()/2;
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
 
-    float sum = 0.0f;
-    const int j = blockIdx.z*nwarps    + threadIdx.y;
+    float sum[mmq_x / nwarps] = {0.0f};
     const int i = blockIdx.y*warp_size + threadIdx.x;
 
     const int nty = (nrows_x + mmq_y - 1) / mmq_y;
@@ -3774,7 +3773,12 @@ static __global__ void mul_mat_q_stream_k_fixup(
         any_fixup = true;
 
 
-        sum += tmp_last_tile[bidx*(mmq_x*mmq_y) + j*mmq_y + i];
+#pragma unroll
+        for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
+            const int j = j0 + threadIdx.y;
+
+            sum[j0/nwarps] += tmp_last_tile[bidx*(mmq_x*mmq_y) + j*mmq_y + i];
+        }
 
         // If this block started in a previous tile we are done and don't need to combine additional partial results.
         if (fastmodulo(kbc, blocks_per_ne00) == 0 || fastdiv(kbc, blocks_per_ne00) < fastdiv(kbc0, blocks_per_ne00)) {
@@ -3805,30 +3809,52 @@ static __global__ void mul_mat_q_stream_k_fixup(
 
         const int i_max = nrows_x   - it*mmq_y - 1;
         const int j_max = ncols_dst - jt*mmq_x - 1;
-        if (j > j_max || (need_check && i > i_max)) {
+        if (need_check && i > i_max) {
             return;
         }
 
-        dst[j*stride_col_dst + i] += sum;
+#pragma unroll
+        for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
+            const int j = j0 + threadIdx.y;
+
+            if (j > j_max) {
+                return;
+            }
+
+            dst[j*stride_col_dst + i] += sum[j0/nwarps];
+        }
         return;
     }
 
+    __shared__ int ids_dst_shared[mmq_x];
     const int col_low  = expert_bounds[zt + 0];
     const int col_high = expert_bounds[zt + 1];
     const int col_diff = col_high - col_low;
 
+    for (int j = threadIdx.y*warp_size + threadIdx.x; j < mmq_x; j += nwarps*warp_size) {
+        ids_dst_shared[j] = ids_dst[col_low + jt*mmq_x + j];
+    }
+    __syncthreads();
+
     const int offset_dst = it*mmq_y;
     dst += offset_dst;
 
-    const int id = ids_dst[col_low + jt*mmq_x + j];
-
     const int i_max = nrows_x  - it*mmq_y - 1;
     const int j_max = col_diff - jt*mmq_x - 1;
-    if (j > j_max || (need_check && i > i_max)) {
+    if (need_check && i > i_max) {
         return;
     }
 
-    dst[id*stride_col_dst + i] += sum;
+#pragma unroll
+    for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
+        const int j = j0 + threadIdx.y;
+
+        if (j > j_max) {
+            return;
+        }
+
+        dst[ids_dst_shared[j]*stride_col_dst + i] += sum[j0/nwarps];
+    }
 }
 
 struct mmq_args {
@@ -3911,7 +3937,7 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
         tmp_fixup.alloc(block_nums_stream_k.x * mmq_x*mmq_y);
     }
 
-    const dim3 block_nums_fixup(block_nums_stream_k.x, mmq_y/warp_size, mmq_x/(nwarps/2));
+    const dim3 block_nums_fixup(block_nums_stream_k.x, mmq_y/warp_size, 1);
     const dim3 block_dims_fixup(block_dims.x, block_dims.y/2, block_dims.z);
 
     if (args.nrows_x % mmq_y == 0) {
