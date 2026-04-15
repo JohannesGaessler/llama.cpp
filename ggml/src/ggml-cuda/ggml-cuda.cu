@@ -1221,7 +1221,7 @@ static bool ggml_backend_cuda_comm_allreduce_tensor(void * comm_ctx_v, struct gg
         tmp[i].pool = &cuda_ctx->pool();
         tmp[i].alloc(ne);
 
-        ggml_cuda_set_device(i);
+        ggml_cuda_set_device(cuda_ctx->device);
         to_bf16(tensors[i]->data, tmp[i].get(), ne, cuda_ctx->stream());
         CUDA_CHECK(cudaGetLastError());
     }
@@ -1236,7 +1236,7 @@ static bool ggml_backend_cuda_comm_allreduce_tensor(void * comm_ctx_v, struct gg
     for (size_t i = 0; i < n_backends; ++i) {
         ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) comm_ctx->backends[i]->context;
 
-        ggml_cuda_set_device(i);
+        ggml_cuda_set_device(cuda_ctx->device);
         to_fp32(tmp[i].get(), (float *) tensors[i]->data, ne, cuda_ctx->stream());
         CUDA_CHECK(cudaGetLastError());
     }
