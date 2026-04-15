@@ -86,11 +86,6 @@ namespace ggml_cuda_mma {
     //   - (I_MAJOR, I_MAJOR_MIRRORED) -> I_MAJOR
     //   - (I_MAJOR, J_MAJOR_MIRRORED) -> I_MAJOR
 
-    static constexpr bool is_i_major(const data_layout dl) {
-        return dl == DATA_LAYOUT_I_MAJOR ||
-               dl == DATA_LAYOUT_I_MAJOR_MIRRORED;
-    }
-
     static constexpr __device__ data_layout get_input_data_layout() {
 #if defined(RDNA3) || defined(VOLTA_MMA_AVAILABLE)
         return DATA_LAYOUT_I_MAJOR_MIRRORED;
@@ -781,9 +776,20 @@ namespace ggml_cuda_mma {
         ggml_cuda_memcpy_1<4*sizeof(T)>(t.x + 4, xs0 + t.get_i(4)*stride + 4);
 #elif defined(AMD_WMMA_AVAILABLE)
         static_assert(sizeof(T) == 4, "bad type size");
+#ifdef RDNA3
+        static_assert(dl == DATA_LAYOUT_I_MAJOR_MIRRORED, "bad data layout");
+#else
         static_assert(dl == DATA_LAYOUT_I_MAJOR, "bad data layout");
-        static_assert(sizeof(t.x) <= 16, "bad ne");
-        ggml_cuda_memcpy_1<sizeof(t.x)>(t.x, xs0 + t.get_i(0)*stride + t.get_j(0));
+#endif // RDNA3
+        if constexpr (sizeof(t.x) <= 16) {
+            ggml_cuda_memcpy_1<sizeof(t.x)>(t.x, xs0 + t.get_i(0)*stride + t.get_j(0));
+        } else {
+            static_assert(sizeof(t.x) % 16 == 0, "bad ne");
+#pragma unroll
+            for (size_t i = 0; i < sizeof(t.x)/16; i++) {
+                ggml_cuda_memcpy_1<16>(t.x + i*4, xs0 + t.get_i(0)*stride + 4*i + t.get_j(0));
+            }
+        }
 #else
         load_generic(t, xs0, stride);
 #endif // TURING_MMA_AVAILABLE
