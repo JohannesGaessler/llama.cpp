@@ -1350,56 +1350,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_16_q8_1_dp4a(
 template <int mmq_x, int mmq_y>
 static __device__ __forceinline__ void vec_dot_q8_0_16_q8_1_mma(
     const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
-#if defined(AMD_MFMA_AVAILABLE)
-    constexpr data_layout input_layout = get_input_data_layout();
-    typedef tile<16,  8, int, input_layout>        tile_A;
-    typedef tile<16,  8, int, input_layout>        tile_B;
-    typedef tile<16, 16, int, DATA_LAYOUT_J_MAJOR> tile_C;
-
-    constexpr int granularity = mmq_get_granularity_device(mmq_x);
-    constexpr int rows_per_warp = granularity;
-    constexpr int ntx = rows_per_warp/tile_C::I; // Number of x minitiles per warp.
-
-    y += (threadIdx.y % ntx) * (tile_C::J*MMQ_TILE_Y_K);
-
-    const int   * x_qs = (const int   *) x;
-    const float * x_df = (const float *) x_qs + MMQ_TILE_NE_K*2;
-    const int   * y_qs = (const int   *) y + 4;
-    const float * y_df = (const float *) y;
-
-    const int i0 = (threadIdx.y / ntx) * rows_per_warp;
-
-    for (int k01 = 0; k01 < MMQ_TILE_NE_K; k01 += 4) {
-        const int k0 = k00 + k01;
-
-        tile_A A[ntx];
-#pragma unroll
-        for (int n = 0; n < ntx; ++n) {
-            load_generic(A[n], x_qs + (i0 + n*tile_A::I)*MMQ_MMA_TILE_X_K_Q3_K + k0, MMQ_MMA_TILE_X_K_Q3_K);
-        }
-
-#pragma unroll
-        for (int j0 = 0; j0 < mmq_x; j0 += ntx*tile_C::J) {
-            tile_B B[1];
-            load_generic(B[0], y_qs + j0*MMQ_TILE_Y_K + k01, MMQ_TILE_Y_K);
-
-            const int j = j0 + tile_C::get_j(0);
-            const float dB = y_df[j*MMQ_TILE_Y_K + k01/QI8_1] / 2;
-
-#pragma unroll
-            for (int n = 0; n < ntx; ++n) {
-                tile_C C;
-                mma(C, A[n], B[0]);
-
-#pragma unroll
-                for (int l = 0; l < tile_C::ne; ++l) {
-                    const int i = i0 + n*tile_C::I + tile_C::get_i(l);
-                    sum[(j0/tile_C::J + n)*tile_C::ne + l] += C.x[l] * x_df[i*MMQ_MMA_TILE_X_K_Q3_K + k0/4] * dB;
-                }
-            }
-        }
-    }
-#elif defined(AMD_WMMA_AVAILABLE) //wmma instructions can handle 16x4 tiles, does not require loading 64x2 tiles
+#if defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     constexpr data_layout input_layout = get_input_data_layout();
     typedef tile<16,  4, int, input_layout>        tile_A;
     typedef tile<16,  4, int, input_layout>        tile_B;

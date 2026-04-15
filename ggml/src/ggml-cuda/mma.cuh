@@ -119,6 +119,8 @@ namespace ggml_cuda_mma {
         static __device__ __forceinline__ int get_i(const int l) {
             if constexpr (I == 64 && J == 2) { // Special tile size to load <16, 4> as <16, 8>
                 return threadIdx.x % 16;
+            } else if constexpr (I == 16 && J == 4) {
+                return threadIdx.x % 16;
             } else if constexpr (I == 16 && J == 8) {
                 return threadIdx.x % 16;
             } else if constexpr (I == 32 && J == 4) {
@@ -136,6 +138,8 @@ namespace ggml_cuda_mma {
         static __device__ __forceinline__ int get_j(const int l) {
             if constexpr (I == 64 && J == 2) { // Special tile size to load <16, 4> as <16, 8>
                 return (2 * ((threadIdx.x / 16) % 2) + l);
+            } else if constexpr (I == 16 && J == 4) {
+                return threadIdx.x / 16;
             } else if constexpr (I == 16 && J == 8) {
                 return 2 * (threadIdx.x / 16) + l;
             } else if constexpr (I == 32 && J == 4) {
@@ -1197,73 +1201,27 @@ namespace ggml_cuda_mma {
         using int32x4_t = __attribute__((__vector_size__(4 * sizeof(int)))) int;
         int32x4_t * acc = (int32x4_t *) D.x;
 #if defined(CDNA4) || defined(CDNA3)
-        acc[0] = __builtin_amdgcn_mfma_i32_16x16x32_i8(((int64_t *) A.x)[0],
-                                                       ((int64_t *) B.x)[0],
-                                                       acc[0],
-                                                       0, 0, 0);
+        acc[0] = __builtin_amdgcn_mfma_i32_16x16x32_i8(((int64_t *) A.x)[0], ((int64_t *) B.x)[0], acc[0], 0, 0, 0);
 #elif defined(CDNA2) || defined(CDNA1)
-        acc[0] = __builtin_amdgcn_mfma_i32_16x16x16i8(A.x[0],
-                                                      B.x[0],
-                                                      acc[0],
-                                                      0, 0, 0);
-        acc[0] = __builtin_amdgcn_mfma_i32_16x16x16i8(A.x[1],
-                                                      B.x[1],
-                                                      acc[0],
-                                                      0, 0, 0);
+        acc[0] = __builtin_amdgcn_mfma_i32_16x16x16i8(A.x[0], B.x[0], acc[0], 0, 0, 0);
+        acc[0] = __builtin_amdgcn_mfma_i32_16x16x16i8(A.x[1], B.x[1], acc[0], 0, 0, 0);
 #endif // defined(CDNA4) || defined(CDNA3)
-
 #elif defined(AMD_WMMA_AVAILABLE)
-
         using int32x8_t = __attribute__((__vector_size__(8 * sizeof(int)))) int;
         int32x8_t * acc = (int32x8_t *) D.x;
-
 #if defined(RDNA4)
         using int32x2_t = __attribute__((__vector_size__(2 * sizeof(int)))) int;
         int32x2_t * a_vec = (int32x2_t *) A.x;
         int32x2_t * b_vec = (int32x2_t *) B.x;
-
-        acc[0] = __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32_gfx12(
-            true,
-            a_vec[0],
-            true,
-            b_vec[0],
-            acc[0],
-            true
-        );
-
-        acc[0] = __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32_gfx12(
-            true,
-            a_vec[1],
-            true,
-            b_vec[1],
-            acc[0],
-            true
-        );
-
+        acc[0] = __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32_gfx12(true, a_vec[0], true, b_vec[0], acc[0], true);
+        acc[0] = __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32_gfx12(true, a_vec[1], true, b_vec[1], acc[0], true);
 #elif defined(RDNA3)
         using int32x4_t = __attribute__((__vector_size__(4 * sizeof(int)))) int;
         int32x4_t * a_vec = (int32x4_t *) A.x;
         int32x4_t * b_vec = (int32x4_t *) B.x;
-
-        acc[0] = __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32(
-            true,
-            a_vec[0],
-            true,
-            b_vec[0],
-            acc[0],
-            true
-        );
-
-        acc[0] = __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32(
-            true,
-            a_vec[1],
-            true,
-            b_vec[1],
-            acc[0],
-            true
-        );
+        acc[0] = __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32(true, a_vec[0], true, b_vec[0], acc[0], true);
+        acc[0] = __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32(true, a_vec[1], true, b_vec[1], acc[0], true);
 #endif // RDNA4
-
 #else
         GGML_UNUSED_VARS(D, A, B);
         NO_DEVICE_CODE;
@@ -1281,14 +1239,8 @@ namespace ggml_cuda_mma {
                                                        acc[0],
                                                        0, 0, 0);
 #elif defined(CDNA2) || defined(CDNA1)
-        acc[0] = __builtin_amdgcn_mfma_i32_32x32x8i8(A.x[0],
-                                                     B.x[0],
-                                                     acc[0],
-                                                     0, 0, 0);
-        acc[0] = __builtin_amdgcn_mfma_i32_32x32x8i8(A.x[1],
-                                                     B.x[1],
-                                                     acc[0],
-                                                     0, 0, 0);
+        acc[0] = __builtin_amdgcn_mfma_i32_32x32x8i8(A.x[0], B.x[0], acc[0], 0, 0, 0);
+        acc[0] = __builtin_amdgcn_mfma_i32_32x32x8i8(A.x[1], B.x[1], acc[0], 0, 0, 0);
 #endif // defined(CDNA4) || defined(CDNA3)
 
 #else
@@ -1349,35 +1301,29 @@ namespace ggml_cuda_mma {
     template <data_layout dl_d, data_layout dl_ab>
     static __device__ __forceinline__ void mma(
             tile<16, 16, int, dl_d> & D, const tile<16, 4, int, dl_ab> & A, const tile<16, 4, int, dl_ab> & B) {
-#if defined(AMD_WMMA_AVAILABLE)
+#if defined(AMD_MFMA_AVAILABLE)
+        using int32x4_t = __attribute__((__vector_size__(4 * sizeof(int)))) int;
+        int32x4_t * acc = (int32x4_t *) D.x;
+#if defined(CDNA4) || defined(CDNA3)
+        const int64_t xA = uint32_t(A.x);
+        const int64_t xB = uint32_t(B.x);
+        acc[0] = __builtin_amdgcn_mfma_i32_16x16x32_i8(xA, xB, acc[0], 0, 0, 0);
+#elif defined(CDNA2) || defined(CDNA1)
+        acc[0] = __builtin_amdgcn_mfma_i32_16x16x16i8(A.x[0], B.x[0], acc[0], 0, 0, 0);
+#endif // defined(CDNA4) || defined(CDNA3)
+#elif defined(AMD_WMMA_AVAILABLE)
         using int32x8_t = __attribute__((__vector_size__(8 * sizeof(int)))) int;
         int32x8_t * acc = (int32x8_t *) D.x;
 #if defined(RDNA4)
         using int32x2_t = __attribute__((__vector_size__(2 * sizeof(int)))) int;
         int32x2_t * a_vec = (int32x2_t *) A.x;
         int32x2_t * b_vec = (int32x2_t *) B.x;
-
-        acc[0] = __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32_gfx12(
-            true,
-            a_vec[0],
-            true,
-            b_vec[0],
-            acc[0],
-            false
-        );
+        acc[0] = __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32_gfx12(true, a_vec[0], true, b_vec[0], acc[0], false);
 #elif defined(RDNA3)
         using int32x4_t = __attribute__((__vector_size__(4 * sizeof(int)))) int;
         int32x4_t * a_vec = (int32x4_t *) A.x;
         int32x4_t * b_vec = (int32x4_t *) B.x;
-
-        acc[0] = __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32(
-            true,
-            a_vec[0],
-            true,
-            b_vec[0],
-            acc[0],
-            false
-        );
+        acc[0] = __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32(true, a_vec[0], true, b_vec[0], acc[0], false);
 #endif // RDNA4
 #else
         GGML_UNUSED(D);
