@@ -108,7 +108,6 @@ namespace ggml_cuda_mma {
         T x[ne] = {0};
 
         static constexpr __device__ bool supported() {
-            if (I == 64 && J ==  2) return true;
             if (I == 16 && J ==  8) return true;
             if (I == 32 && J ==  4) return true;
             if (I == 16 && J == 16) return true;
@@ -117,9 +116,7 @@ namespace ggml_cuda_mma {
         }
 
         static __device__ __forceinline__ int get_i(const int l) {
-            if constexpr (I == 64 && J == 2) { // Special tile size to load <16, 4> as <16, 8>
-                return threadIdx.x % 16;
-            } else if constexpr (I == 16 && J == 4) {
+            if constexpr (I == 16 && J == 4) {
                 return threadIdx.x % 16;
             } else if constexpr (I == 16 && J == 8) {
                 return threadIdx.x % 16;
@@ -136,9 +133,7 @@ namespace ggml_cuda_mma {
         }
 
         static __device__ __forceinline__ int get_j(const int l) {
-            if constexpr (I == 64 && J == 2) { // Special tile size to load <16, 4> as <16, 8>
-                return (2 * ((threadIdx.x / 16) % 2) + l);
-            } else if constexpr (I == 16 && J == 4) {
+            if constexpr (I == 16 && J == 4) {
                 return threadIdx.x / 16;
             } else if constexpr (I == 16 && J == 8) {
                 return 2 * (threadIdx.x / 16) + l;
@@ -715,21 +710,10 @@ namespace ggml_cuda_mma {
 
     template <int I, int J, typename T, data_layout dl>
     static __device__ __forceinline__ void load_generic(tile<I, J, T, dl> & t, const T * __restrict__ xs0, const int stride) {
-#if defined(AMD_MFMA_AVAILABLE)
-        if constexpr (I == 64 && J == 2) { // Special tile size to load <16, 4> as <16, 8>
-#pragma unroll
-            for (int l = 0; l < t.ne; ++l) {
-                t.x[l] = xs0[t.get_i(l)*stride + t.get_j(l)];
-            }
-        } else {
-            ggml_cuda_memcpy_1<sizeof(t.x)>(t.x, xs0 + t.get_i(0) * stride + t.get_j(0));
-        }
-#else
 #pragma unroll
         for (int l = 0; l < t.ne; ++l) {
             t.x[l] = xs0[t.get_i(l)*stride + t.get_j(l)];
         }
-#endif // defined(AMD_MFMA_AVAILABLE)
     }
 
     template <typename T>
@@ -1234,10 +1218,7 @@ namespace ggml_cuda_mma {
         using int32x16_t = __attribute__((__vector_size__(16 * sizeof(int)))) int;
         int32x16_t * acc = (int32x16_t *) D.x;
 #if defined(CDNA4) || defined(CDNA3)
-        acc[0] = __builtin_amdgcn_mfma_i32_32x32x16_i8(((int64_t *) A.x)[0],
-                                                       ((int64_t *) B.x)[0],
-                                                       acc[0],
-                                                       0, 0, 0);
+        acc[0] = __builtin_amdgcn_mfma_i32_32x32x16_i8(((int64_t *) A.x)[0], ((int64_t *) B.x)[0], acc[0], 0, 0, 0);
 #elif defined(CDNA2) || defined(CDNA1)
         acc[0] = __builtin_amdgcn_mfma_i32_32x32x8i8(A.x[0], B.x[0], acc[0], 0, 0, 0);
         acc[0] = __builtin_amdgcn_mfma_i32_32x32x8i8(A.x[1], B.x[1], acc[0], 0, 0, 0);
