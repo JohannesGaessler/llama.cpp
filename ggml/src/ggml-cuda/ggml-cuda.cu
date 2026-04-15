@@ -1130,7 +1130,19 @@ struct ggml_backend_cuda_comm_context {
 };
 #endif // GGML_USE_NCCL
 
-void * ggml_backend_cuda_comm_init(ggml_backend_t * backends, size_t n_backends) {
+static void ggml_backend_cuda_comm_free(void * comm_ctx_v) {
+#ifdef GGML_USE_NCCL
+    if (comm_ctx_v == nullptr) {
+        return;
+    }
+    ggml_backend_cuda_comm_context * comm_ctx = (ggml_backend_cuda_comm_context *) comm_ctx_v;
+    delete comm_ctx;
+#else
+    GGML_UNUSED(comm_ctx_v);
+#endif // GGML_USE_NCCL
+}
+
+static void * ggml_backend_cuda_comm_init(ggml_backend_t * backends, size_t n_backends) {
 #ifdef GGML_USE_NCCL
     for (size_t i = 0; i < n_backends; i++) {
         if (!ggml_backend_is_cuda(backends[i])) {
@@ -1167,7 +1179,7 @@ void * ggml_backend_cuda_comm_init(ggml_backend_t * backends, size_t n_backends)
 #endif // GGML_USE_NCCL
 }
 
-bool ggml_backend_cuda_comm_allreduce_tensor(void * comm_ctx_v, struct ggml_tensor ** tensors) {
+static bool ggml_backend_cuda_comm_allreduce_tensor(void * comm_ctx_v, struct ggml_tensor ** tensors) {
 #ifdef GGML_USE_NCCL
     const int64_t ne = ggml_nelements(tensors[0]);
     // FIXME the input of llm_graph_context::build_in_out_ids can produce a tensor with 0 elements if n_outputs == 0
@@ -1233,18 +1245,6 @@ bool ggml_backend_cuda_comm_allreduce_tensor(void * comm_ctx_v, struct ggml_tens
 #else
     GGML_UNUSED_VARS(comm_ctx_v, tensors);
     return false;
-#endif // GGML_USE_NCCL
-}
-
-void ggml_backend_cuda_comm_free(void * comm_ctx_v) {
-#ifdef GGML_USE_NCCL
-    if (comm_ctx_v == nullptr) {
-        return;
-    }
-    ggml_backend_cuda_comm_context * comm_ctx = (ggml_backend_cuda_comm_context *) comm_ctx_v;
-    delete comm_ctx;
-#else
-    GGML_UNUSED(comm_ctx_v);
 #endif // GGML_USE_NCCL
 }
 
