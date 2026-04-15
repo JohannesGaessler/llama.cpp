@@ -4003,7 +4003,21 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
         return;
     }
 
-    const dim3 block_nums_stream_k(nsm, 1, 1);
+    int max_blocks_per_sm = 1; // Max. number of active blocks limited by occupancy.
+    if (args.nrows_x % mmq_y == 0) {
+        constexpr bool need_check = false;
+        CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &max_blocks_per_sm, mul_mat_q<type, mmq_x, need_check>, block_dims.x * block_dims.y * block_dims.z, nbytes_shared));
+    } else {
+        constexpr bool need_check = true;
+        CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &max_blocks_per_sm, mul_mat_q<type, mmq_x, need_check>, block_dims.x * block_dims.y * block_dims.z, nbytes_shared));
+    }
+    GGML_ASSERT(max_blocks_per_sm > 0);
+
+    const int blocks_per_sm = std::min(max_blocks_per_sm, 2);
+
+    const dim3 block_nums_stream_k(nsm*blocks_per_sm, 1, 1);
     const bool fixup_needed = ntx*nty*ntzw % nsm != 0;
     const uint3 nblocks_fd = init_fastdiv_values(block_nums_stream_k.x);
 
