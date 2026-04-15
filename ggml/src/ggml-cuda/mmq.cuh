@@ -1355,7 +1355,6 @@ static __device__ __forceinline__ void vec_dot_q8_0_16_q8_1_mma(
     typedef tile<16,  8, int, input_layout>        tile_A;
     typedef tile<16,  8, int, input_layout>        tile_B;
     typedef tile<16, 16, int, DATA_LAYOUT_J_MAJOR> tile_C;
-    typedef tile<64,  2, int, input_layout>        tile_load;
 
     constexpr int granularity = mmq_get_granularity_device(mmq_x);
     constexpr int rows_per_warp = granularity;
@@ -1376,13 +1375,13 @@ static __device__ __forceinline__ void vec_dot_q8_0_16_q8_1_mma(
         tile_A A[ntx];
 #pragma unroll
         for (int n = 0; n < ntx; ++n) {
-            load_generic(((tile_load *) A)[n], x_qs + (i0 + n*tile_A::I)*MMQ_MMA_TILE_X_K_Q3_K + k0, MMQ_MMA_TILE_X_K_Q3_K);
+            load_generic(A[n], x_qs + (i0 + n*tile_A::I)*MMQ_MMA_TILE_X_K_Q3_K + k0, MMQ_MMA_TILE_X_K_Q3_K);
         }
 
 #pragma unroll
         for (int j0 = 0; j0 < mmq_x; j0 += ntx*tile_C::J) {
             tile_B B[1];
-            load_generic(((tile_load *) B)[0], y_qs + j0*MMQ_TILE_Y_K + k01, MMQ_TILE_Y_K);
+            load_generic(B[0], y_qs + j0*MMQ_TILE_Y_K + k01, MMQ_TILE_Y_K);
 
             const int j = j0 + tile_C::get_j(0);
             const float dB = y_df[j*MMQ_TILE_Y_K + k01/QI8_1] / 2;
