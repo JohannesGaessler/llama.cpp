@@ -92,11 +92,11 @@ namespace ggml_cuda_mma {
     }
 
     static constexpr __device__ data_layout get_input_data_layout() {
-#if defined(RDNA3) || __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
+#if defined(RDNA3) || defined(VOLTA_MMA_AVAILABLE)
         return DATA_LAYOUT_I_MAJOR_MIRRORED;
 #else
         return DATA_LAYOUT_I_MAJOR;
-#endif // defined(RDNA3) || __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
+#endif // defined(RDNA3) || defined(VOLTA_MMA_AVAILABLE)
     }
 
     template <int I_, int J_, typename T, data_layout ds_=DATA_LAYOUT_I_MAJOR>
@@ -154,7 +154,7 @@ namespace ggml_cuda_mma {
                 return -1;
             }
         }
-#elif __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
+#elif defined(VOLTA_MMA_AVAILABLE)
         static constexpr int ne = I * J / 32;
         T x[ne] = {0};
 
@@ -283,7 +283,7 @@ namespace ggml_cuda_mma {
         static constexpr int         J  = J_;
         static constexpr data_layout dl = DATA_LAYOUT_I_MAJOR;
 
-#if __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
+#if defined(VOLTA_MMA_AVAILABLE)
         static constexpr int ne = I * J / WARP_SIZE;
         half2 x[ne] = {{0.0f, 0.0f}};
 
@@ -407,7 +407,7 @@ namespace ggml_cuda_mma {
                 return -1;
             }
         }
-#endif // __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
+#endif // defined(VOLTA_MMA_AVAILABLE)
     };
 
     template <int I_, int J_>
@@ -757,12 +757,12 @@ namespace ggml_cuda_mma {
             : "=r"(xi[0]), "=r"(xi[1])
             : "l"(xs));
 #else
-#if __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
+#if defined(VOLTA_MMA_AVAILABLE)
         GGML_UNUSED_VARS(t, xs0, stride);
         NO_DEVICE_CODE;
 #else
         load_generic(t, xs0, stride);
-#endif // __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
+#endif // defined(VOLTA_MMA_AVAILABLE)
 #endif // TURING_MMA_AVAILABLE
     }
 
@@ -775,14 +775,12 @@ namespace ggml_cuda_mma {
         asm volatile("ldmatrix.sync.aligned.m8n8.x4.b16 {%0, %1, %2, %3}, [%4];"
             : "=r"(xi[0]), "=r"(xi[1]), "=r"(xi[2]), "=r"(xi[3])
             : "l"(xs));
-#else
-#if __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
+#elif defined(VOLTA_MMA_AVAILABLE)
         static_assert(sizeof(T) == 4, "bad type size");
         ggml_cuda_memcpy_1<4*sizeof(T)>(t.x + 0, xs0 + t.get_i(0)*stride + 0);
         ggml_cuda_memcpy_1<4*sizeof(T)>(t.x + 4, xs0 + t.get_i(4)*stride + 4);
 #else
         load_generic(t, xs0, stride);
-#endif // __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
 #endif // TURING_MMA_AVAILABLE
     }
 
@@ -801,12 +799,12 @@ namespace ggml_cuda_mma {
 
     static __device__ __forceinline__ void load_ldmatrix(
             tile<32, 4, half2> & t, const half2 * __restrict__ xs0, const int stride) {
-#if __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
+#if defined(VOLTA_MMA_AVAILABLE)
         ggml_cuda_memcpy_1<4*sizeof(half2)>(t.x, xs0 + t.get_i(0)*stride);
 #else
         GGML_UNUSED_VARS(t, xs0, stride);
         NO_DEVICE_CODE;
-#endif // __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
+#endif // defined(VOLTA_MMA_AVAILABLE)
     }
 
     template <typename T>
@@ -1303,7 +1301,7 @@ namespace ggml_cuda_mma {
 
     static __device__ __forceinline__ void mma(
             tile<32, 8, float> & D, const tile<32, 4, half2> & A, const tile<8, 4, half2, DATA_LAYOUT_I_MAJOR_MIRRORED> & B) {
-#if __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
+#if defined(VOLTA_MMA_AVAILABLE)
         const int * Axi = (const int *) A.x;
         const int * Bxi = (const int *) B.x;
         int       * Dxi = (int       *) D.x;
@@ -1318,12 +1316,12 @@ namespace ggml_cuda_mma {
 #else
         GGML_UNUSED_VARS(D, A, B);
         NO_DEVICE_CODE;
-#endif // __CUDA_ARCH__ >= GGML_CUDA_CC_VOLTA
+#endif // defined(VOLTA_MMA_AVAILABLE)
     }
 
     static __device__ __forceinline__ void mma(
             tile<32, 4, half2> & D, const tile<32, 4, half2> & A, const tile<8, 4, half2, DATA_LAYOUT_J_MAJOR_MIRRORED> & B) {
-#if __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
+#if defined(VOLTA_MMA_AVAILABLE)
         const int * Axi = (const int *) A.x;
         const int * Bxi = (const int *) B.x;
         int       * Dxi = (int       *) D.x;
@@ -1338,7 +1336,7 @@ namespace ggml_cuda_mma {
 #else
         GGML_UNUSED_VARS(D, A, B);
         NO_DEVICE_CODE;
-#endif // __CUDA_ARCH__ >= GGML_CUDA_CC_VOLTA
+#endif // defined(VOLTA_MMA_AVAILABLE)
     }
 
     template <data_layout dl_d, data_layout dl_ab>
