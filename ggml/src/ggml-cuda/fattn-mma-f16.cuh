@@ -378,8 +378,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
                         ggml_cuda_memcpy_1<sizeof(int)>(tmp + 0, !oob_check || i0 + 0 < i_sup ? KV + (i0 + 0)*stride_KV + k0/2 : &zero);
                         ggml_cuda_memcpy_1<sizeof(int)>(tmp + 1, !oob_check || i0 + 1 < i_sup ? KV + (i0 + 1)*stride_KV + k0/2 : &zero);
 
-                        tmp[2] = __byte_perm(tmp[0], tmp[1], 0x00000145);
-                        tmp[1] = __byte_perm(tmp[0], tmp[1], 0x00002367);
+                        tmp[2] = __byte_perm(tmp[0], tmp[1], 0x00005410);
+                        tmp[1] = __byte_perm(tmp[0], tmp[1], 0x00007632);
 
                         ggml_cuda_memcpy_1<sizeof(int)>(tile_KV + (k0 + 0)*stride_tile + i0/2, tmp + 2);
                         ggml_cuda_memcpy_1<sizeof(int)>(tile_KV + (k0 + 1)*stride_tile + i0/2, tmp + 1);
