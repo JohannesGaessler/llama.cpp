@@ -695,19 +695,6 @@ namespace ggml_cuda_mma {
     }
 #endif // defined(TURING_MMA_AVAILABLE)
 
-    static __device__ __forceinline__ void make_identity_mat(tile<16, 8, half2> & t) {
-#if defined(RDNA4)
-        const int row = t.get_i(0);
-        const int left_right = t.get_j(0) / 4;
-        const int up_down = row / 8;
-        const int idx = row % 8;
-        reinterpret_cast<half*>(t.x)[idx] = left_right == up_down ? 1.0f : 0.0f;
-#else
-        GGML_UNUSED_VARS(t);
-        NO_DEVICE_CODE;
-#endif // defined(RDNA4)
-    }
-
     template <int I, int J, typename T, data_layout dl>
     static __device__ __forceinline__ void load_generic(tile<I, J, T, dl> & t, const T * __restrict__ xs0, const int stride) {
 #pragma unroll
@@ -806,11 +793,23 @@ namespace ggml_cuda_mma {
     static __device__ __forceinline__ void load_ldmatrix_trans(
             tile<16, 8, T> & t, const T * __restrict__ xs0, const int stride) {
 #ifdef TURING_MMA_AVAILABLE
-        int * xi = (int * ) t.x;
+        int * xi = (int *) t.x;
         const int * xs = (const int *) xs0 + (threadIdx.x % t.I) * stride + (threadIdx.x / t.I) * (t.J / 2);
         asm volatile("ldmatrix.sync.aligned.m8n8.x4.trans.b16 {%0, %1, %2, %3}, [%4];"
             : "=r"(xi[0]), "=r"(xi[2]), "=r"(xi[1]), "=r"(xi[3])
             : "l"(xs));
+#elif defined(AMD_WMMA_AVAILABLE)
+        int * xi = (int *) t.x;
+#pragma unroll
+        for (int l = 0; l < t.ne; ++l) {
+            xi[l] = ((const int *) xs0)[t.get_j(l)*stride + t.get_i(l)];
+        }
+// #pragma unroll
+//         for (int l0 = 0; l0 < t.ne; l0 += 2) {
+//             const int tmp = __byte_perm(xi[l0 + 0], xi[l0 + 1], 0x00000145);
+//             xi[l0 + 1]    = __byte_perm(xi[l0 + 0], xi[l0 + 1], 0x00002367);
+//             xi[l0 + 0]    = tmp;
+//         }
 #else
         GGML_UNUSED_VARS(t, xs0, stride);
         NO_DEVICE_CODE;

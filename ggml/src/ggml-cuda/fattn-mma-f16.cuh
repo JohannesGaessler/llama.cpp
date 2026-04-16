@@ -862,11 +862,6 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     }
 
 
-#if defined(AMD_WMMA_AVAILABLE) && !defined(LDMATRIX_TRANS_AVAILABLE)
-    T_A_VKQ A_identity;
-    make_identity_mat(A_identity);
-#endif // defined(AMD_WMMA_AVAILABLE) && !defined(LDMATRIX_TRANS_AVAILABLE)
-
     // Calculate VKQ tile, need to use logical rather than physical elements for i0 due to transposition of V:
 #pragma unroll
     for (int i0_start = 0; i0_start < DV; i0_start += 2*nbatch_V2) {
@@ -897,9 +892,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
                 const int k0 = k00 + (threadIdx.y % np)*T_A_VKQ::J;
 
                 T_A_VKQ A; // Transposed in SRAM but not in registers, gets transposed on load.
-#if defined(LDMATRIX_TRANS_AVAILABLE)
-                load_ldmatrix_trans(A, tile_V_i + 2*k0*stride_tile_V + (i_VKQ_0 - i0_start)/2, stride_tile_V);
-#elif defined(AMD_MFMA_AVAILABLE)
+#if defined(AMD_MFMA_AVAILABLE)
                 // MFMA A register layout: A_mat[i=lane%16][k=4*(lane/16)+reg].
                 // Normal load gives A_mat[seq][dv] but we need A_mat[dv][seq] = V^T.
                 // Load with transposed addressing: 4 strided half loads.
@@ -914,12 +907,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
                     }
                 }
 #else
-                // TODO: Try to transpose tile_V when loading gmem to smem.
-                // Use mma to transpose T_A_VKQ for RDNA.
-                T_A_VKQ A_trans;
-                load_ldmatrix(A_trans, tile_V_i + 2*k0*stride_tile_V + (i_VKQ_0 - i0_start)/2, stride_tile_V);
-                mma(A, A_trans, A_identity);
-#endif // defined(LDMATRIX_TRANS_AVAILABLE)
+                load_ldmatrix_trans(A, tile_V_i + 2*k0*stride_tile_V + (i_VKQ_0 - i0_start)/2, stride_tile_V);
+#endif // AMD_MFMA_AVAILABLE
                 if constexpr (T_B_KQ::I == 8) {
                     mma(VKQ_C[i_VKQ_0/i0_stride], A, B[k00/(np*T_A_VKQ::J)]);
                 } else {
