@@ -741,7 +741,6 @@ namespace ggml_cuda_mma {
             : "=r"(xi[0]), "=r"(xi[1])
             : "l"(xs));
 #elif defined(AMD_WMMA_AVAILABLE)
-        static_assert(sizeof(T) == 4, "bad type size");
 #ifdef RDNA3
         static_assert(sizeof(t.x) == 16, "bad ne");
         ggml_cuda_memcpy_1<8>(t.x + 0, xs0 + t.get_i(0)*stride + 0);
@@ -750,6 +749,9 @@ namespace ggml_cuda_mma {
         static_assert(sizeof(t.x) == 8, "bad ne");
         ggml_cuda_memcpy_1<8>(t.x, xs0 + t.get_i(0)*stride + t.get_j(0));
 #endif // RDNA3
+#elif defined(AMD_MFMA_AVAILABLE)
+        static_assert(sizeof(t.x) == 4, "bad ne");
+        ggml_cuda_memcpy_1<4>(t.x, xs0 + t.get_i(0)*stride + t.get_j(0));
 #else
         GGML_UNUSED_VARS(t, xs0, stride);
         NO_DEVICE_CODE;
@@ -766,11 +768,9 @@ namespace ggml_cuda_mma {
             : "=r"(xi[0]), "=r"(xi[1]), "=r"(xi[2]), "=r"(xi[3])
             : "l"(xs));
 #elif defined(VOLTA_MMA_AVAILABLE)
-        static_assert(sizeof(T) == 4, "bad type size");
         ggml_cuda_memcpy_1<4*sizeof(T)>(t.x + 0, xs0 + t.get_i(0)*stride + 0);
         ggml_cuda_memcpy_1<4*sizeof(T)>(t.x + 4, xs0 + t.get_i(4)*stride + 4);
 #elif defined(AMD_WMMA_AVAILABLE)
-        static_assert(sizeof(T) == 4, "bad type size");
 #ifdef RDNA3
         static_assert(dl == DATA_LAYOUT_I_MAJOR_MIRRORED, "bad data layout");
         static_assert(sizeof(t.x) == 32, "bad ne");
@@ -781,6 +781,9 @@ namespace ggml_cuda_mma {
         static_assert(sizeof(t.x) == 16, "bad ne");
         ggml_cuda_memcpy_1<16>(t.x, xs0 + t.get_i(0)*stride + t.get_j(0));
 #endif // RDNA3
+#elif defined(AMD_MFMA_AVAILABLE)
+        static_assert(sizeof(t.x) == 8, "bad ne");
+        ggml_cuda_memcpy_1<8>(t.x, xs0 + t.get_i(0)*stride + t.get_j(0));
 #else
         GGML_UNUSED_VARS(t, xs0, stride);
         NO_DEVICE_CODE;
