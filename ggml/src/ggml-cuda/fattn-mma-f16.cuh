@@ -363,9 +363,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
             if (transpose) {
 #pragma unroll
                 for (int i00 = 0; i00 < nbatch_fa; i00 += 2*nwarps*stride_i) {
-                    const int i0 = i00 + threadIdx.y*(2*stride_i) + 2*(stride_k == warp_size ? 0 : threadIdx.x / stride_k);
+                    const int i0 = i00 + threadIdx.y*(2*stride_i) + (stride_k == warp_size ? 0 : threadIdx.x / (stride_k/2));
 
-                    if (i00 + nwarps*stride_i > nbatch_fa && i0 >= nbatch_fa) {
+                    if (i00 + 2*nwarps*stride_i > nbatch_fa && i0 >= nbatch_fa) {
                         break;
                     }
 
