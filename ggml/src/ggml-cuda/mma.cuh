@@ -812,8 +812,9 @@ namespace ggml_cuda_mma {
 #elif defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
         half * xh = (half *) t.x;
 #pragma unroll
-        for (int l = 0; l < 2*t.ne; ++l) {
-            xh[l] = ((const half *) xs0)[l*2*stride + t.get_i(l)];
+        for (int l = 0; l < t.ne; ++l) {
+            xh[2*l + 0] = ((const half *) xs0)[(2*t.get_j(l) + 0)*(2*stride) + t.get_i(l)];
+            xh[2*l + 1] = ((const half *) xs0)[(2*t.get_j(l) + 1)*(2*stride) + t.get_i(l)];
         }
 #else
         GGML_UNUSED_VARS(t, xs0, stride);
