@@ -927,7 +927,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 
                 T_A_VKQ A; // Transposed in SRAM but not in registers, gets transposed on load.
 #if defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
-                load_ldmatrix(      A, tile_V_i +   k0*stride_tile_V +  i_VKQ_0 - i0_start,    stride_tile_V);
+                load_ldmatrix(A, tile_V_i + (i_VKQ_0 - i0_start)*stride_tile_V + k0, stride_tile_V);
 #else
                 load_ldmatrix_trans(A, tile_V_i + 2*k0*stride_tile_V + (i_VKQ_0 - i0_start)/2, stride_tile_V);
 #endif // AMD_MFMA_AVAILABLE
