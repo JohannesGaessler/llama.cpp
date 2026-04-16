@@ -739,13 +739,23 @@ namespace ggml_cuda_mma {
         asm volatile("ldmatrix.sync.aligned.m8n8.x2.b16 {%0, %1}, [%2];"
             : "=r"(xi[0]), "=r"(xi[1])
             : "l"(xs));
-#else
-#if defined(VOLTA_MMA_AVAILABLE)
+#elif defined(VOLTA_MMA_AVAILABLE)
         GGML_UNUSED_VARS(t, xs0, stride);
         NO_DEVICE_CODE;
+#elif defined(AMD_WMMA_AVAILABLE)
+        static_assert(sizeof(T) == 4, "bad type size");
+#ifdef RDNA3
+        static_assert(dl == DATA_LAYOUT_I_MAJOR_MIRRORED, "bad data layout");
+        static_assert(sizeof(t.x) == 16, "bad ne");
+        ggml_cuda_memcpy_1<8>(t.x + 0, xs0 + t.get_i(0)*stride + 0);
+        ggml_cuda_memcpy_1<8>(t.x + 2, xs0 + t.get_i(0)*stride + 2);
+#else
+        static_assert(dl == DATA_LAYOUT_I_MAJOR, "bad data layout");
+        static_assert(sizeof(t.x) == 8, "bad ne");
+        ggml_cuda_memcpy_1<8>(t.x, xs0 + t.get_i(0)*stride + t.get_j(0));
+#endif // RDNA3
 #else
         load_generic(t, xs0, stride);
-#endif // defined(VOLTA_MMA_AVAILABLE)
 #endif // TURING_MMA_AVAILABLE
     }
 
