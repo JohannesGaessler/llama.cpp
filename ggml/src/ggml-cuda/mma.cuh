@@ -798,18 +798,6 @@ namespace ggml_cuda_mma {
         asm volatile("ldmatrix.sync.aligned.m8n8.x4.trans.b16 {%0, %1, %2, %3}, [%4];"
             : "=r"(xi[0]), "=r"(xi[2]), "=r"(xi[1]), "=r"(xi[3])
             : "l"(xs));
-#elif defined(AMD_WMMA_AVAILABLE)
-        int * xi = (int *) t.x;
-#pragma unroll
-        for (int l = 0; l < t.ne; ++l) {
-            xi[l] = ((const int *) xs0)[t.get_j(l)*stride + t.get_i(l)];
-        }
-// #pragma unroll
-//         for (int l0 = 0; l0 < t.ne; l0 += 2) {
-//             const int tmp = __byte_perm(xi[l0 + 0], xi[l0 + 1], 0x00000145);
-//             xi[l0 + 1]    = __byte_perm(xi[l0 + 0], xi[l0 + 1], 0x00002367);
-//             xi[l0 + 0]    = tmp;
-//         }
 #else
         GGML_UNUSED_VARS(t, xs0, stride);
         NO_DEVICE_CODE;
