@@ -370,19 +370,19 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
                     }
 
 #pragma unroll
-                    for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
-                        const int k = k0 + (stride_k == warp_size ? threadIdx.x : threadIdx.x % stride_k);
+                    for (int k00 = 2*k0_start; k00 < 2*k0_stop; k00 += stride_k) {
+                        const int k0 = k00 + 2*(stride_k == warp_size ? threadIdx.x : threadIdx.x % stride_k);
 
                         const half2 zero = make_half2(0.0f, 0.0f);
                         int tmp[3];
-                        ggml_cuda_memcpy_1<sizeof(int)>(tmp + 0, !oob_check || i0 + 0 < i_sup ? KV + (i0 + 0)*stride_KV + k : &zero);
-                        ggml_cuda_memcpy_1<sizeof(int)>(tmp + 1, !oob_check || i0 + 1 < i_sup ? KV + (i0 + 1)*stride_KV + k : &zero);
+                        ggml_cuda_memcpy_1<sizeof(int)>(tmp + 0, !oob_check || i0 + 0 < i_sup ? KV + (i0 + 0)*stride_KV + k0/2 : &zero);
+                        ggml_cuda_memcpy_1<sizeof(int)>(tmp + 1, !oob_check || i0 + 1 < i_sup ? KV + (i0 + 1)*stride_KV + k0/2 : &zero);
 
                         tmp[2] = __byte_perm(tmp[0], tmp[1], 0x00000145);
                         tmp[1] = __byte_perm(tmp[0], tmp[1], 0x00002367);
 
-                        ggml_cuda_memcpy_1<sizeof(int)>(tile_KV + (2*k+0)*stride_tile + i0/2, tmp + 2);
-                        ggml_cuda_memcpy_1<sizeof(int)>(tile_KV + (2*k+1)*stride_tile + i0/2, tmp + 1);
+                        ggml_cuda_memcpy_1<sizeof(int)>(tile_KV + (k0 + 0)*stride_tile + i0/2, tmp + 2);
+                        ggml_cuda_memcpy_1<sizeof(int)>(tile_KV + (k0 + 1)*stride_tile + i0/2, tmp + 1);
                     }
                 }
             } else {
