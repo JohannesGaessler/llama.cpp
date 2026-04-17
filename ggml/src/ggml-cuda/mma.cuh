@@ -816,8 +816,14 @@ namespace ggml_cuda_mma {
             int tmp[2];
             tmp[0] = ((const int *) xs0)[(2*t.get_j(l0) + 2*(threadIdx.x % 2))*stride + t.get_i(l0)/2];
             tmp[1] = ((const int *) xs0)[(2*t.get_j(l0) + 2*(threadIdx.x % 2))*stride + t.get_i(l0)/2];
-            xi[l0 + 0] = tmp[0];
-            xi[l0 + 1] = tmp[1];
+            int selection_indices = 0x5410 + ((threadIdx.x % 2) * 0x2222);
+            int k = l0 + threadIdx.x % 2;
+            xi[k] = __byte_perm(tmp[0], tmp[1], selection_indices);
+
+            selection_indices ^= 0x2222;
+            k ^= 1;
+            xi[k] = __byte_perm(tmp[0], tmp[1], selection_indices);
+            xi[k] = __shfl_xor_sync(0xFFFFFFFF, xi[k], 2, 32);
         }
 #else
         GGML_UNUSED_VARS(t, xs0, stride);
