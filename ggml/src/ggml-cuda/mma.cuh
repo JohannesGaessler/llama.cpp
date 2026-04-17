@@ -1291,8 +1291,8 @@ namespace ggml_cuda_mma {
         using int32x4_t = __attribute__((__vector_size__(4 * sizeof(int)))) int;
         int32x4_t * acc = (int32x4_t *) D.x;
 #if defined(CDNA4) || defined(CDNA3)
-        const int64_t xA = uint32_t(A.x);
-        const int64_t xB = uint32_t(B.x);
+        const int64_t xA = uint32_t(A.x[0]);
+        const int64_t xB = uint32_t(B.x[0]);
         acc[0] = __builtin_amdgcn_mfma_i32_16x16x32_i8(xA, xB, acc[0], 0, 0, 0);
 #elif defined(CDNA2) || defined(CDNA1)
         acc[0] = __builtin_amdgcn_mfma_i32_16x16x16i8(A.x[0], B.x[0], acc[0], 0, 0, 0);
