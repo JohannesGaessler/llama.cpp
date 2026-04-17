@@ -349,6 +349,22 @@ static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
         // 6: max  1*16= 16 bytes,   8 half
         ggml_cuda_unroll<6>{}(load);
     } else {
+#ifdef RDNA4
+        if (transpose && nbatch_fa == nwarps * 16) {
+            using shortx8_t = __attribute__((ext_vector_type(8))) short;
+            const int i_KV   = threadIdx.y * 16 + (threadIdx.x & 4) * 2 + (threadIdx.x & 16) / 4 + (threadIdx.x % 4);
+            const int i_tile = threadIdx.y * 8 + (threadIdx.x / 16) * 4;
+#pragma unroll
+            for (int k00 = 0; k00 < D2; k00 += 8) {
+                const int k_tile = 2*k00 + threadIdx.x % 16;
+                const int k0_KV = k00 + (threadIdx.x & 8) / 2;
+                *((shortx8_t *) (tile_KV + k_tile * stride_tile + i_tile))
+                    = __builtin_amdgcn_global_load_tr_b128_v8i16((shortx8_t *) (KV + i_KV*stride_KV + k0_KV));
+            }
+            return;
+        }
+#endif // RDNA4
+
         // TODO use ggml_cuda_memcpy_1
         auto load = [&] __device__ (const int n) {
             const int stride_k = warp_size >> n;
