@@ -810,11 +810,11 @@ namespace ggml_cuda_mma {
             : "=r"(xi[0]), "=r"(xi[2]), "=r"(xi[1]), "=r"(xi[3])
             : "l"(xs));
 #elif defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
-        half * xh = (half *) t.x;
+        int * xi = (int *) t.x;
 #pragma unroll
         for (int l = 0; l < t.ne; ++l) {
-            xh[2*l + 0] = ((const half *) xs0)[(2*t.get_j(l) + 0)*(2*stride) + t.get_i(l)];
-            xh[2*l + 1] = ((const half *) xs0)[(2*t.get_j(l) + 1)*(2*stride) + t.get_i(l)];
+            const int tmp = ((const int *) xs0)[(2*t.get_j(l) + threadIdx.x % 2)*stride + t.get_i(l)/2];
+            xi[l] = tmp;
         }
 #else
         GGML_UNUSED_VARS(t, xs0, stride);
