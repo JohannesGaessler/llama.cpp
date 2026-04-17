@@ -812,9 +812,12 @@ namespace ggml_cuda_mma {
 #elif defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
         int * xi = (int *) t.x;
 #pragma unroll
-        for (int l = 0; l < t.ne; ++l) {
-            const int tmp = ((const int *) xs0)[(2*t.get_j(l) + threadIdx.x % 2)*stride + t.get_i(l)/2];
-            xi[l] = tmp;
+        for (int l0 = 0; l0 < t.ne; l0 += 2) {
+            int tmp[2];
+            tmp[0] = ((const int *) xs0)[(2*t.get_j(l0) + 2*(threadIdx.x % 2))*stride + t.get_i(l0)/2];
+            tmp[1] = ((const int *) xs0)[(2*t.get_j(l0) + 2*(threadIdx.x % 2))*stride + t.get_i(l0)/2];
+            xi[l0 + 0] = tmp[0];
+            xi[l0 + 1] = tmp[1];
         }
 #else
         GGML_UNUSED_VARS(t, xs0, stride);
