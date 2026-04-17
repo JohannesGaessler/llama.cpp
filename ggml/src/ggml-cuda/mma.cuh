@@ -718,9 +718,9 @@ namespace ggml_cuda_mma {
 #endif // TURING_MMA_AVAILABLE
     }
 
-    template <typename T>
+    template <typename T, data_layout dl>
     static __device__ __forceinline__ void load_ldmatrix(
-            tile<16, 4, T> & t, const T * __restrict__ xs0, const int stride) {
+            tile<16, 4, T, dl> & t, const T * __restrict__ xs0, const int stride) {
 #ifdef TURING_MMA_AVAILABLE
         int * xi = (int *) t.x;
         const int * xs = (const int *) xs0 + (threadIdx.x % t.I) * stride;
@@ -729,10 +729,12 @@ namespace ggml_cuda_mma {
             : "l"(xs));
 #elif defined(AMD_WMMA_AVAILABLE)
 #ifdef RDNA3
+        static_assert(dl == DATA_LAYOUT_I_MAJOR_MIRRORED, "bad data layout");
         static_assert(sizeof(t.x) == 16, "bad ne");
         ggml_cuda_memcpy_1<8>(t.x + 0, xs0 + t.get_i(0)*stride + 0);
         ggml_cuda_memcpy_1<8>(t.x + 2, xs0 + t.get_i(0)*stride + 2);
 #else
+        static_assert(dl == DATA_LAYOUT_I_MAJOR, "bad data layout");
         static_assert(sizeof(t.x) == 8, "bad ne");
         ggml_cuda_memcpy_1<8>(t.x, xs0 + t.get_i(0)*stride + t.get_j(0));
 #endif // RDNA3
