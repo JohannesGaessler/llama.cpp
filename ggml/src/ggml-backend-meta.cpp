@@ -1785,8 +1785,8 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
 
         if (max_nnodes_raised || n_subgraphs > backend_ctx->max_subgraphs) {
             backend_ctx->max_subgraphs = std::max(backend_ctx->max_subgraphs, n_subgraphs);
-            const size_t n_nodes_per_device = 2 * backend_ctx->n_reduce_steps; // tmp + ADD per step
-            const size_t n_cgraphs_per_device = backend_ctx->n_reduce_steps;    // 1 ADD graph per step
+            const size_t n_nodes_per_device = 3 * backend_ctx->n_reduce_steps; // tmp + ADD (+zeroing) graph per step and device
+            const size_t n_cgraphs_per_device = 2 * backend_ctx->n_reduce_steps; // ADD ( + zeroing) graph per step and device
             const size_t mem_per_device_graphs_main = backend_ctx->max_subgraphs*ggml_graph_overhead_custom(backend_ctx->max_nnodes, cgraph->grads);
             const size_t mem_per_device_graphs_aux = n_cgraphs_per_device*backend_ctx->max_subgraphs*ggml_graph_overhead_custom(1, cgraph->grads);
             const size_t mem_per_device_nodes_aux = n_nodes_per_device*backend_ctx->max_subgraphs*ggml_tensor_overhead();
