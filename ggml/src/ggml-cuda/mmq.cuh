@@ -3929,8 +3929,14 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
         return;
     }
 
-    const dim3 block_nums_stream_k(args.ids_dst == nullptr ? nsm : ntx*nty*ntzw, 1, 1);
-    const bool fixup_needed = ntx*nty*ntzw % nsm != 0;
+    // For the stream-k kernel it is possible to run it with tiling by setting the number of CUDA blocks equal to the number of tiles.
+    // This is worthwhile if the efficiency of tiling is high and skipping the fixup kernel is more important.
+    const int ntiles_dst = ntx * nty * ntzw;
+    const int tiles_nwaves = (ntiles_dst + nsm - 1) / nsm;
+    const int tiles_efficiency_percent = 100 * ntiles_dst / (nsm*tiles_nwaves);
+    const dim3 block_nums_stream_k(tiles_efficiency_percent >= 85 ? ntiles_dst : nsm, 1, 1);
+
+    const bool fixup_needed = ntiles_dst % block_nums_stream_k.x != 0;
     const uint3 nblocks_fd = init_fastdiv_values(block_nums_stream_k.x);
 
     ggml_cuda_pool & pool = ctx.pool(id);
