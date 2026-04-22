@@ -158,7 +158,7 @@ void ggml_cuda_mul_mat_q(
             ne00, ne01, ne1, s01, ne11, s1,
             ne02, ne12, s02, s12, s2,
             ne03, ne13, s03, s13, s3,
-            use_stream_k, ne1, ne1};
+            use_stream_k, ne1};
         ggml_cuda_mul_mat_q_switch_type(ctx, args, stream);
         return;
     }
@@ -212,18 +212,13 @@ void ggml_cuda_mul_mat_q(
                                            ne11 * ne10_padded * sizeof(block_q8_1) / (QK8_1 * sizeof(int));
     const int64_t s13 = ne12*s12;
 
-    // For MoE the number of active columns per expert is variable. To reduce wasted work, it may be worthwhile to
-    //     reduce the number of columns for tile size optimization by the fraction of actually used experts,
-    //     with an additional number of 2 to avoid excessive CUDA blocks due to noise at the boundary.
-    const int64_t ncols_opt = GGML_CUDA_CC_IS_NVIDIA(cc) ? 2 * ne12 * n_expert_used/ne02 : ne12;
-
     // Note that ne02 is used instead of ne12 because the number of y channels determines the z dimension of the CUDA grid.
     const mmq_args args = {
         src0_d, src0->type, (const int *) src1_q8_1.get(), ids_dst.get(), expert_bounds.get(), dst_d,
         ne00, ne01, ne_get_rows, s01, ne_get_rows, s1,
         ne02, ne02, s02, s12, s2,
         ne03, ne13, s03, s13, s3,
-        use_stream_k, ne12, ncols_opt};
+        use_stream_k, ne12};
 
     ggml_cuda_mul_mat_q_switch_type(ctx, args, stream);
 }
@@ -263,7 +258,7 @@ void ggml_cuda_op_mul_mat_q(
         ne00, row_diff, src1_ncols, stride01, ne11, nrows_dst,
         1, 1, 0, 0, 0,
         1, 1, 0, 0, 0,
-        use_stream_k, src1_ncols, src1_ncols};
+        use_stream_k, src1_ncols};
 
     ggml_cuda_mul_mat_q_switch_type(ctx, args, stream);
 
