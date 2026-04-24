@@ -1300,7 +1300,7 @@ namespace ggml_cuda_mma {
         const halfx16_t * xA = (const halfx16_t *) A.x;
         const halfx16_t * xB = (const halfx16_t *) B.x;
         xD[0] = __builtin_amdgcn_wmma_f16_16x16x16_f16_w32(xA[0], xB[0], xD[0], /*opsel =*/ 0);
-        xD[1] = __builtin_amdgcn_wmma_f16_16x16x16_f16_w32(xA[0], xB[1], xD[0], /*opsel =*/ 1);
+        xD[0] = __builtin_amdgcn_wmma_f16_16x16x16_f16_w32(xA[0], xB[1], xD[0], /*opsel =*/ 1);
 #else
         GGML_UNUSED_VARS(D, A, B);
         NO_DEVICE_CODE;
