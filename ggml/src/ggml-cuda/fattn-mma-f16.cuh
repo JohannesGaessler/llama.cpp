@@ -738,7 +738,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
                 if (!oob_check || k0 + (threadIdx.y % np)*T_C_KQ::J + T_C_KQ::get_j(l) < k_VKQ_sup) {
 #if defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
 #ifdef RDNA3
-                    const int KQ_idx = (l / (T_C_KQ::ne/2));
+                    const int KQ_idx = l / (T_C_KQ::ne/2);
 #else
                     constexpr int KQ_idx = 0;
 #endif // RDNA3
@@ -784,7 +784,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
                 if (!oob_check || k0 + (threadIdx.y % np)*T_C_KQ::J + T_C_KQ::get_j(l) < k_VKQ_sup) {
 #if defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
 #ifdef RDNA3
-                    const int KQ_idx = (l / (T_C_KQ::ne/2));
+                    const int KQ_idx = l / (T_C_KQ::ne/2);
 #else
                     constexpr int KQ_idx = 0;
 #endif // RDNA3

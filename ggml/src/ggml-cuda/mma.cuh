@@ -198,7 +198,7 @@ namespace ggml_cuda_mma {
             } else if constexpr (I == 16 && J == 16) {
                 return threadIdx.x % 16;
             } else if constexpr (I == 32 && J == 16) {
-                return (l & 16) + threadIdx.x % 16;
+                return (l / (ne/2)) * 16 + threadIdx.x % 16;
             } else {
                 NO_DEVICE_CODE;
                 return -1;
@@ -211,7 +211,7 @@ namespace ggml_cuda_mma {
             } else if constexpr (I == 16 && J == 8) {
                 // mmq input for RDNA4
                 return ne * (threadIdx.x / 16) + l;
-            } else if constexpr ((I == 32 || I == 16) && J == 16) {
+            } else if constexpr (I == 16 && J == 16) {
 #if defined(RDNA3)
                 if constexpr (std::is_same_v<T, float> || std::is_same_v<T, int>) {
                     // matrix C
@@ -224,6 +224,8 @@ namespace ggml_cuda_mma {
                 // matrix C is the transposed matrix A&B on RDNA4
                 return ne * (threadIdx.x / 16) + l;
 #endif // defined(RDNA3)
+            } else if constexpr (I == 32 && J == 16) {
+                return (l % (ne/2)) * 2 + (threadIdx.x / 16);
             } else {
                 NO_DEVICE_CODE;
                 return -1;
