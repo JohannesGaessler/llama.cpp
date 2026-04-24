@@ -747,7 +747,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             for (int l = 0; l < T_C_KQ::ne; ++l) {
                 if (!oob_check || k0 + (threadIdx.y % np)*T_C_KQ::J + T_C_KQ::get_j(l) < k_VKQ_sup) {
 #if defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
-                    constexpr int KQ_idx = 0;
+                    const int KQ_idx = (l / (T_C_KQ::ne/2)) % cols_per_warp; // Always 0 except for RDNA3.
 #else
                     // Turing + Volta:
                     const int KQ_idx = (l/2) % 2;
@@ -789,7 +789,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             for (int l = 0; l < T_C_KQ::ne; ++l) {
                 if (!oob_check || k0 + (threadIdx.y % np)*T_C_KQ::J + T_C_KQ::get_j(l) < k_VKQ_sup) {
 #if defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
-                    constexpr int KQ_idx = 0;
+                    const int KQ_idx = (l / (T_C_KQ::ne/2)) % cols_per_warp; // Always 0 except for RDNA3.
 #else
                     // Turing + Volta:
                     const int KQ_idx = (l/2) % 2;
@@ -841,13 +841,15 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             }
         }
 #elif defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
-        const half2 KQ_max_scale_h2 = make_half2(
-            KQ_max_scale[0], KQ_max_scale[0]);
 #pragma unroll
-        for (int i = 0; i < (DV/2)/T_C_VKQ::J; ++i) {
+        for (int col = 0; col < cols_per_thread; ++col) {
+            const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale[col], KQ_max_scale[col]);
 #pragma unroll
-            for (int l = 0; l < T_C_VKQ::ne; ++l) {
-                VKQ_C[i].x[l] *= KQ_max_scale_h2;
+            for (int i = 0; i < (DV/2)/T_C_VKQ::J; ++i) {
+#pragma unroll
+                for (int l = 0; l < T_C_VKQ::ne; ++l) {
+                    VKQ_C[i].x[col*(T_C_VKQ::ne/2) + l] *= KQ_max_scale_h2;
+                }
             }
         }
 #else // Volta
