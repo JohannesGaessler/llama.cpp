@@ -831,15 +831,16 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             }
         }
 #elif defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
+#ifdef RDNA3
+        const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale[threadIdx.x/16], KQ_max_scale[threadIdx.x/16]);
+#else
+        const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale[0], KQ_max_scale[0]);
+#endif // RDNA3
 #pragma unroll
-        for (int col = 0; col < cols_per_thread; ++col) {
-            const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale[col], KQ_max_scale[col]);
+        for (int i = 0; i < (DV/2)/T_C_VKQ::J; ++i) {
 #pragma unroll
-            for (int i = 0; i < (DV/2)/T_C_VKQ::J; ++i) {
-#pragma unroll
-                for (int l = 0; l < T_C_VKQ::ne; ++l) {
-                    VKQ_C[i].x[col*(T_C_VKQ::ne/2) + l] *= KQ_max_scale_h2;
-                }
+            for (int l = 0; l < T_C_VKQ::ne; ++l) {
+                VKQ_C[i].x[l] *= KQ_max_scale_h2;
             }
         }
 #else // Volta
