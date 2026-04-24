@@ -529,7 +529,6 @@ namespace ggml_cuda_mma {
             if (I == 16 && J ==  4) return true;
             if (I == 16 && J ==  8) return true;
             if (I == 16 && J == 16) return true;
-            if (I == 32 && J == 16) return true;
             return false;
         }
 
@@ -540,8 +539,6 @@ namespace ggml_cuda_mma {
                 return threadIdx.x % 16;
             } else if constexpr (I == 16 && J == 16) {
                 return threadIdx.x % 16;
-            } else if constexpr (I == 32 && J == 16) {
-                return (l & 16) + threadIdx.x % 16;
             } else {
                 NO_DEVICE_CODE;
                 return -1;
@@ -555,8 +552,6 @@ namespace ggml_cuda_mma {
                 return l;
             } else if constexpr (I == 16 && J == 16) {
                 return l;
-            } else if constexpr (I == 32 && J == 16) {
-                return l % 16;
             } else {
                 NO_DEVICE_CODE;
                 return -1;
