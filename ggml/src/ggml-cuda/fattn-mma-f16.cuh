@@ -1490,14 +1490,14 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
                     const int j = j0 + 0*(T_C_VKQ::I/2) + T_C_VKQ::get_i(0);
 #pragma unroll
                     for (int l = 0; l < T_C_VKQ::J; ++l) {
-                        tile_Q_h[j*(2*tile_stride) + 2*l + threadIdx.x/16] = __low2half(VKQ_C[(k00 + k1)/T_C_VKQ::J].x[l]);
+                        tile_Q_h[j*(2*tile_stride) + 2*l + threadIdx.x/16] = ((const half *) VKQ_C[(k00 + k1)/T_C_VKQ::J].x)[2*l + 0];
                     }
                 }
                 {
                     const int j = j0 + 1*(T_C_VKQ::I/2) + T_C_VKQ::get_i(0);
 #pragma unroll
                     for (int l = 0; l < T_C_VKQ::J; ++l) {
-                        tile_Q_h[j*(2*tile_stride) + 2*l + threadIdx.x/16] = __high2half(VKQ_C[(k00 + k1)/T_C_VKQ::J].x[l]);
+                        tile_Q_h[j*(2*tile_stride) + 2*l + threadIdx.x/16] = ((const half *) VKQ_C[(k00 + k1)/T_C_VKQ::J].x)[2*l + 1];
                     }
                 }
 #else
