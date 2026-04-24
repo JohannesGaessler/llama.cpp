@@ -682,13 +682,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 #pragma unroll
             for (int l = 0; l < T_C_KQ::ne; ++l) {
                 if (!oob_check || k0 + (threadIdx.y % np)*T_C_KQ::I + T_C_KQ::get_i(l) < k_VKQ_sup) {
-#if defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
-                    constexpr int KQ_idx = 0;
-#else
-                    // Turing + Volta:
-                    const int KQ_idx = l % 2;
-#endif // defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
-                    KQ_max_new[KQ_idx] = fmaxf(KQ_max_new[KQ_idx], KQ_C[k0/(np*T_C_KQ::I)].x[l] + FATTN_KQ_MAX_OFFSET);
+                    KQ_max_new[l % 2] = fmaxf(KQ_max_new[l % 2], KQ_C[k0/(np*T_C_KQ::I)].x[l] + FATTN_KQ_MAX_OFFSET);
                 }
             }
         }
@@ -708,14 +702,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 #pragma unroll
             for (int l = 0; l < T_C_KQ::ne; ++l) {
                 if (!oob_check || k0 + (threadIdx.y % np)*T_C_KQ::I + T_C_KQ::get_i(l) < k_VKQ_sup) {
-#if defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
-                    constexpr int KQ_idx = 0;
-#else
-                    // Turing + Volta:
-                    const int KQ_idx = l % 2;
-#endif // defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
-                    KQ_C[k0/(np*T_C_KQ::I)].x[l] = expf(KQ_C[k0/(np*T_C_KQ::I)].x[l] - KQ_max_new[KQ_idx]);
-                    KQ_rowsum_add[KQ_idx] += KQ_C[k0/(np*T_C_KQ::I)].x[l];
+                    KQ_C[k0/(np*T_C_KQ::I)].x[l] = expf(KQ_C[k0/(np*T_C_KQ::I)].x[l] - KQ_max_new[l % 2]);
+                    KQ_rowsum_add[l % 2] += KQ_C[k0/(np*T_C_KQ::I)].x[l];
                 } else {
                     KQ_C[k0/(np*T_C_KQ::I)].x[l] = 0.0f;
                 }
@@ -1294,7 +1282,12 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
             }
         }
 #elif defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
-        const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale[0], KQ_max_scale[0]);
+#ifdef RDNA3
+        const int KQ_idx = threadIdx.x / 16;
+#else
+        constexpr int KQ_idx = 0;
+#endif // RDNA3
+        const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale[KQ_idx], KQ_max_scale[KQ_idx]);
 #pragma unroll
         for (int i = 0; i < (DV/2)/T_C_VKQ::J; ++i) {
 #pragma unroll
@@ -1354,8 +1347,13 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const float2 KQ_cmr = make_float2(KQ_max[threadIdx.x % cols_per_thread], KQ_rowsum[threadIdx.x % cols_per_thread]);
         const bool thread_should_write = threadIdx.x % 4 < cols_per_thread;
 #elif defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
+#ifdef RDNA3
+        const int KQ_idx = threadIdx.x / 16;
+#else
+        constexpr int KQ_idx = 0;
+#endif // RDNA3
         const int jc_cwm = threadIdx.y*cols_per_warp + T_C_VKQ::get_i(0);
-        const float2 KQ_cmr = make_float2(KQ_max[0], KQ_rowsum[0]);
+        const float2 KQ_cmr = make_float2(KQ_max[KQ_idx], KQ_rowsum[KQ_idx]);
         const bool thread_should_write = threadIdx.x / 16 < cols_per_thread;
 #else // Volta
         const int jc_cwm = threadIdx.y*cols_per_warp + T_C_KQ::get_i(threadIdx.x & 2);
