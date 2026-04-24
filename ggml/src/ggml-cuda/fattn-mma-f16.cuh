@@ -1485,20 +1485,25 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 #pragma unroll
             for (int k1 = 0; k1 < nbatch_combine; k1 += T_C_VKQ::J) {
 #if defined(AMD_WMMA_AVAILABLE) && defined(RDNA3)
-                half * tile_Q_h = (half *) tile_Q;
+                {
+                    half tmp[T_C_VKQ::ne];
 #pragma unroll
-                for (int l = 0; l < T_C_VKQ::ne/2; ++l) {
-                    const int j = j0 + T_C_VKQ::get_i(l);
-                    const int k = 2*k1 + T_C_VKQ::get_j(l);
-
-                    tile_Q_h[j*(2*tile_stride) + k] = __low2half(VKQ_C[(k00 + k1)/T_C_VKQ::J].x[l]);
+                    for (int l = 0; l < T_C_VKQ::ne; ++l) {
+                        tmp[l] = __low2half(VKQ_C[(k00 + k1)/T_C_VKQ::J].x[l]);
+                    }
+                    const int j = j0 + 0*(T_C_VKQ::I/2) + T_C_VKQ::get_i(0);
+                    const int k = k1 + T_C_VKQ::get_j(0);
+                    ggml_cuda_memcpy_1<sizeof(tmp)>(tile_Q + j*tile_stride + k, tmp);
                 }
+                {
+                    half tmp[T_C_VKQ::ne];
 #pragma unroll
-                for (int l = T_C_VKQ::ne/2; l < T_C_VKQ::ne; ++l) {
-                    const int j = j0 + T_C_VKQ::get_i(l);
-                    const int k = 2*k1 + T_C_VKQ::get_j(l);
-
-                    tile_Q_h[j*(2*tile_stride) + k] = __high2half(VKQ_C[(k00 + k1)/T_C_VKQ::J].x[l]);
+                    for (int l = 0; l < T_C_VKQ::ne; ++l) {
+                        tmp[l] = __high2half(VKQ_C[(k00 + k1)/T_C_VKQ::J].x[l]);
+                    }
+                    const int j = j0 + 1*(T_C_VKQ::I/2) + T_C_VKQ::get_i(0);
+                    const int k = k1 + T_C_VKQ::get_j(0);
+                    ggml_cuda_memcpy_1<sizeof(tmp)>(tile_Q + j*tile_stride + k, tmp);
                 }
 #else
 #pragma unroll
