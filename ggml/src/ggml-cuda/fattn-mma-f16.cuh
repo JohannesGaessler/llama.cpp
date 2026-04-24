@@ -840,7 +840,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         }
 #elif defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
 #ifdef RDNA3
-        const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale[threadIdx.x/16], KQ_max_scale[threadIdx.x/16]);
+        const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale[0], KQ_max_scale[1]);
 #else
         const half2 KQ_max_scale_h2 = make_half2(KQ_max_scale[0], KQ_max_scale[0]);
 #endif // RDNA3
@@ -1484,6 +1484,23 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
             const int j0 = threadIdx.y*cols_per_warp;
 #pragma unroll
             for (int k1 = 0; k1 < nbatch_combine; k1 += T_C_VKQ::J) {
+#if defined(AMD_WMMA_AVAILABLE) && defined(RDNA3)
+                half * tile_Q_h = (half *) tile_Q;
+#pragma unroll
+                for (int l = 0; l < T_C_VKQ::ne/2; ++l) {
+                    const int j = j0 + T_C_VKQ::get_i(l);
+                    const int k = 2*k1 + T_C_VKQ::get_j(l);
+
+                    tile_Q_h[j*(2*tile_stride) + k] = __low2half(VKQ_C[(k00 + k1)/T_C_VKQ::J].x[l]);
+                }
+#pragma unroll
+                for (int l = T_C_VKQ::ne/2; l < T_C_VKQ::ne; ++l) {
+                    const int j = j0 + T_C_VKQ::get_i(l);
+                    const int k = 2*k1 + T_C_VKQ::get_j(l);
+
+                    tile_Q_h[j*(2*tile_stride) + k] = __high2half(VKQ_C[(k00 + k1)/T_C_VKQ::J].x[l]);
+                }
+#else
 #pragma unroll
                 for (int l = 0; l < T_C_VKQ::ne; ++l) {
                     const int j = j0 + T_C_VKQ::get_i(l);
@@ -1491,6 +1508,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
                     tile_Q[j*tile_stride + k] = VKQ_C[(k00 + k1)/T_C_VKQ::J].x[l];
                 }
+#endif // defined(AMD_WMMA_AVAILABLE) && defined(RDNA3)
             }
         }
 
