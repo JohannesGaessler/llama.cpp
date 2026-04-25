@@ -3575,8 +3575,8 @@ static __global__ void mul_mat_q(
     constexpr int blocks_per_iter = ITER_K / qk;
 
     // kbc == k block continuous, current index in continuous ijk space.
-    int64_t kbc      = int64_t(blockIdx.x)    *nsamples_y.z*nchannels_y.z*ntx.z*nty*blocks_per_ne00.z / gridDim.x;
-    int64_t kbc_stop = int64_t(blockIdx.x + 1)*nsamples_y.z*nchannels_y.z*ntx.z*nty*blocks_per_ne00.z / gridDim.x;
+    int kbc      = int64_t(blockIdx.x)    *nsamples_y.z*nchannels_y.z*ntx.z*nty*blocks_per_ne00.z / gridDim.x;
+    int kbc_stop = int64_t(blockIdx.x + 1)*nsamples_y.z*nchannels_y.z*ntx.z*nty*blocks_per_ne00.z / gridDim.x;
 
     kbc      -= fastmodulo(kbc,      blocks_per_ne00) % blocks_per_iter;
     kbc_stop -= fastmodulo(kbc_stop, blocks_per_ne00) % blocks_per_iter;
@@ -3935,6 +3935,8 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     const int tiles_nwaves = (ntiles_dst + nsm - 1) / nsm;
     const int tiles_efficiency_percent = 100 * ntiles_dst / (nsm*tiles_nwaves);
     const dim3 block_nums_stream_k(GGML_CUDA_CC_IS_NVIDIA(cc) && tiles_efficiency_percent >= 90 ? ntiles_dst : nsm, 1, 1);
+
+    GGML_ASSERT(ntiles_dst * blocks_per_ne00_fd.z < (1 << 30)); // Assert that variable kbc will not overflow.
 
     const bool fixup_needed = ntiles_dst % block_nums_stream_k.x != 0;
 
