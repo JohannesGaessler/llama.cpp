@@ -305,69 +305,17 @@ bool ggml_cuda_should_use_mmq(enum ggml_type type, int cc, int64_t ne11, int64_t
         return false;
     }
 
-    if (turing_mma_available(cc)) {
-        return true;
-    }
-
-    if (ggml_cuda_highest_compiled_arch(cc) < GGML_CUDA_CC_DP4A) {
-        return false;
-    }
-
 #ifdef GGML_CUDA_FORCE_MMQ
     return true;
 #endif //GGML_CUDA_FORCE_MMQ
+
+    if (turing_mma_available(cc) || amd_mfma_available(cc) || amd_wmma_available(cc)) {
+        return true;
+    }
 
     if (GGML_CUDA_CC_IS_NVIDIA(cc)) {
         return !fp16_mma_hardware_available(cc) || ne11 < MMQ_DP4A_MAX_BATCH_SIZE;
     }
 
-    if (amd_mfma_available(cc)) {
-        // As of ROCM 7.0 rocblas/tensile performs very poorly on CDNA3 and hipblaslt (via ROCBLAS_USE_HIPBLASLT)
-        // performs better but is currently suffering from a crash on this architecture.
-        // TODO: Revisit when hipblaslt is fixed on CDNA3
-        if (GGML_CUDA_CC_IS_CDNA3(cc)) {
-            return true;
-        }
-        if (n_experts > 64 || ne11 <= 128) {
-            return true;
-        }
-        if (type == GGML_TYPE_Q4_0 || type == GGML_TYPE_Q4_1 || type == GGML_TYPE_Q5_0 || type == GGML_TYPE_Q5_1) {
-            return true;
-        }
-        if (ne11 <= 256 && (type == GGML_TYPE_Q4_K || type == GGML_TYPE_Q5_K)) {
-            return true;
-        }
-        return false;
-    }
-
-    if (amd_wmma_available(cc)) {
-        if (GGML_CUDA_CC_IS_RDNA3(cc)) {
-            // High expert counts are almost always better on MMQ due to
-            //     the synchronization overhead in the cuBLAS/hipBLAS path:
-            // https://github.com/ggml-org/llama.cpp/pull/18202
-            if (n_experts >= 64) {
-                return true;
-            }
-
-            // For some quantization types MMQ can have lower peak TOPS than hipBLAS
-            //     so it's only faster for sufficiently small batch sizes:
-            switch (type) {
-                case GGML_TYPE_Q2_K:
-                    return ne11 <= 128;
-                case GGML_TYPE_Q6_K:
-                    return ne11 <= (GGML_CUDA_CC_IS_RDNA3_0(cc) ? 128 : 256);
-                case GGML_TYPE_IQ2_XS:
-                case GGML_TYPE_IQ2_S:
-                    return GGML_CUDA_CC_IS_RDNA3_5(cc) || ne11 <= 128;
-                default:
-                    return true;
-            }
-        }
-
-        // For RDNA4 MMQ is consistently faster than dequantization + hipBLAS:
-        // https://github.com/ggml-org/llama.cpp/pull/18537#issuecomment-3706422301
-        return true;
-    }
-
-    return (!GGML_CUDA_CC_IS_CDNA(cc)) || ne11 < MMQ_DP4A_MAX_BATCH_SIZE;
+    return ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_DP4A || ne11 < MMQ_DP4A_MAX_BATCH_SIZE;
 }
