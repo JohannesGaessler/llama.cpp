@@ -3416,6 +3416,8 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
 
     float sum[mmq_x*mmq_y / (nwarps*warp_size)] = {0.0f};
 
+    constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
+    constexpr int cpy_ne = cpy_nb / 4;
     constexpr int sz = sizeof(block_q8_1_mmq) / sizeof(int);
 
     for (int kb0 = kb0_start; kb0 < kb0_stop; kb0 += blocks_per_iter) {
@@ -3423,10 +3425,12 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
         {
             const int * by0 = y + ncols_y * (kb0 * qk / ne_block) * sz;
 #pragma unroll
-            for (int l0 = 0; l0 < mmq_x * MMQ_TILE_Y_K; l0 += nwarps * warp_size) {
-                int l = l0 + threadIdx.y*warp_size + threadIdx.x;
+            for (int l00 = 0; l00 < mmq_x*MMQ_TILE_Y_K; l00 += nwarps*warp_size*cpy_ne) {
+                const int l0 = l00 + threadIdx.y*(warp_size*cpy_ne) + threadIdx.x*(cpy_ne);
 
-                tile_y[l] = by0[l];
+                if (l00 + nwarps*warp_size*cpy_ne <= mmq_x*MMQ_TILE_Y_K || l0 < mmq_x*MMQ_TILE_Y_K) {
+                    ggml_cuda_memcpy_1<cpy_nb>(tile_y + l0, by0 + l0);
+                }
             }
         }
 
@@ -3439,10 +3443,12 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
         {
             const int * by0 = y + ncols_y * ((kb0 * qk / ne_block) * sz + sz);
 #pragma unroll
-            for (int l0 = 0; l0 < mmq_x * MMQ_TILE_Y_K; l0 += nwarps * warp_size) {
-                int l = l0 + threadIdx.y*warp_size + threadIdx.x;
+            for (int l00 = 0; l00 < mmq_x*MMQ_TILE_Y_K; l00 += nwarps*warp_size*cpy_ne) {
+                const int l0 = l00 + threadIdx.y*(warp_size*cpy_ne) + threadIdx.x*(cpy_ne);
 
-                tile_y[l] = by0[l];
+                if (l00 + nwarps*warp_size*cpy_ne <= mmq_x*MMQ_TILE_Y_K || l0 < mmq_x*MMQ_TILE_Y_K) {
+                    ggml_cuda_memcpy_1<cpy_nb>(tile_y + l0, by0 + l0);
+                }
             }
         }
 
