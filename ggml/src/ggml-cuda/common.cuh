@@ -357,6 +357,13 @@ static constexpr __device__ int ggml_cuda_get_max_cpy_bytes() {
 #endif // GGML_USE_HIP
 }
 
+static constexpr __host__ int ggml_cuda_get_max_cpy_bytes(int cc) {
+    if (GGML_CUDA_CC_IS_AMD(cc)) {
+        return 16;
+    }
+    return cc >= GGML_CUDA_CC_VOLTA ? 16 : 8;
+}
+
 
 [[noreturn]]
 static __device__ void no_device_code(
