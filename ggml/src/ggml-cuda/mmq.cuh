@@ -3,6 +3,7 @@
 #include "common.cuh"
 #include "vecdotq.cuh"
 #include "mma.cuh"
+#include "cp-async.cuh"
 
 #include <climits>
 #include <cstdint>
@@ -3425,11 +3426,22 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
         constexpr int ne8  =               ne4 - ne4 % (nwarps*warp_size*2);
         constexpr int ne16 = cpy_ne >= 4 ? ne8 - ne8 % (nwarps*warp_size*4) : 0;
         if constexpr (cpy_ne >= 4) {
+#ifdef CP_ASYNC_AVAILABLE
+            constexpr int preload = 0;
+            const unsigned int tile_y_32 = ggml_cuda_cvta_generic_to_shared(tile_y);
+
+#pragma unroll
+            for (int l00 = 0; l00 < ne16; l00 += nwarps*warp_size*4) {
+                const int l0 = l00 + threadIdx.y*(warp_size*4) + threadIdx.x*(4);
+                cp_async_cg_16<preload>(tile_y_32 + l0*sizeof(int), y0 + l0);
+            }
+#else
 #pragma unroll
             for (int l00 = 0; l00 < ne16; l00 += nwarps*warp_size*4) {
                 const int l0 = l00 + threadIdx.y*(warp_size*4) + threadIdx.x*(4);
                 ggml_cuda_memcpy_1<4*sizeof(int)>(tile_y + l0, y0 + l0);
             }
+#endif // CP_ASYNC_AVAILABLE
         }
 #pragma unroll
         for (int l00 = ne16; l00 < ne8; l00 += nwarps*warp_size*2) {
@@ -3441,6 +3453,9 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
             const int l0 = l00 + threadIdx.y*(warp_size*1) + threadIdx.x*(1);
             ggml_cuda_memcpy_1<1*sizeof(int)>(tile_y + l0, y0 + l0);
         }
+#ifdef CP_ASYNC_AVAILABLE
+        cp_async_wait_all();
+#endif CP_ASYNC_AVAILABLE
     };
 
     for (int kb0 = kb0_start; kb0 < kb0_stop; kb0 += blocks_per_iter) {
