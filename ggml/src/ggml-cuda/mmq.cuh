@@ -3427,7 +3427,7 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
         constexpr int ne16 = cpy_ne >= 4 ? ne8 - ne8 % (nwarps*warp_size*4) : 0;
         if constexpr (cpy_ne >= 4) {
 #ifdef CP_ASYNC_AVAILABLE
-            constexpr int preload = 0;
+            constexpr int preload = 256;
             const unsigned int tile_y_32 = ggml_cuda_cvta_generic_to_shared(tile_y);
 
 #pragma unroll
