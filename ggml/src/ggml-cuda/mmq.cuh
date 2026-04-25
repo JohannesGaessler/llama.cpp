@@ -3391,12 +3391,10 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
     constexpr int              qk         = ggml_cuda_type_traits<type>::qk;
     constexpr int              mmq_y      = get_mmq_y_device();
     constexpr load_tiles_mmq_t load_tiles = mmq_type_traits<mmq_x, mmq_y, need_check, type>::load_tiles;
-    constexpr int              cpy_nb     = ggml_cuda_get_max_cpy_bytes();
-    constexpr int              cpy_ne     = cpy_nb / 4;
 
     extern __shared__ int data_mul_mat_q[];
     int * tile_y = data_mul_mat_q + mmq_x;
-    int * tile_x = tile_y + GGML_PAD(mmq_x*MMQ_TILE_Y_K, nwarps*warp_size*cpy_ne);
+    int * tile_x = tile_y + GGML_PAD(mmq_x*MMQ_TILE_Y_K, nwarps*warp_size);
 
 #if defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     constexpr vec_dot_mmq_t    vec_dot    = mmq_type_traits<mmq_x, mmq_y, need_check, type>::vec_dot_mma;
@@ -3418,19 +3416,37 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
 
     float sum[mmq_x*mmq_y / (nwarps*warp_size)] = {0.0f};
 
+    constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
+    constexpr int cpy_ne = cpy_nb / 4;
     constexpr int sz = sizeof(block_q8_1_mmq) / sizeof(int);
+
+    auto load_y = [&](const int * __restrict__ y0) {
+        constexpr int ne4  =               mmq_x*MMQ_TILE_Y_K;
+        constexpr int ne8  =               0;
+//         constexpr int ne8  =               ne4 - ne4 % nwarps*warp_size*2;
+//         constexpr int ne16 = cpy_ne >= 4 ? ne8 - ne8 % nwarps*warp_size*4 : 0;
+//         if constexpr (cpy_ne >= 4) {
+// #pragma unroll
+//             for (int l00 = 0; l00 < ne16; l00 += nwarps*warp_size*4) {
+//                 const int l0 = l00 + threadIdx.y*(warp_size*4) + threadIdx.x*(4);
+//                 ggml_cuda_memcpy_1<4*sizeof(int)>(tile_y + l0, y0 + l0);
+//             }
+//         }
+// #pragma unroll
+//         for (int l00 = ne16; l00 < ne8; l00 += nwarps*warp_size*2) {
+//             const int l0 = l00 + threadIdx.y*(warp_size*2) + threadIdx.x*(2);
+//             ggml_cuda_memcpy_1<2*sizeof(int)>(tile_y + l0, y0 + l0);
+//         }
+#pragma unroll
+        for (int l00 = ne8; l00 < ne4; l00 += nwarps*warp_size*1) {
+            const int l0 = l00 + threadIdx.y*(warp_size*1) + threadIdx.x*(1);
+            ggml_cuda_memcpy_1<1*sizeof(int)>(tile_y + l0, y0 + l0);
+        }
+    };
 
     for (int kb0 = kb0_start; kb0 < kb0_stop; kb0 += blocks_per_iter) {
         load_tiles(x, tile_x, offset_x + kb0, tile_x_max_i, stride_row_x);
-        {
-            const int * by0 = y + ncols_y * (kb0 * qk / ne_block) * sz;
-#pragma unroll
-            for (int l00 = 0; l00 < mmq_x*MMQ_TILE_Y_K; l00 += nwarps*warp_size*cpy_ne) {
-                const int l0 = l00 + threadIdx.y*(warp_size*cpy_ne) + threadIdx.x*(cpy_ne);
-
-                ggml_cuda_memcpy_1<cpy_nb>(tile_y + l0, by0 + l0);
-            }
-        }
+        load_y(y + ncols_y * (kb0 * qk / ne_block) * sz);
 
         __syncthreads();
 
@@ -3438,15 +3454,7 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
 
         __syncthreads();
 
-        {
-            const int * by0 = y + ncols_y * ((kb0 * qk / ne_block) * sz + sz);
-#pragma unroll
-            for (int l00 = 0; l00 < mmq_x*MMQ_TILE_Y_K; l00 += nwarps*warp_size*cpy_ne) {
-                const int l0 = l00 + threadIdx.y*(warp_size*cpy_ne) + threadIdx.x*(cpy_ne);
-
-                ggml_cuda_memcpy_1<cpy_nb>(tile_y + l0, by0 + l0);
-            }
-        }
+        load_y(y + ncols_y * ((kb0 * qk / ne_block) * sz + sz));
 
         __syncthreads();
 
@@ -3874,7 +3882,7 @@ static size_t mmq_get_nbytes_shared(const int mmq_x, const int mmq_y, const int 
     const size_t nbs_ids = mmq_x*sizeof(int);
     const size_t nbs_x = (turing_mma_available(cc) || amd_mfma_available(cc) || amd_wmma_available(cc)) ? mmq_y*mmq_tile_x_k*sizeof(int) : txs.qs*sizeof(int) + txs.dm*sizeof(half2) + txs.sc*sizeof(int);
     const size_t nbs_y = mmq_x * (sizeof(block_q8_1_mmq));
-    return nbs_ids + nbs_x + GGML_PAD(nbs_y, nwarps*warp_size*ggml_cuda_get_max_cpy_bytes(cc));
+    return nbs_ids + nbs_x + GGML_PAD(nbs_y, nwarps*warp_size*sizeof(int));
 }
 
 template <ggml_type type, int mmq_x>
