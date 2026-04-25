@@ -288,7 +288,7 @@ static constexpr __device__ int mmq_get_granularity_device(const int /*mmq_x*/) 
 
 #if defined(GGML_USE_HIP)
 static int mmq_get_nwarps_host(const int cc, const int warp_size) {
-    return amd_mfma_available(cc) ? 8 : 256/warp_size;
+    return amd_mfma_available(cc) || amd_wmma_available(cc) ? 8 : 256/warp_size;
 }
 #else
 static int mmq_get_nwarps_host(const int /*cc*/, const int warp_size) {
