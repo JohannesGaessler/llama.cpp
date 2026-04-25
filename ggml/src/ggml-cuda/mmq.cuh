@@ -3422,21 +3422,20 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
 
     auto load_y = [&](const int * __restrict__ y0) {
         constexpr int ne4  =               mmq_x*MMQ_TILE_Y_K;
-        constexpr int ne8  =               0;
-//         constexpr int ne8  =               ne4 - ne4 % nwarps*warp_size*2;
-//         constexpr int ne16 = cpy_ne >= 4 ? ne8 - ne8 % nwarps*warp_size*4 : 0;
-//         if constexpr (cpy_ne >= 4) {
-// #pragma unroll
-//             for (int l00 = 0; l00 < ne16; l00 += nwarps*warp_size*4) {
-//                 const int l0 = l00 + threadIdx.y*(warp_size*4) + threadIdx.x*(4);
-//                 ggml_cuda_memcpy_1<4*sizeof(int)>(tile_y + l0, y0 + l0);
-//             }
-//         }
-// #pragma unroll
-//         for (int l00 = ne16; l00 < ne8; l00 += nwarps*warp_size*2) {
-//             const int l0 = l00 + threadIdx.y*(warp_size*2) + threadIdx.x*(2);
-//             ggml_cuda_memcpy_1<2*sizeof(int)>(tile_y + l0, y0 + l0);
-//         }
+        constexpr int ne8  =               ne4 - ne4 % (nwarps*warp_size*2);
+        constexpr int ne16 = cpy_ne >= 4 ? ne8 - ne8 % (nwarps*warp_size*4) : 0;
+        if constexpr (cpy_ne >= 4) {
+#pragma unroll
+            for (int l00 = 0; l00 < ne16; l00 += nwarps*warp_size*4) {
+                const int l0 = l00 + threadIdx.y*(warp_size*4) + threadIdx.x*(4);
+                ggml_cuda_memcpy_1<4*sizeof(int)>(tile_y + l0, y0 + l0);
+            }
+        }
+#pragma unroll
+        for (int l00 = ne16; l00 < ne8; l00 += nwarps*warp_size*2) {
+            const int l0 = l00 + threadIdx.y*(warp_size*2) + threadIdx.x*(2);
+            ggml_cuda_memcpy_1<2*sizeof(int)>(tile_y + l0, y0 + l0);
+        }
 #pragma unroll
         for (int l00 = ne8; l00 < ne4; l00 += nwarps*warp_size*1) {
             const int l0 = l00 + threadIdx.y*(warp_size*1) + threadIdx.x*(1);
