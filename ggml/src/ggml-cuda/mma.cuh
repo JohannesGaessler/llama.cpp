@@ -662,6 +662,21 @@ namespace ggml_cuda_mma {
 
         return ret;
     }
+#elif defined(AMD_WMMA_AVAILABLE) && defined(RDNA3)
+    static __device__ __forceinline__ tile<16, 8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED> get_half2(
+            const tile<16, 16, float, DATA_LAYOUT_I_MAJOR> & tile_float) {
+        tile<16, 8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED> ret;
+#pragma unroll
+        for (int l = 0; l < tile_float.ne; ++l) {
+            float tmp[2];
+            int i = threadIdx.x / 16;
+            tmp[i] = tile_float.x[l];
+            i ^= 1;
+            tmp[i] = __shfl_xor_sync(0xFFFFFFFF, tile_float.x[l], 16, WARP_SIZE);
+            ret.x[l] = make_half2(tmp[0], tmp[1]);
+        }
+        return ret;
+    }
 #elif defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
     template <int I, int J>
     static __device__ __forceinline__ tile<I, J/2, half2> get_half2(const tile<I, J, float> & tile_float) {
@@ -802,16 +817,18 @@ namespace ggml_cuda_mma {
 #endif // defined(VOLTA_MMA_AVAILABLE)
     }
 
-    template <typename T>
+    template <typename T, data_layout dl>
     static __device__ __forceinline__ void load_ldmatrix_trans(
-            tile<16, 8, T> & t, const T * __restrict__ xs0, const int stride) {
+            tile<16, 8, T, dl> & t, const T * __restrict__ xs0, const int stride) {
 #ifdef TURING_MMA_AVAILABLE
+        static_assert(dl == DATA_LAYOUT_I_MAJOR, "bad data layout");
         int * xi = (int *) t.x;
         const int * xs = (const int *) xs0 + (threadIdx.x % t.I) * stride + (threadIdx.x / t.I) * (t.J / 2);
         asm volatile("ldmatrix.sync.aligned.m8n8.x4.trans.b16 {%0, %1, %2, %3}, [%4];"
             : "=r"(xi[0]), "=r"(xi[2]), "=r"(xi[1]), "=r"(xi[3])
             : "l"(xs));
 #elif defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
+        static_assert(dl == DATA_LAYOUT_I_MAJOR || dl == DATA_LAYOUT_I_MAJOR_MIRRORED, "bad data layout");
         half * xh = (half *) t.x;
 #pragma unroll
         for (int l = 0; l < t.ne; ++l) {
