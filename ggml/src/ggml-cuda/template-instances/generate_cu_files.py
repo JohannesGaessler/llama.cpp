@@ -78,8 +78,6 @@ for ncols in [8, 16, 32, 64]:
         ncols1 = ncols // ncols2
         with open(f"fattn-mma-f16-instance-ncols1_{ncols1}-ncols2_{ncols2}.cu", "w") as f:
             f.write(SOURCE_FATTN_MMA_START)
-            if ncols == 8:
-                f.write("#ifndef GGML_USE_HIP\n")
 
             for head_size_kq in HEAD_SIZES_KQ:
                 if head_size_kq == 40:
@@ -94,9 +92,6 @@ for ncols in [8, 16, 32, 64]:
                     continue
                 head_size_v = head_size_kq if head_size_kq != 576 else 512
                 f.write(SOURCE_FATTN_MMA_CASE.format(ncols1=ncols1, ncols2=ncols2, head_size_kq=head_size_kq, head_size_v=head_size_v))
-
-            if ncols == 8:
-                f.write("#endif // GGML_USE_HIP\n")
 
 for type in TYPES_MMQ:
     with open(f"mmq-instance-{get_short_name(type)}.cu", "w") as f:
