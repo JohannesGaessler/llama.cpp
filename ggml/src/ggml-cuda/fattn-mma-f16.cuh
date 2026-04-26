@@ -266,21 +266,27 @@ static constexpr __device__ bool ggml_cuda_fattn_mma_get_Q_in_reg(const int DKQ,
     return ggml_cuda_fattn_mma_get_config(DKQ, DV, ncols).Q_in_reg;
 }
 
-static constexpr __device__ int get_cols_per_thread() {
-#if defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
-    return 1; // AMD has a single column per thread.
+// This function returns KQ columns per thread, e.g. Volta only has a single VKQ column.
+static constexpr __device__ int get_cols_per_thread(int ncols) {
+#if defined(AMD_WMMA_AVAILABLE) && defined(RDNA3)
+    return ncols == 16 ? 1 : 2; // 1x/2x logical tiles 16x16 with 1 column per thread.
+#elif defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
+    return 1; // 2x logical 16x16 tiles with 1 column per thread.
 #else
-    return 2; // This is specifically KQ columns, Volta only has a single VKQ column.
+    return 2;
 #endif // defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
+    GGML_UNUSED(ncols);
 }
 
-static __host__ int get_cols_per_warp(const int cc) {
-    if (turing_mma_available(cc) || amd_wmma_available(cc) || amd_mfma_available(cc)) {
-        return 16;
-    } else {
-        // Volta
-        return 32;
+static __host__ int get_cols_per_warp(const int cc, const int ncols) {
+    if (amd_wmma_available(cc)) {
+        return GGML_CUDA_CC_IS_RDNA3(cc) && ncols > 16 ? 32 : 16;
     }
+    if (turing_mma_available(cc) || amd_mfma_available(cc)) {
+        return 16;
+    }
+    // Volta
+    return 32;
 }
 
 // ------------------------------------------------------------------------------------------------------------------
@@ -500,7 +506,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     constexpr int  warp_size       = ggml_cuda_get_physical_warp_size();
     constexpr int  ncols           = ncols1 * ncols2;
     constexpr int  cols_per_warp   = T_B_KQ::I;
-    constexpr int  cols_per_thread = get_cols_per_thread();
+    constexpr int  cols_per_thread = get_cols_per_thread(ncols);
     constexpr int  np              = cols_per_warp > ncols ? nwarps : nwarps * cols_per_warp/ncols; // Number of parallel CUDA warps per Q column.
     constexpr int  nbatch_fa       = ggml_cuda_fattn_mma_get_nbatch_fa(DKQ, DV, ncols);
     constexpr int  nbatch_K2       = ggml_cuda_fattn_mma_get_nbatch_K2(DKQ, DV, ncols);
@@ -719,7 +725,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             for (int l = 0; l < T_C_KQ::ne; ++l) {
                 if (!oob_check || k0 + (threadIdx.y % np)*T_C_KQ::J + T_C_KQ::get_j(l) < k_VKQ_sup) {
 #if defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
-                    constexpr int KQ_idx = 0;
+                    const int KQ_idx = l / (T_C_KQ::ne/cols_per_thread);
 #else
                     // Turing + Volta:
                     const int KQ_idx = (l/2) % 2;
@@ -761,7 +767,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             for (int l = 0; l < T_C_KQ::ne; ++l) {
                 if (!oob_check || k0 + (threadIdx.y % np)*T_C_KQ::J + T_C_KQ::get_j(l) < k_VKQ_sup) {
 #if defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
-                    constexpr int KQ_idx = 0;
+                    const int KQ_idx = l / (T_C_KQ::ne/cols_per_thread);
 #else
                     // Turing + Volta:
                     const int KQ_idx = (l/2) % 2;
@@ -828,7 +834,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             for (int i = 0; i < DV/T_C_VKQ::J; ++i) {
 #pragma unroll
                 for (int l = 0; l < T_C_VKQ::ne; ++l) {
-                    VKQ_C[i].x[l] *= KQ_max_scale[0];
+                    VKQ_C[i].x[l] *= KQ_max_scale[l / (T_C_VKQ::ne/cols_per_thread)];
                 }
             }
         }
@@ -971,6 +977,14 @@ template<> struct mma_tile_sizes<8> {
 #elif defined(AMD_WMMA_AVAILABLE) && defined(RDNA3)
 template<int ncols> struct mma_tile_sizes {
     using T_A_KQ  = tile<16,  8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED>; // row-major
+    using T_B_KQ  = tile<32,  8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED>; // column-major
+    using T_C_KQ  = tile<32, 16, float, DATA_LAYOUT_I_MAJOR>;          // column-major
+    using T_A_VKQ = tile<16,  8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED>; // row-major
+    using T_B_VKQ = tile<32,  8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED>; // column-major
+    using T_C_VKQ = tile<32, 16, float, DATA_LAYOUT_I_MAJOR>;          // column-major
+};
+template<> struct mma_tile_sizes<16> {
+    using T_A_KQ  = tile<16,  8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED>; // row-major
     using T_B_KQ  = tile<16,  8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED>; // column-major
     using T_C_KQ  = tile<16, 16, float, DATA_LAYOUT_I_MAJOR>;          // column-major
     using T_A_VKQ = tile<16,  8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED>; // row-major
@@ -1035,7 +1049,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     using     T_C_VKQ   = typename mma_tile_sizes<ncols>::T_C_VKQ;
 
     constexpr int  cols_per_warp   = T_B_KQ::I;
-    constexpr int  cols_per_thread = get_cols_per_thread();
+    constexpr int  cols_per_thread = get_cols_per_thread(ncols);
     constexpr int  np              = cols_per_warp > ncols ? nwarps : nwarps * cols_per_warp/ncols; // Number of parallel CUDA warps per Q column.
     constexpr int  nbatch_fa       = ggml_cuda_fattn_mma_get_nbatch_fa     (DKQ, DV, ncols);
     constexpr int  nbatch_K2       = ggml_cuda_fattn_mma_get_nbatch_K2     (DKQ, DV, ncols);
@@ -1290,7 +1304,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
             for (int i = 0; i < DV/T_C_VKQ::J; ++i) {
 #pragma unroll
                 for (int l = 0; l < T_C_VKQ::ne; ++l) {
-                    VKQ_C[i].x[l] *= KQ_max_scale[0];
+                    VKQ_C[i].x[l] *= KQ_max_scale[l / (T_C_VKQ::ne/cols_per_thread)];
                 }
             }
         }
@@ -1347,8 +1361,8 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         const bool thread_should_write = threadIdx.x % 4 < cols_per_thread;
 #elif defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
         const int jc_cwm = threadIdx.y*cols_per_warp + T_C_VKQ::get_i(0);
-        const float2 KQ_cmr = make_float2(KQ_max[0], KQ_rowsum[0]);
-        const bool thread_should_write = threadIdx.x / 16 < cols_per_thread;
+        const float2 KQ_cmr = make_float2(KQ_max[threadIdx.x/16], KQ_rowsum[threadIdx.x/16]);
+        const bool thread_should_write = cols_per_thread*16 >= warp_size || threadIdx.x/16 < cols_per_thread;
 #else // Volta
         const int jc_cwm = threadIdx.y*cols_per_warp + T_C_KQ::get_i(threadIdx.x & 2);
         const float2 KQ_cmr = make_float2(KQ_max[(threadIdx.x & 2) / 2], KQ_rowsum[(threadIdx.x & 2) / 2]);
@@ -1763,7 +1777,7 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     const bool Q_in_reg       = ggml_cuda_fattn_mma_get_Q_in_reg      (DKQ, DV, ncols, cc);
     const int  nstages        = ggml_cuda_fattn_mma_get_nstages       (DKQ, DV, ncols1, ncols2, cc);
 
-    const int cols_per_warp = std::min(ncols, get_cols_per_warp(cc));
+    const int cols_per_warp = std::min(ncols, get_cols_per_warp(cc, ncols));
     const int warp_size_host = ggml_cuda_info().devices[ctx.device].warp_size;
     const int nwarps         = nthreads / warp_size_host;
 
