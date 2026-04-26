@@ -725,7 +725,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             for (int l = 0; l < T_C_KQ::ne; ++l) {
                 if (!oob_check || k0 + (threadIdx.y % np)*T_C_KQ::J + T_C_KQ::get_j(l) < k_VKQ_sup) {
 #if defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
-                    const int KQ_idx = l / (T_C_KQ::ne/cols_per_thread);
+                    const int KQ_idx = l / (T_C_VKQ::ne/cols_per_thread);
 #else
                     // Turing + Volta:
                     const int KQ_idx = (l/2) % 2;
@@ -767,7 +767,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             for (int l = 0; l < T_C_KQ::ne; ++l) {
                 if (!oob_check || k0 + (threadIdx.y % np)*T_C_KQ::J + T_C_KQ::get_j(l) < k_VKQ_sup) {
 #if defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
-                    const int KQ_idx = l / (T_C_KQ::ne/cols_per_thread);
+                    const int KQ_idx = l / (T_C_VKQ::ne/cols_per_thread);
 #else
                     // Turing + Volta:
                     const int KQ_idx = (l/2) % 2;
@@ -1362,7 +1362,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 #elif defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
         const int jc_cwm = threadIdx.y*cols_per_warp + T_C_VKQ::get_i(0);
         const float2 KQ_cmr = make_float2(KQ_max[threadIdx.x/16], KQ_rowsum[threadIdx.x/16]);
-        const bool thread_should_write = cols_per_thread*16 >= warp_size || threadIdx.x/16 < cols_per_thread;
+        const bool thread_should_write = warp_size/16 <= cols_per_thread || threadIdx.x/16 < cols_per_thread;
 #else // Volta
         const int jc_cwm = threadIdx.y*cols_per_warp + T_C_KQ::get_i(threadIdx.x & 2);
         const float2 KQ_cmr = make_float2(KQ_max[(threadIdx.x & 2) / 2], KQ_rowsum[(threadIdx.x & 2) / 2]);
