@@ -688,9 +688,10 @@ namespace ggml_cuda_mma {
         return ret;
     }
 #elif defined(AMD_WMMA_AVAILABLE) && defined(RDNA3)
-    static __device__ __forceinline__ tile<16, 8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED> get_half2(
-            const tile<16, 16, float, DATA_LAYOUT_I_MAJOR> & tile_float) {
-        tile<16, 8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED> ret;
+    template <int I, int J>
+    static __device__ __forceinline__ tile<I, J/2, half2, DATA_LAYOUT_I_MAJOR_MIRRORED> get_half2(
+            const tile<I, J, float, DATA_LAYOUT_I_MAJOR> & tile_float) {
+        tile<I, J/2, half2, DATA_LAYOUT_I_MAJOR_MIRRORED> ret;
 #pragma unroll
         for (int l = 0; l < tile_float.ne; ++l) {
             float tmp[2];
