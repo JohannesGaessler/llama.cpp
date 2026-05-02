@@ -953,22 +953,6 @@ struct ggml_object {
 static const size_t GGML_OBJECT_SIZE = sizeof(struct ggml_object);
 
 //
-// ggml context
-//
-
-struct ggml_context {
-    size_t mem_size;
-    void * mem_buffer;
-    bool   mem_buffer_owned;
-    bool   no_alloc;
-
-    int    n_objects;
-
-    struct ggml_object * objects_begin;
-    struct ggml_object * objects_end;
-};
-
-//
 // data types
 //
 
