@@ -57,22 +57,6 @@ uint64_t ggml_graph_next_uid(void);
     #endif
 #endif
 
-//
-// ggml context
-//
-
-struct ggml_context {
-    size_t mem_size;
-    void * mem_buffer;
-    bool   mem_buffer_owned;
-    bool   no_alloc;
-
-    int    n_objects;
-
-    struct ggml_object * objects_begin;
-    struct ggml_object * objects_end;
-};
-
 static inline int ggml_up32(int n) {
     return (n + 31) & ~31;
 }
@@ -756,9 +740,6 @@ static inline bool ggml_can_fuse_subgraph(const struct ggml_cgraph * cgraph,
 
     return ggml_can_fuse_subgraph_ext(cgraph, idxs, count, ops, outputs, num_outputs);
 }
-
-struct ggml_backend_buffer_type;
-void ggml_backend_meta_buft_update_max_n_tensors(struct ggml_backend_buffer_type * buft, size_t n_tensors);
 
 #ifdef __cplusplus
 }

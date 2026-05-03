@@ -1478,12 +1478,12 @@ struct ggml_backend_buffer * ggml_backend_meta_alloc_ctx_tensors_from_buft(struc
     const size_t n_simple_bufts = ggml_backend_meta_buft_n_bufts(buft);
 
     ggml_init_params params_static = {
-        /*.mem_size   =*/ ctx->mem_size,
+        /*.mem_size   =*/ ggml_get_mem_size(ctx),
         /*.mem_buffer =*/ nullptr,
         /*.no_alloc   =*/ true,
     };
     ggml_init_params params_compute = {
-        /*.mem_size   =*/ 8*ctx->mem_size,
+        /*.mem_size   =*/ 8*ggml_get_mem_size(ctx),
         /*.mem_buffer =*/ nullptr,
         /*.no_alloc   =*/ true,
     };
