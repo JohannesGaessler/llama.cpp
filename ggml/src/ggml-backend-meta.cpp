@@ -14,6 +14,7 @@
 #include <cstring>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -420,7 +421,8 @@ struct ggml_backend_meta_simple_tensor_container {
 struct ggml_backend_meta_buffer_context {
     ggml_backend_meta_simple_tensor_container stc_static;
     ggml_backend_meta_simple_tensor_container stc_compute[2];
-    int stc_compute_index = 0;
+    int stc_compute_index      = 0;
+    int stc_compute_index_next = 0;
     std::vector<ggml_backend_buffer_ptr> bufs;
 
     int debug;
@@ -1237,6 +1239,7 @@ static enum ggml_status ggml_backend_meta_buffer_init_tensor_impl(ggml_backend_m
 static enum ggml_status ggml_backend_meta_buffer_init_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor) {
     GGML_ASSERT(ggml_backend_buffer_is_meta(buffer));
     ggml_backend_meta_buffer_context * buf_ctx = (ggml_backend_meta_buffer_context *) buffer->context;
+    buf_ctx->stc_compute_index = buf_ctx->stc_compute_index_next;
     return ggml_backend_meta_buffer_init_tensor_impl(buf_ctx->get_simple_tensor_container(tensor), tensor);
 }
 
@@ -1508,7 +1511,8 @@ struct ggml_backend_buffer * ggml_backend_meta_alloc_ctx_tensors_from_buft(struc
     };
 
     std::vector<ggml_backend_buffer_t> bufs(n_simple_bufts, nullptr);
-    ggml_backend_meta_buffer_context * meta_buf_ctx = new ggml_backend_meta_buffer_context(ggml_init(params), ggml_init(params), ggml_init(params), bufs);
+    ggml_backend_meta_buffer_context * meta_buf_ctx = new ggml_backend_meta_buffer_context(
+        ggml_init(params), ggml_init(params), ggml_init(params), bufs);
 
     ggml_backend_buffer_t meta_buf = ggml_backend_buffer_init(buft, ggml_backend_meta_buffer_iface, meta_buf_ctx, 0);
     for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != nullptr; t = ggml_get_next_tensor(ctx, t)) {
@@ -1735,6 +1739,27 @@ static enum ggml_status ggml_backend_meta_graph_compute(ggml_backend_t backend, 
     }
 
     if (needs_rebuild) {
+        if (needs_rebuild) {
+            std::set<ggml_backend_buffer_t> used_buffers;
+            for (int i = 0; i < cgraph->n_leafs; i++) {
+                if (ggml_backend_buffer_is_meta(cgraph->leafs[i]->buffer)) {
+                    used_buffers.emplace(cgraph->leafs[i]->buffer);
+                }
+            }
+            for (int i = 0; i < cgraph->n_nodes; i++) {
+                if (ggml_backend_buffer_is_meta(cgraph->nodes[i]->buffer)) {
+                    used_buffers.emplace(cgraph->nodes[i]->buffer);
+                }
+            }
+            for (ggml_backend_buffer_t buf : used_buffers) {
+                ggml_backend_meta_buffer_context * buf_ctx = (ggml_backend_meta_buffer_context *) buf->context;
+                buf_ctx->stc_compute_index_next = buf_ctx->stc_compute_index ^ 1;
+                ggml_backend_meta_simple_tensor_container & stc = buf_ctx->stc_compute[buf_ctx->stc_compute_index_next];
+                ggml_reset(stc.ctx.get());
+                stc.simple_tensors.clear();
+                stc.split_state_cache.clear();
+            }
+        }
         size_t n_subgraphs  = 0;
         size_t max_tmp_size = 0;
 
