@@ -408,6 +408,7 @@ static ggml_backend_buffer_type_t ggml_backend_meta_device_get_host_buffer_type(
 // meta backend buffer
 //
 
+// Container to hold the tensor slices per simple ggml backend buffer.
 struct ggml_backend_meta_simple_tensor_container {
     std::vector<ggml_context_ptr> ctxs;
     std::map<const ggml_tensor *, std::vector<ggml_tensor *>> simple_tensors;
@@ -425,6 +426,13 @@ struct ggml_backend_meta_simple_tensor_container {
 };
 
 struct ggml_backend_meta_buffer_context {
+    // FIXME
+    // Most tensors can simply be stored statically in their own buffer.
+    // Externally created views however also need a mapping to simple tensors but they use the buffer of the view source.
+    // If external views are simply using that buffer they will slowly deplete its memory.
+    // Current solution: rotating set of 2 "compute" containers to hold external views, works correctly for llama.cpp.
+    // Long-term: tie the lifetime of external views to the meta backend executing the graph instead,
+    //     currently not possible due to graph-external operations in the backend scheduler.
     ggml_backend_meta_simple_tensor_container stc_static;
     ggml_backend_meta_simple_tensor_container stc_compute[2];
     int stc_compute_index      = 0;
