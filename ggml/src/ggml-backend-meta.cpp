@@ -1498,7 +1498,7 @@ static ggml_backend_buffer_t ggml_backend_meta_buffer_type_alloc_buffer(ggml_bac
     const ggml_backend_meta_buffer_type_context * buft_ctx = (const ggml_backend_meta_buffer_type_context *) buft->context;
 
     ggml_init_params params = {
-        /*.mem_size   =*/ n_simple_bufts*buft_ctx->max_n_tensors.load()*ggml_tensor_overhead(),
+        /*.mem_size   =*/ buft_ctx->max_n_tensors.load()*ggml_tensor_overhead(),
         /*.mem_buffer =*/ nullptr,
         /*.no_alloc   =*/ true,
     };
