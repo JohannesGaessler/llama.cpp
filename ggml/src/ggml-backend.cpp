@@ -20,7 +20,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <algorithm>
-#include <set>
 #include <vector>
 
 #ifdef __APPLE__
@@ -1823,24 +1822,6 @@ void ggml_backend_sched_reset(ggml_backend_sched_t sched) {
     GGML_ASSERT(sched);
     // reset state for the next run
     if (!sched->is_reset) {
-        std::set<ggml_backend_buffer_t> seen_bufs;
-        for (int i = 0; i < sched->graph.n_leafs; i++) {
-            ggml_backend_buffer_t buf = sched->graph.leafs[i]->buffer;
-            if (buf == nullptr || seen_bufs.find(buf) != seen_bufs.end()) {
-                continue;
-            }
-            ggml_backend_buffer_reset(buf);
-            seen_bufs.emplace(buf);
-        }
-        for (int i = 0; i < sched->graph.n_nodes; i++) {
-            ggml_backend_buffer_t buf = sched->graph.nodes[i]->buffer;
-            if (buf == nullptr || seen_bufs.find(buf) != seen_bufs.end()) {
-                continue;
-            }
-            ggml_backend_buffer_reset(buf);
-            seen_bufs.emplace(buf);
-        }
-
         ggml_hash_set_reset(&sched->hash_set);
         memset(sched->hv_tensor_backend_ids, -1, sched->hash_set.size * sizeof(sched->hv_tensor_backend_ids[0]));
         memset(sched->hv_tensor_copies,       0, sched->hash_set.size * sched->n_backends * sched->n_copies * sizeof(struct ggml_tensor *));
