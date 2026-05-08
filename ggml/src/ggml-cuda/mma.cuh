@@ -312,12 +312,15 @@ namespace ggml_cuda_mma {
         half2 x[ne] = {{0.0f, 0.0f}};
 
         static constexpr __device__ bool supported() {
-            if (I == 16 && J == 8) return true;
+            if (I == 16 && J ==  8) return true;
+            if (I == 16 && J == 16) return true;
             return false;
         }
 
         static __device__ __forceinline__ int get_i(const int l) {
             if constexpr (I == 16 && J == 8) {
+                return threadIdx.x % 16;
+            } else if constexpr (I == 16 && J == 16) {
                 return threadIdx.x % 16;
             } else {
                 NO_DEVICE_CODE;
@@ -327,7 +330,9 @@ namespace ggml_cuda_mma {
 
         static __device__ __forceinline__ int get_j(const int l) {
             if constexpr (I == 16 && J == 8) {
-                return ne * (threadIdx.x / 16) + l;
+                return (threadIdx.x / 16) * ne + l;
+            } else if constexpr (I == 16 && J == 16) {
+                return (threadIdx.x / 16) * ne + l;
             } else {
                 NO_DEVICE_CODE;
                 return -1;
