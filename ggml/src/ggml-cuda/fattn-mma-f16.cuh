@@ -1128,7 +1128,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 #if defined(TURING_MMA_AVAILABLE)
     T_C_VKQ VKQ_C[cols_per_warp == 8 ? DV/T_C_VKQ::I : DV/(2*T_C_VKQ::J)];
 #elif defined(AMD_WMMA_AVAILABLE) && defined(RDNA3)
-    T_C_VKQ VKQ_C[                                     DV/(1*T_C_VKQ::J)];
+    T_C_VKQ VKQ_C[DV % 32 != 0       ? DV/T_C_VKQ::J : DV/(2*T_C_VKQ::J)];
 #elif defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
     T_C_VKQ VKQ_C[                                     DV/(2*T_C_VKQ::J)];
 #else // Volta
