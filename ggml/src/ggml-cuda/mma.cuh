@@ -822,10 +822,11 @@ namespace ggml_cuda_mma {
 #endif // defined(VOLTA_MMA_AVAILABLE)
     }
 
-    template <typename T, data_layout dl>
+    template <int I, typename T, data_layout dl>
     static __device__ __forceinline__ void load_ldmatrix_trans(
-            tile<16, 8, T, dl> & t, const T * __restrict__ xs0, const int stride) {
+            tile<I, 8, T, dl> & t, const T * __restrict__ xs0, const int stride) {
 #ifdef TURING_MMA_AVAILABLE
+        static_assert(I == 16, "bad tile width");
         static_assert(dl == DATA_LAYOUT_I_MAJOR, "bad data layout");
         int * xi = (int *) t.x;
         const int * xs = (const int *) xs0 + (threadIdx.x % t.I) * stride + (threadIdx.x / t.I) * (t.J / 2);
