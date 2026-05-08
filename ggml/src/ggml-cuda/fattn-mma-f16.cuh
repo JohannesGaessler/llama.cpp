@@ -998,7 +998,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
 }
 
 #if defined(TURING_MMA_AVAILABLE)
-template<int ncols> struct mma_tile_sizes {
+template<int DV, int ncols> struct mma_tile_sizes {
     using T_A_KQ  = tile<16,  8, half2>; // row-major
     using T_B_KQ  = tile<16,  8, half2>; // column-major
     using T_C_KQ  = tile<16, 16, float>; // column-major
@@ -1006,7 +1006,7 @@ template<int ncols> struct mma_tile_sizes {
     using T_B_VKQ = tile<16,  8, half2>; // column-major
     using T_C_VKQ = tile<16,  8, half2>; // column-major
 };
-template<> struct mma_tile_sizes<8> {
+template<int DV> struct mma_tile_sizes<DV, 8> {
     using T_A_KQ  = tile<16,  8, half2>; // row-major
     using T_B_KQ  = tile< 8,  8, half2>; // column-major
     using T_C_KQ  = tile<16,  8, float>; // row-major
@@ -1015,7 +1015,23 @@ template<> struct mma_tile_sizes<8> {
     using T_C_VKQ = tile<16,  4, half2>; // row-major
 };
 #elif defined(AMD_WMMA_AVAILABLE) && defined(RDNA3)
-template<int ncols> struct mma_tile_sizes {
+template<int DV, int ncols> struct mma_tile_sizes {
+    using T_A_KQ  = tile<16,  8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED>; // row-major
+    using T_B_KQ  = tile<16,  8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED>; // column-major
+    using T_C_KQ  = tile<16, 16, float, DATA_LAYOUT_I_MAJOR>;          // column-major
+    using T_A_VKQ = tile<16,  8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED>; // row-major
+    using T_B_VKQ = tile<16,  8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED>; // column-major
+    using T_C_VKQ = tile<16, 16, float, DATA_LAYOUT_I_MAJOR>;          // column-major
+};
+template<int ncols> struct mma_tile_sizes<80, ncols> {
+    using T_A_KQ  = tile<16,  8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED>; // row-major
+    using T_B_KQ  = tile<16,  8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED>; // column-major
+    using T_C_KQ  = tile<16, 16, float, DATA_LAYOUT_I_MAJOR>;          // column-major
+    using T_A_VKQ = tile<16,  8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED>; // row-major
+    using T_B_VKQ = tile<16,  8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED>; // column-major
+    using T_C_VKQ = tile<16, 16, float, DATA_LAYOUT_I_MAJOR>;          // column-major
+};
+template<int ncols> struct mma_tile_sizes<112, ncols> {
     using T_A_KQ  = tile<16,  8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED>; // row-major
     using T_B_KQ  = tile<16,  8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED>; // column-major
     using T_C_KQ  = tile<16, 16, float, DATA_LAYOUT_I_MAJOR>;          // column-major
@@ -1024,7 +1040,7 @@ template<int ncols> struct mma_tile_sizes {
     using T_C_VKQ = tile<16, 16, float, DATA_LAYOUT_I_MAJOR>;          // column-major
 };
 #elif defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
-template<int ncols> struct mma_tile_sizes {
+template<int DV, int ncols> struct mma_tile_sizes {
     using T_A_KQ  = tile<16,  8, half2>; // row-major
     using T_B_KQ  = tile<16,  8, half2>; // column-major
     using T_C_KQ  = tile<16, 16, float>; // column-major
@@ -1033,7 +1049,7 @@ template<int ncols> struct mma_tile_sizes {
     using T_C_VKQ = tile<16,  8, half2>; // column-major
 };
 #else // Volta
-template<int ncols> struct mma_tile_sizes {
+template<int DV, int ncols> struct mma_tile_sizes {
     using T_A_KQ  = tile< 8,  4, half2, DATA_LAYOUT_I_MAJOR_MIRRORED>; // row-major
     using T_B_KQ  = tile<32,  4, half2, DATA_LAYOUT_I_MAJOR>;          // column-major
     using T_C_KQ  = tile<32,  8, float, DATA_LAYOUT_I_MAJOR>;          // column-major
@@ -1073,12 +1089,12 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
 
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
     constexpr int ncols = ncols1 * ncols2;
-    using     T_A_KQ    = typename mma_tile_sizes<ncols>::T_A_KQ;
-    using     T_B_KQ    = typename mma_tile_sizes<ncols>::T_B_KQ;
-    using     T_C_KQ    = typename mma_tile_sizes<ncols>::T_C_KQ;
-    using     T_A_VKQ   = typename mma_tile_sizes<ncols>::T_A_VKQ;
-    using     T_B_VKQ   = typename mma_tile_sizes<ncols>::T_B_VKQ;
-    using     T_C_VKQ   = typename mma_tile_sizes<ncols>::T_C_VKQ;
+    using     T_A_KQ    = typename mma_tile_sizes<DV, ncols>::T_A_KQ;
+    using     T_B_KQ    = typename mma_tile_sizes<DV, ncols>::T_B_KQ;
+    using     T_C_KQ    = typename mma_tile_sizes<DV, ncols>::T_C_KQ;
+    using     T_A_VKQ   = typename mma_tile_sizes<DV, ncols>::T_A_VKQ;
+    using     T_B_VKQ   = typename mma_tile_sizes<DV, ncols>::T_B_VKQ;
+    using     T_C_VKQ   = typename mma_tile_sizes<DV, ncols>::T_C_VKQ;
 
     constexpr int  cols_per_warp   = T_B_KQ::I;
     constexpr int  cols_per_thread = get_cols_per_thread();
