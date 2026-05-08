@@ -840,11 +840,22 @@ namespace ggml_cuda_mma {
             : "l"(xs));
 #elif defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
         static_assert(dl == DATA_LAYOUT_I_MAJOR || dl == DATA_LAYOUT_I_MAJOR_MIRRORED, "bad data layout");
-        half * xh = (half *) t.x;
+        if constexpr (I == 32 && dl == DATA_LAYOUT_I_MAJOR_MIRRORED) {
 #pragma unroll
-        for (int l = 0; l < t.ne; ++l) {
-            xh[2*l + 0] = ((const half *) xs0)[(2*t.get_j(l) + 0)*(2*stride) + t.get_i(l)];
-            xh[2*l + 1] = ((const half *) xs0)[(2*t.get_j(l) + 1)*(2*stride) + t.get_i(l)];
+            for (int l0 = 0; l0 < t.ne/2; ++l0) {
+                const half2 tmp0 = xs0[(2*t.get_j(l0) + 0)*stride + t.get_i(l0)/2];
+                const half2 tmp1 = xs0[(2*t.get_j(l0) + 1)*stride + t.get_i(l0)/2];
+
+                t.x[l0]          =  __lows2half2(tmp0, tmp1);
+                t.x[l0 + t.ne/2] = __highs2half2(tmp0, tmp1);
+            }
+        } else {
+            half * xh = (half *) t.x;
+#pragma unroll
+            for (int l = 0; l < t.ne; ++l) {
+                xh[2*l + 0] = ((const half *) xs0)[(2*t.get_j(l) + 0)*(2*stride) + t.get_i(l)];
+                xh[2*l + 1] = ((const half *) xs0)[(2*t.get_j(l) + 1)*(2*stride) + t.get_i(l)];
+            }
         }
 #else
         GGML_UNUSED_VARS(t, xs0, stride);
