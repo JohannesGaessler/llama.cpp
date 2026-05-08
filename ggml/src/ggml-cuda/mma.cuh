@@ -312,12 +312,15 @@ namespace ggml_cuda_mma {
         half2 x[ne] = {{0.0f, 0.0f}};
 
         static constexpr __device__ bool supported() {
-            if (I == 16 && J == 8) return true;
+            if (I == 16 && J ==  8) return true;
+            if (I == 16 && J == 16) return true;
             return false;
         }
 
         static __device__ __forceinline__ int get_i(const int l) {
             if constexpr (I == 16 && J == 8) {
+                return threadIdx.x % 16;
+            } else if constexpr (I == 16 && J == 16) {
                 return threadIdx.x % 16;
             } else {
                 NO_DEVICE_CODE;
@@ -327,7 +330,9 @@ namespace ggml_cuda_mma {
 
         static __device__ __forceinline__ int get_j(const int l) {
             if constexpr (I == 16 && J == 8) {
-                return ne * (threadIdx.x / 16) + l;
+                return (threadIdx.x / 16) * ne + l;
+            } else if constexpr (I == 16 && J == 16) {
+                return l*2 + (threadIdx.x / 16);
             } else {
                 NO_DEVICE_CODE;
                 return -1;
@@ -516,12 +521,15 @@ namespace ggml_cuda_mma {
             if (I == 16 && J == 16) return true;
             if (I == 16 && J == 8)  return true;
             if (I == 16 && J == 4)  return true;
+            if (I == 32 && J == 8)  return true;
             return false;
         }
 
-        static __device__ __forceinline__ int get_i(const int /*l*/) {
-            if constexpr (supported()) {
+        static __device__ __forceinline__ int get_i(const int l) {
+            if constexpr (I == 16) {
                 return threadIdx.x % 16;
+            } else if constexpr (I == 32) {
+                return (threadIdx.x % 16) * 2 + l / (ne/2);
             } else {
                 NO_DEVICE_CODE;
                 return -1;
@@ -529,8 +537,10 @@ namespace ggml_cuda_mma {
         }
 
         static __device__ __forceinline__ int get_j(const int l) {
-            if constexpr (supported()) {
+            if constexpr (I == 16) {
                 return l;
+            } else if constexpr (I == 32) {
+                return l % (ne/2);
             } else {
                 NO_DEVICE_CODE;
                 return -1;
@@ -817,10 +827,11 @@ namespace ggml_cuda_mma {
 #endif // defined(VOLTA_MMA_AVAILABLE)
     }
 
-    template <typename T, data_layout dl>
+    template <int I, typename T, data_layout dl>
     static __device__ __forceinline__ void load_ldmatrix_trans(
-            tile<16, 8, T, dl> & t, const T * __restrict__ xs0, const int stride) {
+            tile<I, 8, T, dl> & t, const T * __restrict__ xs0, const int stride) {
 #ifdef TURING_MMA_AVAILABLE
+        static_assert(I == 16, "bad tile width");
         static_assert(dl == DATA_LAYOUT_I_MAJOR, "bad data layout");
         int * xi = (int *) t.x;
         const int * xs = (const int *) xs0 + (threadIdx.x % t.I) * stride + (threadIdx.x / t.I) * (t.J / 2);
@@ -1301,6 +1312,22 @@ namespace ggml_cuda_mma {
         GGML_UNUSED_VARS(D, A, B);
         NO_DEVICE_CODE;
 #endif // defined(VOLTA_MMA_AVAILABLE)
+    }
+
+    static __device__ __forceinline__ void mma(
+            tile<16, 16, half2, DATA_LAYOUT_I_MAJOR> & D, const tile<32,  8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED> & A,
+            const tile<16,  8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED> & B) {
+#if defined(AMD_WMMA_AVAILABLE) && defined(RDNA3)
+        using halfx16_t = __attribute__((ext_vector_type(16))) _Float16;
+        halfx16_t       * xD = (halfx16_t       *) D.x;
+        const halfx16_t * xA = (const halfx16_t *) A.x;
+        const halfx16_t * xB = (const halfx16_t *) B.x;
+        xD[0] = __builtin_amdgcn_wmma_f16_16x16x16_f16_w32(xA[0], xB[0], xD[0], /*opsel =*/ 0);
+        xD[0] = __builtin_amdgcn_wmma_f16_16x16x16_f16_w32(xA[1], xB[0], xD[0], /*opsel =*/ 1);
+#else
+        GGML_UNUSED_VARS(D, A, B);
+        NO_DEVICE_CODE;
+#endif // TURING_MMA_AVAILABLE
     }
 
     template <data_layout dl_d, data_layout dl_ab>
