@@ -842,14 +842,14 @@ namespace ggml_cuda_mma {
         static_assert(dl == DATA_LAYOUT_I_MAJOR || dl == DATA_LAYOUT_I_MAJOR_MIRRORED, "bad data layout");
         if constexpr (I == 128 && dl == DATA_LAYOUT_I_MAJOR_MIRRORED) {
 #pragma unroll
-            for (int l0 = 0; l0 < t.ne/8; l0 += 2) {
+            for (int l0 = 0; l0 < t.ne/8; ++l0) {
                 half2 tmp[2][4];
-                ggml_cuda_memcpy_1<16>(tmp[0], xs0 + (l0 + 0)*stride + t.get_i(0)/2);
-                ggml_cuda_memcpy_1<16>(tmp[1], xs0 + (l0 + 1)*stride + t.get_i(0)/2);
+                ggml_cuda_memcpy_1<16>(tmp[0], xs0 + (2*l0 + 0)*stride + t.get_i(0)/2);
+                ggml_cuda_memcpy_1<16>(tmp[1], xs0 + (2*l0 + 1)*stride + t.get_i(0)/2);
 #pragma unroll
                 for (int l1 = 0; l1 < 8; l1 += 2) {
-                    t.x[(l1 + 0)*(t.ne/8) + l0/2] =  __lows2half2(tmp[0][l1/2], tmp[1][l1/2]);
-                    t.x[(l1 + 1)*(t.ne/8) + l0/2] = __highs2half2(tmp[0][l1/2], tmp[1][l1/2]);
+                    t.x[(l1 + 0)*(t.ne/8) + l0] =  __lows2half2(tmp[0][l1/2], tmp[1][l1/2]);
+                    t.x[(l1 + 1)*(t.ne/8) + l0] = __highs2half2(tmp[0][l1/2], tmp[1][l1/2]);
                 }
             }
         } else {
