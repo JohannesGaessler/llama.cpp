@@ -332,7 +332,7 @@ namespace ggml_cuda_mma {
             if constexpr (I == 16 && J == 8) {
                 return (threadIdx.x / 16) * ne + l;
             } else if constexpr (I == 16 && J == 16) {
-                return (threadIdx.x / 16) * ne + l;
+                return l*2 + (threadIdx.x / 16);
             } else {
                 NO_DEVICE_CODE;
                 return -1;
