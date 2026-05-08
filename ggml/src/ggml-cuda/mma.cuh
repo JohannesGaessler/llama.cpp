@@ -516,12 +516,15 @@ namespace ggml_cuda_mma {
             if (I == 16 && J == 16) return true;
             if (I == 16 && J == 8)  return true;
             if (I == 16 && J == 4)  return true;
+            if (I == 32 && J == 8)  return true;
             return false;
         }
 
-        static __device__ __forceinline__ int get_i(const int /*l*/) {
-            if constexpr (supported()) {
+        static __device__ __forceinline__ int get_i(const int l) {
+            if constexpr (I == 16) {
                 return threadIdx.x % 16;
+            } else if constexpr (I == 32) {
+                return (threadIdx.x % 16) * 2 + l / (ne/2);
             } else {
                 NO_DEVICE_CODE;
                 return -1;
@@ -529,8 +532,10 @@ namespace ggml_cuda_mma {
         }
 
         static __device__ __forceinline__ int get_j(const int l) {
-            if constexpr (supported()) {
+            if constexpr (I == 16) {
                 return l;
+            } else if constexpr (I == 32) {
+                return l % (ne/2);
             } else {
                 NO_DEVICE_CODE;
                 return -1;
@@ -1301,6 +1306,22 @@ namespace ggml_cuda_mma {
         GGML_UNUSED_VARS(D, A, B);
         NO_DEVICE_CODE;
 #endif // defined(VOLTA_MMA_AVAILABLE)
+    }
+
+    static __device__ __forceinline__ void mma(
+            tile<16, 16, half2, DATA_LAYOUT_I_MAJOR> & D, const tile<32,  8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED> & A,
+            const tile<16,  8, half2, DATA_LAYOUT_I_MAJOR_MIRRORED> & B) {
+#if defined(AMD_WMMA_AVAILABLE) && defined(RDNA3)
+        using halfx16_t = __attribute__((ext_vector_type(16))) _Float16;
+        halfx16_t       * xD = (halfx16_t       *) D.x;
+        const halfx16_t * xA = (const halfx16_t *) A.x;
+        const halfx16_t * xB = (const halfx16_t *) B.x;
+        xD[0] = __builtin_amdgcn_wmma_f16_16x16x16_f16_w32(xA[0], xB[0], xD[0], /*opsel =*/ 0);
+        xD[0] = __builtin_amdgcn_wmma_f16_16x16x16_f16_w32(xA[1], xB[0], xD[0], /*opsel =*/ 1);
+#else
+        GGML_UNUSED_VARS(D, A, B);
+        NO_DEVICE_CODE;
+#endif // TURING_MMA_AVAILABLE
     }
 
     template <data_layout dl_d, data_layout dl_ab>
