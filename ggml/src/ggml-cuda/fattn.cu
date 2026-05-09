@@ -502,37 +502,21 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
         return BEST_FATTN_KERNEL_WMMA_F16;
     }
 
-    if (((amd_wmma_available(cc) && gqa_opt_applies && Q->ne[0] <= 128) || (amd_mfma_available(cc) && Q->ne[0] <= 256)) &&
-            Q->ne[0] != 40 && Q->ne[0] != 72) {
-        if (can_use_vector_kernel) {
-            if (!ggml_is_quantized(K->type) && !ggml_is_quantized(V->type)) {
-                if (Q->ne[1] == 1) {
-                    if (!gqa_opt_applies) {
-                        return BEST_FATTN_KERNEL_VEC;
-                    }
-                }
-            } else {
-                if (Q->ne[1] <= 2) {
-                    return BEST_FATTN_KERNEL_VEC;
-                }
-            }
+    // AMD MFMA needs a certain minimum batch size to outscale the tile kernel for large head sizes.
+    if ((amd_mfma_available(cc) && Q->ne[0] <= 256) && Q->ne[0] != 40 && Q->ne[0] != 72) {
+        if ((Q->ne[0] <= 64 && Q->ne[1] * gqa_ratio_eff > 8)) {
+            return BEST_FATTN_KERNEL_MMA_F16;
         }
-        if (amd_mfma_available(cc)) {
-            // AMD MFMA needs a certain minimum batch size to outscale the tile kernel for large head sizes.
-            if (Q->ne[1] > 64) {
-                if (Q->ne[1] * gqa_ratio_eff <= 16) {
-                    return BEST_FATTN_KERNEL_TILE;
-                }
-            } else if (Q->ne[1] > 128) {
-                if (Q->ne[1] * gqa_ratio_eff <= 64) {
-                    return BEST_FATTN_KERNEL_TILE;
-                }
-            }
-        } else {
-            if (Q->ne[1] * gqa_ratio_eff <= 8) {
-                return BEST_FATTN_KERNEL_TILE; // AMD WMMA is always faster if the full tile width of 16 can be utilized.
-            }
+        if ((Q->ne[0] <= 128 && Q->ne[1] * gqa_ratio_eff > 16)) {
+            return BEST_FATTN_KERNEL_MMA_F16;
         }
+        if ((Q->ne[0] <= 256 && Q->ne[1] * gqa_ratio_eff > 32)) {
+            return BEST_FATTN_KERNEL_MMA_F16;
+        }
+    }
+
+    // AMD WMMA is always faster than the tile kernel if the full tile width of 16 can be utilized.
+    if ((amd_wmma_available(cc) && gqa_opt_applies && Q->ne[0] <= 128) && Q->ne[0] != 40 && Q->ne[0] != 72 && Q->ne[1] * gqa_ratio_eff > 8) {
         return BEST_FATTN_KERNEL_MMA_F16;
     }
 
