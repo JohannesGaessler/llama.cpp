@@ -1068,6 +1068,22 @@ template<int ncols> struct mma_tile_sizes<112, ncols> {
 };
 #elif defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
 template<int DV, int ncols> struct mma_tile_sizes {
+    using T_A_KQ  = tile<16,  8, half2, DATA_LAYOUT_I_MAJOR>;           // row-major
+    using T_B_KQ  = tile<16,  8, half2, DATA_LAYOUT_I_MAJOR>;           // column-major
+    using T_C_KQ  = tile<16, 16, float, DATA_LAYOUT_I_MAJOR>;           // column-major
+    using T_A_VKQ = tile<32,  8, half2, DATA_LAYOUT_I_MAJOR>;           // row-major
+    using T_B_VKQ = tile<16,  8, half2, DATA_LAYOUT_I_MAJOR>;           // column-major
+    using T_C_VKQ = tile<16, 16, half2, DATA_LAYOUT_I_MAJOR_SCRAMBLED>; // column-major
+};
+template<int ncols> struct mma_tile_sizes<80, ncols> {
+    using T_A_KQ  = tile<16,  8, half2>; // row-major
+    using T_B_KQ  = tile<16,  8, half2>; // column-major
+    using T_C_KQ  = tile<16, 16, float>; // column-major
+    using T_A_VKQ = tile<16,  8, half2>; // row-major
+    using T_B_VKQ = tile<16,  8, half2>; // column-major
+    using T_C_VKQ = tile<16,  8, half2>; // column-major
+};
+template<int ncols> struct mma_tile_sizes<112, ncols> {
     using T_A_KQ  = tile<16,  8, half2>; // row-major
     using T_B_KQ  = tile<16,  8, half2>; // column-major
     using T_C_KQ  = tile<16, 16, float>; // column-major
@@ -1555,14 +1571,30 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
         } else {
             const int j0 = threadIdx.y*cols_per_warp;
             if constexpr (std::is_same_v<decltype(T_C_VKQ::x), half2[T_C_VKQ::ne]>) {
+                if constexpr (T_C_VKQ::dl == DATA_LAYOUT_I_MAJOR) {
 #pragma unroll
-                for (int k1 = 0; k1 < nbatch_combine; k1 += T_C_VKQ::J) {
+                    for (int k1 = 0; k1 < nbatch_combine; k1 += T_C_VKQ::J) {
 #pragma unroll
-                    for (int l = 0; l < T_C_VKQ::ne; ++l) {
-                        const int j = j0 + T_C_VKQ::get_i(l);
-                        const int k = k1 + T_C_VKQ::get_j(l);
+                        for (int l = 0; l < T_C_VKQ::ne; ++l) {
+                            const int j = j0 + T_C_VKQ::get_i(l);
+                            const int k = k1 + T_C_VKQ::get_j(l);
 
-                        tile_Q[j*tile_stride + k] = VKQ_C[(k00 + k1)/T_C_VKQ::J].x[l];
+                            tile_Q[j*tile_stride + k] = VKQ_C[(k00 + k1)/T_C_VKQ::J].x[l];
+                        }
+                    }
+                } else {
+                    static_assert(T_C_VKQ::dl == DATA_LAYOUT_I_MAJOR_SCRAMBLED, "bad T_C_VKQ data layout");
+                    using T_C_VKQ_us = tile<T_C_VKQ::I, T_C_VKQ::J, half2, DATA_LAYOUT_I_MAJOR>; // us == unscrambled
+#pragma unroll
+                    for (int k1 = 0; k1 < nbatch_combine; k1 += T_C_VKQ::J) {
+                        const T_C_VKQ_us VKQ_C_us = unscramble(VKQ_C[(k00 + k1)/T_C_VKQ::J]);
+#pragma unroll
+                        for (int l = 0; l < T_C_VKQ_us::ne; ++l) {
+                            const int j = j0 + T_C_VKQ_us::get_i(l);
+                            const int k = k1 + T_C_VKQ_us::get_j(l);
+
+                            tile_Q[j*tile_stride + k] = VKQ_C_us.x[l];
+                        }
                     }
                 }
             } else {

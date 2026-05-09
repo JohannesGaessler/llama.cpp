@@ -80,6 +80,7 @@ namespace ggml_cuda_mma {
         DATA_LAYOUT_J_MAJOR           = 10, // Matrix C for CDNA and RDNA4, int and float matrix C for RDNA3.
         DATA_LAYOUT_I_MAJOR_MIRRORED  = 20, // Volta, matrix A&B for RDNA3.
         DATA_LAYOUT_J_MAJOR_MIRRORED  = 30,
+        DATA_LAYOUT_I_MAJOR_SCRAMBLED = 40, // Scrambled matrix C for faster transposition (RDNA4/CDNA), convert to float to unscramble.
     };
     // Implemented mma combinations are:
     //   - (I_MAJOR, I_MAJOR)          -> I_MAJOR
@@ -314,6 +315,7 @@ namespace ggml_cuda_mma {
         static constexpr __device__ bool supported() {
             if (I == 16 && J ==  8) return true;
             if (I == 16 && J == 16) return true;
+            if (I == 32 && J ==  8) return true;
             return false;
         }
 
@@ -322,6 +324,8 @@ namespace ggml_cuda_mma {
                 return threadIdx.x % 16;
             } else if constexpr (I == 16 && J == 16) {
                 return threadIdx.x % 16;
+            } else if constexpr (I == 32 && J == 8) {
+                return (threadIdx.x % 16) * 2 + l / (ne/2);
             } else {
                 NO_DEVICE_CODE;
                 return -1;
@@ -332,7 +336,13 @@ namespace ggml_cuda_mma {
             if constexpr (I == 16 && J == 8) {
                 return (threadIdx.x / 16) * ne + l;
             } else if constexpr (I == 16 && J == 16) {
+#ifdef RDNA3
                 return l*2 + (threadIdx.x / 16);
+#else
+                return (threadIdx.x / 16) * ne + l;
+#endif // RDNA3
+            } else if constexpr (I == 32 && J == 8) {
+                return (threadIdx.x / 16) * (ne/2) + l % (ne/2);
             } else {
                 NO_DEVICE_CODE;
                 return -1;
@@ -343,13 +353,19 @@ namespace ggml_cuda_mma {
         half2 x[ne] = {{0.0f, 0.0f}};
 
         static constexpr __device__ bool supported() {
-            if (I == 16 && J == 8) return true;
+            if (I == 16 && J ==  8) return true;
+            if (I == 16 && J == 16) return true;
+            if (I == 32 && J ==  8) return true;
             return false;
         }
 
         static __device__ __forceinline__ int get_i(const int l) {
             if constexpr (I == 16 && J == 8) {
                 return threadIdx.x % 16;
+            } else if constexpr (I == 16 && J == 16) {
+                return threadIdx.x % 16;
+            } else if constexpr (I == 32 && J == 8) {
+                return (threadIdx.x % 16) * 2 + l / (ne/2);
             } else {
                 NO_DEVICE_CODE;
                 return -1;
@@ -358,7 +374,11 @@ namespace ggml_cuda_mma {
 
         static __device__ __forceinline__ int get_j(const int l) {
             if constexpr (I == 16 && J == 8) {
-                return ne * (threadIdx.x / 16) + l;
+                return (threadIdx.x / 16) * ne + l;
+            } else if constexpr (I == 16 && J == 16) {
+                return (threadIdx.x / 16) * ne + l;
+            } else if constexpr (I == 32 && J == 8) {
+                return (threadIdx.x / 16) * (ne/2) + l % (ne/2);
             } else {
                 NO_DEVICE_CODE;
                 return -1;
@@ -654,6 +674,40 @@ namespace ggml_cuda_mma {
         }
     };
 
+    template <int I_, int J_>
+    struct tile<I_, J_, half2, DATA_LAYOUT_I_MAJOR_SCRAMBLED> {
+        static constexpr int         I  = I_;
+        static constexpr int         J  = J_;
+        static constexpr data_layout dl = DATA_LAYOUT_I_MAJOR_SCRAMBLED;
+
+        static constexpr int ne = I * J / ggml_cuda_get_physical_warp_size();
+        half2 x[ne] = {{0.0f, 0.0f}};
+
+        static constexpr __device__ bool supported() {
+            if (I == 16 && J == 16) return true;
+            return false;
+        }
+
+        static __device__ __forceinline__ int get_i(const int l) {
+            return tile<I_, J_, half2, DATA_LAYOUT_I_MAJOR>::get_i(l);
+        }
+    };
+
+    static __device__ __forceinline__ tile<16, 16, half2, DATA_LAYOUT_I_MAJOR> unscramble(const tile<16, 16, half2, DATA_LAYOUT_I_MAJOR_SCRAMBLED> & t) {
+#if defined(AMD_MFMA_AVAILABLE) || (defined(AMD_WMMA_AVAILABLE) && defined(RDNA4))
+        tile<16, 16, half2, DATA_LAYOUT_I_MAJOR> ret;
+#pragma unroll
+        for (int l0 = 0; l0 < t.ne/2; ++l0) {
+            ret.x[2*l0 + 0] =  __lows2half2(t.x[l0], t.x[l0 + t.ne/2]);
+            ret.x[2*l0 + 1] = __highs2half2(t.x[l0], t.x[l0 + t.ne/2]);
+        }
+        return ret;
+#else
+        NO_DEVICE_CODE;
+        GGML_UNUSED(t);
+#endif // defined(AMD_MFMA_AVAILABLE) || (defined(AMD_WMMA_AVAILABLE) && defined(RDNA4))
+    }
+
 #if defined(TURING_MMA_AVAILABLE)
     template <int I, int J>
     static __device__ __forceinline__ tile<I, J/2, half2> get_half2(const tile<I, J, float> & tile_float) {
@@ -840,11 +894,22 @@ namespace ggml_cuda_mma {
             : "l"(xs));
 #elif defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
         static_assert(dl == DATA_LAYOUT_I_MAJOR || dl == DATA_LAYOUT_I_MAJOR_MIRRORED, "bad data layout");
-        half * xh = (half *) t.x;
+        if constexpr (I == 32) {
 #pragma unroll
-        for (int l = 0; l < t.ne; ++l) {
-            xh[2*l + 0] = ((const half *) xs0)[(2*t.get_j(l) + 0)*(2*stride) + t.get_i(l)];
-            xh[2*l + 1] = ((const half *) xs0)[(2*t.get_j(l) + 1)*(2*stride) + t.get_i(l)];
+            for (int l0 = 0; l0 < t.ne/2; ++l0) {
+                const half2 tmp0 = xs0[(2*t.get_j(l0) + 0)*stride + t.get_i(l0)/2];
+                const half2 tmp1 = xs0[(2*t.get_j(l0) + 1)*stride + t.get_i(l0)/2];
+
+                t.x[l0]          =  __lows2half2(tmp0, tmp1);
+                t.x[l0 + t.ne/2] = __highs2half2(tmp0, tmp1);
+            }
+        } else {
+            half * xh = (half *) t.x;
+#pragma unroll
+            for (int l = 0; l < t.ne; ++l) {
+                xh[2*l + 0] = ((const half *) xs0)[(2*t.get_j(l) + 0)*(2*stride) + t.get_i(l)];
+                xh[2*l + 1] = ((const half *) xs0)[(2*t.get_j(l) + 1)*(2*stride) + t.get_i(l)];
+            }
         }
 #else
         GGML_UNUSED_VARS(t, xs0, stride);
@@ -998,6 +1063,20 @@ namespace ggml_cuda_mma {
         GGML_UNUSED_VARS(D, A, B);
         NO_DEVICE_CODE;
 #endif // TURING_MMA_AVAILABLE
+    }
+
+    static __device__ __forceinline__ void mma(
+            tile<16, 16, half2, DATA_LAYOUT_I_MAJOR_SCRAMBLED> & D, const tile<32, 8, half2, DATA_LAYOUT_I_MAJOR> & A,
+            const tile<16, 8, half2, DATA_LAYOUT_I_MAJOR> & B) {
+#if defined(AMD_MFMA_AVAILABLE) || (defined(AMD_WMMA_AVAILABLE) && defined(RDNA4))
+        tile<16, 8, half2>       * D16 = (tile<16, 8, half2>       *) &D;
+        const tile<16, 8, half2> * A16 = (const tile<16, 8, half2> *) &A;
+        mma(D16[0], A16[0], B);
+        mma(D16[1], A16[1], B);
+#else
+        GGML_UNUSED_VARS(D, A, B);
+        NO_DEVICE_CODE;
+#endif // defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE) && defined(RDNA4)
     }
 
     template <data_layout dl_ab, data_layout dl_d>
