@@ -2,7 +2,7 @@
 #include "fwht.cuh"
 
 template <int N>
-__launch_bounds__(4*ggml_cuda_get_physical_warp_size(), 1)
+__launch_bounds__(128, 1)
 __global__ void fwht_cuda(const float * src, float * dst, const int64_t n_rows, const float scale) {
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
 
@@ -69,7 +69,7 @@ void ggml_cuda_op_fwht(ggml_backend_cuda_context & ctx, const ggml_tensor * src,
 
     const int warp_size = ggml_cuda_info().devices[ggml_cuda_get_device()].warp_size;
     GGML_ASSERT(n % warp_size == 0);
-    const int rows_per_block = 4;
+    const int rows_per_block = 128 / warp_size;
 
     const int64_t num_blocks = (rows + rows_per_block - 1) / rows_per_block;
 
