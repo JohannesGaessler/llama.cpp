@@ -656,9 +656,10 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
             }
         }
         if (!ggml_is_permuted(tensor) && !ggml_is_permuted(tensor->src[0]) && axis >= 0 && axis < GGML_MAX_DIMS-1) {
+            GGML_ASSERT(src_ss[0].n_segments == 1);
             for (int dim = 0; dim < GGML_MAX_DIMS-1; dim++) {
                 if (tensor->nb[dim+1] == tensor->src[0]->nb[axis+1]) {
-                    return {ggml_backend_meta_split_axis(dim), {0}, {1}, 1};
+                    return {ggml_backend_meta_split_axis(dim), {0}, {src_ss[0].nr[0]}, 1};
                 }
             }
             GGML_ABORT("fatal error");
