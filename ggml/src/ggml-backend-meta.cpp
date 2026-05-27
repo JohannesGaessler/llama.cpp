@@ -1050,8 +1050,12 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
                     GGML_ASSERT(split_state.n_segments == 1);
                     for (size_t j = 0; j < n_bufs; j++) {
                         // Assert that ratio is consistent:
-                        GGML_ASSERT(split_state.ne[j] * split_state.nr[0] * tensor->src[i]->ne[src_ss[i].axis]
-                                 ==   src_ss[i].ne[j] *   src_ss[i].nr[0] * tensor->ne[split_state.axis]);
+                        int64_t sum = 0;
+                        for (size_t s = 0; s < src_ss[i].n_segments; s++) {
+                            sum += src_ss[i].ne[s*n_bufs + j] * src_ss[i].nr[s];
+                        }
+                        GGML_ASSERT(split_state.ne[j]*split_state.nr[0] * tensor->src[i]->ne[src_ss[i].axis]
+                                                                 == sum * tensor->ne[split_state.axis]);
                     }
                 }
                 first_src_split_by_axis = false;
