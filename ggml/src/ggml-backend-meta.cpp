@@ -753,13 +753,13 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
 
     auto handle_ssm_conv = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
         if (src_ss[0].axis == src_ss[1].axis) {
-            GGML_ASSERT(src_ss[0].n_segments == 1 && src_ss[0].nr[0] == 1);
-            GGML_ASSERT(src_ss[1].n_segments == 1 && src_ss[1].nr[0] == 1);
+            GGML_ASSERT(src_ss[0].n_segments == 1);
+            GGML_ASSERT(src_ss[1].n_segments == 1);
             if (src_ss[0].axis == GGML_BACKEND_SPLIT_AXIS_0) {
-                return {GGML_BACKEND_SPLIT_AXIS_1, {0}, {1}, 1};
+                return {GGML_BACKEND_SPLIT_AXIS_1, {0}, {src_ss[0].nr[0]}, 1};
             }
             if (src_ss[0].axis == GGML_BACKEND_SPLIT_AXIS_1) {
-                return {GGML_BACKEND_SPLIT_AXIS_0, {0}, {1}, 1};
+                return {GGML_BACKEND_SPLIT_AXIS_0, {0}, {src_ss[0].nr[0]}, 1};
             }
         }
         return handle_generic(src_ss, /*scalar_only =*/ false);
