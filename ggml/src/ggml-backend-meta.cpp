@@ -591,23 +591,6 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
         //return {GGML_BACKEND_SPLIT_AXIS_UNKNOWN, {0}, {1}, 1};
     };
 
-    auto handle_cpy = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
-        if (src_ss[0].axis >= 0 && src_ss[0].axis < GGML_MAX_DIMS) {
-            int64_t ne_split_src = tensor->src[0]->ne[0];
-            for (int dim = 1; dim <= src_ss[0].axis; dim++) {
-                ne_split_src *= tensor->src[0]->ne[dim];
-            }
-            int64_t ne_split_dst = 1;
-            for (int dim = 0; dim < GGML_MAX_DIMS; dim++) {
-                ne_split_dst *= tensor->ne[dim];
-                if (ne_split_dst == ne_split_src) {
-                    return {ggml_backend_meta_split_axis(dim), {0}, {1}, 1};
-                }
-            }
-        }
-        return handle_generic(src_ss, /*scalar_only =*/ false);
-    };
-
     auto handle_reshape = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
         switch (src_ss[0].axis) {
             case GGML_BACKEND_SPLIT_AXIS_0:
@@ -643,6 +626,13 @@ static struct ggml_backend_meta_split_state ggml_backend_meta_get_split_state(
                 //return {GGML_BACKEND_SPLIT_AXIS_UNKNOWN, {0}, {1}, 1};
             }
         }
+    };
+
+    auto handle_cpy = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
+        if (src_ss[0].axis >= 0 && src_ss[0].axis < GGML_MAX_DIMS) {
+            return handle_reshape(src_ss);
+        }
+        return handle_generic(src_ss, /*scalar_only =*/ false);
     };
 
     auto handle_view = [&](const std::vector<ggml_backend_meta_split_state> & src_ss) -> ggml_backend_meta_split_state {
