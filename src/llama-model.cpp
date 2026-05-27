@@ -636,9 +636,9 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
         const std::vector<std::pair<int64_t, uint32_t>> segments = get_split_segments(split_state.axis, tc.il);
         const std::vector<int64_t> granularity = get_split_granularity(blck_size, tc.il, segments);
         for (size_t is = 0; is < segments.size(); is++) {
-            const int64_t ne_s = segments[is].first;
-            const int64_t nr_s = segments[is].second;
-            const int64_t g_s = granularity[is];
+            const int64_t  ne_s = segments[is].first;
+            const uint32_t nr_s = segments[is].second;
+            const int64_t  g_s  = granularity[is];
             GGML_ASSERT(ne_full % g_s == 0);
             int64_t low = 0;
             size_t j = 0;
@@ -657,6 +657,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
         split_state.n_segments = segments.size();
     } else {
         memset(split_state.ne, 0, sizeof(split_state.ne));
+        split_state.nr[0] = 1;
         split_state.n_segments = 1;
     }
     return split_state;
