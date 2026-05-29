@@ -1011,7 +1011,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_dp4a(
     const int   * y_qs = (const int   *) y + 4;
     const float * y_df = (const float *) y;
 
-// #pragma unroll
+#pragma unroll
     for (int k01 = 0; k01 < MMQ_TILE_NE_K; k01 += VDR_Q8_0_Q8_1_MMQ) {
         int   x_qs_k[mmq_y/warp_size][VDR_Q8_0_Q8_1_MMQ];
         float x_df_k[mmq_y/warp_size];
@@ -3351,9 +3351,7 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
 
 template <ggml_type type, int mmq_x, bool need_check>
 #if defined(GGML_USE_HIP)
-#if defined(RDNA4) || defined(RDNA3) || defined(RDNA2) || defined(CDNA) || defined(GCN)
     __launch_bounds__(ggml_cuda_get_physical_warp_size()*mmq_get_nwarps_device(), 2)
-#endif // defined(RDNA4) || defined(RDNA3) || defined(RDNA2) || defined(CDNA) || defined(GCN)
 #else
 #if __CUDA_ARCH__ >= GGML_CUDA_CC_VOLTA
     __launch_bounds__(ggml_cuda_get_physical_warp_size()*mmq_get_nwarps_device(), 1)
