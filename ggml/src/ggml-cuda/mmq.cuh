@@ -3351,7 +3351,7 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
 
 template <ggml_type type, int mmq_x, bool need_check>
 #if defined(GGML_USE_HIP)
-    __launch_bounds__(ggml_cuda_get_physical_warp_size()*mmq_get_nwarps_device(), 2)
+    __launch_bounds__(ggml_cuda_get_physical_warp_size()*mmq_get_nwarps_device(), 1)
 #else
 #if __CUDA_ARCH__ >= GGML_CUDA_CC_VOLTA
     __launch_bounds__(ggml_cuda_get_physical_warp_size()*mmq_get_nwarps_device(), 1)
