@@ -1011,25 +1011,10 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_dp4a(
     const int   * y_qs = (const int   *) y + 4;
     const float * y_df = (const float *) y;
 
-    float x_df_reg[mmq_y/warp_size][MMQ_TILE_NE_K/QI8_0];
-#pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += warp_size) {
-        const int i = i0 + threadIdx.x;
-
-        ggml_cuda_memcpy_1<sizeof(x_df_reg[0])>(x_df_reg[i0/warp_size], x_df + i*MMQ_MMA_TILE_X_K_Q8_0 + k00/QI8_0);
-    }
-
-    float y_df_reg[mmq_x/nwarps][MMQ_TILE_NE_K/QI8_1];
-#pragma unroll
-    for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
-        const int j = j0 + threadIdx.y;
-
-        ggml_cuda_memcpy_1<sizeof(y_df_reg[0])>(y_df_reg[j0/nwarps], y_df + j*MMQ_TILE_Y_K);
-    }
-
 // #pragma unroll
     for (int k01 = 0; k01 < MMQ_TILE_NE_K; k01 += VDR_Q8_0_Q8_1_MMQ) {
-        int x_qs_k[mmq_y/warp_size][VDR_Q8_0_Q8_1_MMQ];
+        int   x_qs_k[mmq_y/warp_size][VDR_Q8_0_Q8_1_MMQ];
+        float x_df_k[mmq_y/warp_size];
 #pragma unroll
         for (int i0 = 0; i0 < mmq_y; i0 += warp_size) {
             const int i = i0 + threadIdx.x;
@@ -1040,6 +1025,9 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_dp4a(
 
                 ggml_cuda_memcpy_1<GGML_CUDA_MAX_CPY_BYTES>(x_qs_k[i0/warp_size] + k02, x_qs + i*MMQ_MMA_TILE_X_K_Q8_0 + k0);
             }
+
+            const int k0 = k00 + k01;
+            x_df_k[i0/warp_size] = x_df[i*MMQ_MMA_TILE_X_K_Q8_0 + k0/QI8_0];
         }
 
 #pragma unroll
@@ -1053,11 +1041,12 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_dp4a(
 
                 ggml_cuda_memcpy_1<GGML_CUDA_MAX_CPY_BYTES>(y_qs_kj + k02, y_qs + j*MMQ_TILE_Y_K + k0);
             }
+            const float y_df_jk = y_df[j*MMQ_TILE_Y_K + k01/QI8_1];
 
 #pragma unroll
             for (int i0 = 0; i0 < mmq_y; i0 += warp_size) {
                 sum[j0/nwarps*mmq_y/warp_size + i0/warp_size] += vec_dot_q8_0_q8_1_impl<VDR_Q8_0_Q8_1_MMQ>
-                    (x_qs_k[i0/warp_size], y_qs_kj, x_df_reg[i0/warp_size][k01/QI8_0], y_df_reg[j0/nwarps][k01/QI8_1]);
+                    (x_qs_k[i0/warp_size], y_qs_kj, x_df_k[i0/warp_size], y_df_jk);
             }
         }
     }
