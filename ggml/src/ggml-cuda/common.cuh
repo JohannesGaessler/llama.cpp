@@ -370,6 +370,9 @@ static constexpr __device__ int ggml_cuda_get_physical_warp_size() {
 }
 
 // Maximum number of bytes that can be copied in a single instruction.
+#define GGML_CUDA_MAX_CPY_BYTES 16
+
+// FIXME these values are based on a misconception and should be phased out
 static constexpr __device__ int ggml_cuda_get_max_cpy_bytes() {
 #ifdef GGML_USE_HIP
     return 16;
@@ -780,10 +783,11 @@ static __device__ __forceinline__ void ggml_cuda_mad(half2 & acc, const half2 v,
 template <int nbytes, int alignment = 0>
 static __device__ __forceinline__ void ggml_cuda_memcpy_1(void * __restrict__ dst, const void * __restrict__ src) {
     static_assert(
-        nbytes <= ggml_cuda_get_max_cpy_bytes() || alignment == 0,
+        nbytes <= GGML_CUDA_MAX_CPY_BYTES || alignment == 0,
         "You are misusing the alignment parameter for ggml_cuda_memcpy_1. "
         "The intent is for the parameter is only as a workaround if either one of the pointers is not properly aligned. "
-        "If you use it to do more bytes per copy than ggml_cuda_max_cpy_bytes() the reads and writes may not be coalesced. "
+        "If you use it to do more bytes per copy than GGML_CUDA_MAX_CPY_BYTES the reads and writes may not be coalesced. "
+
         "Call ggml_cuda_memcpy_1 in a loop instead.");
     if constexpr (alignment != 0) {
         static_assert(nbytes % alignment == 0, "bad alignment");

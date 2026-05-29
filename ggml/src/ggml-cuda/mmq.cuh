@@ -136,7 +136,7 @@ static constexpr __device__ int get_mmq_x_max_device() {
 #endif // __CUDA_ARCH__ >= GGML_CUDA_CC_VOLTA
 
 #endif // defined(GGML_USE_HIP)
-#endif // defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
+#endif // defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
 }
 
 static int get_mmq_y_host(const int cc) {
@@ -292,7 +292,7 @@ static constexpr __device__ int mmq_get_granularity_device(const int mmq_x) {
 static constexpr __device__ int mmq_get_granularity_device(const int /*mmq_x*/) {
     return 8;
 }
-#endif // AMD_MFMA_AVAILABLE
+#endif // AMD_MFMA_AVAILABLE || defined(AMD_WMMA_AVAILABLE)
 
 #if defined(GGML_USE_HIP)
 static int mmq_get_nwarps_host(const int cc, const int warp_size) {
@@ -309,7 +309,7 @@ static constexpr __device__ int mmq_get_nwarps_device() {
     return 8;
 #else
     return 256/ggml_cuda_get_physical_warp_size();
-#endif // AMD_MFMA_AVAILABLE
+#endif // AMD_MFMA_AVAILABLE || defined(AMD_WMMA_AVAILABLE)
 }
 
 // ------------------------------------------------------------
@@ -319,14 +319,8 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
     constexpr int nwarps = mmq_get_nwarps_device();
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
 
-#if defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     int   * x_qs = (int   *)  x_tile;
     float * x_df = (float *) (x_qs + 2*MMQ_TILE_NE_K);
-#else
-    constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q8_0, mmq_y);
-    int   * x_qs = (int   *)  x_tile;
-    float * x_df = (float *) (x_qs + txs.qs);
-#endif // defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
 
     constexpr int blocks_per_iter = MMQ_ITER_K / QK1_0;
     constexpr int threads_per_row = blocks_per_iter * QI1_0;
@@ -366,11 +360,7 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
         const int dst_offset = kbx*(scale_entries_per_block*QI8_0) + kqsx*QI8_0;
 #pragma unroll
         for (int j = 0; j < 8; ++j) {
-#if defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
             x_qs[i*MMQ_MMA_TILE_X_K_Q8_0 + dst_offset + j] = unpacked_bytes[j];
-#else
-            x_qs[i*(2*MMQ_TILE_NE_K + 1) + dst_offset + j] = unpacked_bytes[j];
-#endif // defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
         }
     }
 
@@ -387,11 +377,7 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
 
         const block_q1_0 * bxi = (const block_q1_0 *) x + kbx0 + i*stride + scale_block;
 
-#if defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
         x_df[i*MMQ_MMA_TILE_X_K_Q8_0 + ksx] = bxi->d;
-#else
-        x_df[i*(2*MMQ_TILE_NE_K/QI8_0) + i/(QI8_0/2) + ksx] = bxi->d;
-#endif // defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     }
 }
 
@@ -400,14 +386,8 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
     constexpr int nwarps = mmq_get_nwarps_device();
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
 
-#if defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     int   * x_qs = (int   *)  x_tile;
     float * x_df = (float *) (x_qs + 2*MMQ_TILE_NE_K);
-#else
-    constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q4_0, mmq_y);
-    int   * x_qs = (int   *)  x_tile;
-    float * x_df = (float *) (x_qs + txs.qs);
-#endif // defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
 
     constexpr int threads_per_row = MMQ_ITER_K / (4 * QR4_0);
     constexpr int nrows = warp_size / threads_per_row;
@@ -426,12 +406,8 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
         const block_q4_0 * bxi = (const block_q4_0 *) x + kbx0 + i*stride + kbx;
         const int qs0 = get_int_b2(bxi->qs, kqsx);
 
-#if defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
         x_qs[i*MMQ_MMA_TILE_X_K_Q8_0 + kbx*(2*QI4_0) + kqsx + 0]     = __vsubss4((qs0 >> 0) & 0x0F0F0F0F, 0x08080808);
         x_qs[i*MMQ_MMA_TILE_X_K_Q8_0 + kbx*(2*QI4_0) + kqsx + QI4_0] = __vsubss4((qs0 >> 4) & 0x0F0F0F0F, 0x08080808);
-#else
-        x_qs[i*(MMQ_TILE_NE_K + 1) + txi] = qs0;
-#endif // defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE)
     }
 
     constexpr int blocks_per_tile_x_row = MMQ_TILE_NE_K / QI4_0;
@@ -448,11 +424,7 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
 
         const block_q4_0 * bxi = (const block_q4_0 *) x + kbx0 + i*stride + kbxd;
 
-#if defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
-        x_df[i*MMQ_MMA_TILE_X_K_Q8_0           + kbxd] = bxi->d;
-#else
-        x_df[i*(MMQ_TILE_NE_K/QI4_0) + i/QI4_0 + kbxd] = bxi->d;
-#endif // defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
+        x_df[i*MMQ_MMA_TILE_X_K_Q8_0 + kbxd] = bxi->d;
     }
 }
 
@@ -776,14 +748,8 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
     constexpr int nwarps = mmq_get_nwarps_device();
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
 
-#if defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     int   * x_qs = (int   *)  x_tile;
     float * x_df = (float *) (x_tile + 2*MMQ_TILE_NE_K);
-#else
-    constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q8_0, mmq_y);
-    int   * x_qs = (int   *)  x_tile;
-    float * x_df = (float *) (x_qs + txs.qs);
-#endif // defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
 
     // MMQ_ITER_K / (4 * QR8_0) == 64 required. but NV has only 32 threads per warp
     constexpr int threads_per_row = 32;
@@ -802,13 +768,8 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
 
         const block_q8_0 * bxi = (const block_q8_0 *) x + kbx0 + i*stride + kbx;
 
-#if defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
         x_qs[i*MMQ_MMA_TILE_X_K_Q8_0 + 0             + txi] = get_int_b2(bxi[0].qs,                   kqsx);
         x_qs[i*MMQ_MMA_TILE_X_K_Q8_0 + MMQ_TILE_NE_K + txi] = get_int_b2(bxi[MMQ_TILE_NE_K/QI8_0].qs, kqsx);
-#else
-        x_qs[i*(2*MMQ_TILE_NE_K + 1) + 0             + txi] = get_int_b2(bxi[0].qs,                   kqsx);
-        x_qs[i*(2*MMQ_TILE_NE_K + 1) + MMQ_TILE_NE_K + txi] = get_int_b2(bxi[MMQ_TILE_NE_K/QI8_0].qs, kqsx);
-#endif // defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     }
 
     constexpr int blocks_per_tile_x_row = 2*MMQ_TILE_NE_K / QI8_0;
@@ -825,11 +786,7 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
 
         const block_q8_0 * bxi = (const block_q8_0 *) x + kbx0 + i*stride + kbxd;
 
-#if defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
-        x_df[i*MMQ_MMA_TILE_X_K_Q8_0                 + kbxd] = bxi->d;
-#else
-        x_df[i*(2*MMQ_TILE_NE_K/QI8_0) + i/(QI8_0/2) + kbxd] = bxi->d;
-#endif // defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
+        x_df[i*MMQ_MMA_TILE_X_K_Q8_0 + kbxd] = bxi->d;
     }
 }
 
@@ -1129,27 +1086,58 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_dp4a(
     constexpr int nwarps = mmq_get_nwarps_device();
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
 
-    constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q8_0, mmq_y);
     const int   * x_qs = (const int   *) x;
-    const float * x_df = (const float *) x_qs + txs.qs;
+    const float * x_df = (const float *) x_qs + 2*MMQ_TILE_NE_K;
     const int   * y_qs = (const int   *) y + 4;
     const float * y_df = (const float *) y;
 
+    float x_df_reg[mmq_y/warp_size][MMQ_TILE_NE_K/QI8_0];
+#pragma unroll
+    for (int i0 = 0; i0 < mmq_y; i0 += warp_size) {
+        const int i = i0 + threadIdx.x;
+
+        ggml_cuda_memcpy_1<sizeof(x_df_reg[0])>(x_df_reg + i0/warp_size, x_df + i*MMQ_MMA_TILE_X_K_Q8_0 + k00/QI8_0);
+    }
+
+    float y_df_reg[mmq_x/nwarps][MMQ_TILE_NE_K/QI8_0];
+#pragma unroll
+    for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
+        const int j = j0 + threadIdx.y;
+
+        ggml_cuda_memcpy_1<sizeof(y_df_reg[0])>(y_df_reg + j0/nwarps, y_df + j*MMQ_TILE_Y_K);
+    }
+
 // #pragma unroll
     for (int k01 = 0; k01 < MMQ_TILE_NE_K; k01 += VDR_Q8_0_Q8_1_MMQ) {
-        const int k0 = k00 + k01;
+        int x_qs_k[mmq_y/nwarps][VDR_Q8_0_Q8_1_MMQ];
+#pragma unroll
+        for (int i0 = 0; i0 < mmq_y; i0 += warp_size) {
+            const int i = i0 + threadIdx.x;
+
+#pragma unroll
+            for (int k02 = 0; k02 < VDR_Q8_0_Q8_1_MMQ; k02 += GGML_CUDA_MAX_CPY_BYTES/sizeof(int)) {
+                const int k0 = k00 + k01 + k02;
+
+                ggml_cuda_memcpy_1<GGML_CUDA_MAX_CPY_BYTES>(x_qs_k[i0/warp_size] + k02, x_qs + i*MMQ_TILE_Y_K + k0);
+            }
+        }
 
 #pragma unroll
         for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
             const int j = j0 + threadIdx.y;
 
+            int y_qs_kj[VDR_Q8_0_Q8_1_MMQ];
+#pragma unroll
+            for (int k02 = 0; k02 < VDR_Q8_0_Q8_1_MMQ; k02 += GGML_CUDA_MAX_CPY_BYTES/sizeof(int)) {
+                const int k0 = k00 + k01 + k02;
+
+                ggml_cuda_memcpy_1<GGML_CUDA_MAX_CPY_BYTES>(y_qs_kj + k02, y_qs + j*MMQ_TILE_Y_K + k0);
+            }
+
 #pragma unroll
             for (int i0 = 0; i0 < mmq_y; i0 += warp_size) {
-                const int i = i0 + threadIdx.x;
-
-                sum[j0/nwarps*mmq_y/warp_size + i0/warp_size] += vec_dot_q8_0_q8_1_impl<float, VDR_Q8_0_Q8_1_MMQ>
-                    (&x_qs[i*(2*MMQ_TILE_NE_K + 1) + k0], &y_qs[j*MMQ_TILE_Y_K + k0 % MMQ_TILE_NE_K],
-                     x_df[i*(2*MMQ_TILE_NE_K/QI8_0) + i/(QI8_0/2) + k0/QI8_0], y_df[j*MMQ_TILE_Y_K + (k0/QI8_1) % (MMQ_TILE_NE_K/QI8_1)]);
+                sum[j0/nwarps*mmq_y/warp_size + i0/warp_size] += vec_dot_q8_0_q8_1_impl<VDR_Q8_0_Q8_1_MMQ>
+                    (x_qs_k[i0/warp_size], y_qs_kj, x_df_reg[i0/warp_size][k01/QI8_0], y_df_reg[j0/nwarps][QI8_1]);
             }
         }
     }
@@ -3930,11 +3918,10 @@ struct mmq_args {
 };
 
 template<ggml_type type>
-static size_t mmq_get_nbytes_shared(const int mmq_x, const int mmq_y, const int cc, const int warp_size, const int nwarps) {
-    const tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(type, mmq_y);
+static size_t mmq_get_nbytes_shared(const int mmq_x, const int mmq_y, const int warp_size, const int nwarps) {
     const int mmq_tile_x_k = mmq_get_mma_tile_x_k(type);
     const size_t nbs_ids = mmq_x*sizeof(int);
-    const size_t nbs_x = (turing_mma_available(cc) || amd_mfma_available(cc) || amd_wmma_available(cc)) ? mmq_y*mmq_tile_x_k*sizeof(int) : txs.qs*sizeof(int) + txs.dm*sizeof(half2) + txs.sc*sizeof(int);
+    const size_t nbs_x = mmq_y*mmq_tile_x_k*sizeof(int);
     const size_t nbs_y = mmq_x * (sizeof(block_q8_1_mmq));
     return nbs_ids + nbs_x + GGML_PAD(nbs_y, nwarps*warp_size*sizeof(int));
 }
@@ -3950,7 +3937,7 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
 
     const dim3 block_dims(warp_size, nwarps, 1);
 
-    const int nbytes_shared = mmq_get_nbytes_shared<type>(mmq_x, mmq_y, cc, warp_size, nwarps);
+    const int nbytes_shared = mmq_get_nbytes_shared<type>(mmq_x, mmq_y, warp_size, nwarps);
 
     CUDA_SET_SHARED_MEMORY_LIMIT((mul_mat_q<type, mmq_x, false>), nbytes_shared);
     CUDA_SET_SHARED_MEMORY_LIMIT((mul_mat_q<type, mmq_x,  true>), nbytes_shared);
@@ -4069,7 +4056,7 @@ void mul_mat_q_case(ggml_backend_cuda_context & ctx, const mmq_args & args, cuda
     for (int mmq_x = 8; mmq_x <= mmq_x_max && ntiles_x_best > 1; mmq_x += 8) {
         const int granularity = mmq_get_granularity_host(mmq_x, cc);
 
-        if (mmq_x % granularity != 0 || mmq_get_nbytes_shared<type>(mmq_x, mmq_y, cc, warp_size, nwarps) > smpbo) {
+        if (mmq_x % granularity != 0 || mmq_get_nbytes_shared<type>(mmq_x, mmq_y, warp_size, nwarps) > smpbo) {
             continue;
         }
 

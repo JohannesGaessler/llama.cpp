@@ -282,7 +282,7 @@ static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_q8_0(
         const float2 * Q_ds = (const float2 *) Q_ds_v;
         const float Q_d = Q_ds[k_KQ_0/nthreads].x;
 
-        sum += vec_dot_q8_0_q8_1_impl<float, 1>(&v, &Q_q8[k_KQ_0/nthreads], K_q8_0[ib].d, Q_d);
+        sum += vec_dot_q8_0_q8_1_impl<1>(&v, &Q_q8[k_KQ_0/nthreads], K_q8_0[ib].d, Q_d);
     }
 
     return sum;
