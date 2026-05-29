@@ -106,6 +106,106 @@ struct tile_x_sizes {
     int sc;
 };
 
+// Config options for the MMQ kernel.
+// Should not affect results, only speed/register pressure/shared memory use.
+struct ggml_cuda_mmq_config {
+    ggml_type type;      // src0->type
+    int       nthreads;  // Number of threads per CUDA block.
+    int       occupancy; // Targeted occupancy for the MMA kernel.
+    int       I;         // SRAM tile width in src0->ne[1]/dst->ne[0] direction.
+    int       J;         // SRAM tile width in src1->ne[1]/dst->ne[1] direction.
+    int       K;         // SRAM tile length in src0->ne[0]/src1->ne[0] direction.
+
+    constexpr __host__ __device__ ggml_cuda_mmq_config(
+            ggml_type type, int nthreads, int occupancy, int I, int J, int K) :
+        type(type), nthreads(nthreads), occupancy(occupancy), I(I), J(J), K(K) {}
+};
+
+#define GGML_CUDA_MMQ_CONFIG_CASE(type_, nthreads_, occupancy_, I_, J_, K_)                \
+    if (type == (type_) && J == (J_)) {                                                    \
+        static_assert((nthreads_) % 32 == 0 && (nthreads_)       <= 512, "bad nthreads");  \
+        static_assert(                         (occupancy_)      <=   8, "bad occupancy"); \
+        static_assert((I_)        % 32 == 0,                             "bad I");         \
+        static_assert((J_)        %  8 == 0,                             "bad J");         \
+        static_assert((K_)        % 32 == 0,                             "bad K");         \
+        return ggml_cuda_mmq_config((type_), (nthreads_), (occupancy_), (I_), (J_), (K_)); \
+    }                                                                                      \
+
+static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config_ampere(const ggml_type type, const int J) {
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 128,   8, 64);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 128,  16, 64);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 128,  24, 64);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 128,  32, 64);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 128,  48, 64);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 128,  64, 64);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 128,  96, 64);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 128, 128, 64);
+
+    return ggml_cuda_mmq_config(GGML_TYPE_COUNT, 256, 1, 128, 64, 64);
+}
+
+static __host__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config(const ggml_type type, const int J, const int cc) {
+    if (ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_TURING) {
+        return ggml_cuda_mmq_get_config_ampere(type, J);
+    }
+    GGML_UNUSED_VARS(type, J, cc);
+    return ggml_cuda_mmq_config(GGML_TYPE_COUNT, 32, 1, 64, 64, 64);
+}
+
+static constexpr __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config(const ggml_type type, const int J) {
+#ifdef GGML_USE_HJP
+    GGML_UNUSED_VARS(type, J);
+    return ggml_cuda_mmq_config(GGML_TYPE_COUNT, 32, 1, 64, 64, 64);
+#else
+#if __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
+    return ggml_cuda_mmq_get_config_ampere(type, J);
+#else
+    GGML_UNUSED_VARS(type, J);
+    return ggml_cuda_mmq_config(GGML_TYPE_COUNT, 32, 1, 64, 64, 64);
+#endif // __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
+#endif // GGML_USE_HJP
+}
+
+static __host__ int ggml_cuda_mmq_get_nthreads(const ggml_type type, const int J, const int cc) {
+    return ggml_cuda_mmq_get_config(type, J, cc).nthreads;
+}
+
+static constexpr __device__ int ggml_cuda_mmq_get_nthreads(const ggml_type type, const int J) {
+    return ggml_cuda_mmq_get_config(type, J).nthreads;
+}
+
+static __host__ int ggml_cuda_mmq_get_occupancy(const ggml_type type, const int J, const int cc) {
+    return ggml_cuda_mmq_get_config(type, J, cc).occupancy;
+}
+
+static constexpr __device__ int ggml_cuda_mmq_get_occupancy(const ggml_type type, const int J) {
+    return ggml_cuda_mmq_get_config(type, J).occupancy;
+}
+
+static __host__ int ggml_cuda_mmq_get_I(const ggml_type type, const int J, const int cc) {
+    return ggml_cuda_mmq_get_config(type, J, cc).I;
+}
+
+static constexpr __device__ int ggml_cuda_mmq_get_I(const ggml_type type, const int J) {
+    return ggml_cuda_mmq_get_config(type, J).I;
+}
+
+static __host__ int ggml_cuda_mmq_get_J(const ggml_type type, const int J, const int cc) {
+    return ggml_cuda_mmq_get_config(type, J, cc).J;
+}
+
+static constexpr __device__ int ggml_cuda_mmq_get_J(const ggml_type type, const int J) {
+    return ggml_cuda_mmq_get_config(type, J).J;
+}
+
+static __host__ int ggml_cuda_mmq_get_K(const ggml_type type, const int J, const int cc) {
+    return ggml_cuda_mmq_get_config(type, J, cc).K;
+}
+
+static constexpr __device__ int ggml_cuda_mmq_get_K(const ggml_type type, const int J) {
+    return ggml_cuda_mmq_get_config(type, J).K;
+}
+
 static int get_mmq_x_max_host(const int cc) {
     return (turing_mma_available(cc) || amd_wmma_available(cc)) ? 128 :
         GGML_CUDA_CC_IS_NVIDIA(cc) && ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_VOLTA ?
@@ -3451,9 +3551,9 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
         const int tile_x_max_i, const int tile_y_max_j, const int kb0_start, const int kb0_stop) {
 
     constexpr int              warp_size  = ggml_cuda_get_physical_warp_size();
-    constexpr int              nwarps     = mmq_get_nwarps_device();
+    constexpr int              nwarps     = ggml_cuda_mmq_get_nthreads(type, mmq_x) / warp_size;
     constexpr int              qk         = ggml_cuda_type_traits<type>::qk;
-    constexpr int              mmq_y      = get_mmq_y_device();
+    constexpr int              mmq_y      = ggml_cuda_mmq_get_I(type, mmq_x);
     constexpr load_tiles_mmq_t load_tiles = mmq_type_traits<mmq_x, mmq_y, need_check, type>::load_tiles;
 
     extern __shared__ int data_mul_mat_q[];
@@ -3548,16 +3648,15 @@ static __global__ void mul_mat_q(
         const uint3 ntx) {
 
     // Skip unused template specializations for faster compilation:
-    if (mmq_x > get_mmq_x_max_device() || mmq_x % mmq_get_granularity_device(mmq_x) != 0) {
+    if (ggml_cuda_mmq_get_config(type, mmq_x).type == GGML_TYPE_COUNT) {
         NO_DEVICE_CODE;
         return;
     }
 
-    constexpr int nwarps = mmq_get_nwarps_device();
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
-
-    constexpr int qk    = ggml_cuda_type_traits<type>::qk;
-    constexpr int mmq_y = get_mmq_y_device();
+    constexpr int nwarps    = ggml_cuda_mmq_get_nthreads(type, mmq_x) / warp_size;
+    constexpr int qk        = ggml_cuda_type_traits<type>::qk;
+    constexpr int mmq_y     = ggml_cuda_mmq_get_I(type, mmq_x);
 
     const uint32_t nty = (nrows_x + mmq_y - 1) / mmq_y; // Number of tiles y
 
@@ -3929,34 +4028,35 @@ struct mmq_args {
     bool use_stream_k; int64_t ncols_max;
 };
 
-template<ggml_type type>
-static size_t mmq_get_nbytes_shared(const int mmq_x, const int mmq_y, const int cc, const int warp_size, const int nwarps) {
-    const tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(type, mmq_y);
-    const int mmq_tile_x_k = mmq_get_mma_tile_x_k(type);
-    const size_t nbs_ids = mmq_x*sizeof(int);
-    const size_t nbs_x = (turing_mma_available(cc) || amd_mfma_available(cc) || amd_wmma_available(cc)) ? mmq_y*mmq_tile_x_k*sizeof(int) : txs.qs*sizeof(int) + txs.dm*sizeof(half2) + txs.sc*sizeof(int);
-    const size_t nbs_y = mmq_x * (sizeof(block_q8_1_mmq));
-    return nbs_ids + nbs_x + GGML_PAD(nbs_y, nwarps*warp_size*sizeof(int));
+static size_t mmq_get_nbytes_shared(const ggml_cuda_mmq_config & config, const int cc) {
+    const tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(config.type, config.I);
+    const int mmq_tile_x_k = mmq_get_mma_tile_x_k(config.type);
+    const size_t nbs_ids = config.J*sizeof(int);
+    const size_t nbs_x = (turing_mma_available(cc) || amd_mfma_available(cc) || amd_wmma_available(cc)) ?
+        config.J*mmq_tile_x_k*sizeof(int) : txs.qs*sizeof(int) + txs.dm*sizeof(half2) + txs.sc*sizeof(int);
+    const size_t nbs_y = config.J * (sizeof(block_q8_1_mmq));
+    return nbs_ids + nbs_x + GGML_PAD(nbs_y, config.nthreads*sizeof(int));
 }
 
-template <ggml_type type, int mmq_x>
+template <ggml_type type, int J>
 static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & args, cudaStream_t stream) {
     const int id = ggml_cuda_get_device();
     const int cc = ggml_cuda_info().devices[id].cc;
     const int nsm = ggml_cuda_info().devices[id].nsm;
     const int warp_size = ggml_cuda_info().devices[id].warp_size;
-    const int nwarps = mmq_get_nwarps_host(cc, warp_size);
-    const int mmq_y = get_mmq_y_host(cc);
+
+    const ggml_cuda_mmq_config config = ggml_cuda_mmq_get_config(type, J, cc);
+    GGML_ASSERT(config.nthreads % warp_size == 0);
+    const int nwarps = config.nthreads / warp_size;
+    const int nbytes_shared = mmq_get_nbytes_shared(config, cc);
 
     const dim3 block_dims(warp_size, nwarps, 1);
 
-    const int nbytes_shared = mmq_get_nbytes_shared<type>(mmq_x, mmq_y, cc, warp_size, nwarps);
+    CUDA_SET_SHARED_MEMORY_LIMIT((mul_mat_q<type, J, false>), nbytes_shared);
+    CUDA_SET_SHARED_MEMORY_LIMIT((mul_mat_q<type, J,  true>), nbytes_shared);
 
-    CUDA_SET_SHARED_MEMORY_LIMIT((mul_mat_q<type, mmq_x, false>), nbytes_shared);
-    CUDA_SET_SHARED_MEMORY_LIMIT((mul_mat_q<type, mmq_x,  true>), nbytes_shared);
-
-    const int nty  = (args.nrows_x   + mmq_y - 1) / mmq_y;
-    const int ntx  = (args.ncols_max + mmq_x - 1) / mmq_x;
+    const int nty  = (args.nrows_x   + config.I - 1) / config.I;
+    const int ntx  = (args.ncols_max + config.J - 1) / config.J;
     const int ntzw = args.nchannels_y * args.nsamples_y;
     const dim3 block_nums_xy_tiling(nty, ntx, ntzw);
 
@@ -3973,9 +4073,9 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     const uint3 sample_ratio_fd    = init_fastdiv_values(sample_ratio);
 
     if (!args.use_stream_k) {
-        if (args.nrows_x % mmq_y == 0) {
+        if (args.nrows_x % config.I == 0) {
             constexpr bool need_check = false;
-            mul_mat_q<type, mmq_x, need_check><<<block_nums_xy_tiling, block_dims, nbytes_shared, stream>>>
+            mul_mat_q<type, J, need_check><<<block_nums_xy_tiling, block_dims, nbytes_shared, stream>>>
                 (args.x, args.y, args.ids_dst, args.expert_bounds, args.dst, nullptr,
                  blocks_per_ne00_fd, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
                  channel_ratio_fd, nchannels_y_fd, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
@@ -3983,7 +4083,7 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
                  ntx_fd);
         } else {
             constexpr bool need_check = true;
-            mul_mat_q<type, mmq_x, need_check><<<block_nums_xy_tiling, block_dims, nbytes_shared, stream>>>
+            mul_mat_q<type, J, need_check><<<block_nums_xy_tiling, block_dims, nbytes_shared, stream>>>
                 (args.x, args.y, args.ids_dst, args.expert_bounds, args.dst, nullptr,
                  blocks_per_ne00_fd, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
                  channel_ratio_fd, nchannels_y_fd, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
@@ -4007,15 +4107,15 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     ggml_cuda_pool & pool = ctx.pool(id);
     ggml_cuda_pool_alloc<float> tmp_fixup(pool);
     if (fixup_needed) {
-        tmp_fixup.alloc(block_nums_stream_k.x * mmq_x*mmq_y);
+        tmp_fixup.alloc(block_nums_stream_k.x * config.J*config.I);
     }
 
-    const dim3 block_nums_fixup(block_nums_stream_k.x, mmq_y/warp_size, 1);
+    const dim3 block_nums_fixup(block_nums_stream_k.x, config.I/warp_size, 1);
     const dim3 block_dims_fixup(block_dims.x, block_dims.y/2, block_dims.z);
 
-    if (args.nrows_x % mmq_y == 0) {
+    if (args.nrows_x % config.I == 0) {
         constexpr bool need_check = false;
-        mul_mat_q<type, mmq_x, need_check><<<block_nums_stream_k, block_dims, nbytes_shared, stream>>>
+        mul_mat_q<type, J, need_check><<<block_nums_stream_k, block_dims, nbytes_shared, stream>>>
             (args.x, args.y, args.ids_dst, args.expert_bounds, args.dst, tmp_fixup.ptr,
              blocks_per_ne00_fd, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
              channel_ratio_fd, nchannels_y_fd, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
@@ -4027,13 +4127,13 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
         }
 
         CUDA_CHECK(cudaGetLastError());
-        mul_mat_q_stream_k_fixup<type, mmq_x, need_check><<<block_nums_fixup, block_dims_fixup, 0, stream>>>
+        mul_mat_q_stream_k_fixup<type, J, need_check><<<block_nums_fixup, block_dims_fixup, 0, stream>>>
             (args.ids_dst, args.expert_bounds, args.dst, tmp_fixup.ptr, blocks_per_ne00_fd, args.nrows_x, args.ncols_dst,
              args.nrows_dst, nchannels_y_fd, args.stride_channel_dst, nsamples_y_fd, args.stride_sample_dst,
              ntx_fd);
     } else {
         constexpr bool need_check = true;
-        mul_mat_q<type, mmq_x, need_check><<<block_nums_stream_k, block_dims, nbytes_shared, stream>>>
+        mul_mat_q<type, J, need_check><<<block_nums_stream_k, block_dims, nbytes_shared, stream>>>
             (args.x, args.y, args.ids_dst, args.expert_bounds, args.dst, tmp_fixup.ptr,
              blocks_per_ne00_fd, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
              channel_ratio_fd, nchannels_y_fd, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
@@ -4045,7 +4145,7 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
         }
 
         CUDA_CHECK(cudaGetLastError());
-        mul_mat_q_stream_k_fixup<type, mmq_x, need_check><<<block_nums_fixup, block_dims_fixup, 0, stream>>>
+        mul_mat_q_stream_k_fixup<type, J, need_check><<<block_nums_fixup, block_dims_fixup, 0, stream>>>
             (args.ids_dst, args.expert_bounds, args.dst, tmp_fixup.ptr, blocks_per_ne00_fd, args.nrows_x, args.ncols_dst,
              args.nrows_dst, nchannels_y_fd, args.stride_channel_dst, nsamples_y_fd, args.stride_sample_dst,
              ntx_fd);
@@ -4054,34 +4154,32 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
 
 template <ggml_type type>
 void mul_mat_q_case(ggml_backend_cuda_context & ctx, const mmq_args & args, cudaStream_t stream) {
-    const int    id     = ggml_cuda_get_device();
-    const int    cc     = ggml_cuda_info().devices[id].cc;
-    const size_t smpbo  = ggml_cuda_info().devices[id].smpbo;
-    const int warp_size = ggml_cuda_info().devices[id].warp_size;
-    const int nwarps    = mmq_get_nwarps_host(cc, warp_size);
+    const int    id    = ggml_cuda_get_device();
+    const int    cc    = ggml_cuda_info().devices[id].cc;
+    const size_t smpbo = ggml_cuda_info().devices[id].smpbo;
 
-    const int mmq_x_max = get_mmq_x_max_host(cc);
-    const int mmq_y = get_mmq_y_host(cc);
+    int J_best        = 0;
+    int ntiles_J_best = INT_MAX;
 
-    int mmq_x_best  = 0;
-    int ntiles_x_best = INT_MAX;
-
-    for (int mmq_x = 8; mmq_x <= mmq_x_max && ntiles_x_best > 1; mmq_x += 8) {
-        const int granularity = mmq_get_granularity_host(mmq_x, cc);
-
-        if (mmq_x % granularity != 0 || mmq_get_nbytes_shared<type>(mmq_x, mmq_y, cc, warp_size, nwarps) > smpbo) {
+    for (int J = 8; J <= 128 && ntiles_J_best > 1; J += 8) {
+        const ggml_cuda_mmq_config config = ggml_cuda_mmq_get_config(type, J, cc);
+        if (config.type == GGML_TYPE_COUNT) {
             continue;
         }
 
-        const int ntiles_x = (args.ncols_max + mmq_x - 1) / mmq_x;
+        if (mmq_get_nbytes_shared(config, cc) > smpbo) {
+            continue;
+        }
 
-        if (ntiles_x < ntiles_x_best) {
-            mmq_x_best = mmq_x;
-            ntiles_x_best = ntiles_x;
+        const int ntiles_x = (args.ncols_max + config.J - 1) / config.J;
+
+        if (ntiles_x < ntiles_J_best) {
+            J_best = J;
+            ntiles_J_best = ntiles_x;
         }
     }
 
-    switch (mmq_x_best) {
+    switch (J_best) {
         case   8:
             launch_mul_mat_q<type,   8>(ctx, args, stream);
             break;
@@ -4131,7 +4229,7 @@ void mul_mat_q_case(ggml_backend_cuda_context & ctx, const mmq_args & args, cuda
             launch_mul_mat_q<type, 128>(ctx, args, stream);
             break;
         default:
-            fprintf(stderr, "mmq_x_best=%d\n", mmq_x_best);
+            fprintf(stderr, "J_best=%d\n", J_best);
             GGML_ABORT("fatal error");
             break;
     }
