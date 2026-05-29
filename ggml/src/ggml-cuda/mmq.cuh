@@ -1137,7 +1137,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_dp4a(
 #pragma unroll
             for (int i0 = 0; i0 < mmq_y; i0 += warp_size) {
                 sum[j0/nwarps*mmq_y/warp_size + i0/warp_size] += vec_dot_q8_0_q8_1_impl<VDR_Q8_0_Q8_1_MMQ>
-                    (x_qs_k[i0/warp_size], y_qs_kj, x_df_reg[i0/warp_size][k01/QI8_0], y_df_reg[j0/nwarps][QI8_1]);
+                    (x_qs_k[i0/warp_size], y_qs_kj, x_df_reg[i0/warp_size][k01/QI8_0], y_df_reg[j0/nwarps][k01/QI8_1]);
             }
         }
     }
