@@ -61,8 +61,8 @@ static_assert(sizeof(block_fp4_mmq)  == sizeof(block_q8_1_mmq),    "Unexpected b
 static mmq_q8_1_ds_layout mmq_get_q8_1_ds_layout(const ggml_type type_x) {
     switch (type_x) {
         case GGML_TYPE_Q1_0:
-            return MMQ_Q8_1_DS_LAYOUT_D4;
         case GGML_TYPE_Q4_0:
+            return MMQ_Q8_1_DS_LAYOUT_D4;
         case GGML_TYPE_Q4_1:
             return MMQ_Q8_1_DS_LAYOUT_DS4;
         case GGML_TYPE_Q5_0:
@@ -425,56 +425,6 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
         const block_q4_0 * bxi = (const block_q4_0 *) x + kbx0 + i*stride + kbxd;
 
         x_df[i*MMQ_MMA_TILE_X_K_Q8_0 + kbxd] = bxi->d;
-    }
-}
-
-template <int mmq_x, int mmq_y>
-static __device__ __forceinline__ void vec_dot_q4_0_q8_1_dp4a(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
-    constexpr int nwarps = mmq_get_nwarps_device();
-    constexpr int warp_size = ggml_cuda_get_physical_warp_size();
-
-    constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q4_0, mmq_y);
-    const int   * x_qs = (const int   *) x;
-    const float * x_df = (const float *) x_qs + txs.qs;
-    const int   * y_qs = (const int   *) y + 4;
-    const half2 * y_ds = (const half2 *) y;
-
-// #pragma unroll
-    for (int k01 = 0; k01 < MMQ_TILE_NE_K; k01 += QR4_0*VDR_Q4_0_Q8_1_MMQ) {
-        const int k0 = k00 + k01;
-
-#pragma unroll
-        for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
-            const int j = j0 + threadIdx.y;
-
-#pragma unroll
-            for (int i0 = 0; i0 < mmq_y; i0 += warp_size) {
-                const int i = i0 + threadIdx.x;
-                const int kyqs = QI8_1 * ((k01/2) / (QI8_1/2)) + (k01/2) % (QI8_1/2);
-
-                int u[2*VDR_Q4_0_Q8_1_MMQ];
-
-                constexpr int max_cpy = ggml_cuda_get_max_cpy_bytes();
-                constexpr int mcpy_int = max_cpy / sizeof(int);
-                static_assert(VDR_Q4_0_Q8_1_MMQ == 4, "bad VDR_Q4_0_Q8_1_MMQ");
-
-                int tmp0[4], tmp1[4];
-
-                #pragma unroll
-                for (int l0 = 0; l0 < 4 / mcpy_int; ++l0) {
-                    ggml_cuda_memcpy_1<max_cpy>(tmp0 + l0 * mcpy_int, &y_qs[j*MMQ_TILE_Y_K + kyqs + l0 * mcpy_int]  );
-                    ggml_cuda_memcpy_1<max_cpy>(tmp1 + l0 * mcpy_int, &y_qs[j*MMQ_TILE_Y_K + kyqs + QI4_0 + l0 * mcpy_int]);
-                }
-
-                u[0]=tmp0[0]; u[2]=tmp0[1]; u[4]=tmp0[2]; u[6]=tmp0[3];
-                u[1]=tmp1[0]; u[3]=tmp1[1]; u[5]=tmp1[2]; u[7]=tmp1[3];
-
-                sum[j0/nwarps*mmq_y/warp_size + i0/warp_size] += vec_dot_q4_0_q8_1_impl<VDR_Q4_0_Q8_1_MMQ>
-                    (&x_qs[i*(MMQ_TILE_NE_K + 1) + k0/QR4_0], u,
-                     x_df[i*(MMQ_TILE_NE_K/QI4_0) + i/QI4_0 + k0/(QR4_0*QI4_0)], y_ds[j*MMQ_TILE_Y_K + k01/QI8_1]);
-            }
-        }
     }
 }
 
