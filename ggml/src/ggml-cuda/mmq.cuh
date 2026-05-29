@@ -1099,7 +1099,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_dp4a(
         ggml_cuda_memcpy_1<sizeof(x_df_reg[0])>(x_df_reg + i0/warp_size, x_df + i*MMQ_MMA_TILE_X_K_Q8_0 + k00/QI8_0);
     }
 
-    float y_df_reg[mmq_x/nwarps][MMQ_TILE_NE_K/QI8_0];
+    float y_df_reg[mmq_x/nwarps][MMQ_TILE_NE_K/QI8_1];
 #pragma unroll
     for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
         const int j = j0 + threadIdx.y;
@@ -1109,7 +1109,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_dp4a(
 
 // #pragma unroll
     for (int k01 = 0; k01 < MMQ_TILE_NE_K; k01 += VDR_Q8_0_Q8_1_MMQ) {
-        int x_qs_k[mmq_y/nwarps][VDR_Q8_0_Q8_1_MMQ];
+        int x_qs_k[mmq_y/warp_size][VDR_Q8_0_Q8_1_MMQ];
 #pragma unroll
         for (int i0 = 0; i0 < mmq_y; i0 += warp_size) {
             const int i = i0 + threadIdx.x;
@@ -1129,7 +1129,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_dp4a(
             int y_qs_kj[VDR_Q8_0_Q8_1_MMQ];
 #pragma unroll
             for (int k02 = 0; k02 < VDR_Q8_0_Q8_1_MMQ; k02 += GGML_CUDA_MAX_CPY_BYTES/sizeof(int)) {
-                const int k0 = k00 + k01 + k02;
+                const int k0 = k01 + k02;
 
                 ggml_cuda_memcpy_1<GGML_CUDA_MAX_CPY_BYTES>(y_qs_kj + k02, y_qs + j*MMQ_TILE_Y_K + k0);
             }
