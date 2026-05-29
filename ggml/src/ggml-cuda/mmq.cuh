@@ -3315,17 +3315,30 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
 
     constexpr int sz = sizeof(block_q8_1_mmq) / sizeof(int);
 
+    auto load_y = [&](const int * __restrict__ y0) {
+        constexpr int ne4  = mmq_x*MMQ_TILE_Y_K;
+        constexpr int ne8  = ne4 - ne4 % (nwarps*warp_size*2);
+        constexpr int ne16 = ne8 - ne8 % (nwarps*warp_size*4);
+#pragma unroll
+        for (int l00 = 0; l00 < ne16; l00 += nwarps*warp_size*4) {
+            const int l0 = l00 + threadIdx.y*(warp_size*4) + threadIdx.x*(4);
+            ggml_cuda_memcpy_1<4*sizeof(int)>(tile_y + l0, y0 + l0);
+        }
+#pragma unroll
+        for (int l00 = ne16; l00 < ne8; l00 += nwarps*warp_size*2) {
+            const int l0 = l00 + threadIdx.y*(warp_size*2) + threadIdx.x*(2);
+            ggml_cuda_memcpy_1<2*sizeof(int)>(tile_y + l0, y0 + l0);
+        }
+#pragma unroll
+        for (int l00 = ne8; l00 < ne4; l00 += nwarps*warp_size*1) {
+            const int l0 = l00 + threadIdx.y*(warp_size*1) + threadIdx.x*(1);
+            ggml_cuda_memcpy_1<1*sizeof(int)>(tile_y + l0, y0 + l0);
+        }
+    };
+
     for (int kb0 = kb0_start; kb0 < kb0_stop; kb0 += blocks_per_iter) {
         load_tiles(x, tile_x, offset_x + kb0, tile_x_max_i, stride_row_x);
-        {
-            const int * by0 = y + ncols_y * (kb0 * qk / ne_block) * sz;
-#pragma unroll
-            for (int l0 = 0; l0 < mmq_x * MMQ_TILE_Y_K; l0 += nwarps * warp_size) {
-                int l = l0 + threadIdx.y*warp_size + threadIdx.x;
-
-                tile_y[l] = by0[l];
-            }
-        }
+        load_y(y + ncols_y * (kb0 * qk / ne_block) * sz);
 
         __syncthreads();
 
@@ -3333,15 +3346,7 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
 
         __syncthreads();
 
-        {
-            const int * by0 = y + ncols_y * ((kb0 * qk / ne_block) * sz + sz);
-#pragma unroll
-            for (int l0 = 0; l0 < mmq_x * MMQ_TILE_Y_K; l0 += nwarps * warp_size) {
-                int l = l0 + threadIdx.y*warp_size + threadIdx.x;
-
-                tile_y[l] = by0[l];
-            }
-        }
+        load_y(y + ncols_y * ((kb0 * qk / ne_block) * sz + sz));
 
         __syncthreads();
 
