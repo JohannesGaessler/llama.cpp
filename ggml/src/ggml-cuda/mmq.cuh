@@ -276,7 +276,7 @@ static constexpr __device__ int ggml_cuda_mmq_get_K_vram(const ggml_type type, c
     return ggml_cuda_mmq_get_config(type, J).K_vram;
 }
 
-//---------------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------------
 
 static __host__ int ggml_cuda_mmq_get_J_max(const ggml_type type, const int cc, const int64_t ne11) {
     int ret = std::min(ne11, int64_t(512));
@@ -327,6 +327,14 @@ static constexpr __host__ __device__ tile_x_sizes mmq_get_dp4a_tile_x_sizes(ggml
     }
 }
 
+// FIXME temporary until all combinations of data types and GPUs can use the MMA data layout
+static __host__ int ggml_cuda_mmq_get_nbytes_shared_x(const ggml_cuda_mmq_config & config, const int cc) {
+    if (turing_mma_available(cc) || amd_mfma_available(cc) || amd_wmma_available(cc)) {
+        return config.K_sram * config.I * 4;
+    }
+    const tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(config.type, config.I);
+    return (txs.qs + txs.dm + txs.sc) * 4;
+}
 
 static constexpr __host__ __device__ int mmq_get_mma_tile_x_k(ggml_type type) {
     switch (type) {
@@ -4013,11 +4021,8 @@ struct mmq_args {
 };
 
 static size_t mmq_get_nbytes_shared(const ggml_cuda_mmq_config & config, const int cc) {
-    const tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(config.type, config.I);
-    const int mmq_tile_x_k = mmq_get_mma_tile_x_k(config.type);
     const size_t nbs_ids = config.J*sizeof(int);
-    const size_t nbs_x = (turing_mma_available(cc) || amd_mfma_available(cc) || amd_wmma_available(cc)) ?
-        config.J*mmq_tile_x_k*sizeof(int) : txs.qs*sizeof(int) + txs.dm*sizeof(half2) + txs.sc*sizeof(int);
+    const size_t nbs_x = ggml_cuda_mmq_get_nbytes_shared_x(config, cc);
     const size_t nbs_y = config.J * (sizeof(block_q8_1_mmq));
     return nbs_ids + nbs_x + GGML_PAD(nbs_y, config.nthreads*sizeof(int));
 }
