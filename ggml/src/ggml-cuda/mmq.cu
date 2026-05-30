@@ -3,6 +3,8 @@
 #include "quantize.cuh"
 #include "mmid.cuh"
 
+#include <cstdint>
+
 static void ggml_cuda_mul_mat_q_switch_type(ggml_backend_cuda_context & ctx, const mmq_args & args, cudaStream_t stream) {
     switch (args.type_x) {
         case GGML_TYPE_Q1_0:
@@ -125,8 +127,8 @@ void ggml_cuda_mul_mat_q(
     const bool use_native_fp4 = blackwell_mma_available(cc) && (src0->type == GGML_TYPE_MXFP4 || src0->type == GGML_TYPE_NVFP4);
 
     if (!ids) {
-        const size_t nbytes_src1_q8_1 = ne13*ne12 * ne11*ne10_padded * sizeof(block_q8_1)/QK8_1 +
-            get_mmq_x_max_host(cc)*sizeof(block_q8_1_mmq);
+        const int64_t ne11_padded = GGML_PAD(ne11, ggml_cuda_mmq_get_J_max(src0->type, cc, ne11));
+        const size_t nbytes_src1_q8_1 = ne13*ne12 * ne11_padded*ne10_padded * sizeof(block_q8_1)/QK8_1;
         ggml_cuda_pool_alloc<char> src1_q8_1(ctx.pool(), nbytes_src1_q8_1);
 
         {
@@ -183,8 +185,8 @@ void ggml_cuda_mul_mat_q(
         CUDA_CHECK(cudaGetLastError());
     }
 
-    const size_t nbytes_src1_q8_1 = ne12*n_expert_used*ne10_padded * sizeof(block_q8_1)/QK8_1 +
-        get_mmq_x_max_host(cc)*sizeof(block_q8_1_mmq);
+    const int64_t neu_padded = GGML_PAD(n_expert_used, ggml_cuda_mmq_get_J_max(src0->type, cc, ne11));
+    const size_t nbytes_src1_q8_1 = ne12*neu_padded*ne10_padded * sizeof(block_q8_1)/QK8_1;
     ggml_cuda_pool_alloc<char> src1_q8_1(ctx.pool(), nbytes_src1_q8_1);
 
     const int64_t ne11_flat = ne12*n_expert_used;
