@@ -106,6 +106,32 @@ struct tile_x_sizes {
     int sc;
 };
 
+// Decouple shared memory tile sizes from WARP_SIZE to allow for different warp sizes.
+// The K dimension of the tiles has either,
+// 1*MMQ_TILE_NE_K==32 (always for TILE_Y_K) or 2*MMQ_TILE_NE_K==64 (typically for TILE_X_K),
+// 32 bit elements for the quantized data (does not include scales).
+// In other words, the size of the quantized data in the K dimension is a multiple of MMQ_TILE_NE_K.
+// The final tile size in K direction is padded to avoid shared memory bank conflicts,
+// in terms of 32 bit elements that means K % 2 == 1 for dp4a or K % 8 == 4 for mma.
+#define MMQ_TILE_NE_K 32
+
+#define MMQ_MMA_TILE_X_K_Q8_0  (2*MMQ_TILE_NE_K + 2*MMQ_TILE_NE_K/QI8_0                   + 4)
+#define MMQ_MMA_TILE_X_K_FP4   (2*MMQ_TILE_NE_K + 8                                       + 4) // MXFP4 and NVFP4 Blackwell
+#define MMQ_MMA_TILE_X_K_NVFP4 (2*MMQ_TILE_NE_K + MMQ_TILE_NE_K/2                         + 4) // NVFP4 Generic
+#define MMQ_MMA_TILE_X_K_Q8_1  (2*MMQ_TILE_NE_K + 2*MMQ_TILE_NE_K/QI8_0                   + 4)
+#define MMQ_MMA_TILE_X_K_Q2_K  (2*MMQ_TILE_NE_K + MMQ_TILE_NE_K                           + 4)
+#define MMQ_MMA_TILE_X_K_Q3_K  (2*MMQ_TILE_NE_K + MMQ_TILE_NE_K/2                         + 4)
+#define MMQ_MMA_TILE_X_K_Q6_K  (2*MMQ_TILE_NE_K + MMQ_TILE_NE_K/QI6_K   + MMQ_TILE_NE_K/8 + 7)
+
+static_assert(MMQ_MMA_TILE_X_K_Q8_0 % 8 == 4, "Wrong padding.");
+static_assert(MMQ_MMA_TILE_X_K_Q8_1 % 8 == 4, "Wrong padding.");
+static_assert(MMQ_MMA_TILE_X_K_Q2_K % 8 == 4, "Wrong padding.");
+static_assert(MMQ_MMA_TILE_X_K_Q3_K % 8 == 4, "Wrong padding.");
+static_assert(MMQ_MMA_TILE_X_K_Q6_K % 8 == 4, "Wrong padding.");
+static_assert(MMQ_MMA_TILE_X_K_FP4  % 8 == 4, "Wrong padding.");
+static_assert(MMQ_MMA_TILE_X_K_FP4 == MMQ_MMA_TILE_X_K_Q8_1, "Wrong tile size for MXFP4");
+static_assert(MMQ_MMA_TILE_X_K_NVFP4 % 8 == 4, "Wrong padding.");
+
 // Config options for the MMQ kernel.
 // Should not affect results, only speed/register pressure/shared memory use.
 struct ggml_cuda_mmq_config {
@@ -114,45 +140,70 @@ struct ggml_cuda_mmq_config {
     int       occupancy; // Targeted occupancy for the MMA kernel.
     int       I;         // SRAM tile width in src0->ne[1]/dst->ne[0] direction.
     int       J;         // SRAM tile width in src1->ne[1]/dst->ne[1] direction.
-    int       K;         // SRAM tile length in src0->ne[0]/src1->ne[0] direction.
+    int       K_sram;    // SRAM tile length in src0->ne[0]/src1->ne[0] direction (physical 32 bit elements).
+    int       K_vram;    // VRAM tile length in src0->ne[0]/src1->ne[0] direction (logical elements).
 
     constexpr __host__ __device__ ggml_cuda_mmq_config(
-            ggml_type type, int nthreads, int occupancy, int I, int J, int K) :
-        type(type), nthreads(nthreads), occupancy(occupancy), I(I), J(J), K(K) {}
+            ggml_type type, int nthreads, int occupancy, int I, int J, int K_sram, int K_vram) :
+        type(type), nthreads(nthreads), occupancy(occupancy), I(I), J(J), K_sram(K_sram), K_vram(K_vram) {}
 };
 
-#define GGML_CUDA_MMQ_CONFIG_CASE(type_, nthreads_, occupancy_, I_, J_, K_)                \
+#define GGML_CUDA_MMQ_CONFIG_CASE(type_, nthreads_, occupancy_, I_, J_, K_sram_, K_vram_)  \
     if (type == (type_) && J == (J_)) {                                                    \
-        static_assert((nthreads_) % 32 == 0 && (nthreads_)       <= 512, "bad nthreads");  \
-        static_assert(                         (occupancy_)      <=   8, "bad occupancy"); \
-        static_assert((I_)        % 32 == 0,                             "bad I");         \
-        static_assert((J_)        %  8 == 0,                             "bad J");         \
-        static_assert((K_)        % 32 == 0,                             "bad K");         \
-        return ggml_cuda_mmq_config((type_), (nthreads_), (occupancy_), (I_), (J_), (K_)); \
+        static_assert((nthreads_) %  32 == 0 && (nthreads_)       <= 512, "bad nthreads");  \
+        static_assert(                          (occupancy_)      <=   8, "bad occupancy"); \
+        static_assert((I_)        %  32 == 0,                             "bad I");         \
+        static_assert((J_)        %   8 == 0,                             "bad J");         \
+        static_assert((K_vram_)   % 256 == 0,                             "bad K_vram");    \
+        return ggml_cuda_mmq_config((type_), (nthreads_), (occupancy_), (I_), (J_), (K_sram_), (K_vram_)); \
     }                                                                                      \
 
 static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config_ampere(const ggml_type type, const int J) {
-    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 128,   8, 64);
-    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 128,  16, 64);
-    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 128,  24, 64);
-    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 128,  32, 64);
-    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 128,  48, 64);
-    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 128,  64, 64);
-    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 128,  96, 64);
-    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 128, 128, 64);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 128,  24, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 128,  32, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 128,  48, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 128,  96, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K);
 
-    return ggml_cuda_mmq_config(GGML_TYPE_COUNT, 256, 1, 128, 64, 64);
+    return ggml_cuda_mmq_config(GGML_TYPE_COUNT, 256, 1, 128, 64, 64, 256);
+}
+
+static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config_blackwell(const ggml_type type, const int J) {
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_MXFP4, 256, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K_FP4);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_MXFP4, 256, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K_FP4);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_MXFP4, 256, 1, 128,  24, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K_FP4);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_MXFP4, 256, 1, 128,  32, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K_FP4);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_MXFP4, 256, 1, 128,  48, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K_FP4);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_MXFP4, 256, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K_FP4);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_MXFP4, 256, 1, 128,  96, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K_FP4);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_MXFP4, 256, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K_FP4);
+
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_NVFP4, 256, 1, 128,   8, MMQ_MMA_TILE_X_K_NVFP4, MMQ_ITER_K_FP4);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_NVFP4, 256, 1, 128,  16, MMQ_MMA_TILE_X_K_NVFP4, MMQ_ITER_K_FP4);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_NVFP4, 256, 1, 128,  24, MMQ_MMA_TILE_X_K_NVFP4, MMQ_ITER_K_FP4);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_NVFP4, 256, 1, 128,  32, MMQ_MMA_TILE_X_K_NVFP4, MMQ_ITER_K_FP4);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_NVFP4, 256, 1, 128,  48, MMQ_MMA_TILE_X_K_NVFP4, MMQ_ITER_K_FP4);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_NVFP4, 256, 1, 128,  64, MMQ_MMA_TILE_X_K_NVFP4, MMQ_ITER_K_FP4);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_NVFP4, 256, 1, 128,  96, MMQ_MMA_TILE_X_K_NVFP4, MMQ_ITER_K_FP4);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_NVFP4, 256, 1, 128, 128, MMQ_MMA_TILE_X_K_NVFP4, MMQ_ITER_K_FP4);
+
+    return ggml_cuda_mmq_get_config_ampere(type, J);
 }
 
 static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config_pascal(const ggml_type type, const int J) {
-    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 64,   8, 64);
-    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 64,  16, 64);
-    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 64,  24, 64);
-    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 64,  32, 64);
-    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 64,  48, 64);
-    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 64,  64, 64);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 64,   8, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 64,  16, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 64,  24, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 64,  32, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 64,  48, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 64,  64, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 64,  96, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K);
+    GGML_CUDA_MMQ_CONFIG_CASE(GGML_TYPE_Q8_0, 256, 1, 64, 128, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K);
 
-    return ggml_cuda_mmq_config(GGML_TYPE_COUNT, 256, 1, 128, 64, 64);
+    return ggml_cuda_mmq_config(GGML_TYPE_COUNT, 256, 1, 128, 64, 64, 256);
 }
 
 static __host__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config(const ggml_type type, const int J, const int cc) {
@@ -161,13 +212,13 @@ static __host__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config(const ggml_type ty
     }
     return ggml_cuda_mmq_get_config_pascal(type, J);
     GGML_UNUSED_VARS(type, J, cc);
-    return ggml_cuda_mmq_config(GGML_TYPE_COUNT, 32, 1, 64, 64, 64);
+    return ggml_cuda_mmq_config(GGML_TYPE_COUNT, 32, 1, 64, 64, 64, 256);
 }
 
 static constexpr __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config(const ggml_type type, const int J) {
 #ifdef GGML_USE_HJP
     GGML_UNUSED_VARS(type, J);
-    return ggml_cuda_mmq_config(GGML_TYPE_COUNT, 32, 1, 64, 64, 64);
+    return ggml_cuda_mmq_config(GGML_TYPE_COUNT, 32, 1, 64, 64, 64, 256);
 #else
 #if __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
     return ggml_cuda_mmq_get_config_ampere(type, J);
@@ -209,12 +260,20 @@ static constexpr __device__ int ggml_cuda_mmq_get_J(const ggml_type type, const 
     return ggml_cuda_mmq_get_config(type, J).J;
 }
 
-static __host__ int ggml_cuda_mmq_get_K(const ggml_type type, const int J, const int cc) {
-    return ggml_cuda_mmq_get_config(type, J, cc).K;
+static __host__ int ggml_cuda_mmq_get_K_sram(const ggml_type type, const int J, const int cc) {
+    return ggml_cuda_mmq_get_config(type, J, cc).K_sram;
 }
 
-static constexpr __device__ int ggml_cuda_mmq_get_K(const ggml_type type, const int J) {
-    return ggml_cuda_mmq_get_config(type, J).K;
+static constexpr __device__ int ggml_cuda_mmq_get_K_sram(const ggml_type type, const int J) {
+    return ggml_cuda_mmq_get_config(type, J).K_sram;
+}
+
+static __host__ int ggml_cuda_mmq_get_K_vram(const ggml_type type, const int J, const int cc) {
+    return ggml_cuda_mmq_get_config(type, J, cc).K_vram;
+}
+
+static constexpr __device__ int ggml_cuda_mmq_get_K_vram(const ggml_type type, const int J) {
+    return ggml_cuda_mmq_get_config(type, J).K_vram;
 }
 
 //---------------------------------------------------------------------------------------------
@@ -229,24 +288,6 @@ static __host__ int ggml_cuda_mmq_get_J_max(const ggml_type type, const int cc, 
     }
     return ret;
 }
-
-static constexpr __device__ int get_iter_k([[maybe_unused]] const ggml_type type) {
-#if defined(BLACKWELL_MMA_AVAILABLE)
-if (type == GGML_TYPE_NVFP4 || type == GGML_TYPE_MXFP4) {
-    return MMQ_ITER_K_FP4;
-}
-#endif // defined(BLACKWELL_MMA_AVAILABLE)
-    return MMQ_ITER_K;
-}
-
-// Decouple shared memory tile sizes from WARP_SIZE to allow for different warp sizes.
-// The K dimension of the tiles has either,
-// 1*MMQ_TILE_NE_K==32 (always for TILE_Y_K) or 2*MMQ_TILE_NE_K==64 (typically for TILE_X_K),
-// 32 bit elements for the quantized data (does not include scales).
-// In other words, the size of the quantized data in the K dimension is a multiple of MMQ_TILE_NE_K.
-// The final tile size in K direction is padded to avoid shared memory bank conflicts,
-// in terms of 32 bit elements that means K % 2 == 1 for dp4a or K % 8 == 4 for mma.
-#define MMQ_TILE_NE_K 32
 
 #define MMQ_DP4A_TXS_Q4_0    tile_x_sizes{mmq_y*MMQ_TILE_NE_K   + mmq_y, mmq_y*MMQ_TILE_NE_K/QI4_0   + mmq_y/QI4_0,     0}
 #define MMQ_DP4A_TXS_Q4_1    tile_x_sizes{mmq_y*MMQ_TILE_NE_K   + mmq_y, mmq_y*MMQ_TILE_NE_K/QI4_1   + mmq_y/QI4_1,     0}
@@ -285,23 +326,6 @@ static constexpr __host__ __device__ tile_x_sizes mmq_get_dp4a_tile_x_sizes(ggml
         default:                return tile_x_sizes{0, 0, 0};
     }
 }
-
-#define MMQ_MMA_TILE_X_K_Q8_0  (2*MMQ_TILE_NE_K + 2*MMQ_TILE_NE_K/QI8_0                   + 4)
-#define MMQ_MMA_TILE_X_K_FP4   (2*MMQ_TILE_NE_K + 8                                       + 4) // MXFP4 and NVFP4 Blackwell
-#define MMQ_MMA_TILE_X_K_NVFP4 (2*MMQ_TILE_NE_K + MMQ_TILE_NE_K/2                         + 4) // NVFP4 Generic
-#define MMQ_MMA_TILE_X_K_Q8_1  (2*MMQ_TILE_NE_K + 2*MMQ_TILE_NE_K/QI8_0                   + 4)
-#define MMQ_MMA_TILE_X_K_Q2_K  (2*MMQ_TILE_NE_K + MMQ_TILE_NE_K                           + 4)
-#define MMQ_MMA_TILE_X_K_Q3_K  (2*MMQ_TILE_NE_K + MMQ_TILE_NE_K/2                         + 4)
-#define MMQ_MMA_TILE_X_K_Q6_K  (2*MMQ_TILE_NE_K + MMQ_TILE_NE_K/QI6_K   + MMQ_TILE_NE_K/8 + 7)
-
-static_assert(MMQ_MMA_TILE_X_K_Q8_0 % 8 == 4, "Wrong padding.");
-static_assert(MMQ_MMA_TILE_X_K_Q8_1 % 8 == 4, "Wrong padding.");
-static_assert(MMQ_MMA_TILE_X_K_Q2_K % 8 == 4, "Wrong padding.");
-static_assert(MMQ_MMA_TILE_X_K_Q3_K % 8 == 4, "Wrong padding.");
-static_assert(MMQ_MMA_TILE_X_K_Q6_K % 8 == 4, "Wrong padding.");
-static_assert(MMQ_MMA_TILE_X_K_FP4  % 8 == 4, "Wrong padding.");
-static_assert(MMQ_MMA_TILE_X_K_FP4 == MMQ_MMA_TILE_X_K_Q8_1, "Wrong tile size for MXFP4");
-static_assert(MMQ_MMA_TILE_X_K_NVFP4 % 8 == 4, "Wrong padding.");
 
 
 static constexpr __host__ __device__ int mmq_get_mma_tile_x_k(ggml_type type) {
@@ -958,7 +982,7 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
     }
 }
 
-template <int mmq_y, bool need_check>
+template <int mmq_x, int mmq_y, bool need_check>
 static __device__ __forceinline__ void load_tiles_mxfp4_fp4(const char * __restrict__ x,
                                                             int * __restrict__ x_tile,
                                                             const int kbx0,
@@ -972,7 +996,7 @@ static __device__ __forceinline__ void load_tiles_mxfp4_fp4(const char * __restr
 
     const int txi = threadIdx.x;
 
-    constexpr int iter_k = get_iter_k(GGML_TYPE_MXFP4);
+    constexpr int iter_k = ggml_cuda_mmq_get_K_vram(GGML_TYPE_MXFP4, mmq_x);
 
     constexpr int threads_per_row = iter_k / QK_MXFP4;  // each thread processes 1 block
     constexpr int rows_per_warp   = warp_size / threads_per_row;
@@ -1003,7 +1027,7 @@ static __device__ __forceinline__ void load_tiles_mxfp4_fp4(const char * __restr
 }
 
 #ifdef BLACKWELL_MMA_AVAILABLE
-template <int mmq_y, bool need_check>
+template <int mmq_x, int mmq_y, bool need_check>
 static __device__ __forceinline__ void load_tiles_nvfp4_nvfp4(const char * __restrict__ x,
                                                             int * __restrict__ x_tile,
                                                             const int kbx0,
@@ -1011,7 +1035,7 @@ static __device__ __forceinline__ void load_tiles_nvfp4_nvfp4(const char * __res
                                                             const int stride) {
     constexpr int nwarps = mmq_get_nwarps_device();
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
-    constexpr int iter_k = get_iter_k(GGML_TYPE_NVFP4);
+    constexpr int iter_k = ggml_cuda_mmq_get_K_vram(GGML_TYPE_NVFP4, mmq_x);
     constexpr int threads_per_row = iter_k / QK_NVFP4; // each thread processes 1 block
     constexpr int rows_per_warp = warp_size / threads_per_row;
 
@@ -3377,7 +3401,7 @@ template <int mmq_x, int mmq_y, bool need_check>
 struct mmq_type_traits<mmq_x, mmq_y, need_check, GGML_TYPE_MXFP4> {
     static constexpr int              vdr          = VDR_MXFP4_Q8_1_MMQ;
 #ifdef BLACKWELL_MMA_AVAILABLE
-    static constexpr load_tiles_mmq_t load_tiles  = load_tiles_mxfp4_fp4<mmq_y, need_check>;
+    static constexpr load_tiles_mmq_t load_tiles  = load_tiles_mxfp4_fp4<mmq_x, mmq_y, need_check>;
     static constexpr vec_dot_mmq_t    vec_dot_mma = vec_dot_fp4_fp4_mma<mmq_x, mmq_y, GGML_TYPE_MXFP4>;
 #else
     static constexpr load_tiles_mmq_t load_tiles   = load_tiles_mxfp4<mmq_y, need_check>;
@@ -3390,7 +3414,7 @@ template <int mmq_x, int mmq_y, bool need_check>
 struct mmq_type_traits<mmq_x, mmq_y, need_check, GGML_TYPE_NVFP4> {
     static constexpr int              vdr          = VDR_NVFP4_Q8_1_MMQ;
 #ifdef BLACKWELL_MMA_AVAILABLE
-    static constexpr load_tiles_mmq_t load_tiles   = load_tiles_nvfp4_nvfp4<mmq_y, need_check>;
+    static constexpr load_tiles_mmq_t load_tiles   = load_tiles_nvfp4_nvfp4<mmq_x, mmq_y, need_check>;
     static constexpr vec_dot_mmq_t    vec_dot_mma  = vec_dot_fp4_fp4_mma<mmq_x, mmq_y, GGML_TYPE_NVFP4>;
 #else
     static constexpr load_tiles_mmq_t load_tiles   = load_tiles_nvfp4<mmq_y, need_check>;
@@ -3535,7 +3559,7 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
     constexpr int ne_block = 4 * QK8_1;
 #endif  // defined(BLACKWELL_MMA_AVAILABLE)
 
-    constexpr int ITER_K          = get_iter_k(type);
+    constexpr int ITER_K          = ggml_cuda_mmq_get_K_vram(type, mmq_x);
     constexpr int blocks_per_iter = ITER_K / qk;
 
     float sum[mmq_x*mmq_y / (nwarps*warp_size)] = {0.0f};
@@ -3694,7 +3718,7 @@ static __global__ void mul_mat_q(
     }
 #endif // (defined(GGML_USE_HIP) && !defined(CDNA4) && !defined(CDNA3)) || __CUDA_ARCH__ < GGML_CUDA_CC_VOLTA
 
-    constexpr int ITER_K          = get_iter_k(type);
+    constexpr int ITER_K          = ggml_cuda_mmq_get_K_vram(type, mmq_x);
     constexpr int blocks_per_iter = ITER_K / qk;
 
     // kbc == k block continuous, current index in continuous ijk space.
@@ -3850,7 +3874,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
         const int stride_sample_dst, const uint3 ntx) {
     constexpr int mmq_y           = ggml_cuda_mmq_get_I(type, mmq_x);
     constexpr int qk              = ggml_cuda_type_traits<type>::qk;
-    constexpr int ITER_K          = get_iter_k(type);
+    constexpr int ITER_K          = ggml_cuda_mmq_get_K_vram(type, mmq_x);
     constexpr int blocks_per_iter = ITER_K / qk;
 
     constexpr int nwarps = mmq_get_nwarps_device()/2;
