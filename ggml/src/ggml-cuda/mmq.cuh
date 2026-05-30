@@ -217,42 +217,17 @@ static constexpr __device__ int ggml_cuda_mmq_get_K(const ggml_type type, const 
     return ggml_cuda_mmq_get_config(type, J).K;
 }
 
-static int get_mmq_x_max_host(const int cc) {
-    return (turing_mma_available(cc) || amd_wmma_available(cc)) ? 128 :
-        GGML_CUDA_CC_IS_NVIDIA(cc) && ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_VOLTA ?
-#ifdef GGML_CUDA_FORCE_MMQ
-            128                     : 64;
-#else
-            MMQ_DP4A_MAX_BATCH_SIZE : 64;
-#endif // GGML_CUDA_FORCE_MMQ
-}
+//---------------------------------------------------------------------------------------------
 
-static constexpr __device__ int get_mmq_x_max_device() {
-#if defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
-    return 128;
-#else // defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
-
-#if defined(GGML_USE_HIP)
-    return 64;
-#else // defined(GGML_USE_HIP)
-
-#if __CUDA_ARCH__ >= GGML_CUDA_CC_VOLTA
-#ifdef GGML_CUDA_FORCE_MMQ
-    return 128;
-#else // GGML_CUDA_FORCE_MMQ
-    return MMQ_DP4A_MAX_BATCH_SIZE;
-#endif // GGML_CUDA_FORCE_MMQ
-#else // __CUDA_ARCH__ >= GGML_CUDA_CC_VOLTA
-    return 64;
-#endif // __CUDA_ARCH__ >= GGML_CUDA_CC_VOLTA
-
-#endif // defined(GGML_USE_HIP)
-#endif // defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
-}
-
-static int get_mmq_y_host(const int cc) {
-    return GGML_CUDA_CC_IS_AMD(cc) ? (GGML_CUDA_CC_IS_RDNA1(cc) ? 64 : 128) :
-        ((GGML_CUDA_CC_IS_NVIDIA(cc) && ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_VOLTA) ? 128 : 64);
+static __host__ int ggml_cuda_mmq_get_J_max(const ggml_type type, const int cc, const int64_t ne11) {
+    int ret = std::min(ne11, int64_t(512));
+    ret -= ret % 8;
+    for (;ret > 0; ret -= 8) {
+        if (ggml_cuda_mmq_get_config(type, ret, cc).type != GGML_TYPE_COUNT) {
+            return ret;
+        }
+    }
+    return ret;
 }
 
 static constexpr __device__ int get_iter_k([[maybe_unused]] const ggml_type type) {
@@ -262,22 +237,6 @@ if (type == GGML_TYPE_NVFP4 || type == GGML_TYPE_MXFP4) {
 }
 #endif // defined(BLACKWELL_MMA_AVAILABLE)
     return MMQ_ITER_K;
-}
-
-static constexpr __device__ int get_mmq_y_device() {
-#if defined(GGML_USE_HIP)
-#if defined(RDNA1)
-    return 64;
-#else
-    return 128;
-#endif // defined RDNA1
-#else
-#if __CUDA_ARCH__ >= GGML_CUDA_CC_VOLTA
-    return 128;
-#else
-    return 64;
-#endif // __CUDA_ARCH__ >= GGML_CUDA_CC_VOLTA
-#endif // defined(GGML_USE_HIP)
 }
 
 // Decouple shared memory tile sizes from WARP_SIZE to allow for different warp sizes.
@@ -380,16 +339,6 @@ static constexpr __host__ __device__ int mmq_get_mma_tile_x_k(ggml_type type) {
 // block_q8_1_mmq has (128 8-bit ints == 32 32-bit ints + 4 32-bit scales)
 #define MMQ_TILE_Y_K     (MMQ_TILE_NE_K + MMQ_TILE_NE_K / QI8_1)
 #define MMQ_TILE_Y_FP4_K MMQ_TILE_Y_K
-
-static int mmq_get_granularity_host(const int mmq_x, const int cc) {
-    if (amd_mfma_available(cc) || amd_wmma_available(cc)) {
-        return mmq_x >= 128 ? 32 : 16;
-    } else if (turing_mma_available(cc) && mmq_x >= 48) {
-        return 16;
-    } else {
-        return 8;
-    }
-}
 
 #if defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
 static constexpr __device__ int mmq_get_granularity_device(const int mmq_x) {
@@ -3899,7 +3848,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
         float * __restrict__ tmp_last_tile, const uint3 blocks_per_ne00, const int nrows_x, const int ncols_dst,
         const int stride_col_dst, const uint3 nchannels_y, const int stride_channel_dst, const uint3 nsamples_y,
         const int stride_sample_dst, const uint3 ntx) {
-    constexpr int mmq_y           = get_mmq_y_device();
+    constexpr int mmq_y           = ggml_cuda_mmq_get_I(type, mmq_x);
     constexpr int qk              = ggml_cuda_type_traits<type>::qk;
     constexpr int ITER_K          = get_iter_k(type);
     constexpr int blocks_per_iter = ITER_K / qk;
