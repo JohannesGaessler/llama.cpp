@@ -185,12 +185,11 @@ struct ggml_cuda_mmq_config {
         return ggml_cuda_mmq_config((type_), (nthreads_), (occupancy_), (I_), (J_), (K_sram_), (K_vram_), (stream_k_), (fallback_)); \
     }                                                                                                                                \
 
+#include "mmq-config-pascal.cuh"
 #include "mmq-config-ampere.cuh"
 #include "mmq-config-blackwell.cuh"
 
 #include "mmq-config-cdna.cuh"
-
-#include "mmq-config-generic.cuh"
 
 #undef CASE
 
@@ -199,7 +198,10 @@ static __host__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config(const ggml_type ty
         if (GGML_CUDA_CC_IS_CDNA(cc)) {
             return ggml_cuda_mmq_get_config_cdna(type, J, fallback);
         }
-        return ggml_cuda_mmq_get_config_generic(type, J, fallback);
+        if (GGML_CUDA_CC_IS_RDNA3(cc) || GGML_CUDA_CC_IS_RDNA4(cc)) {
+            return ggml_cuda_mmq_get_config_ampere(type, J, fallback);
+        }
+        return ggml_cuda_mmq_get_config_pascal(type, J, fallback);
     }
     if (ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_BLACKWELL) {
         return ggml_cuda_mmq_get_config_blackwell(type, J, fallback);
@@ -207,7 +209,7 @@ static __host__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config(const ggml_type ty
     if (ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_TURING) {
         return ggml_cuda_mmq_get_config_ampere(type, J, fallback);
     }
-    return ggml_cuda_mmq_get_config_generic(type, J, fallback);
+    return ggml_cuda_mmq_get_config_pascal(type, J, fallback);
 }
 
 static constexpr __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config(ggml_type type, int J, bool fallback) {
@@ -215,15 +217,15 @@ static constexpr __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config(ggml_t
 #ifdef CDNA
     return ggml_cuda_mmq_get_config_cdna(type, J, fallback);
 #else
-    return ggml_cuda_mmq_get_config_generic(type, J, fallback);
+    return ggml_cuda_mmq_get_config_pascal(type, J, fallback);
 #endif // CDNA
 #else
 #if __CUDA_ARCH__ >= GGML_CUDA_CC_BLACKWELL
     return ggml_cuda_mmq_get_config_blackwell(type, J, fallback);
-#if __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
+#elif __CUDA_ARCH__ >= GGML_CUDA_CC_TURING
     return ggml_cuda_mmq_get_config_ampere(type, J, fallback);
 #else
-    return ggml_cuda_mmq_get_config_generic(type, J, fallback);
+    return ggml_cuda_mmq_get_config_pascal(type, J, fallback);
 #endif // __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
 #endif // GGML_USE_HIP
     GGML_UNUSED_VARS(type, J, fallback);

@@ -1,4 +1,4 @@
-static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config_generic(ggml_type type, int J, bool fallback) {
+static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config_pascal(ggml_type type, int J, bool fallback) {
     CASE(GGML_TYPE_Q1_0, 256, 1, 64,   8, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q1_0, 256, 1, 64,  16, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q1_0, 256, 1, 64,  32, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);

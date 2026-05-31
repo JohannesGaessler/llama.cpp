@@ -3,7 +3,6 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_Q1_0, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q1_0, 512, 1, 128,  32, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q1_0, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
-    CASE(GGML_TYPE_Q1_0, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q1_0, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q1_0, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q1_0, 512, 1, 128,  24, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
@@ -11,16 +10,11 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_Q1_0, 512, 1, 128,  40, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q1_0, 512, 1, 128,  48, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q1_0, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q1_0, 512, 1, 128,  80, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q1_0, 512, 1, 128,  96, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q1_0, 512, 1, 128, 112, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q1_0, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
 
     CASE(GGML_TYPE_Q4_0, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q4_0, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q4_0, 512, 1, 128,  32, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q4_0, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
-    CASE(GGML_TYPE_Q4_0, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q4_0, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q4_0, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q4_0, 512, 1, 128,  24, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
@@ -28,16 +22,11 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_Q4_0, 512, 1, 128,  40, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q4_0, 512, 1, 128,  48, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q4_0, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q4_0, 512, 1, 128,  80, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q4_0, 512, 1, 128,  96, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q4_0, 512, 1, 128, 112, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q4_0, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
 
     CASE(GGML_TYPE_Q4_1, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q4_1, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q4_1, 512, 1, 128,  32, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q4_1, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, true);
-    CASE(GGML_TYPE_Q4_1, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q4_1, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q4_1, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q4_1, 512, 1, 128,  24, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
@@ -45,16 +34,11 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_Q4_1, 512, 1, 128,  40, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q4_1, 512, 1, 128,  48, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q4_1, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q4_1, 512, 1, 128,  80, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q4_1, 512, 1, 128,  96, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q4_1, 512, 1, 128, 112, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q4_1, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
 
     CASE(GGML_TYPE_Q5_0, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q5_0, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q5_0, 512, 1, 128,  32, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q5_0, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
-    CASE(GGML_TYPE_Q5_0, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q5_0, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q5_0, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q5_0, 512, 1, 128,  24, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
@@ -62,16 +46,11 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_Q5_0, 512, 1, 128,  40, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q5_0, 512, 1, 128,  48, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q5_0, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q5_0, 512, 1, 128,  80, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q5_0, 512, 1, 128,  96, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q5_0, 512, 1, 128, 112, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q5_0, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
 
     CASE(GGML_TYPE_Q5_1, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q5_1, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q5_1, 512, 1, 128,  32, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q5_1, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, true);
-    CASE(GGML_TYPE_Q5_1, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q5_1, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q5_1, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q5_1, 512, 1, 128,  24, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
@@ -79,16 +58,11 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_Q5_1, 512, 1, 128,  40, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q5_1, 512, 1, 128,  48, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q5_1, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q5_1, 512, 1, 128,  80, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q5_1, 512, 1, 128,  96, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q5_1, 512, 1, 128, 112, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q5_1, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
 
     CASE(GGML_TYPE_Q8_0, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q8_0, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q8_0, 512, 1, 128,  32, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q8_0, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
-    CASE(GGML_TYPE_Q8_0, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q8_0, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q8_0, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q8_0, 512, 1, 128,  24, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
@@ -96,10 +70,6 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_Q8_0, 512, 1, 128,  40, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q8_0, 512, 1, 128,  48, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q8_0, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q8_0, 512, 1, 128,  80, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q8_0, 512, 1, 128,  96, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q8_0, 512, 1, 128, 112, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q8_0, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
 
 // ---------------------------------------------------------------------------------------------
 
@@ -107,7 +77,6 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_Q2_K, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q2_K, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q2_K, 512, 1, 128,  32, MMQ_MMA_TILE_X_K_Q2_K, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q2_K, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q2_K, MMQ_ITER_K, true, true);
-    CASE(GGML_TYPE_Q2_K, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q2_K, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q2_K, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q2_K, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q2_K, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q2_K, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q2_K, 512, 1, 128,  24, MMQ_MMA_TILE_X_K_Q2_K, MMQ_ITER_K, true, false);
@@ -115,16 +84,11 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_Q2_K, 512, 1, 128,  40, MMQ_MMA_TILE_X_K_Q2_K, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q2_K, 512, 1, 128,  48, MMQ_MMA_TILE_X_K_Q2_K, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q2_K, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q2_K, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q2_K, 512, 1, 128,  80, MMQ_MMA_TILE_X_K_Q2_K, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q2_K, 512, 1, 128,  96, MMQ_MMA_TILE_X_K_Q2_K, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q2_K, 512, 1, 128, 112, MMQ_MMA_TILE_X_K_Q2_K, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q2_K, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q2_K, MMQ_ITER_K, true, false);
 
     CASE(GGML_TYPE_Q3_K, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q3_K, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q3_K, 512, 1, 128,  32, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q3_K, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, true);
-    CASE(GGML_TYPE_Q3_K, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q3_K, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q3_K, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q3_K, 512, 1, 128,  24, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
@@ -132,16 +96,11 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_Q3_K, 512, 1, 128,  40, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q3_K, 512, 1, 128,  48, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q3_K, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q3_K, 512, 1, 128,  80, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q3_K, 512, 1, 128,  96, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q3_K, 512, 1, 128, 112, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q3_K, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
 
     CASE(GGML_TYPE_Q4_K, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q4_K, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q4_K, 512, 1, 128,  32, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q4_K, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, true);
-    CASE(GGML_TYPE_Q4_K, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q4_K, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q4_K, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q4_K, 512, 1, 128,  24, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
@@ -149,16 +108,11 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_Q4_K, 512, 1, 128,  40, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q4_K, 512, 1, 128,  48, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q4_K, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q4_K, 512, 1, 128,  80, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q4_K, 512, 1, 128,  96, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q4_K, 512, 1, 128, 112, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q4_K, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
 
     CASE(GGML_TYPE_Q5_K, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q5_K, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q5_K, 512, 1, 128,  32, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q5_K, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, true);
-    CASE(GGML_TYPE_Q5_K, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q5_K, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q5_K, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q5_K, 512, 1, 128,  24, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
@@ -166,16 +120,11 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_Q5_K, 512, 1, 128,  40, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q5_K, 512, 1, 128,  48, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q5_K, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q5_K, 512, 1, 128,  80, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q5_K, 512, 1, 128,  96, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q5_K, 512, 1, 128, 112, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q5_K, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
 
     CASE(GGML_TYPE_Q6_K, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q6_K, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q6_K, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q6_K, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q6_K, 512, 1, 128,  32, MMQ_MMA_TILE_X_K_Q6_K, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q6_K, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q6_K, MMQ_ITER_K, true, true);
-    CASE(GGML_TYPE_Q6_K, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q6_K, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q6_K, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q6_K, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q6_K, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q6_K, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q6_K, 512, 1, 128,  24, MMQ_MMA_TILE_X_K_Q6_K, MMQ_ITER_K, true, false);
@@ -183,10 +132,6 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_Q6_K, 512, 1, 128,  40, MMQ_MMA_TILE_X_K_Q6_K, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q6_K, 512, 1, 128,  48, MMQ_MMA_TILE_X_K_Q6_K, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q6_K, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q6_K, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q6_K, 512, 1, 128,  80, MMQ_MMA_TILE_X_K_Q6_K, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q6_K, 512, 1, 128,  96, MMQ_MMA_TILE_X_K_Q6_K, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q6_K, 512, 1, 128, 112, MMQ_MMA_TILE_X_K_Q6_K, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_Q6_K, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q6_K, MMQ_ITER_K, true, false);
 
 // ---------------------------------------------------------------------------------------------
 
@@ -194,7 +139,6 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_IQ1_S, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ1_S, 512, 1, 128,  32, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ1_S, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
-    CASE(GGML_TYPE_IQ1_S, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ1_S, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ1_S, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ1_S, 512, 1, 128,  24, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
@@ -202,16 +146,11 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_IQ1_S, 512, 1, 128,  40, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ1_S, 512, 1, 128,  48, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ1_S, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ1_S, 512, 1, 128,  80, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ1_S, 512, 1, 128,  96, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ1_S, 512, 1, 128, 112, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ1_S, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
 
     CASE(GGML_TYPE_IQ2_XXS, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ2_XXS, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ2_XXS, 512, 1, 128,  32, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ2_XXS, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
-    CASE(GGML_TYPE_IQ2_XXS, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ2_XXS, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ2_XXS, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ2_XXS, 512, 1, 128,  24, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
@@ -219,16 +158,11 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_IQ2_XXS, 512, 1, 128,  40, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ2_XXS, 512, 1, 128,  48, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ2_XXS, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ2_XXS, 512, 1, 128,  80, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ2_XXS, 512, 1, 128,  96, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ2_XXS, 512, 1, 128, 112, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ2_XXS, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
 
     CASE(GGML_TYPE_IQ2_XS, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ2_XS, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ2_XS, 512, 1, 128,  32, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ2_XS, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, true);
-    CASE(GGML_TYPE_IQ2_XS, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ2_XS, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ2_XS, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ2_XS, 512, 1, 128,  24, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
@@ -236,16 +170,11 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_IQ2_XS, 512, 1, 128,  40, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ2_XS, 512, 1, 128,  48, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ2_XS, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ2_XS, 512, 1, 128,  80, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ2_XS, 512, 1, 128,  96, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ2_XS, 512, 1, 128, 112, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ2_XS, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
 
     CASE(GGML_TYPE_IQ2_S, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ2_S, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ2_S, 512, 1, 128,  32, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ2_S, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, true);
-    CASE(GGML_TYPE_IQ2_S, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ2_S, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ2_S, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ2_S, 512, 1, 128,  24, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
@@ -253,16 +182,11 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_IQ2_S, 512, 1, 128,  40, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ2_S, 512, 1, 128,  48, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ2_S, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ2_S, 512, 1, 128,  80, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ2_S, 512, 1, 128,  96, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ2_S, 512, 1, 128, 112, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ2_S, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q3_K, MMQ_ITER_K, true, false);
 
     CASE(GGML_TYPE_IQ3_XXS, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ3_XXS, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ3_XXS, 512, 1, 128,  32, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ3_XXS, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
-    CASE(GGML_TYPE_IQ3_XXS, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ3_XXS, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ3_XXS, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ3_XXS, 512, 1, 128,  24, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
@@ -270,16 +194,11 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_IQ3_XXS, 512, 1, 128,  40, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ3_XXS, 512, 1, 128,  48, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ3_XXS, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ3_XXS, 512, 1, 128,  80, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ3_XXS, 512, 1, 128,  96, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ3_XXS, 512, 1, 128, 112, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ3_XXS, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
 
     CASE(GGML_TYPE_IQ3_S, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ3_S, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ3_S, 512, 1, 128,  32, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ3_S, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
-    CASE(GGML_TYPE_IQ3_S, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ3_S, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ3_S, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ3_S, 512, 1, 128,  24, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
@@ -287,16 +206,11 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_IQ3_S, 512, 1, 128,  40, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ3_S, 512, 1, 128,  48, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ3_S, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ3_S, 512, 1, 128,  80, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ3_S, 512, 1, 128,  96, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ3_S, 512, 1, 128, 112, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ3_S, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
 
     CASE(GGML_TYPE_IQ4_XS, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ4_XS, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ4_XS, 512, 1, 128,  32, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ4_XS, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
-    CASE(GGML_TYPE_IQ4_XS, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ4_XS, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ4_XS, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ4_XS, 512, 1, 128,  24, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
@@ -304,16 +218,11 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_IQ4_XS, 512, 1, 128,  40, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ4_XS, 512, 1, 128,  48, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ4_XS, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ4_XS, 512, 1, 128,  80, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ4_XS, 512, 1, 128,  96, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ4_XS, 512, 1, 128, 112, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ4_XS, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
 
     CASE(GGML_TYPE_IQ4_NL, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ4_NL, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ4_NL, 512, 1, 128,  32, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ4_NL, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
-    CASE(GGML_TYPE_IQ4_NL, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_IQ4_NL, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ4_NL, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ4_NL, 512, 1, 128,  24, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
@@ -321,10 +230,6 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_IQ4_NL, 512, 1, 128,  40, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ4_NL, 512, 1, 128,  48, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_IQ4_NL, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ4_NL, 512, 1, 128,  80, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ4_NL, 512, 1, 128,  96, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ4_NL, 512, 1, 128, 112, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_IQ4_NL, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_0, MMQ_ITER_K, true, false);
 
 // ---------------------------------------------------------------------------------------------
 
@@ -332,7 +237,6 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_MXFP4, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_MXFP4, 512, 1, 128,  32, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_MXFP4, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, true);
-    CASE(GGML_TYPE_MXFP4, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_MXFP4, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_MXFP4, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_MXFP4, 512, 1, 128,  24, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
@@ -340,16 +244,11 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_MXFP4, 512, 1, 128,  40, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_MXFP4, 512, 1, 128,  48, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_MXFP4, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_MXFP4, 512, 1, 128,  80, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_MXFP4, 512, 1, 128,  96, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_MXFP4, 512, 1, 128, 112, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_MXFP4, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_Q8_1, MMQ_ITER_K, true, false);
 
     CASE(GGML_TYPE_NVFP4, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_NVFP4, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_NVFP4, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_NVFP4, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_NVFP4, 512, 1, 128,  32, MMQ_MMA_TILE_X_K_NVFP4, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_NVFP4, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_NVFP4, MMQ_ITER_K, true, true);
-    CASE(GGML_TYPE_NVFP4, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_NVFP4, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_NVFP4, 512, 1, 128,   8, MMQ_MMA_TILE_X_K_NVFP4, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_NVFP4, 512, 1, 128,  16, MMQ_MMA_TILE_X_K_NVFP4, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_NVFP4, 512, 1, 128,  24, MMQ_MMA_TILE_X_K_NVFP4, MMQ_ITER_K, true, false);
@@ -357,10 +256,6 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
     CASE(GGML_TYPE_NVFP4, 512, 1, 128,  40, MMQ_MMA_TILE_X_K_NVFP4, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_NVFP4, 512, 1, 128,  48, MMQ_MMA_TILE_X_K_NVFP4, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_NVFP4, 512, 1, 128,  64, MMQ_MMA_TILE_X_K_NVFP4, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_NVFP4, 512, 1, 128,  80, MMQ_MMA_TILE_X_K_NVFP4, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_NVFP4, 512, 1, 128,  96, MMQ_MMA_TILE_X_K_NVFP4, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_NVFP4, 512, 1, 128, 112, MMQ_MMA_TILE_X_K_NVFP4, MMQ_ITER_K, true, false);
-    CASE(GGML_TYPE_NVFP4, 512, 1, 128, 128, MMQ_MMA_TILE_X_K_NVFP4, MMQ_ITER_K, true, false);
 
     return ggml_cuda_mmq_config(GGML_TYPE_COUNT, 512, 1, 128, 64, 64, 256, false, true);
 }
