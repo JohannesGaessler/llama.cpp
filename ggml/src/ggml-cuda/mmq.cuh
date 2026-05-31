@@ -895,16 +895,17 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
     }
 }
 
-template <int mmq_y, bool need_check> static __device__ __forceinline__ void load_tiles_mxfp4(
-    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
-    constexpr int nwarps = mmq_get_nwarps_device();
+template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void load_tiles_mxfp4(
+        const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
+    constexpr int nwarps    = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
+    constexpr int I         = ggml_cuda_mmq_get_I(type, J, fallback);
 
 #if defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     int   * x_qs = (int   *)  x_tile;
     float * x_df = (float *) (x_qs + MMQ_TILE_NE_K*2);
 #else
-    constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_MXFP4, mmq_y);
+    constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_MXFP4, I);
     int   * x_qs = (int   *)  x_tile;
     float * x_df = (float *) (x_qs + txs.qs);
 #endif // defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
@@ -916,10 +917,10 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
     const int kqsx = txi % QI_MXFP4;
 
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nrows*nwarps) {
+    for (int i0 = 0; i0 < I; i0 += nrows*nwarps) {
         int i = i0 + (nrows == 1 ? threadIdx.y : threadIdx.y*nrows + threadIdx.x/threads_per_row);
 
-        if (need_check) {
+        if (fallback) {
             i = min(i, i_max);
         }
 
@@ -943,10 +944,10 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
     const int kbxd = threadIdx.x % blocks_per_tile_x_row;
 
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nwarps * rows_per_warp) {
+    for (int i0 = 0; i0 < I; i0 += nwarps * rows_per_warp) {
         int i = i0 + threadIdx.y * rows_per_warp + threadIdx.x / blocks_per_tile_x_row;
 
-        if (need_check) {
+        if (fallback) {
             i = min(i, i_max);
         }
 
@@ -960,21 +961,18 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
     }
 }
 
-template <int mmq_x, int mmq_y, bool need_check>
-static __device__ __forceinline__ void load_tiles_mxfp4_fp4(const char * __restrict__ x,
-                                                            int * __restrict__ x_tile,
-                                                            const int kbx0,
-                                                            const int i_max,
-                                                            const int stride) {
-    constexpr int nwarps = mmq_get_nwarps_device();
+template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void load_tiles_mxfp4_fp4(
+        const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
+    constexpr int nwarps    = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
+    constexpr int I         = ggml_cuda_mmq_get_I(type, J, fallback);
 
     int *      x_qs = (int *) x_tile;
     uint32_t * x_sc = (uint32_t *) (x_qs + 2 * MMQ_TILE_NE_K);
 
     const int txi = threadIdx.x;
 
-    constexpr int iter_k = ggml_cuda_mmq_get_K_vram(GGML_TYPE_MXFP4, mmq_x);
+    constexpr int iter_k = ggml_cuda_mmq_get_K_vram(GGML_TYPE_MXFP4, J);
 
     constexpr int threads_per_row = iter_k / QK_MXFP4;  // each thread processes 1 block
     constexpr int rows_per_warp   = warp_size / threads_per_row;
@@ -982,10 +980,10 @@ static __device__ __forceinline__ void load_tiles_mxfp4_fp4(const char * __restr
     const int     row_in_warp     = txi / threads_per_row;
 
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += rows_per_warp * nwarps) {
+    for (int i0 = 0; i0 < I; i0 += rows_per_warp * nwarps) {
         int i = i0 + threadIdx.y * rows_per_warp + row_in_warp;
 
-        if constexpr (need_check) {
+        if constexpr (fallback) {
             i = min(i, i_max);
         }
 
@@ -1004,18 +1002,14 @@ static __device__ __forceinline__ void load_tiles_mxfp4_fp4(const char * __restr
     }
 }
 
-#ifdef BLACKWELL_MMA_AVAILABLE
-template <int mmq_x, int mmq_y, bool need_check>
-static __device__ __forceinline__ void load_tiles_nvfp4_nvfp4(const char * __restrict__ x,
-                                                            int * __restrict__ x_tile,
-                                                            const int kbx0,
-                                                            const int i_max,
-                                                            const int stride) {
-    constexpr int nwarps = mmq_get_nwarps_device();
-    constexpr int warp_size = ggml_cuda_get_physical_warp_size();
-    constexpr int iter_k = ggml_cuda_mmq_get_K_vram(GGML_TYPE_NVFP4, mmq_x);
+template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void load_tiles_nvfp4_nvfp4(
+        const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
+    constexpr int warp_size       = ggml_cuda_get_physical_warp_size();
+    constexpr int nwarps          = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
+    constexpr int I               = ggml_cuda_mmq_get_I(type, J, fallback);
+    constexpr int iter_k          = ggml_cuda_mmq_get_K_vram(GGML_TYPE_NVFP4, J);
     constexpr int threads_per_row = iter_k / QK_NVFP4; // each thread processes 1 block
-    constexpr int rows_per_warp = warp_size / threads_per_row;
+    constexpr int rows_per_warp   = warp_size / threads_per_row;
 
     uint32_t * x_u32 = (uint32_t *) x_tile;
 
@@ -1027,10 +1021,10 @@ static __device__ __forceinline__ void load_tiles_nvfp4_nvfp4(const char * __res
     uint32_t * x_u32_scale = x_u32 + 64 + kbx;
 
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += rows_per_warp * nwarps) {
+    for (int i0 = 0; i0 < I; i0 += rows_per_warp * nwarps) {
         int i = i0 + threadIdx.y * rows_per_warp + row_in_warp;
 
-        if constexpr (need_check) {
+        if constexpr (fallback) {
             i = min(i, i_max);
         }
 
@@ -1054,11 +1048,8 @@ static __device__ __forceinline__ void load_tiles_nvfp4_nvfp4(const char * __res
 // Both quantizations encode values as e2m1 (FP4) and produce one uint32 scale per
 // m16n8k64 MMA call; only the PTX kind (scale_vec::2X ue8m0 vs scale_vec::4X ue4m3)
 // and the per-type stride constant differ.
-template <ggml_type type, int mmq_x, bool fallback>
-static __device__ __forceinline__ void vec_dot_fp4_fp4_mma(const int * __restrict__ x,
-                                                           const int * __restrict__ y,
-                                                           float * __restrict__ sum,
-                                                           const int k00) {
+template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void vec_dot_fp4_fp4_mma(
+        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
     static_assert(type == GGML_TYPE_MXFP4 || type == GGML_TYPE_NVFP4,
                   "vec_dot_fp4_fp4_mma: type must be MXFP4 or NVFP4");
 
@@ -1066,9 +1057,9 @@ static __device__ __forceinline__ void vec_dot_fp4_fp4_mma(const int * __restric
     typedef tile<8, 8, int>    tile_B;
     typedef tile<16, 8, float> tile_C;
 
-    constexpr int mmq_y         = ggml_cuda_mmq_get_I(type, mmq_x, fallback);
+    constexpr int mmq_y         = ggml_cuda_mmq_get_I(type, J, fallback);
     constexpr int stride        = MMQ_MMA_TILE_X_K_FP4;
-    constexpr int rows_per_warp = ggml_cuda_mmq_get_rows_per_warp(type, mmq_x, fallback);
+    constexpr int rows_per_warp = ggml_cuda_mmq_get_rows_per_warp(type, J, fallback);
     constexpr int ntx           = rows_per_warp / tile_C::I;
     constexpr int nfrags        = MMQ_TILE_NE_K / tile_A::J;
 
@@ -1099,7 +1090,7 @@ static __device__ __forceinline__ void vec_dot_fp4_fp4_mma(const int * __restric
     }
 
 #pragma unroll
-    for (int j0 = 0; j0 < mmq_x; j0 += ntx * tile_C::J) {
+    for (int j0 = 0; j0 < J; j0 += ntx * tile_C::J) {
         tile_B   B[nfrags];
         uint32_t scaleB[nfrags];
 
@@ -1124,23 +1115,18 @@ static __device__ __forceinline__ void vec_dot_fp4_fp4_mma(const int * __restric
         }
     }
 }
-#endif // BLACKWELL_MMA_AVAILABLE
 
-
-template <int mmq_y, bool need_check>
-static __device__ __forceinline__ void load_tiles_nvfp4(const char * __restrict__ x,
-                                                        int * __restrict__ x_tile,
-                                                        const int kb0,
-                                                        const int i_max,
-                                                        const int stride) {
-    constexpr int nwarps = mmq_get_nwarps_device();
+template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void load_tiles_nvfp4(
+        const char * __restrict__ x, int * __restrict__ x_tile, const int kb0, const int i_max, const int stride) {
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
+    constexpr int nwarps    = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
+    constexpr int I         = ggml_cuda_mmq_get_I(type, J, fallback);
 
 #if defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     int   * x_qs = (int   *) x_tile;
     float * x_df = (float *) (x_qs + MMQ_TILE_NE_K*2);
 #else
-    constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_NVFP4, mmq_y);
+    constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_NVFP4, I);
     int   * x_qs = (int   *) x_tile;
     float * x_df = (float *) (x_qs + txs.qs);
 #endif // defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
@@ -1151,10 +1137,10 @@ static __device__ __forceinline__ void load_tiles_nvfp4(const char * __restrict_
     const int row_in_warp = threadIdx.x / threads_per_row;
 
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += rows_per_warp * nwarps) {
+    for (int i0 = 0; i0 < I; i0 += rows_per_warp * nwarps) {
         int i = i0 + threadIdx.y * rows_per_warp + row_in_warp;
 
-        if constexpr (need_check) {
+        if constexpr (fallback) {
             i = min(i, i_max);
         }
 
@@ -3465,11 +3451,43 @@ static constexpr __device__ ggml_cuda_mmq_util_funcs ggml_cuda_mmq_get_util_func
                     vec_dot_q8_0_q8_1_dp4a<J, I>,
                     mmq_write_back_dp4a<J, I, fallback>);
 // ---------------------------------------------------------------------------------------------
+            case GGML_TYPE_MXFP4:
+                return ggml_cuda_mmq_util_funcs(
+                    VDR_MXFP4_Q8_1_MMQ,
+                    load_tiles_mxfp4<type, J, fallback>,
+                    vec_dot_q8_0_q8_1_dp4a<J, I>,
+                    mmq_write_back_dp4a<J, I, fallback>);
+            case GGML_TYPE_NVFP4:
+                return ggml_cuda_mmq_util_funcs(
+                    VDR_NVFP4_Q8_1_MMQ,
+                    load_tiles_nvfp4<type, J, fallback>,
+                    vec_dot_q8_0_16_q8_1_dp4a<J, I>,
+                    mmq_write_back_dp4a<J, I, fallback>);
             default:
                 return ggml_cuda_mmq_util_funcs(1, nullptr, nullptr, nullptr);
         }
     }
 
+// ---------------------------------------------------------------------------------------------
+
+#ifdef BLACKWELL_MMA_AVAILABLE
+    switch (type) {
+        case GGML_TYPE_MXFP4:
+            return ggml_cuda_mmq_util_funcs(
+                -1,
+                load_tiles_mxfp4_fp4<type, J, fallback>,
+                vec_dot_fp4_fp4_mma<type, J, fallback, GGML_TYPE_MXFP4>,
+                mmq_write_back_mma<type, J, fallback>);
+        case GGML_TYPE_NVFP4:
+            return ggml_cuda_mmq_util_funcs(
+                -1,
+                load_tiles_nvfp4_nvfp4<type, J, fallback>,
+                vec_dot_fp4_fp4_mma<type, J, fallback, GGML_TYPE_NVFP4>,
+                mmq_write_back_mma<type, J, fallback>);
+        default:
+            break;
+    }
+#endif // BLACKWELL_MMA_AVAILABLE
 
 // ---------------------------------------------------------------------------------------------
 
@@ -3591,6 +3609,18 @@ static constexpr __device__ ggml_cuda_mmq_util_funcs ggml_cuda_mmq_get_util_func
                 vec_dot_q8_0_q8_1_mma<type, J, fallback, MMQ_Q8_1_DS_LAYOUT_D4>,
                 mmq_write_back_mma<type, J, fallback>);
 // ---------------------------------------------------------------------------------------------
+        case GGML_TYPE_MXFP4:
+            return ggml_cuda_mmq_util_funcs(
+                -1,
+                load_tiles_mxfp4<type, J, fallback>,
+                vec_dot_q8_0_q8_1_mma<type, J, fallback, MMQ_Q8_1_DS_LAYOUT_D4>,
+                mmq_write_back_mma<type, J, fallback>);
+        case GGML_TYPE_NVFP4:
+            return ggml_cuda_mmq_util_funcs(
+                -1,
+                load_tiles_nvfp4<type, J, fallback>,
+                vec_dot_q8_0_16_q8_1_mma<type, J, fallback>,
+                mmq_write_back_mma<type, J, fallback>);
         default:
             return ggml_cuda_mmq_util_funcs(1, nullptr, nullptr, nullptr);
     }
@@ -3617,33 +3647,6 @@ static constexpr __device__ mmq_write_back_t ggml_cuda_mmq_get_write_back() {
 }
 
 // ---------------------------------------------------------------------------------------------
-
-// template <int mmq_x, int mmq_y, bool need_check>
-// struct mmq_type_traits<mmq_x, mmq_y, need_check, GGML_TYPE_MXFP4> {
-//     static constexpr int              vdr          = VDR_MXFP4_Q8_1_MMQ;
-// #ifdef BLACKWELL_MMA_AVAILABLE
-//     static constexpr load_tiles_mmq_t load_tiles  = load_tiles_mxfp4_fp4<mmq_x, mmq_y, need_check>;
-//     static constexpr vec_dot_mmq_t    vec_dot_mma = vec_dot_fp4_fp4_mma<mmq_x, mmq_y, GGML_TYPE_MXFP4>;
-// #else
-//     static constexpr load_tiles_mmq_t load_tiles   = load_tiles_mxfp4<mmq_y, need_check>;
-//     static constexpr vec_dot_mmq_t    vec_dot_mma  = vec_dot_q8_0_q8_1_mma<mmq_x, mmq_y, MMQ_Q8_1_DS_LAYOUT_D4>;
-// #endif // BLACKWELL_MMA_AVAILABLE
-//     static constexpr vec_dot_mmq_t    vec_dot_dp4a = vec_dot_q8_0_q8_1_dp4a<mmq_x, mmq_y>;
-// };
-
-// template <int mmq_x, int mmq_y, bool need_check>
-// struct mmq_type_traits<mmq_x, mmq_y, need_check, GGML_TYPE_NVFP4> {
-//     static constexpr int              vdr          = VDR_NVFP4_Q8_1_MMQ;
-// #ifdef BLACKWELL_MMA_AVAILABLE
-//     static constexpr load_tiles_mmq_t load_tiles   = load_tiles_nvfp4_nvfp4<mmq_x, mmq_y, need_check>;
-//     static constexpr vec_dot_mmq_t    vec_dot_mma  = vec_dot_fp4_fp4_mma<mmq_x, mmq_y, GGML_TYPE_NVFP4>;
-// #else
-//     static constexpr load_tiles_mmq_t load_tiles   = load_tiles_nvfp4<mmq_y, need_check>;
-//     static constexpr vec_dot_mmq_t    vec_dot_mma  = vec_dot_q8_0_16_q8_1_mma<mmq_x, mmq_y>;
-// #endif // BLACKWELL_MMA_AVAILABLE
-//     static constexpr vec_dot_mmq_t    vec_dot_dp4a = vec_dot_q8_0_16_q8_1_dp4a<mmq_x, mmq_y>;
-// };
-
 
 template <ggml_type type, int mmq_x, bool fallback, bool fixup>
 static __device__ __forceinline__ void mul_mat_q_process_tile(
