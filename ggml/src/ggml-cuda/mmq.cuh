@@ -188,9 +188,16 @@ struct ggml_cuda_mmq_config {
 #include "mmq-config-ampere.cuh"
 #include "mmq-config-blackwell.cuh"
 
+#include "mmq-config-cdna.cuh"
+
 #undef CASE
 
 static __host__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config(const ggml_type type, const int J, const bool fallback, const int cc) {
+    if (GGML_CUDA_CC_IS_AMD(cc)) {
+        if (GGML_CUDA_CC_IS_CDNA(cc)) {
+            return ggml_cuda_mmq_get_config_cdna(type, J, fallback);
+        }
+    }
     if (ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_TURING) {
         return ggml_cuda_mmq_get_config_ampere(type, J, fallback);
     }
@@ -346,38 +353,20 @@ static __host__ int ggml_cuda_mmq_get_nbytes_shared_x(const ggml_cuda_mmq_config
     return (txs.qs + txs.dm + txs.sc) * 4;
 }
 
-#if defined(GGML_USE_HIP)
-static int mmq_get_nwarps_host(const int cc, const int warp_size) {
-    return amd_mfma_available(cc) ? 8 : 256/warp_size;
-}
-#else
-static int mmq_get_nwarps_host(const int /*cc*/, const int warp_size) {
-    return 256/warp_size;
-}
-#endif // (GGML_USE_HIP)
-
-static constexpr __device__ int mmq_get_nwarps_device() {
-#if defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
-    return 8;
-#else
-    return 256/ggml_cuda_get_physical_warp_size();
-#endif // AMD_MFMA_AVAILABLE
-}
-
 // ------------------------------------------------------------
 
 #include "mmq-load-tiles.cuh"
 #include "mmq-vec-dot.cuh"
 
-template<int mmq_x, int mmq_y, bool need_check>
-static __device__ __forceinline__ void mmq_write_back_dp4a(
+template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void mmq_write_back_dp4a(
         const float * __restrict__ sum, const int32_t * __restrict__ ids_dst, float * __restrict__ dst,
         const int stride, const int i_max, const int j_max) {
-    constexpr int nwarps = mmq_get_nwarps_device();
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
+    constexpr int nwarps    = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
+    constexpr int I         = ggml_cuda_mmq_get_I(type, J, fallback);
 
 #pragma unroll
-    for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
+    for (int j0 = 0; j0 < J; j0 += nwarps) {
         const int j = j0 + threadIdx.y;
 
         if (j > j_max) {
@@ -385,38 +374,38 @@ static __device__ __forceinline__ void mmq_write_back_dp4a(
         }
 
 #pragma unroll
-        for (int i0 = 0; i0 < mmq_y; i0 += warp_size) {
+        for (int i0 = 0; i0 < I; i0 += warp_size) {
             const int i = i0 + threadIdx.x;
 
-            if (need_check && i > i_max) {
+            if (fallback && i > i_max) {
                 continue;
             }
 
-            dst[ids_dst[j]*stride + i] = sum[(j0/nwarps) * (mmq_y/warp_size) + i0/warp_size];
+            dst[ids_dst[j]*stride + i] = sum[(j0/nwarps) * (I/warp_size) + i0/warp_size];
         }
     }
 }
 
-template<ggml_type type, int mmq_x, bool fallback>
+template<ggml_type type, int J, bool fallback>
 static __device__ __forceinline__ void mmq_write_back_mma(
-        const float * __restrict__ sum, const int * __restrict__ ids_dst, float * __restrict__ dst,
-        const int stride, const int i_max, const int j_max) {
+            const float * __restrict__ sum, const int * __restrict__ ids_dst, float * __restrict__ dst,
+            const int stride, const int i_max, const int j_max) {
 #if defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     typedef tile<16, 16, int, DATA_LAYOUT_J_MAJOR> tile_C;
 #else
     typedef tile<16,  8, int> tile_C;
-#endif // defined(AMD_MFMA_AVAILABLE)
+#endif // defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
 
-    constexpr int nwarps = mmq_get_nwarps_device();
-
-    constexpr int mmq_y         = ggml_cuda_mmq_get_I(type, mmq_x, fallback);
-    constexpr int rows_per_warp = ggml_cuda_mmq_get_rows_per_warp(type, mmq_x, fallback);
-    constexpr int ntx = rows_per_warp/tile_C::I; // Number of x minitiles per warp.
+    constexpr int warp_size     = ggml_cuda_get_physical_warp_size();
+    constexpr int nwarps        = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
+    constexpr int I             = ggml_cuda_mmq_get_I(type, J, fallback);
+    constexpr int rows_per_warp = ggml_cuda_mmq_get_rows_per_warp(type, J, fallback);
+    constexpr int ntx           = rows_per_warp/tile_C::I; // Number of x minitiles per warp.
 
     const int i0 = (threadIdx.y / ntx) * (ntx*tile_C::I);
 
 #pragma unroll
-    for (int j0 = 0; j0 < mmq_x; j0 += ntx*tile_C::J) {
+    for (int j0 = 0; j0 < J; j0 += ntx*tile_C::J) {
 #pragma unroll
         for (int n = 0; n < ntx; ++n) {
 #pragma unroll
@@ -462,131 +451,131 @@ static constexpr __device__ ggml_cuda_mmq_util_funcs ggml_cuda_mmq_get_util_func
                 return ggml_cuda_mmq_util_funcs(
                     VDR_Q1_0_Q8_1_MMQ,
                     load_tiles_q1_0<type, J, fallback>,
-                    vec_dot_q8_0_q8_1_dp4a<J, I>,
-                    mmq_write_back_dp4a<J, I, fallback>);
+                    vec_dot_q8_0_q8_1_dp4a<type, J, fallback>,
+                    mmq_write_back_dp4a<type, J, fallback>);
             case GGML_TYPE_Q4_0:
                 return ggml_cuda_mmq_util_funcs(
                     VDR_Q4_0_Q8_1_MMQ,
                     load_tiles_q4_0<type, J, fallback>,
-                    vec_dot_q4_0_q8_1_dp4a<J, I>,
-                    mmq_write_back_dp4a<J, I, fallback>);
+                    vec_dot_q4_0_q8_1_dp4a<type, J, fallback>,
+                    mmq_write_back_dp4a<type, J, fallback>);
             case GGML_TYPE_Q4_1:
                 return ggml_cuda_mmq_util_funcs(
                     VDR_Q4_1_Q8_1_MMQ,
                     load_tiles_q4_1<type, J, fallback>,
-                    vec_dot_q4_1_q8_1_dp4a<J, I>,
-                    mmq_write_back_dp4a<J, I, fallback>);
+                    vec_dot_q4_1_q8_1_dp4a<type, J, fallback>,
+                    mmq_write_back_dp4a<type, J, fallback>);
             case GGML_TYPE_Q5_0:
                 return ggml_cuda_mmq_util_funcs(
                     VDR_Q5_0_Q8_1_MMQ,
                     load_tiles_q5_0<type, J, fallback>,
-                    vec_dot_q8_0_q8_1_dp4a<J, I>,
-                    mmq_write_back_dp4a<J, I, fallback>);
+                    vec_dot_q8_0_q8_1_dp4a<type, J, fallback>,
+                    mmq_write_back_dp4a<type, J, fallback>);
             case GGML_TYPE_Q5_1:
                 return ggml_cuda_mmq_util_funcs(
                     VDR_Q5_1_Q8_1_MMQ,
                     load_tiles_q5_1<type, J, fallback>,
-                    vec_dot_q8_1_q8_1_dp4a<J, I>,
-                    mmq_write_back_dp4a<J, I, fallback>);
+                    vec_dot_q8_1_q8_1_dp4a<type, J, fallback>,
+                    mmq_write_back_dp4a<type, J, fallback>);
             case GGML_TYPE_Q8_0:
                 return ggml_cuda_mmq_util_funcs(
                     VDR_Q8_0_Q8_1_MMQ,
                     load_tiles_q8_0<type, J, fallback>,
-                    vec_dot_q8_0_q8_1_dp4a<J, I>,
-                    mmq_write_back_dp4a<J, I, fallback>);
+                    vec_dot_q8_0_q8_1_dp4a<type, J, fallback>,
+                    mmq_write_back_dp4a<type, J, fallback>);
 // ---------------------------------------------------------------------------------------------
             case GGML_TYPE_Q2_K:
                 return ggml_cuda_mmq_util_funcs(
                     VDR_Q2_K_Q8_1_MMQ,
                     load_tiles_q2_K<type, J, fallback>,
-                    vec_dot_q2_K_q8_1_dp4a<J, I>,
-                    mmq_write_back_dp4a<J, I, fallback>);
+                    vec_dot_q2_K_q8_1_dp4a<type, J, fallback>,
+                    mmq_write_back_dp4a<type, J, fallback>);
             case GGML_TYPE_Q3_K:
                 return ggml_cuda_mmq_util_funcs(
                     VDR_Q3_K_Q8_1_MMQ,
                     load_tiles_q3_K<type, J, fallback>,
-                    vec_dot_q3_K_q8_1_dp4a<J, I>,
-                    mmq_write_back_dp4a<J, I, fallback>);
+                    vec_dot_q3_K_q8_1_dp4a<type, J, fallback>,
+                    mmq_write_back_dp4a<type, J, fallback>);
             case GGML_TYPE_Q4_K:
                 return ggml_cuda_mmq_util_funcs(
                     VDR_Q4_K_Q8_1_MMQ,
                     load_tiles_q4_K<type, J, fallback>,
-                    vec_dot_q4_K_q8_1_dp4a<J, I>,
-                    mmq_write_back_dp4a<J, I, fallback>);
+                    vec_dot_q4_K_q8_1_dp4a<type, J, fallback>,
+                    mmq_write_back_dp4a<type, J, fallback>);
             case GGML_TYPE_Q5_K:
                 return ggml_cuda_mmq_util_funcs(
                     VDR_Q5_K_Q8_1_MMQ,
                     load_tiles_q5_K<type, J, fallback>,
-                    vec_dot_q5_K_q8_1_dp4a<J, I>,
-                    mmq_write_back_dp4a<J, I, fallback>);
+                    vec_dot_q5_K_q8_1_dp4a<type, J, fallback>,
+                    mmq_write_back_dp4a<type, J, fallback>);
             case GGML_TYPE_Q6_K:
                 return ggml_cuda_mmq_util_funcs(
                     VDR_Q6_K_Q8_1_MMQ,
                     load_tiles_q6_K<type, J, fallback>,
-                    vec_dot_q6_K_q8_1_dp4a<J, I>,
-                    mmq_write_back_dp4a<J, I, fallback>);
+                    vec_dot_q6_K_q8_1_dp4a<type, J, fallback>,
+                    mmq_write_back_dp4a<type, J, fallback>);
 // ---------------------------------------------------------------------------------------------
             case GGML_TYPE_IQ1_S:
                 return ggml_cuda_mmq_util_funcs(
                     VDR_IQ1_S_Q8_1_MMQ,
                     load_tiles_iq1_s<type, J, fallback>,
-                    vec_dot_q8_1_q8_1_dp4a<J, I>,
-                    mmq_write_back_dp4a<J, I, fallback>);
+                    vec_dot_q8_1_q8_1_dp4a<type, J, fallback>,
+                    mmq_write_back_dp4a<type, J, fallback>);
             case GGML_TYPE_IQ2_XXS:
                 return ggml_cuda_mmq_util_funcs(
                     VDR_IQ2_XXS_Q8_1_MMQ,
                     load_tiles_iq2_xxs<type, J, fallback>,
-                    vec_dot_q8_0_q8_1_dp4a<J, I>,
-                    mmq_write_back_dp4a<J, I, fallback>);
+                    vec_dot_q8_0_q8_1_dp4a<type, J, fallback>,
+                    mmq_write_back_dp4a<type, J, fallback>);
             case GGML_TYPE_IQ2_XS:
                 return ggml_cuda_mmq_util_funcs(
                     VDR_IQ2_XS_Q8_1_MMQ,
                     load_tiles_iq2_xs<type, J, fallback>,
-                    vec_dot_q8_0_16_q8_1_dp4a<J, I>,
-                    mmq_write_back_dp4a<J, I, fallback>);
+                    vec_dot_q8_0_16_q8_1_dp4a<type, J, fallback>,
+                    mmq_write_back_dp4a<type, J, fallback>);
             case GGML_TYPE_IQ2_S:
                 return ggml_cuda_mmq_util_funcs(
                     VDR_IQ2_S_Q8_1_MMQ,
                     load_tiles_iq2_s<type, J, fallback>,
-                    vec_dot_q8_0_16_q8_1_dp4a<J, I>,
-                    mmq_write_back_dp4a<J, I, fallback>);
+                    vec_dot_q8_0_16_q8_1_dp4a<type, J, fallback>,
+                    mmq_write_back_dp4a<type, J, fallback>);
             case GGML_TYPE_IQ3_XXS:
                 return ggml_cuda_mmq_util_funcs(
                     VDR_IQ3_XXS_Q8_1_MMQ,
                     load_tiles_iq3_xxs<type, J, fallback>,
-                    vec_dot_q8_0_q8_1_dp4a<J, I>,
-                    mmq_write_back_dp4a<J, I, fallback>);
+                    vec_dot_q8_0_q8_1_dp4a<type, J, fallback>,
+                    mmq_write_back_dp4a<type, J, fallback>);
             case GGML_TYPE_IQ3_S:
                 return ggml_cuda_mmq_util_funcs(
                     VDR_IQ3_S_Q8_1_MMQ,
                     load_tiles_iq3_s<type, J, fallback>,
-                    vec_dot_q8_0_q8_1_dp4a<J, I>,
-                    mmq_write_back_dp4a<J, I, fallback>);
+                    vec_dot_q8_0_q8_1_dp4a<type, J, fallback>,
+                    mmq_write_back_dp4a<type, J, fallback>);
             case GGML_TYPE_IQ4_XS:
                 return ggml_cuda_mmq_util_funcs(
                     VDR_IQ4_XS_Q8_1_MMQ,
                     load_tiles_iq4_xs<type, J, fallback>,
-                    vec_dot_q8_0_q8_1_dp4a<J, I>,
-                    mmq_write_back_dp4a<J, I, fallback>);
+                    vec_dot_q8_0_q8_1_dp4a<type, J, fallback>,
+                    mmq_write_back_dp4a<type, J, fallback>);
             case GGML_TYPE_IQ4_NL:
                 return ggml_cuda_mmq_util_funcs(
                     VDR_IQ4_NL_Q8_1_MMQ,
                     load_tiles_iq4_nl<type, J, fallback>,
-                    vec_dot_q8_0_q8_1_dp4a<J, I>,
-                    mmq_write_back_dp4a<J, I, fallback>);
+                    vec_dot_q8_0_q8_1_dp4a<type, J, fallback>,
+                    mmq_write_back_dp4a<type, J, fallback>);
 // ---------------------------------------------------------------------------------------------
             case GGML_TYPE_MXFP4:
                 return ggml_cuda_mmq_util_funcs(
                     VDR_MXFP4_Q8_1_MMQ,
                     load_tiles_mxfp4<type, J, fallback>,
-                    vec_dot_q8_0_q8_1_dp4a<J, I>,
-                    mmq_write_back_dp4a<J, I, fallback>);
+                    vec_dot_q8_0_q8_1_dp4a<type, J, fallback>,
+                    mmq_write_back_dp4a<type, J, fallback>);
             case GGML_TYPE_NVFP4:
                 return ggml_cuda_mmq_util_funcs(
                     VDR_NVFP4_Q8_1_MMQ,
                     load_tiles_nvfp4<type, J, fallback>,
-                    vec_dot_q8_0_16_q8_1_dp4a<J, I>,
-                    mmq_write_back_dp4a<J, I, fallback>);
+                    vec_dot_q8_0_16_q8_1_dp4a<type, J, fallback>,
+                    mmq_write_back_dp4a<type, J, fallback>);
             default:
                 return ggml_cuda_mmq_util_funcs(1, nullptr, nullptr, nullptr);
         }
@@ -850,18 +839,8 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
 
 // The mul_mat_q kernel implements "stream-k" work partitioning as described in https://arxiv.org/abs/2301.03598
 
-template <ggml_type type, int mmq_x, bool fallback>
-#if defined(GGML_USE_HIP)
-#if defined(RDNA4) || defined(RDNA3) || defined(RDNA2) || defined(CDNA) || defined(GCN)
-    __launch_bounds__(ggml_cuda_get_physical_warp_size()*mmq_get_nwarps_device(), 2)
-#endif // defined(RDNA4) || defined(RDNA3) || defined(RDNA2) || defined(CDNA) || defined(GCN)
-#else
-#if __CUDA_ARCH__ >= GGML_CUDA_CC_VOLTA
-    __launch_bounds__(ggml_cuda_get_physical_warp_size()*mmq_get_nwarps_device(), 1)
-#else
-    __launch_bounds__(ggml_cuda_get_physical_warp_size()*mmq_get_nwarps_device(), 2)
-#endif // __CUDA_ARCH__ >= GGML_CUDA_CC_VOLTA
-#endif // defined(GGML_USE_HIP)
+template <ggml_type type, int J, bool fallback>
+__launch_bounds__(ggml_cuda_mmq_get_nthreads(type, J, fallback), ggml_cuda_mmq_get_occupancy(type, J, fallback))
 static __global__ void mul_mat_q(
         const char * __restrict__ x, const int * __restrict__ y, const int32_t * __restrict__ ids_dst,
         const int32_t * __restrict__ expert_bounds, float * __restrict__ dst, float * __restrict__ tmp_fixup,
@@ -871,27 +850,27 @@ static __global__ void mul_mat_q(
         const uint3 ntx) {
 
     // Skip unused template specializations for faster compilation:
-    if (ggml_cuda_mmq_get_config(type, mmq_x, fallback).type == GGML_TYPE_COUNT) {
+    if (ggml_cuda_mmq_get_config(type, J, fallback).type == GGML_TYPE_COUNT) {
         NO_DEVICE_CODE;
         return;
     }
 
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
-    constexpr int nwarps    = ggml_cuda_mmq_get_nthreads(type, mmq_x, fallback) / warp_size;
+    constexpr int nwarps    = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
     constexpr int qk        = ggml_cuda_type_traits<type>::qk;
-    constexpr int mmq_y     = ggml_cuda_mmq_get_I(type, mmq_x, fallback);
+    constexpr int I         = ggml_cuda_mmq_get_I(type, J, fallback);
 
-    const uint32_t nty = (nrows_x + mmq_y - 1) / mmq_y; // Number of tiles y
+    const uint32_t nty = (nrows_x + I - 1) / I; // Number of tiles y
 
     // Initialize the ids for writing back data with just the index.
     // For regular matrix multiplications this is never changed.
     // For MoE the correct indices are loaded from ids_dst.
     extern __shared__ int ids_dst_shared[]; // Stored at beginning of shared memory.
 #pragma unroll
-    for (int j0 = 0; j0 < mmq_x; j0 += nwarps*warp_size) {
+    for (int j0 = 0; j0 < J; j0 += nwarps*warp_size) {
         const int j = j0 + threadIdx.y*warp_size + threadIdx.x;
 
-        if (j0 + nwarps*warp_size > mmq_x && j >= mmq_x) {
+        if (j0 + nwarps*warp_size > J && j >= J) {
             break;
         }
 
@@ -899,7 +878,7 @@ static __global__ void mul_mat_q(
     }
     __syncthreads();
 
-    if constexpr (!ggml_cuda_mmq_get_stream_k(type, mmq_x, fallback)) {
+    if constexpr (!ggml_cuda_mmq_get_stream_k(type, J, fallback)) {
         const uint2 tmp2 = fast_div_modulo(blockIdx.z, nchannels_y);
         const int wt = tmp2.x;
         const int zt = tmp2.y;
@@ -911,7 +890,7 @@ static __global__ void mul_mat_q(
         int col_high   = ncols_dst;
         int col_diff   = ncols_dst;
         int offset_y   = wt*stride_sample_y   + zt*stride_channel_y;
-        int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*mmq_x*stride_col_dst;
+        int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*J*stride_col_dst;
 
         if (ids_dst) {
             col_low  = expert_bounds[zt + 0];
@@ -921,40 +900,40 @@ static __global__ void mul_mat_q(
             offset_y   = 0;
             offset_dst = 0;
 
-            if (jt*mmq_x >= col_diff) {
+            if (jt*J >= col_diff) {
                 return;
             }
 
             // __syncthreads(); // There is no previous tile that could cause a race condition.
 #pragma unroll
-            for (int j0 = 0; j0 < mmq_x; j0 += nwarps*warp_size) {
+            for (int j0 = 0; j0 < J; j0 += nwarps*warp_size) {
                 const int j = j0 + threadIdx.y*warp_size + threadIdx.x;
 
-                if (j0 + nwarps*warp_size > mmq_x && j >= mmq_x) {
+                if (j0 + nwarps*warp_size > J && j >= J) {
                     break;
                 }
 
-                ids_dst_shared[j] = ids_dst[col_low + jt*mmq_x + j];
+                ids_dst_shared[j] = ids_dst[col_low + jt*J + j];
             }
             __syncthreads();
         }
 
-        offset_y   += (col_low + jt*mmq_x)*(sizeof(block_q8_1_mmq)/sizeof(int));
-        offset_dst += it*mmq_y;
+        offset_y   += (col_low + jt*J)*(sizeof(block_q8_1_mmq)/sizeof(int));
+        offset_dst += it*I;
 
-        const int tile_x_max_i = nrows_x  - it*mmq_y - 1;
-        const int tile_y_max_j = col_diff - jt*mmq_x - 1;
+        const int tile_x_max_i = nrows_x  - it*I - 1;
+        const int tile_y_max_j = col_diff - jt*J - 1;
 
-        const int offset_x = fastdiv(wt, sample_ratio)*stride_sample_x + fastdiv(zt, channel_ratio)*stride_channel_x + it*mmq_y*stride_row_x;
+        const int offset_x = fastdiv(wt, sample_ratio)*stride_sample_x + fastdiv(zt, channel_ratio)*stride_channel_x + it*I*stride_row_x;
 
         constexpr bool fixup = false;
-        mul_mat_q_process_tile<type, mmq_x, fallback, fixup>
+        mul_mat_q_process_tile<type, J, fallback, fixup>
             (x, offset_x, y + offset_y, ids_dst_shared, dst + offset_dst, tmp_fixup, stride_row_x, ncols_y, stride_col_dst,
              tile_x_max_i, tile_y_max_j, 0, blocks_per_ne00.z);
         return;
     }
 
-    constexpr int ITER_K          = ggml_cuda_mmq_get_K_vram(type, mmq_x, fallback);
+    constexpr int ITER_K          = ggml_cuda_mmq_get_K_vram(type, J, fallback);
     constexpr int blocks_per_iter = ITER_K / qk;
 
     // kbc == k block continuous, current index in continuous ijk space.
@@ -984,7 +963,7 @@ static __global__ void mul_mat_q(
         int col_high   = ncols_dst;
         int col_diff   = ncols_dst;
         int offset_y   = wt*stride_sample_y   + zt*stride_channel_y;
-        int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*mmq_x*stride_col_dst;
+        int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*J*stride_col_dst;
 
         if (ids_dst) {
             col_low  = expert_bounds[zt + 0];
@@ -994,7 +973,7 @@ static __global__ void mul_mat_q(
             offset_y   = 0;
             offset_dst = 0;
 
-            if (jt*mmq_x >= col_diff) {
+            if (jt*J >= col_diff) {
                 kbc += blocks_per_ne00.z;
                 kbc -= fastmodulo(kbc, blocks_per_ne00);
 
@@ -1006,28 +985,28 @@ static __global__ void mul_mat_q(
 
             __syncthreads();
 #pragma unroll
-            for (int j0 = 0; j0 < mmq_x; j0 += nwarps*warp_size) {
+            for (int j0 = 0; j0 < J; j0 += nwarps*warp_size) {
                 const int j = j0 + threadIdx.y*warp_size + threadIdx.x;
 
-                if (j0 + nwarps*warp_size > mmq_x && j >= mmq_x) {
+                if (j0 + nwarps*warp_size > J && j >= J) {
                     break;
                 }
 
-                ids_dst_shared[j] = ids_dst[col_low + jt*mmq_x + j];
+                ids_dst_shared[j] = ids_dst[col_low + jt*J + j];
             }
             __syncthreads();
         }
 
-        offset_y += (col_low + jt * mmq_x) * (sizeof(block_q8_1_mmq) / sizeof(int));
-        offset_dst += it*mmq_y;
+        offset_y += (col_low + jt * J) * (sizeof(block_q8_1_mmq) / sizeof(int));
+        offset_dst += it*I;
 
-        const int tile_x_max_i = nrows_x  - it*mmq_y - 1;
-        const int tile_y_max_j = col_diff - jt*mmq_x - 1;
+        const int tile_x_max_i = nrows_x  - it*I - 1;
+        const int tile_y_max_j = col_diff - jt*J - 1;
 
-        const int offset_x = fastdiv(wt, sample_ratio)*stride_sample_x + fastdiv(zt, channel_ratio)*stride_channel_x + it*mmq_y*stride_row_x;
+        const int offset_x = fastdiv(wt, sample_ratio)*stride_sample_x + fastdiv(zt, channel_ratio)*stride_channel_x + it*I*stride_row_x;
 
         constexpr bool fixup = false; // All but (potentially) the last iterations write their data to dst rather than the fixup buffer.
-        mul_mat_q_process_tile<type, mmq_x, fallback, fixup>
+        mul_mat_q_process_tile<type, J, fallback, fixup>
             (x, offset_x, y + offset_y, ids_dst_shared, dst + offset_dst, tmp_fixup, stride_row_x, ncols_y, stride_col_dst,
              tile_x_max_i, tile_y_max_j, kb0_start, kb0_stop);
 
@@ -1058,7 +1037,7 @@ static __global__ void mul_mat_q(
     int col_high   = ncols_dst;
     int col_diff   = ncols_dst;
     int offset_y   = wt*stride_sample_y   + zt*stride_channel_y;
-    int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*mmq_x*stride_col_dst;
+    int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*J*stride_col_dst;
 
     if (ids_dst) {
         col_low  = expert_bounds[zt + 0];
@@ -1068,17 +1047,17 @@ static __global__ void mul_mat_q(
         offset_y   = 0;
         offset_dst = 0;
 
-        if (jt*mmq_x >= col_diff) {
+        if (jt*J >= col_diff) {
             return;
         }
 
         // The memory layout for the fixup buffer is always contiguous, therefore reset ids:
         __syncthreads();
 #pragma unroll
-        for (int j0 = 0; j0 < mmq_x; j0 += nwarps*warp_size) {
+        for (int j0 = 0; j0 < J; j0 += nwarps*warp_size) {
             const int j = j0 + threadIdx.y*warp_size + threadIdx.x;
 
-            if (j0 + nwarps*warp_size > mmq_x && j >= mmq_x) {
+            if (j0 + nwarps*warp_size > J && j >= J) {
                 break;
             }
 
@@ -1087,22 +1066,22 @@ static __global__ void mul_mat_q(
         __syncthreads();
     }
 
-    offset_y += (col_low + jt * mmq_x) * (sizeof(block_q8_1_mmq) / sizeof(int));
-    offset_dst += it*mmq_y;
+    offset_y += (col_low + jt * J) * (sizeof(block_q8_1_mmq) / sizeof(int));
+    offset_dst += it*I;
 
-    const int tile_x_max_i = nrows_x  - it*mmq_y - 1;
-    const int tile_y_max_j = col_diff - jt*mmq_x - 1;
+    const int tile_x_max_i = nrows_x  - it*I - 1;
+    const int tile_y_max_j = col_diff - jt*J - 1;
 
-    const int offset_x = fastdiv(wt, sample_ratio)*stride_sample_x + fastdiv(zt, channel_ratio)*stride_channel_x + it*mmq_y*stride_row_x;
+    const int offset_x = fastdiv(wt, sample_ratio)*stride_sample_x + fastdiv(zt, channel_ratio)*stride_channel_x + it*I*stride_row_x;
 
     constexpr bool fixup = true; // Last index writes its data to fixup buffer to avoid data races with other blocks.
-    mul_mat_q_process_tile<type, mmq_x, fallback, fixup>
+    mul_mat_q_process_tile<type, J, fallback, fixup>
         (x, offset_x, y + offset_y, ids_dst_shared, dst + offset_dst, tmp_fixup, stride_row_x, ncols_y, stride_col_dst,
          tile_x_max_i, tile_y_max_j, kb0_start, kb0_stop);
 }
 
 template <ggml_type type, int J, bool fallback>
-__launch_bounds__(ggml_cuda_get_physical_warp_size()*mmq_get_nwarps_device()/2, 1)
+__launch_bounds__(ggml_cuda_mmq_get_nthreads(type, J, fallback)/2, 1)
 static __global__ void mul_mat_q_stream_k_fixup(
         const int32_t * __restrict__ ids_dst, const int32_t * __restrict__ expert_bounds, float * __restrict__ dst,
         float * __restrict__ tmp_last_tile, const uint3 blocks_per_ne00, const int nrows_x, const int ncols_dst,
