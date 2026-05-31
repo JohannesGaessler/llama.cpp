@@ -216,6 +216,8 @@ static constexpr __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config(ggml_t
 #ifdef GGML_USE_HIP
 #ifdef CDNA
     return ggml_cuda_mmq_get_config_cdna(type, J, fallback);
+#elif defined(RDNA3) || defined(RDNA4)
+    return ggml_cuda_mmq_get_config_ampere(type, J, fallback);
 #else
     return ggml_cuda_mmq_get_config_pascal(type, J, fallback);
 #endif // CDNA
