@@ -1522,7 +1522,7 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 
     const int txi = threadIdx.x;
 
-    constexpr int iter_k = ggml_cuda_mmq_get_K_vram(GGML_TYPE_MXFP4, J);
+    constexpr int iter_k = ggml_cuda_mmq_get_K_vram(type, J, fallback);
 
     constexpr int threads_per_row = iter_k / QK_MXFP4;  // each thread processes 1 block
     constexpr int rows_per_warp   = warp_size / threads_per_row;
@@ -1612,7 +1612,7 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
     constexpr int warp_size       = ggml_cuda_get_physical_warp_size();
     constexpr int nwarps          = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
     constexpr int I               = ggml_cuda_mmq_get_I(type, J, fallback);
-    constexpr int iter_k          = ggml_cuda_mmq_get_K_vram(GGML_TYPE_NVFP4, J);
+    constexpr int iter_k          = ggml_cuda_mmq_get_K_vram(type, J, fallback);
     constexpr int threads_per_row = iter_k / QK_NVFP4; // each thread processes 1 block
     constexpr int rows_per_warp   = warp_size / threads_per_row;
 
