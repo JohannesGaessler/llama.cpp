@@ -1,3 +1,9 @@
+#pragma once
+
+#include "vecdotq.cuh"
+
+#include "mmq.cuh"
+
 template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void load_tiles_q1_0(
         const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
