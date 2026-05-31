@@ -1687,15 +1687,17 @@ static __device__ __forceinline__ void vec_dot_q8_0_16_q8_1_mma(
 #endif // AMD_MFMA_AVAILABLE || AMD_WMMA_AVAILABLE
 }
 
-template <int mmq_y, bool need_check> static __device__ __forceinline__ void load_tiles_q2_K(
-    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
-    constexpr int nwarps = mmq_get_nwarps_device();
+template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void load_tiles_q2_K(
+        const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
+    constexpr int warp_size = ggml_cuda_get_physical_warp_size();
+    constexpr int nwarps    = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
+    constexpr int I         = ggml_cuda_mmq_get_I(type, J, fallback);
 
 #if defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     int   * x_qs = (int   *)  x_tile;
     half2 * x_dm = (half2 *) (x_qs + 2*MMQ_TILE_NE_K);
 #else
-    constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q2_K, mmq_y);
+    constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q2_K, I);
     int   * x_qs = (int   *)  x_tile;
     half2 * x_dm = (half2 *) (x_qs + txs.qs);
 #endif // defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
@@ -1705,10 +1707,10 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
     const int kqsx = threadIdx.x % threads_per_row;
 
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nrows*nwarps) {
+    for (int i0 = 0; i0 < I; i0 += nrows*nwarps) {
         int i = i0 + threadIdx.y*nrows + threadIdx.x/threads_per_row;
 
-        if (need_check) {
+        if (fallback) {
             i = min(i, i_max);
         }
 
@@ -2006,16 +2008,17 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
 #endif // AMD_MFMA_AVAILABLE || AMD_WMMA_AVAILABLE
 }
 
-template <int mmq_y, bool need_check> static __device__ __forceinline__ void load_tiles_q3_K(
-    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
-    constexpr int nwarps = mmq_get_nwarps_device();
+template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void load_tiles_q3_K(
+        const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
+    constexpr int nwarps    = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
+    constexpr int I         = ggml_cuda_mmq_get_I(type, J, fallback);
 
 #if defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     int   * x_qs = (int   *)  x_tile;
     float * x_df = (float *) (x_qs + MMQ_TILE_NE_K*2);
 #else
-    constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q3_K, mmq_y);
+    constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q3_K, I);
     int   * x_qs = (int   *)  x_tile;
     float * x_df = (float *) (x_qs + txs.qs);
     int   * x_sc = (int   *) (x_df + txs.dm);
@@ -2026,10 +2029,10 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
     const int kqsx = threadIdx.x % threads_per_row;
 
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nrows*nwarps) {
+    for (int i0 = 0; i0 < I; i0 += nrows*nwarps) {
         int i = i0 + threadIdx.y*nrows + threadIdx.x/threads_per_row;
 
-        if (need_check) {
+        if (fallback) {
             i = min(i, i_max);
         }
 
@@ -2057,10 +2060,10 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
 
     constexpr int rows_per_warp = warp_size / 4;
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nwarps*rows_per_warp) {
+    for (int i0 = 0; i0 < I; i0 += nwarps*rows_per_warp) {
         int i = i0 + threadIdx.y*rows_per_warp + threadIdx.x/4;
 
-        if (need_check) {
+        if (fallback) {
             i = min(i, i_max);
         }
 
@@ -2093,10 +2096,10 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
 
 #if !(defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE))
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nwarps*warp_size) {
-        int i = (i0 + threadIdx.y*warp_size + threadIdx.x) % mmq_y;
+    for (int i0 = 0; i0 < I; i0 += nwarps*warp_size) {
+        int i = (i0 + threadIdx.y*warp_size + threadIdx.x) % I;
 
-        if (need_check) {
+        if (fallback) {
             i = min(i, i_max);
         }
 
@@ -2152,16 +2155,17 @@ static __device__ __forceinline__ int unpack_scales_q45_K(const int * scales, co
            ((scales[ksc/2]              >> (2 * (ksc % 2)))       & 0x30303030);  // upper 2 bits
 }
 
-template <int mmq_y, bool need_check> static __device__ __forceinline__ void load_tiles_q4_K(
-    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
-    constexpr int nwarps = mmq_get_nwarps_device();
+template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void load_tiles_q4_K(
+        const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
+    constexpr int nwarps    = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
+    constexpr int I         = ggml_cuda_mmq_get_I(type, J, fallback);
 
 #if defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     int   * x_qs = (int   *)  x_tile;
     half2 * x_dm = (half2 *) (x_qs + 2*MMQ_TILE_NE_K);
 #else
-    constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q4_K, mmq_y);
+    constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q4_K, I);
     int   * x_qs = (int   *)  x_tile;
     half2 * x_dm = (half2 *) (x_qs + txs.qs);
     int   * x_sc = (int   *) (x_dm + txs.dm);
@@ -2172,10 +2176,10 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
     const int txi = warp_size > threads_per_row ? threadIdx.x % threads_per_row : threadIdx.x;
 
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nrows*nwarps) {
+    for (int i0 = 0; i0 < I; i0 += nrows*nwarps) {
         int i = i0 + (nrows == 1 ? threadIdx.y : threadIdx.y*nrows + threadIdx.x/threads_per_row);
 
-        if (need_check) {
+        if (fallback) {
             i = min(i, i_max);
         }
 
@@ -2193,18 +2197,18 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
 #if defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     constexpr int rows_per_warp = warp_size / 2;
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nwarps*rows_per_warp) {
+    for (int i0 = 0; i0 < I; i0 += nwarps*rows_per_warp) {
 #if defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
         // Need if on AMD instead of % because warp_size == 64
         // This causes double work and throughput loss (MI300X)
         // H100 loses about 100 t/s with 'if' condition over '%'
         int i = i0 + threadIdx.y*rows_per_warp + threadIdx.x/2;
-        if (i < mmq_y) {
+        if (i < I) {
 #else
-        int i = (i0 + threadIdx.y*rows_per_warp + threadIdx.x/2) % mmq_y;
+        int i = (i0 + threadIdx.y*rows_per_warp + threadIdx.x/2) % I;
         {
 #endif // defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
-            if (need_check) {
+            if (fallback) {
                 i = min(i, i_max);
             }
 
@@ -2229,10 +2233,10 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
     }
 #else
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nwarps*warp_size) {
-        int i = (i0 + threadIdx.y*warp_size + threadIdx.x) % mmq_y;
+    for (int i0 = 0; i0 < I; i0 += nwarps*warp_size) {
+        int i = (i0 + threadIdx.y*warp_size + threadIdx.x) % I;
 
-        if (need_check) {
+        if (fallback) {
             i = min(i, i_max);
         }
 
@@ -2242,10 +2246,10 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
     }
     constexpr int rows_per_warp = warp_size / 4;
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nwarps*rows_per_warp) {
-        int i = (i0 + threadIdx.y*rows_per_warp + threadIdx.x/(MMQ_TILE_NE_K/8)) % mmq_y;
+    for (int i0 = 0; i0 < I; i0 += nwarps*rows_per_warp) {
+        int i = (i0 + threadIdx.y*rows_per_warp + threadIdx.x/(MMQ_TILE_NE_K/8)) % I;
 
-        if (need_check) {
+        if (fallback) {
             i = min(i, i_max);
         }
 
@@ -2296,16 +2300,17 @@ static __device__ __forceinline__ void vec_dot_q4_K_q8_1_dp4a(
     }
 }
 
-template <int mmq_y, bool need_check> static __device__ __forceinline__ void load_tiles_q5_K(
-    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
-    constexpr int nwarps = mmq_get_nwarps_device();
+template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void load_tiles_q5_K(
+        const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
+    constexpr int nwarps    = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
+    constexpr int I         = ggml_cuda_mmq_get_I(type, J, fallback);
 
 #if defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     int   * x_qs = (int   *)  x_tile;
     half2 * x_dm = (half2 *) (x_qs + MMQ_TILE_NE_K*2);
 #else
-    constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q5_K, mmq_y);
+    constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q5_K, I);
     int   * x_qs = (int   *)  x_tile;
     half2 * x_dm = (half2 *) (x_qs + txs.qs);
     int   * x_sc = (int   *) (x_dm + txs.dm);
@@ -2316,10 +2321,10 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
     const int txi = warp_size > threads_per_row ? threadIdx.x % threads_per_row : threadIdx.x;
 
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nrows*nwarps) {
+    for (int i0 = 0; i0 < I; i0 += nrows*nwarps) {
         int i = i0 + (nrows == 1 ? threadIdx.y : threadIdx.y*nrows + threadIdx.x/threads_per_row);
 
-        if (need_check) {
+        if (fallback) {
             i = min(i, i_max);
         }
 
@@ -2349,18 +2354,18 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
 #if defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     constexpr int rows_per_warp = warp_size / 2;
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nwarps*rows_per_warp) {
+    for (int i0 = 0; i0 < I; i0 += nwarps*rows_per_warp) {
 #if defined(AMD_MFMA_AVAILABLE)
         // Need if on AMD instead of % because warp_size == 64
         // This causes double work and throughput loss (MI300X)
         // H100 loses about 100 t/s with 'if' condition over '%'
         int i = i0 + threadIdx.y*rows_per_warp + threadIdx.x/2;
-        if (i < mmq_y) {
+        if (i < I) {
 #else
-        int i = (i0 + threadIdx.y*rows_per_warp + threadIdx.x/2) % mmq_y;
+        int i = (i0 + threadIdx.y*rows_per_warp + threadIdx.x/2) % I;
         {
 #endif // defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
-            if (need_check) {
+            if (fallback) {
                 i = min(i, i_max);
             }
 
@@ -2385,10 +2390,10 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
     }
 #else
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nwarps*warp_size) {
-        int i = (i0 + threadIdx.y*warp_size + threadIdx.x) % mmq_y;
+    for (int i0 = 0; i0 < I; i0 += nwarps*warp_size) {
+        int i = (i0 + threadIdx.y*warp_size + threadIdx.x) % I;
 
-        if (need_check) {
+        if (fallback) {
             i = min(i, i_max);
         }
 
@@ -2399,10 +2404,10 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
 
     constexpr int rows_per_warp = warp_size / 4;
 #pragma unroll
-    for (int i0 = 0; i0 < mmq_y; i0 += nwarps*rows_per_warp) {
-        int i = (i0 + threadIdx.y*rows_per_warp + threadIdx.x/(MMQ_TILE_NE_K/8)) % mmq_y;
+    for (int i0 = 0; i0 < I; i0 += nwarps*rows_per_warp) {
+        int i = (i0 + threadIdx.y*rows_per_warp + threadIdx.x/(MMQ_TILE_NE_K/8)) % I;
 
-        if (need_check) {
+        if (fallback) {
             i = min(i, i_max);
         }
 
@@ -3372,6 +3377,30 @@ static constexpr __device__ ggml_cuda_mmq_util_funcs ggml_cuda_mmq_get_util_func
                     vec_dot_q8_0_q8_1_dp4a<J, I>,
                     mmq_write_back_dp4a<J, I, fallback>);
 // ---------------------------------------------------------------------------------------------
+            case GGML_TYPE_Q2_K:
+                return ggml_cuda_mmq_util_funcs(
+                    VDR_Q2_K_Q8_1_MMQ,
+                    load_tiles_q2_K<type, J, fallback>,
+                    vec_dot_q2_K_q8_1_dp4a<J, I>,
+                    mmq_write_back_dp4a<J, I, fallback>);
+            case GGML_TYPE_Q3_K:
+                return ggml_cuda_mmq_util_funcs(
+                    VDR_Q3_K_Q8_1_MMQ,
+                    load_tiles_q3_K<type, J, fallback>,
+                    vec_dot_q3_K_q8_1_dp4a<J, I>,
+                    mmq_write_back_dp4a<J, I, fallback>);
+            case GGML_TYPE_Q4_K:
+                return ggml_cuda_mmq_util_funcs(
+                    VDR_Q4_K_Q8_1_MMQ,
+                    load_tiles_q4_K<type, J, fallback>,
+                    vec_dot_q4_K_q8_1_dp4a<J, I>,
+                    mmq_write_back_dp4a<J, I, fallback>);
+            case GGML_TYPE_Q5_K:
+                return ggml_cuda_mmq_util_funcs(
+                    VDR_Q5_K_Q8_1_MMQ,
+                    load_tiles_q5_K<type, J, fallback>,
+                    vec_dot_q5_K_q8_1_dp4a<J, I>,
+                    mmq_write_back_dp4a<J, I, fallback>);
             case GGML_TYPE_Q6_K:
                 return ggml_cuda_mmq_util_funcs(
                     VDR_Q6_K_Q8_1_MMQ,
@@ -3382,6 +3411,7 @@ static constexpr __device__ ggml_cuda_mmq_util_funcs ggml_cuda_mmq_get_util_func
                 return ggml_cuda_mmq_util_funcs(1, nullptr, nullptr, nullptr);
         }
     }
+
 
 // ---------------------------------------------------------------------------------------------
 
@@ -3423,6 +3453,30 @@ static constexpr __device__ ggml_cuda_mmq_util_funcs ggml_cuda_mmq_get_util_func
                 vec_dot_q8_0_q8_1_mma<type, J, fallback, MMQ_Q8_1_DS_LAYOUT_D4>,
                 mmq_write_back_mma<type, J, fallback>);
 // ---------------------------------------------------------------------------------------------
+        case GGML_TYPE_Q2_K:
+            return ggml_cuda_mmq_util_funcs(
+                -1,
+                load_tiles_q2_K<type, J, fallback>,
+                vec_dot_q2_K_q8_1_mma<type, J, fallback>,
+                mmq_write_back_mma<type, J, fallback>);
+        case GGML_TYPE_Q3_K:
+            return ggml_cuda_mmq_util_funcs(
+                -1,
+                load_tiles_q3_K<type, J, fallback>,
+                vec_dot_q8_0_16_q8_1_mma<type, J, fallback>,
+                mmq_write_back_mma<type, J, fallback>);
+        case GGML_TYPE_Q4_K:
+            return ggml_cuda_mmq_util_funcs(
+                -1,
+                load_tiles_q4_K<type, J, fallback>,
+                vec_dot_q8_1_q8_1_mma<type, J, fallback>,
+                mmq_write_back_mma<type, J, fallback>);
+        case GGML_TYPE_Q5_K:
+            return ggml_cuda_mmq_util_funcs(
+                -1,
+                load_tiles_q5_K<type, J, fallback>,
+                vec_dot_q8_1_q8_1_mma<type, J, fallback>,
+                mmq_write_back_mma<type, J, fallback>);
         case GGML_TYPE_Q6_K:
             return ggml_cuda_mmq_util_funcs(
                 -1,
@@ -3457,54 +3511,6 @@ static constexpr __device__ mmq_write_back_t ggml_cuda_mmq_get_write_back() {
 // ---------------------------------------------------------------------------------------------
 
 // template <int mmq_x, int mmq_y, bool need_check>
-// struct mmq_type_traits<mmq_x, mmq_y, need_check, GGML_TYPE_Q1_0> {
-//     static constexpr int              vdr          = VDR_Q1_0_Q8_1_MMQ;
-//     static constexpr load_tiles_mmq_t load_tiles   = load_tiles_q1_0<mmq_y, need_check>;
-//     static constexpr vec_dot_mmq_t    vec_dot_mma  = vec_dot_q8_0_q8_1_mma<mmq_x, mmq_y, MMQ_Q8_1_DS_LAYOUT_D4>;
-//     static constexpr vec_dot_mmq_t    vec_dot_dp4a = vec_dot_q8_0_q8_1_dp4a<mmq_x, mmq_y>;
-// };
-
-// template <int mmq_x, int mmq_y, bool need_check>
-// struct mmq_type_traits<mmq_x, mmq_y, need_check, GGML_TYPE_Q4_0> {
-//     static constexpr int              vdr          = VDR_Q4_0_Q8_1_MMQ;
-//     static constexpr load_tiles_mmq_t load_tiles   = load_tiles_q4_0<mmq_y, need_check>;
-//     static constexpr vec_dot_mmq_t    vec_dot_mma  = vec_dot_q8_0_q8_1_mma<mmq_x, mmq_y, MMQ_Q8_1_DS_LAYOUT_DS4>;
-//     static constexpr vec_dot_mmq_t    vec_dot_dp4a = vec_dot_q4_0_q8_1_dp4a<mmq_x, mmq_y>;
-// };
-
-// template <int mmq_x, int mmq_y, bool need_check>
-// struct mmq_type_traits<mmq_x, mmq_y, need_check, GGML_TYPE_Q4_1> {
-//     static constexpr int              vdr          = VDR_Q4_1_Q8_1_MMQ;
-//     static constexpr load_tiles_mmq_t load_tiles   = load_tiles_q4_1<mmq_y, need_check>;
-//     static constexpr vec_dot_mmq_t    vec_dot_mma  = vec_dot_q8_1_q8_1_mma<mmq_x, mmq_y>;
-//     static constexpr vec_dot_mmq_t    vec_dot_dp4a = vec_dot_q4_1_q8_1_dp4a<mmq_x, mmq_y>;
-// };
-
-// template <int mmq_x, int mmq_y, bool need_check>
-// struct mmq_type_traits<mmq_x, mmq_y, need_check, GGML_TYPE_Q5_0> {
-//     static constexpr int              vdr          = VDR_Q5_0_Q8_1_MMQ;
-//     static constexpr load_tiles_mmq_t load_tiles   = load_tiles_q5_0<mmq_y, need_check>;
-//     static constexpr vec_dot_mmq_t    vec_dot_mma  = vec_dot_q8_0_q8_1_mma<mmq_x, mmq_y, MMQ_Q8_1_DS_LAYOUT_D4>;
-//     static constexpr vec_dot_mmq_t    vec_dot_dp4a = vec_dot_q8_0_q8_1_dp4a<mmq_x, mmq_y>;
-// };
-
-// template <int mmq_x, int mmq_y, bool need_check>
-// struct mmq_type_traits<mmq_x, mmq_y, need_check, GGML_TYPE_Q5_1> {
-//     static constexpr int              vdr          = VDR_Q5_1_Q8_1_MMQ;
-//     static constexpr load_tiles_mmq_t load_tiles   = load_tiles_q5_1<mmq_y, need_check>;
-//     static constexpr vec_dot_mmq_t    vec_dot_mma  = vec_dot_q8_1_q8_1_mma<mmq_x, mmq_y>;
-//     static constexpr vec_dot_mmq_t    vec_dot_dp4a = vec_dot_q8_1_q8_1_dp4a<mmq_x, mmq_y>;
-// };
-
-// template <int mmq_x, int mmq_y, bool need_check>
-// struct mmq_type_traits<mmq_x, mmq_y, need_check, GGML_TYPE_Q8_0> {
-//     static constexpr int              vdr          = VDR_Q8_0_Q8_1_MMQ;
-//     static constexpr load_tiles_mmq_t load_tiles   = load_tiles_q8_0<mmq_y, need_check>;
-//     static constexpr vec_dot_mmq_t    vec_dot_mma  = vec_dot_q8_0_q8_1_mma<mmq_x, mmq_y, MMQ_Q8_1_DS_LAYOUT_D4>;
-//     static constexpr vec_dot_mmq_t    vec_dot_dp4a = vec_dot_q8_0_q8_1_dp4a<mmq_x, mmq_y>;
-// };
-
-// template <int mmq_x, int mmq_y, bool need_check>
 // struct mmq_type_traits<mmq_x, mmq_y, need_check, GGML_TYPE_MXFP4> {
 //     static constexpr int              vdr          = VDR_MXFP4_Q8_1_MMQ;
 // #ifdef BLACKWELL_MMA_AVAILABLE
@@ -3528,46 +3534,6 @@ static constexpr __device__ mmq_write_back_t ggml_cuda_mmq_get_write_back() {
 //     static constexpr vec_dot_mmq_t    vec_dot_mma  = vec_dot_q8_0_16_q8_1_mma<mmq_x, mmq_y>;
 // #endif // BLACKWELL_MMA_AVAILABLE
 //     static constexpr vec_dot_mmq_t    vec_dot_dp4a = vec_dot_q8_0_16_q8_1_dp4a<mmq_x, mmq_y>;
-// };
-
-// template <int mmq_x, int mmq_y, bool need_check>
-// struct mmq_type_traits<mmq_x, mmq_y, need_check, GGML_TYPE_Q2_K> {
-//     static constexpr int              vdr          = VDR_Q2_K_Q8_1_MMQ;
-//     static constexpr load_tiles_mmq_t load_tiles   = load_tiles_q2_K<mmq_y, need_check>;
-//     static constexpr vec_dot_mmq_t    vec_dot_mma  = vec_dot_q2_K_q8_1_mma<mmq_x, mmq_y>;
-//     static constexpr vec_dot_mmq_t    vec_dot_dp4a = vec_dot_q2_K_q8_1_dp4a<mmq_x, mmq_y>;
-// };
-
-// template <int mmq_x, int mmq_y, bool need_check>
-// struct mmq_type_traits<mmq_x, mmq_y, need_check, GGML_TYPE_Q3_K> {
-//     static constexpr int              vdr          = VDR_Q3_K_Q8_1_MMQ;
-//     static constexpr load_tiles_mmq_t load_tiles   = load_tiles_q3_K<mmq_y, need_check>;
-//     static constexpr vec_dot_mmq_t    vec_dot_mma  = vec_dot_q8_0_16_q8_1_mma<mmq_x, mmq_y>;
-//     static constexpr vec_dot_mmq_t    vec_dot_dp4a = vec_dot_q3_K_q8_1_dp4a<mmq_x, mmq_y>;
-// };
-
-// template <int mmq_x, int mmq_y, bool need_check>
-// struct mmq_type_traits<mmq_x, mmq_y, need_check, GGML_TYPE_Q4_K> {
-//     static constexpr int              vdr          = VDR_Q4_K_Q8_1_MMQ;
-//     static constexpr load_tiles_mmq_t load_tiles   = load_tiles_q4_K<mmq_y, need_check>;
-//     static constexpr vec_dot_mmq_t    vec_dot_mma  = vec_dot_q8_1_q8_1_mma<mmq_x, mmq_y>;
-//     static constexpr vec_dot_mmq_t    vec_dot_dp4a = vec_dot_q4_K_q8_1_dp4a<mmq_x, mmq_y>;
-// };
-
-// template <int mmq_x, int mmq_y, bool need_check>
-// struct mmq_type_traits<mmq_x, mmq_y, need_check, GGML_TYPE_Q5_K> {
-//     static constexpr int              vdr          = VDR_Q5_K_Q8_1_MMQ;
-//     static constexpr load_tiles_mmq_t load_tiles   = load_tiles_q5_K<mmq_y, need_check>;
-//     static constexpr vec_dot_mmq_t    vec_dot_mma  = vec_dot_q8_1_q8_1_mma<mmq_x, mmq_y>;
-//     static constexpr vec_dot_mmq_t    vec_dot_dp4a = vec_dot_q5_K_q8_1_dp4a<mmq_x, mmq_y>;
-// };
-
-// template <int mmq_x, int mmq_y, bool need_check>
-// struct mmq_type_traits<mmq_x, mmq_y, need_check, GGML_TYPE_Q6_K> {
-//     static constexpr int              vdr          = VDR_Q6_K_Q8_1_MMQ;
-//     static constexpr load_tiles_mmq_t load_tiles   = load_tiles_q6_K<mmq_y, need_check>;
-//     static constexpr vec_dot_mmq_t    vec_dot_mma  = vec_dot_q6_K_q8_1_mma<mmq_x, mmq_y>;
-//     static constexpr vec_dot_mmq_t    vec_dot_dp4a = vec_dot_q6_K_q8_1_dp4a<mmq_x, mmq_y>;
 // };
 
 // template <int mmq_x, int mmq_y, bool need_check>
