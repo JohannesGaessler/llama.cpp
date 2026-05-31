@@ -198,7 +198,7 @@ static __host__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config(const ggml_type ty
         if (GGML_CUDA_CC_IS_CDNA(cc)) {
             return ggml_cuda_mmq_get_config_cdna(type, J, fallback);
         }
-        if (GGML_CUDA_CC_IS_RDNA3(cc) || GGML_CUDA_CC_IS_RDNA4(cc)) {
+        if (amd_wmma_available(cc)) {
             return ggml_cuda_mmq_get_config_ampere(type, J, fallback);
         }
         return ggml_cuda_mmq_get_config_pascal(type, J, fallback);
@@ -216,7 +216,7 @@ static constexpr __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config(ggml_t
 #ifdef GGML_USE_HIP
 #ifdef CDNA
     return ggml_cuda_mmq_get_config_cdna(type, J, fallback);
-#elif defined(RDNA3) || defined(RDNA4)
+#elif defined(AMD_WMMA_AVAILABLE)
     return ggml_cuda_mmq_get_config_ampere(type, J, fallback);
 #else
     return ggml_cuda_mmq_get_config_pascal(type, J, fallback);
