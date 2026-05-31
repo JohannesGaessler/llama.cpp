@@ -3978,25 +3978,24 @@ static __global__ void mul_mat_q(
          tile_x_max_i, tile_y_max_j, kb0_start, kb0_stop);
 }
 
-template <ggml_type type, int mmq_x, bool fallback>
+template <ggml_type type, int J, bool fallback>
 __launch_bounds__(ggml_cuda_get_physical_warp_size()*mmq_get_nwarps_device()/2, 1)
 static __global__ void mul_mat_q_stream_k_fixup(
         const int32_t * __restrict__ ids_dst, const int32_t * __restrict__ expert_bounds, float * __restrict__ dst,
         float * __restrict__ tmp_last_tile, const uint3 blocks_per_ne00, const int nrows_x, const int ncols_dst,
         const int stride_col_dst, const uint3 nchannels_y, const int stride_channel_dst, const uint3 nsamples_y,
         const int stride_sample_dst, const uint3 ntx) {
-    constexpr int mmq_y           = ggml_cuda_mmq_get_I(type, mmq_x, fallback);
+    constexpr int warp_size       = ggml_cuda_get_physical_warp_size();
+    constexpr int nwarps          = (ggml_cuda_mmq_get_nthreads(type, J, fallback) / 2) / warp_size;
+    constexpr int I               = ggml_cuda_mmq_get_I(type, J, fallback);
     constexpr int qk              = ggml_cuda_type_traits<type>::qk;
-    constexpr int ITER_K          = ggml_cuda_mmq_get_K_vram(type, mmq_x, fallback);
+    constexpr int ITER_K          = ggml_cuda_mmq_get_K_vram(type, J, fallback);
     constexpr int blocks_per_iter = ITER_K / qk;
 
-    constexpr int nwarps = mmq_get_nwarps_device()/2;
-    constexpr int warp_size = ggml_cuda_get_physical_warp_size();
-
-    float sum[mmq_x / nwarps] = {0.0f};
+    float sum[J / nwarps] = {0.0f};
     const int i = blockIdx.y*warp_size + threadIdx.x;
 
-    const int nty = (nrows_x + mmq_y - 1) / mmq_y;
+    const int nty = (nrows_x + I - 1) / I;
 
     const int bidx0 = blockIdx.x;
 
@@ -4034,10 +4033,10 @@ static __global__ void mul_mat_q_stream_k_fixup(
 
 
 #pragma unroll
-        for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
+        for (int j0 = 0; j0 < J; j0 += nwarps) {
             const int j = j0 + threadIdx.y;
 
-            sum[j0/nwarps] += tmp_last_tile[bidx*(mmq_x*mmq_y) + j*mmq_y + i];
+            sum[j0/nwarps] += tmp_last_tile[bidx*(J*I) + j*I + i];
         }
 
         // If this block started in a previous tile we are done and don't need to combine additional partial results.
@@ -4064,17 +4063,17 @@ static __global__ void mul_mat_q_stream_k_fixup(
     const int it = tmp2.x;
 
     if (!ids_dst) {
-        const int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*mmq_x*stride_col_dst + it*mmq_y;
+        const int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*J*stride_col_dst + it*I;
         dst += offset_dst;
 
-        const int i_max = nrows_x   - it*mmq_y - 1;
-        const int j_max = ncols_dst - jt*mmq_x - 1;
-        if (!fallback && i > i_max) {
+        const int i_max = nrows_x   - it*I - 1;
+        const int j_max = ncols_dst - jt*J - 1;
+        if (fallback && i > i_max) {
             return;
         }
 
 #pragma unroll
-        for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
+        for (int j0 = 0; j0 < J; j0 += nwarps) {
             const int j = j0 + threadIdx.y;
 
             if (j > j_max) {
@@ -4086,27 +4085,27 @@ static __global__ void mul_mat_q_stream_k_fixup(
         return;
     }
 
-    __shared__ int ids_dst_shared[mmq_x];
+    __shared__ int ids_dst_shared[J];
     const int col_low  = expert_bounds[zt + 0];
     const int col_high = expert_bounds[zt + 1];
     const int col_diff = col_high - col_low;
 
-    for (int j = threadIdx.y*warp_size + threadIdx.x; j < mmq_x; j += nwarps*warp_size) {
-        ids_dst_shared[j] = ids_dst[col_low + jt*mmq_x + j];
+    for (int j = threadIdx.y*warp_size + threadIdx.x; j < J; j += nwarps*warp_size) {
+        ids_dst_shared[j] = ids_dst[col_low + jt*J + j];
     }
     __syncthreads();
 
-    const int offset_dst = it*mmq_y;
+    const int offset_dst = it*I;
     dst += offset_dst;
 
-    const int i_max = nrows_x  - it*mmq_y - 1;
-    const int j_max = col_diff - jt*mmq_x - 1;
-    if (!fallback && i > i_max) {
+    const int i_max = nrows_x  - it*I - 1;
+    const int j_max = col_diff - jt*J - 1;
+    if (fallback && i > i_max) {
         return;
     }
 
 #pragma unroll
-    for (int j0 = 0; j0 < mmq_x; j0 += nwarps) {
+    for (int j0 = 0; j0 < J; j0 += nwarps) {
         const int j = j0 + threadIdx.y;
 
         if (j > j_max) {
