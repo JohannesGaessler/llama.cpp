@@ -121,19 +121,13 @@ void ggml_cuda_mul_mat_q(
     const int64_t s3  =  dst->nb[3] / ts_dst;
 
     const bool fallback = ne01 % 128 != 0;
-    // TODO
-    // const bool use_stream_k = (GGML_CUDA_CC_IS_NVIDIA(cc) && ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_VOLTA)
-    //                         || GGML_CUDA_CC_IS_CDNA(cc);
 
     // TODO: tighter pool buffer size vs q8 path
     const bool use_native_fp4 = blackwell_mma_available(cc) && (src0->type == GGML_TYPE_MXFP4 || src0->type == GGML_TYPE_NVFP4);
 
     if (!ids) {
-        const int64_t J_max = ggml_cuda_mmq_get_J_max(src0->type, fallback, cc, ne11);
-        int64_t ne11_padded = ne11;
-        ne11_padded += J_max - 1;
-        ne11_padded -= ne11_padded % J_max;
-        const size_t nbytes_src1_q8_1 = ne13*ne12 * ne11_padded*ne10_padded * sizeof(block_q8_1)/QK8_1;
+        const size_t nbytes_src1_q8_1 = ne13*ne12 * ne11*ne10_padded * sizeof(block_q8_1)/QK8_1 +
+            ggml_cuda_mmq_get_J_max(src0->type, fallback, cc, ne11) * sizeof(block_q8_1_mmq);
         ggml_cuda_pool_alloc<char> src1_q8_1(ctx.pool(), nbytes_src1_q8_1);
 
         {
@@ -190,11 +184,8 @@ void ggml_cuda_mul_mat_q(
         CUDA_CHECK(cudaGetLastError());
     }
 
-    const int64_t J_max = ggml_cuda_mmq_get_J_max(src0->type, fallback, cc, n_expert_used);
-    int64_t neu_padded = n_expert_used;
-    neu_padded += J_max - 1;
-    neu_padded -= neu_padded % J_max;
-    const size_t nbytes_src1_q8_1 = ne12*neu_padded*ne10_padded * sizeof(block_q8_1)/QK8_1;
+    const size_t nbytes_src1_q8_1 = ne12*n_expert_used*ne10_padded * sizeof(block_q8_1)/QK8_1 +
+        ggml_cuda_mmq_get_J_max(src0->type, fallback, cc, ne11) * sizeof(block_q8_1_mmq);
     ggml_cuda_pool_alloc<char> src1_q8_1(ctx.pool(), nbytes_src1_q8_1);
 
     const int64_t ne11_flat = ne12*n_expert_used;
