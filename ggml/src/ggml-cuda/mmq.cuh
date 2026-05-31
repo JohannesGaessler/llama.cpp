@@ -359,7 +359,7 @@ static __host__ int ggml_cuda_mmq_get_J_max(const ggml_type type, const bool fal
     return ret;
 }
 
-static constexpr __device__ bool ggml_cuda_mmq_get_rows_per_warp(ggml_type type, int J, bool fallback) {
+static constexpr __device__ int ggml_cuda_mmq_get_rows_per_warp(ggml_type type, int J, bool fallback) {
     return ggml_cuda_mmq_get_config(type, J, fallback).rows_per_warp();
 }
 
@@ -1370,8 +1370,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
     typedef tile<16, 8, int> tile_C;
 
     constexpr int mmq_y         = ggml_cuda_mmq_get_I(type, mmq_x, fallback);
-    // constexpr int rows_per_warp = ggml_cuda_mmq_get_rows_per_warp(type, mmq_x, fallback); // FIXME
-    constexpr int rows_per_warp = 16;
+    constexpr int rows_per_warp = ggml_cuda_mmq_get_rows_per_warp(type, mmq_x, fallback);
     constexpr int ntx = rows_per_warp/tile_C::I; // Number of x minitiles per warp.
 
     y += (threadIdx.y % ntx) * (tile_C::J*MMQ_TILE_Y_K);
@@ -3375,8 +3374,7 @@ static __device__ __forceinline__ void mmq_write_back_mma(
     constexpr int nwarps = mmq_get_nwarps_device();
 
     constexpr int mmq_y         = ggml_cuda_mmq_get_I(type, mmq_x, fallback);
-    // constexpr int rows_per_warp = ggml_cuda_mmq_get_rows_per_warp(type, mmq_x, fallback); // FIXME
-    constexpr int rows_per_warp = 16;
+    constexpr int rows_per_warp = ggml_cuda_mmq_get_rows_per_warp(type, mmq_x, fallback);
     constexpr int ntx = rows_per_warp/tile_C::I; // Number of x minitiles per warp.
 
     const int i0 = (threadIdx.y / ntx) * (ntx*tile_C::I);
