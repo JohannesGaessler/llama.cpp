@@ -111,43 +111,67 @@ struct tile_x_sizes {
 // in terms of 32 bit elements that means K % 2 == 1 for dp4a or K % 8 == 4 for mma.
 #define MMQ_TILE_NE_K 32
 
-#define MMQ_MMA_TILE_X_K_Q8_0  (2*MMQ_TILE_NE_K + 2*MMQ_TILE_NE_K/QI8_0                   + 4)
-#define MMQ_MMA_TILE_X_K_FP4   (2*MMQ_TILE_NE_K + 8                                       + 4) // MXFP4 and NVFP4 Blackwell
-#define MMQ_MMA_TILE_X_K_NVFP4 (2*MMQ_TILE_NE_K + MMQ_TILE_NE_K/2                         + 4) // NVFP4 Generic
-#define MMQ_MMA_TILE_X_K_Q8_1  (2*MMQ_TILE_NE_K + 2*MMQ_TILE_NE_K/QI8_0                   + 4)
-#define MMQ_MMA_TILE_X_K_Q2_K  (2*MMQ_TILE_NE_K + MMQ_TILE_NE_K                           + 4)
-#define MMQ_MMA_TILE_X_K_Q3_K  (2*MMQ_TILE_NE_K + MMQ_TILE_NE_K/2                         + 4)
-#define MMQ_MMA_TILE_X_K_Q6_K  (2*MMQ_TILE_NE_K + MMQ_TILE_NE_K/QI6_K   + MMQ_TILE_NE_K/8 + 7)
-
-static_assert(MMQ_MMA_TILE_X_K_Q8_0 % 8 == 4, "Wrong padding.");
-static_assert(MMQ_MMA_TILE_X_K_Q8_1 % 8 == 4, "Wrong padding.");
-static_assert(MMQ_MMA_TILE_X_K_Q2_K % 8 == 4, "Wrong padding.");
-static_assert(MMQ_MMA_TILE_X_K_Q3_K % 8 == 4, "Wrong padding.");
-static_assert(MMQ_MMA_TILE_X_K_Q6_K % 8 == 4, "Wrong padding.");
-static_assert(MMQ_MMA_TILE_X_K_FP4  % 8 == 4, "Wrong padding.");
-static_assert(MMQ_MMA_TILE_X_K_FP4 == MMQ_MMA_TILE_X_K_Q8_1, "Wrong tile size for MXFP4");
-static_assert(MMQ_MMA_TILE_X_K_NVFP4 % 8 == 4, "Wrong padding.");
-
 // block_q8_1_mmq has (128 8-bit ints == 32 32-bit ints + 4 32-bit scales)
 #define MMQ_TILE_Y_K     (MMQ_TILE_NE_K + MMQ_TILE_NE_K / QI8_1)
 #define MMQ_TILE_Y_FP4_K MMQ_TILE_Y_K
 
+enum ggml_cuda_mmq_sram_layout {
+    GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0,
+    GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_1,
+    GGML_CUDA_MMQ_SRAM_LAYOUT_Q2_K,
+    GGML_CUDA_MMQ_SRAM_LAYOUT_Q3_K,
+    GGML_CUDA_MMQ_SRAM_LAYOUT_Q6_K,
+    GGML_CUDA_MMQ_SRAM_LAYOUT_FP4,   // MXFP4 and NVFP4 on Blackwell.
+    GGML_CUDA_MMQ_SRAM_LAYOUT_NVFP4, // Generic NVFP4
+};
+
+static constexpr __host__ __device__ int ggml_cuda_mmq_get_sram_stride(ggml_cuda_mmq_sram_layout sram_layout) {
+    switch (sram_layout) {
+        case GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0:
+            return 2*MMQ_TILE_NE_K + 2*MMQ_TILE_NE_K/QI8_0 + 4;
+        case GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_1:
+            return 2*MMQ_TILE_NE_K + 2*MMQ_TILE_NE_K/QI8_1 + 4;
+        case GGML_CUDA_MMQ_SRAM_LAYOUT_Q2_K:
+            return 2*MMQ_TILE_NE_K + MMQ_TILE_NE_K         + 4;
+        case GGML_CUDA_MMQ_SRAM_LAYOUT_Q3_K:
+            return 2*MMQ_TILE_NE_K + MMQ_TILE_NE_K/2       + 4;
+        case GGML_CUDA_MMQ_SRAM_LAYOUT_Q6_K:
+            return 2*MMQ_TILE_NE_K + MMQ_TILE_NE_K/QI6_K   + MMQ_TILE_NE_K/8 + 7;
+        case GGML_CUDA_MMQ_SRAM_LAYOUT_FP4:
+            return 2*MMQ_TILE_NE_K + 8                     + 4;
+        case GGML_CUDA_MMQ_SRAM_LAYOUT_NVFP4:
+            return 2*MMQ_TILE_NE_K + MMQ_TILE_NE_K/2       + 4;
+        default:
+            return -1;
+    }
+}
+
+static_assert(ggml_cuda_mmq_get_sram_stride(GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0)  % 8 == 4, "Wrong padding.");
+static_assert(ggml_cuda_mmq_get_sram_stride(GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_1)  % 8 == 4, "Wrong padding.");
+static_assert(ggml_cuda_mmq_get_sram_stride(GGML_CUDA_MMQ_SRAM_LAYOUT_Q2_K)  % 8 == 4, "Wrong padding.");
+static_assert(ggml_cuda_mmq_get_sram_stride(GGML_CUDA_MMQ_SRAM_LAYOUT_Q3_K)  % 8 == 4, "Wrong padding.");
+static_assert(ggml_cuda_mmq_get_sram_stride(GGML_CUDA_MMQ_SRAM_LAYOUT_Q6_K)  % 8 == 4, "Wrong padding.");
+static_assert(ggml_cuda_mmq_get_sram_stride(GGML_CUDA_MMQ_SRAM_LAYOUT_FP4)   % 8 == 4, "Wrong padding.");
+static_assert(ggml_cuda_mmq_get_sram_stride(GGML_CUDA_MMQ_SRAM_LAYOUT_NVFP4) % 8 == 4, "Wrong padding.");
+
+static_assert(ggml_cuda_mmq_get_sram_stride(GGML_CUDA_MMQ_SRAM_LAYOUT_FP4) == ggml_cuda_mmq_get_sram_stride(GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_1), "Wrong tile size for MXFP4");
+
 // Config options for the MMQ kernel.
 // Should not affect results, only speed/register pressure/shared memory use.
 struct ggml_cuda_mmq_config {
-    ggml_type type;      // src0->type
-    int       nthreads;  // Number of threads per CUDA block.
-    int       occupancy; // Targeted occupancy for the MMA kernel.
-    int       I;         // SRAM tile width in src0->ne[1]/dst->ne[0] direction.
-    int       J;         // SRAM tile width in src1->ne[1]/dst->ne[1] direction.
-    int       K_sram;    // SRAM tile length in src0->ne[0]/src1->ne[0] direction (physical 32 bit elements).
-    int       K_vram;    // VRAM tile length in src0->ne[0]/src1->ne[0] direction (logical elements).
-    bool      stream_k;  // Whether or not to use stream-k decomposition.
-    bool      fallback;  // Whether a fallback for out-of-bounds check in src0->ne[1] direction is needed.
+    ggml_type                 type;        // src0->type
+    int                       nthreads;    // Number of threads per CUDA block.
+    int                       occupancy;   // Targeted occupancy for the MMA kernel.
+    int                       I;           // SRAM tile width in src0->ne[1]/dst->ne[0] direction.
+    int                       J;           // SRAM tile width in src1->ne[1]/dst->ne[1] direction.
+    ggml_cuda_mmq_sram_layout sram_layout; // SRAM tile length in src0->ne[0]/src1->ne[0] direction (physical 32 bit elements).
+    int                       K_vram;      // VRAM tile length in src0->ne[0]/src1->ne[0] direction (logical elements).
+    bool                      stream_k;    // Whether or not to use stream-k decomposition.
+    bool                      fallback;    // Whether a fallback for out-of-bounds check in src0->ne[1] direction is needed.
 
     constexpr __host__ __device__ ggml_cuda_mmq_config(
-            ggml_type type, int nthreads, int occupancy, int I, int J, int K_sram, int K_vram, bool stream_k, bool fallback) :
-        type(type), nthreads(nthreads), occupancy(occupancy), I(I), J(J), K_sram(K_sram), K_vram(K_vram), stream_k(stream_k), fallback(fallback) {}
+            ggml_type type, int nthreads, int occupancy, int I, int J, ggml_cuda_mmq_sram_layout sram_layout, int K_vram, bool stream_k, bool fallback) :
+        type(type), nthreads(nthreads), occupancy(occupancy), I(I), J(J), sram_layout(sram_layout), K_vram(K_vram), stream_k(stream_k), fallback(fallback) {}
 
     constexpr __device__ int rows_per_warp() const {
 #if defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
@@ -175,15 +199,15 @@ struct ggml_cuda_mmq_config {
 
 };
 
-#define CASE(type_, nthreads_, occupancy_, I_, J_, K_sram_, K_vram_, stream_k_, fallback_)                                           \
-    if (type == (type_) && J == (J_) && fallback == (fallback_)) {                                                                   \
-        static_assert((nthreads_) %  32 == 0 && (nthreads_)       <= 512, "bad nthreads");                                           \
-        static_assert(                          (occupancy_)      <=   8, "bad occupancy");                                          \
-        static_assert((I_)        %  32 == 0,                             "bad I");                                                  \
-        static_assert((J_)        %   8 == 0,                             "bad J");                                                  \
-        static_assert((K_vram_)   % 256 == 0,                             "bad K_vram");                                             \
-        return ggml_cuda_mmq_config((type_), (nthreads_), (occupancy_), (I_), (J_), (K_sram_), (K_vram_), (stream_k_), (fallback_)); \
-    }                                                                                                                                \
+#define CASE(type_, nthreads_, occupancy_, I_, J_, sram_layout_, K_vram_, stream_k_, fallback_)                                           \
+    if (type == (type_) && J == (J_) && fallback == (fallback_)) {                                                                        \
+        static_assert((nthreads_) %  32 == 0 && (nthreads_)       <= 512, "bad nthreads");                                                \
+        static_assert(                          (occupancy_)      <=   8, "bad occupancy");                                               \
+        static_assert((I_)        %  32 == 0,                             "bad I");                                                       \
+        static_assert((J_)        %   8 == 0,                             "bad J");                                                       \
+        static_assert((K_vram_)   % 256 == 0,                             "bad K_vram");                                                  \
+        return ggml_cuda_mmq_config((type_), (nthreads_), (occupancy_), (I_), (J_), (sram_layout_), (K_vram_), (stream_k_), (fallback_)); \
+    }                                                                                                                                     \
 
 #include "mmq-config-pascal.cuh"
 #include "mmq-config-ampere.cuh"
@@ -274,12 +298,12 @@ static constexpr __device__ int ggml_cuda_mmq_get_J(ggml_type type, int J, bool 
     return ggml_cuda_mmq_get_config(type, J, fallback).J;
 }
 
-static __host__ int ggml_cuda_mmq_get_K_sram(const ggml_type type, const int J, const bool fallback, const int cc) {
-    return ggml_cuda_mmq_get_config(type, J, fallback, cc).K_sram;
+static __host__ ggml_cuda_mmq_sram_layout ggml_cuda_mmq_get_sram_layout(const ggml_type type, const int J, const bool fallback, const int cc) {
+    return ggml_cuda_mmq_get_config(type, J, fallback, cc).sram_layout;
 }
 
-static constexpr __device__ int ggml_cuda_mmq_get_K_sram(ggml_type type, int J, bool fallback) {
-    return ggml_cuda_mmq_get_config(type, J, fallback).K_sram;
+static constexpr __device__ ggml_cuda_mmq_sram_layout ggml_cuda_mmq_get_sram_layout(ggml_type type, int J, bool fallback) {
+    return ggml_cuda_mmq_get_config(type, J, fallback).sram_layout;
 }
 
 static __host__ int ggml_cuda_mmq_get_K_vram(const ggml_type type, const int J, const bool fallback, const int cc) {
@@ -307,6 +331,14 @@ static constexpr __device__ int ggml_cuda_mmq_get_fallback(ggml_type type, int J
 }
 
 // ---------------------------------------------------------------------------------------------
+
+static __host__ int ggml_cuda_mmq_get_sram_stride(const ggml_type type, const int J, const bool fallback, const int cc) {
+    return ggml_cuda_mmq_get_sram_stride(ggml_cuda_mmq_get_sram_layout(type, J, fallback, cc));
+}
+
+static constexpr __device__ int ggml_cuda_mmq_get_sram_stride(ggml_type type, int J, bool fallback) {
+    return ggml_cuda_mmq_get_sram_stride(ggml_cuda_mmq_get_sram_layout(type, J, fallback));
+}
 
 static __host__ int ggml_cuda_mmq_get_J_max(const ggml_type type, const bool fallback, const int cc, const int64_t ne11) {
     int ret = std::min(ne11, int64_t(512));
@@ -364,7 +396,7 @@ static constexpr __host__ __device__ tile_x_sizes mmq_get_dp4a_tile_x_sizes(ggml
 // FIXME temporary until all combinations of data types and GPUs can use the MMA data layout
 static __host__ int ggml_cuda_mmq_get_nbytes_shared_x(const ggml_cuda_mmq_config & config, const int cc) {
     if (config.use_mma_data_layout(cc)) {
-        return config.K_sram * config.I * 4;
+        return config.I * ggml_cuda_mmq_get_sram_stride(config.sram_layout) * 4;
     }
     const tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(config.type, config.I);
     return (txs.qs + txs.dm + txs.sc) * 4;

@@ -149,6 +149,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
     typedef tile<16, 16, int, DATA_LAYOUT_J_MAJOR> tile_C;
 
     constexpr int I             = ggml_cuda_mmq_get_I(type, J, fallback);
+    constexpr int sram_stride   = ggml_cuda_mmq_get_sram_stride(type, J, fallback);
     constexpr int rows_per_warp = ggml_cuda_mmq_get_rows_per_warp(type, J, fallback);
     constexpr int ntx           = rows_per_warp/tile_C::I; // Number of x minitiles per warp.
 
@@ -168,7 +169,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
         tile_A A[ntx];
 #pragma unroll
         for (int n = 0; n < ntx; ++n) {
-            load_ldmatrix(A[n], x_qs + (i0 + n*tile_A::I)*MMQ_MMA_TILE_X_K_Q8_0 + k0, MMQ_MMA_TILE_X_K_Q8_0);
+            load_ldmatrix(A[n], x_qs + (i0 + n*tile_A::I)*sram_stride + k0, sram_stride);
         }
 
 #pragma unroll
@@ -192,7 +193,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
 #pragma unroll
                 for (int l = 0; l < tile_C::ne; ++l) {
                     const int i = i0 + n*tile_A::I + tile_C::get_i(l);
-                    const float dA = x_df[i*MMQ_MMA_TILE_X_K_Q8_0 + k0/QI8_0];
+                    const float dA = x_df[i*sram_stride + k0/QI8_0];
                     sum[(j0/tile_C::J + n)*tile_C::ne + l] += C.x[l]*dA*dB;
                 }
             }
@@ -204,6 +205,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
     typedef tile<16, 8, int> tile_C;
 
     constexpr int I             = ggml_cuda_mmq_get_I(type, J, fallback);
+    constexpr int sram_stride   = ggml_cuda_mmq_get_sram_stride(type, J, fallback);
     constexpr int rows_per_warp = ggml_cuda_mmq_get_rows_per_warp(type, J, fallback);
     constexpr int ntx           = rows_per_warp/tile_C::I; // Number of x minitiles per warp.
 
@@ -226,7 +228,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
         for (int k01 = 0; k01 < MMQ_TILE_NE_K; k01 += QI8_0) {
             const int k0 = k00 + k01;
 
-            load_ldmatrix(A[n][k01/QI8_0], x_qs + (i0 + n*tile_A::I)*MMQ_MMA_TILE_X_K_Q8_0 + k0, MMQ_MMA_TILE_X_K_Q8_0);
+            load_ldmatrix(A[n][k01/QI8_0], x_qs + (i0 + n*tile_A::I)*sram_stride + k0, sram_stride);
         }
 
 #pragma unroll
@@ -237,7 +239,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_q8_1_mma(
             for (int k01 = 0; k01 < MMQ_TILE_NE_K; k01 += QI8_0) {
                 const int k0 = k00 + k01;
 
-                dA[n][l][k01/QI8_0] = x_df[i*MMQ_MMA_TILE_X_K_Q8_0 + k0/QI8_0];
+                dA[n][l][k01/QI8_0] = x_df[i*sram_stride + k0/QI8_0];
             }
         }
     }
@@ -319,9 +321,10 @@ static __device__ __forceinline__ void vec_dot_q8_1_q8_1_mma(
     typedef tile<16,  8, int, input_layout>        tile_B;
     typedef tile<16, 16, int, DATA_LAYOUT_J_MAJOR> tile_C;
 
-    constexpr int I         = ggml_cuda_mmq_get_I(type, J, fallback);
+    constexpr int I             = ggml_cuda_mmq_get_I(type, J, fallback);
+    constexpr int sram_stride   = ggml_cuda_mmq_get_sram_stride(type, J, fallback);
     constexpr int rows_per_warp = ggml_cuda_mmq_get_rows_per_warp(type, J, fallback);
-    constexpr int ntx = rows_per_warp/tile_C::I; // Number of x minitiles per warp.
+    constexpr int ntx           = rows_per_warp/tile_C::I; // Number of x minitiles per warp.
 
     y += (threadIdx.y % ntx) * (tile_C::J*MMQ_TILE_Y_K);
 
@@ -338,7 +341,7 @@ static __device__ __forceinline__ void vec_dot_q8_1_q8_1_mma(
         tile_A A[ntx];
 #pragma unroll
         for (int n = 0; n < ntx; ++n) {
-            load_ldmatrix(A[n], x_qs + (i0 + n*tile_A::I)*MMQ_MMA_TILE_X_K_Q8_1 + k0, MMQ_MMA_TILE_X_K_Q8_1);
+            load_ldmatrix(A[n], x_qs + (i0 + n*tile_A::I)*sram_stride + k0, sram_stride);
         }
 
 #pragma unroll
@@ -357,7 +360,7 @@ static __device__ __forceinline__ void vec_dot_q8_1_q8_1_mma(
 #pragma unroll
                 for (int l = 0; l < tile_C::ne; ++l) {
                     const int i = i0 + n*tile_A::I + tile_C::get_i(l);
-                    float2 dmA = __half22float2(x_dm[i*MMQ_MMA_TILE_X_K_Q8_1 + k0/QI8_1]);
+                    float2 dmA = __half22float2(x_dm[i*sram_stride + k0/QI8_1]);
                     sum[(j0/tile_C::J + n)*tile_C::ne + l] += dmA.x*dsB.x*C.x[l];
                     sum[(j0/tile_C::J + n)*tile_C::ne + l] += dmA.y*dsB.y;
                 }
@@ -369,9 +372,10 @@ static __device__ __forceinline__ void vec_dot_q8_1_q8_1_mma(
     typedef tile< 8,  8, int> tile_B;
     typedef tile<16,  8, int> tile_C;
 
-    constexpr int I         = ggml_cuda_mmq_get_I(type, J, fallback);
+    constexpr int I             = ggml_cuda_mmq_get_I(type, J, fallback);
+    constexpr int sram_stride   = ggml_cuda_mmq_get_sram_stride(type, J, fallback);
     constexpr int rows_per_warp = ggml_cuda_mmq_get_rows_per_warp(type, J, fallback);
-    constexpr int ntx = rows_per_warp/tile_C::I; // Number of x minitiles per warp.
+    constexpr int ntx           = rows_per_warp/tile_C::I; // Number of x minitiles per warp.
 
     y += (threadIdx.y % ntx) * (tile_C::J*MMQ_TILE_Y_K);
 
@@ -391,7 +395,7 @@ static __device__ __forceinline__ void vec_dot_q8_1_q8_1_mma(
         for (int k01 = 0; k01 < MMQ_TILE_NE_K; k01 += QI8_1) {
             const int k0 = k00 + k01;
 
-            load_ldmatrix(A[n][k01/QI8_1], x_qs + (i0 + n*tile_A::I)*MMQ_MMA_TILE_X_K_Q8_1 + k0, MMQ_MMA_TILE_X_K_Q8_1);
+            load_ldmatrix(A[n][k01/QI8_1], x_qs + (i0 + n*tile_A::I)*sram_stride + k0, sram_stride);
         }
 
 #pragma unroll
@@ -402,7 +406,7 @@ static __device__ __forceinline__ void vec_dot_q8_1_q8_1_mma(
             for (int k01 = 0; k01 < MMQ_TILE_NE_K; k01 += QI8_1) {
                 const int k0 = k00 + k01;
 
-                dmA[n][l][k01/QI8_1] = __half22float2(x_dm[i*MMQ_MMA_TILE_X_K_Q8_1 + k0/QI8_1]);
+                dmA[n][l][k01/QI8_1] = __half22float2(x_dm[i*sram_stride + k0/QI8_1]);
             }
         }
     }
@@ -485,6 +489,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_16_q8_1_mma(
     typedef tile<16, 16, int, DATA_LAYOUT_J_MAJOR> tile_C;
 
     constexpr int I             = ggml_cuda_mmq_get_I(type, J, fallback);
+    constexpr int sram_stride   = ggml_cuda_mmq_get_sram_stride(type, J, fallback);
     constexpr int rows_per_warp = ggml_cuda_mmq_get_rows_per_warp(type, J, fallback);
     constexpr int ntx           = rows_per_warp/tile_C::I; // Number of x minitiles per warp.
 
@@ -503,7 +508,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_16_q8_1_mma(
         tile_A A[ntx];
 #pragma unroll
         for (int n = 0; n < ntx; ++n) {
-            load_ldmatrix(A[n], x_qs + (i0 + n*tile_A::I)*MMQ_MMA_TILE_X_K_Q3_K + k0, MMQ_MMA_TILE_X_K_Q3_K);
+            load_ldmatrix(A[n], x_qs + (i0 + n*tile_A::I)*sram_stride + k0, sram_stride);
         }
 
 #pragma unroll
@@ -522,7 +527,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_16_q8_1_mma(
 #pragma unroll
                 for (int l = 0; l < tile_C::ne; ++l) {
                     const int i = i0 + n*tile_C::I + tile_C::get_i(l);
-                    sum[(j0/tile_C::J + n)*tile_C::ne + l] += C.x[l] * x_df[i*MMQ_MMA_TILE_X_K_Q3_K + k0/4] * dB;
+                    sum[(j0/tile_C::J + n)*tile_C::ne + l] += C.x[l] * x_df[i*sram_stride + k0/4] * dB;
                 }
             }
         }
@@ -535,6 +540,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_16_q8_1_mma(
     typedef tile<16, 8, int> tile_C;
 
     constexpr int I             = ggml_cuda_mmq_get_I(type, J, fallback);
+    constexpr int sram_stride   = ggml_cuda_mmq_get_sram_stride(type, J, fallback);
     constexpr int rows_per_warp = ggml_cuda_mmq_get_rows_per_warp(type, J, fallback);
     constexpr int ntx           = rows_per_warp/tile_C::I; // Number of x minitiles per warp.
 
@@ -556,7 +562,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_16_q8_1_mma(
         for (int k01 = 0; k01 < MMQ_TILE_NE_K; k01 += 8) {
             const int k0 = k00 + k01;
 
-            load_ldmatrix(((tile_A_8 *) A[n])[k01/8], x_qs + (i0 + n*tile_A::I)*MMQ_MMA_TILE_X_K_Q3_K + k0, MMQ_MMA_TILE_X_K_Q3_K);
+            load_ldmatrix(((tile_A_8 *) A[n])[k01/8], x_qs + (i0 + n*tile_A::I)*sram_stride + k0, sram_stride);
         }
 
 #pragma unroll
@@ -567,7 +573,7 @@ static __device__ __forceinline__ void vec_dot_q8_0_16_q8_1_mma(
             for (int k01 = 0; k01 < MMQ_TILE_NE_K; k01 += 4) {
                 const int k0 = k00 + k01;
 
-                dA[n][l][k01/4] = x_df[i*MMQ_MMA_TILE_X_K_Q3_K + k0/4];
+                dA[n][l][k01/4] = x_df[i*sram_stride + k0/4];
             }
         }
     }
@@ -684,6 +690,7 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
     typedef tile<16, 16, int, DATA_LAYOUT_J_MAJOR> tile_C;
 
     constexpr int I             = ggml_cuda_mmq_get_I(type, J, fallback);
+    constexpr int sram_stride   = ggml_cuda_mmq_get_sram_stride(type, J, fallback);
     constexpr int rows_per_warp = ggml_cuda_mmq_get_rows_per_warp(type, J, fallback);
     constexpr int ntx           = rows_per_warp/tile_C::I; // Number of x minitiles per warp.
 
@@ -702,7 +709,7 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
         tile_A A[ntx];
 #pragma unroll
         for (int n = 0; n < ntx; ++n) {
-            load_ldmatrix(A[n], x_qs + (i0 + n*tile_A::I)*MMQ_MMA_TILE_X_K_Q2_K + k0, MMQ_MMA_TILE_X_K_Q2_K);
+            load_ldmatrix(A[n], x_qs + (i0 + n*tile_A::I)*sram_stride + k0, sram_stride);
         }
 
 #pragma unroll
@@ -734,7 +741,7 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
 #pragma unroll
                 for (int l = 0; l < tile_C::ne; ++l) {
                     const int i = i0 + n*tile_C::I + tile_C::get_i(l);
-                    const float2 dm = __half22float2(x_dm[i*MMQ_MMA_TILE_X_K_Q2_K + k0/4]);
+                    const float2 dm = __half22float2(x_dm[i*sram_stride + k0/4]);
                     float tmp = Cd.x[l]*dm.x;
                     if (k01 >= MMQ_TILE_NE_K * 3/4) {
                         tmp -= Cm.x[l]*dm.y;
@@ -753,6 +760,7 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
     typedef tile<16, 8, int> tile_C;
 
     constexpr int I             = ggml_cuda_mmq_get_I(type, J, fallback);
+    constexpr int sram_stride   = ggml_cuda_mmq_get_sram_stride(type, J, fallback);
     constexpr int rows_per_warp = ggml_cuda_mmq_get_rows_per_warp(type, J, fallback);
     constexpr int ntx           = rows_per_warp/tile_C::I; // Number of x minitiles per warp.
 
@@ -775,7 +783,7 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
         for (int k01 = 0; k01 < MMQ_TILE_NE_K; k01 += QI8_1) {
             const int k0 = k00 + k01;
 
-            load_ldmatrix(((tile_A_8 *) A[n])[k01/QI8_1], x_qs + (i0 + n*tile_A::I)*MMQ_MMA_TILE_X_K_Q2_K + k0, MMQ_MMA_TILE_X_K_Q2_K);
+            load_ldmatrix(((tile_A_8 *) A[n])[k01/QI8_1], x_qs + (i0 + n*tile_A::I)*sram_stride + k0, sram_stride);
         }
     }
 
@@ -789,7 +797,7 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
             for (int k01 = 0; k01 < MMQ_TILE_NE_K; k01 += QI8_1/2) {
                 const int k0 = k00 + k01;
 
-                const float2 dm = __half22float2(x_dm[i*MMQ_MMA_TILE_X_K_Q2_K + k0/(QI8_1/2)]);
+                const float2 dm = __half22float2(x_dm[i*sram_stride + k0/(QI8_1/2)]);
 
                 dA[n][l][k01/(QI8_1/2)] = dm.x;
                 mA[n][l][k01/(QI8_1/2)] = dm.y;
@@ -1020,6 +1028,7 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_mma(
     typedef tile<16, 16, int, DATA_LAYOUT_J_MAJOR> tile_C;
 
     constexpr int I             = ggml_cuda_mmq_get_I(type, J, fallback);
+    constexpr int sram_stride   = ggml_cuda_mmq_get_sram_stride(type, J, fallback);
     constexpr int rows_per_warp = ggml_cuda_mmq_get_rows_per_warp(type, J, fallback);
     constexpr int ntx           = rows_per_warp/tile_C::I; // Number of x minitiles per warp.
 
@@ -1039,7 +1048,7 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_mma(
         tile_A A[ntx];
 #pragma unroll
         for (int n = 0; n < ntx; ++n) {
-            load_ldmatrix(A[n], x_qs + (i0 + n*tile_A::I)*MMQ_MMA_TILE_X_K_Q6_K + k0, MMQ_MMA_TILE_X_K_Q6_K);
+            load_ldmatrix(A[n], x_qs + (i0 + n*tile_A::I)*sram_stride + k0, sram_stride);
         }
 
 #pragma unroll
@@ -1058,8 +1067,8 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_mma(
 #pragma unroll
                 for (int l = 0; l < tile_C::ne; ++l) {
                     const int i = i0 + n*tile_C::I + tile_C::get_i(l);
-                    const int8_t * sc = (const int8_t *) (x_sc + i*MMQ_MMA_TILE_X_K_Q6_K + k00/16);
-                    sum[(j0/tile_C::J + n)*tile_C::ne + l] += C.x[l] * sc[k01/4] * x_df[i*MMQ_MMA_TILE_X_K_Q6_K] * dB;
+                    const int8_t * sc = (const int8_t *) (x_sc + i*sram_stride + k00/16);
+                    sum[(j0/tile_C::J + n)*tile_C::ne + l] += C.x[l] * sc[k01/4] * x_df[i*sram_stride] * dB;
                 }
             }
         }
@@ -1071,6 +1080,7 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_mma(
     typedef tile<16, 8, int> tile_C;
 
     constexpr int I             = ggml_cuda_mmq_get_I(type, J, fallback);
+    constexpr int sram_stride   = ggml_cuda_mmq_get_sram_stride(type, J, fallback);
     constexpr int rows_per_warp = ggml_cuda_mmq_get_rows_per_warp(type, J, fallback);
     constexpr int ntx           = rows_per_warp/tile_C::I; // Number of x minitiles per warp.
 
@@ -1094,8 +1104,8 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_mma(
         for (int k01 = 0; k01 < MMQ_TILE_NE_K; k01 += 8) {
             const int k0 = k00 + k01;
 
-            load_ldmatrix(A[n][k01/4 + 0], x_qs + (i0 + n*tile_A::I)*MMQ_MMA_TILE_X_K_Q6_K + (k0 + 0),         MMQ_MMA_TILE_X_K_Q6_K);
-            load_ldmatrix(A[n][k01/4 + 1], x_qs + (i0 + n*tile_A::I)*MMQ_MMA_TILE_X_K_Q6_K + (k0 + tile_A::J), MMQ_MMA_TILE_X_K_Q6_K);
+            load_ldmatrix(A[n][k01/4 + 0], x_qs + (i0 + n*tile_A::I)*sram_stride + (k0 + 0),         sram_stride);
+            load_ldmatrix(A[n][k01/4 + 1], x_qs + (i0 + n*tile_A::I)*sram_stride + (k0 + tile_A::J), sram_stride);
         }
 
 #pragma unroll
@@ -1106,7 +1116,7 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_mma(
             for (int l = 0; l < tile_C::ne/2; ++l) {
                 const int i = i0 + n*tile_C::I + tile_C::get_i(2*l);
 
-                const int      sc_packed = x_sc[i*MMQ_MMA_TILE_X_K_Q6_K + k0/16];
+                const int      sc_packed = x_sc[i*sram_stride + k0/16];
                 const int8_t * sc        = (const int8_t *) &sc_packed;
 
 #pragma unroll
@@ -1120,7 +1130,7 @@ static __device__ __forceinline__ void vec_dot_q6_K_q8_1_mma(
         for (int l = 0; l < tile_C::ne/2; ++l) {
             const int i = i0 + n*tile_C::I + tile_C::get_i(2*l);
 
-            dA[n][l] = x_df[i*MMQ_MMA_TILE_X_K_Q6_K];
+            dA[n][l] = x_df[i*sram_stride];
         }
     }
 
@@ -1187,7 +1197,7 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
     typedef tile<16, 8, float> tile_C;
 
     constexpr int I             = ggml_cuda_mmq_get_I(type, J, fallback);
-    constexpr int stride        = MMQ_MMA_TILE_X_K_FP4;
+    constexpr int sram_stride   = ggml_cuda_mmq_get_sram_stride(type, J, fallback);
     constexpr int rows_per_warp = ggml_cuda_mmq_get_rows_per_warp(type, J, fallback);
     constexpr int ntx           = rows_per_warp / tile_C::I;
     constexpr int nfrags        = MMQ_TILE_NE_K / tile_A::J;
@@ -1213,8 +1223,8 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 #pragma unroll
         for (int frag = 0; frag < nfrags; ++frag) {
             const int k0 = k00 + frag * tile_A::J;
-            load_ldmatrix(A[n][frag], x_qs + (i0 + n * tile_A::I) * stride + k0, stride);
-            scaleA[n][frag] = x_sc[(i0 + n * tile_A::I + tidx_A) * stride + k0 / tile_A::J];
+            load_ldmatrix(A[n][frag], x_qs + (i0 + n * tile_A::I) * sram_stride + k0, sram_stride);
+            scaleA[n][frag] = x_sc[(i0 + n * tile_A::I + tidx_A) * sram_stride + k0 / tile_A::J];
         }
     }
 
