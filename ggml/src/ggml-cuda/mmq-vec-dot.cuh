@@ -1185,8 +1185,6 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 // and the per-type stride constant differ.
 template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_fp4_fp4_mma(
         const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
-    static_assert(type == GGML_TYPE_MXFP4 || type == GGML_TYPE_NVFP4,
-                  "vec_dot_fp4_fp4_mma: type must be MXFP4 or NVFP4");
 
     typedef tile<16, 8, int>   tile_A;
     typedef tile<8,  8, int>   tile_B;
