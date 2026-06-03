@@ -10,9 +10,9 @@
 #define MMQ_ITER_K_FP4         512
 #define MMQ_NWARPS               8
 
-typedef void (*load_tiles_mmq_t)(const char * __restrict__ x, int * x_tile, const int kbx0, const int i_max, const int stride);
-typedef void (*vec_dot_mmq_t)(const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00);
-typedef void (*mmq_write_back_t)(const float * __restrict__ sum, const int32_t * __restrict__ get_rows_to_sorted,
+typedef void (*ggml_cuda_mmq_load_tiles_t)(const char * __restrict__ x, int * x_tile, const int kbx0, const int i_max, const int stride);
+typedef void (*ggml_cuda_mmq_vec_dot_t)(const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00);
+typedef void (*ggml_cuda_mmq_write_back_t)(const float * __restrict__ sum, const int32_t * __restrict__ get_rows_to_sorted,
     float * __restrict__ dst, const int stride, const int i_max, const int j_max);
 
 enum mmq_q8_1_ds_layout {
@@ -479,14 +479,15 @@ static __device__ __forceinline__ void mmq_write_back_mma(
 
 // -------------------------------------------------------------------------------------------------------------------------------------
 
+// TODO remove this struct and use ggml_cuda_mmq_sram_layout instead.
 struct ggml_cuda_mmq_util_funcs {
     int              vdr;
-    load_tiles_mmq_t load_tiles;
-    vec_dot_mmq_t    vec_dot;
-    mmq_write_back_t write_back;
+    ggml_cuda_mmq_load_tiles_t load_tiles;
+    ggml_cuda_mmq_vec_dot_t    vec_dot;
+    ggml_cuda_mmq_write_back_t write_back;
 
     constexpr __host__ __device__ ggml_cuda_mmq_util_funcs(
-            int vdr, load_tiles_mmq_t load_tiles, vec_dot_mmq_t vec_dot, mmq_write_back_t write_back) :
+            int vdr, ggml_cuda_mmq_load_tiles_t load_tiles, ggml_cuda_mmq_vec_dot_t vec_dot, ggml_cuda_mmq_write_back_t write_back) :
         vdr(vdr), load_tiles(load_tiles), vec_dot(vec_dot), write_back(write_back) {}
 };
 
@@ -794,17 +795,17 @@ static constexpr __device__ int ggml_cuda_mmq_get_vdr() {
 }
 
 template <ggml_type type, int J, bool fallback>
-static constexpr __device__ load_tiles_mmq_t ggml_cuda_mmq_get_load_tiles() {
+static constexpr __device__ ggml_cuda_mmq_load_tiles_t ggml_cuda_mmq_get_load_tiles() {
     return ggml_cuda_mmq_get_util_funcs<type, J, fallback>().load_tiles;
 }
 
 template <ggml_type type, int J, bool fallback>
-static constexpr __device__ vec_dot_mmq_t ggml_cuda_mmq_get_vec_dot() {
+static constexpr __device__ ggml_cuda_mmq_vec_dot_t ggml_cuda_mmq_get_vec_dot() {
     return ggml_cuda_mmq_get_util_funcs<type, J, fallback>().vec_dot;
 }
 
 template <ggml_type type, int J, bool fallback>
-static constexpr __device__ mmq_write_back_t ggml_cuda_mmq_get_write_back() {
+static constexpr __device__ ggml_cuda_mmq_write_back_t ggml_cuda_mmq_get_write_back() {
     return ggml_cuda_mmq_get_util_funcs<type, J, fallback>().write_back;
 }
 
@@ -821,9 +822,9 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
     constexpr int              nwarps     = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
     constexpr int              qk         = ggml_cuda_type_traits<type>::qk;
     constexpr int              I          = ggml_cuda_mmq_get_I(type, J, fallback);
-    constexpr load_tiles_mmq_t load_tiles = ggml_cuda_mmq_get_load_tiles<type, J, fallback>();
-    constexpr vec_dot_mmq_t    vec_dot    = ggml_cuda_mmq_get_vec_dot<type, J, fallback>();
-    constexpr mmq_write_back_t write_back = ggml_cuda_mmq_get_write_back<type, J, fallback>();
+    constexpr ggml_cuda_mmq_load_tiles_t load_tiles = ggml_cuda_mmq_get_load_tiles<type, J, fallback>();
+    constexpr ggml_cuda_mmq_vec_dot_t    vec_dot    = ggml_cuda_mmq_get_vec_dot<type, J, fallback>();
+    constexpr ggml_cuda_mmq_write_back_t write_back = ggml_cuda_mmq_get_write_back<type, J, fallback>();
 
     extern __shared__ int data_mul_mat_q[];
     int * tile_y = data_mul_mat_q + J;
@@ -1272,7 +1273,7 @@ struct mmq_args {
     int64_t ncols_x; int64_t nrows_x; int64_t ncols_dst; int64_t stride_row_x; int64_t ncols_y; int64_t nrows_dst;
     int64_t nchannels_x; int64_t nchannels_y; int64_t stride_channel_x; int64_t stride_channel_y; int64_t stride_channel_dst;
     int64_t nsamples_x; int64_t nsamples_y; int64_t stride_sample_x; int64_t stride_sample_y; int64_t stride_sample_dst;
-    int64_t ncols_max;
+    bool can_use_stream_k; int64_t ncols_max;
 };
 
 static size_t mmq_get_nbytes_shared(const ggml_cuda_mmq_config & config, const int cc) {
@@ -1316,7 +1317,7 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     const uint3 channel_ratio_fd   = init_fastdiv_values(channel_ratio);
     const uint3 sample_ratio_fd    = init_fastdiv_values(sample_ratio);
 
-    if (!ggml_cuda_mmq_get_stream_k(type, J, fallback, cc)) {
+    if (!args.can_use_stream_k || !ggml_cuda_mmq_get_stream_k(type, J, fallback, cc)) {
         mul_mat_q<type, J, fallback><<<block_nums_xy_tiling, block_dims, nbytes_shared, stream>>>
             (args.x, args.y, args.ids_dst, args.expert_bounds, args.dst, nullptr,
              blocks_per_ne00_fd, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
