@@ -214,7 +214,8 @@ struct ggml_cuda_mmq_config {
 #include "mmq-config-blackwell.cuh"
 
 #include "mmq-config-cdna.cuh"
-#include "mmq-config-rdna-4.cuh"
+#include "mmq-config-rdna2.cuh"
+#include "mmq-config-rdna4.cuh"
 
 #undef CASE
 
@@ -224,9 +225,9 @@ static __host__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config(const ggml_type ty
             return ggml_cuda_mmq_get_config_cdna(type, J, fallback);
         }
         if (amd_wmma_available(cc)) {
-            return ggml_cuda_mmq_get_config_rdna_4(type, J, fallback);
+            return ggml_cuda_mmq_get_config_rdna4(type, J, fallback);
         }
-        return ggml_cuda_mmq_get_config_pascal(type, J, fallback);
+        return ggml_cuda_mmq_get_config_rdna2(type, J, fallback);
     }
     if (ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_BLACKWELL) {
         return ggml_cuda_mmq_get_config_blackwell(type, J, fallback);
@@ -242,9 +243,9 @@ static constexpr __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_config(ggml_t
 #ifdef CDNA
     return ggml_cuda_mmq_get_config_cdna(type, J, fallback);
 #elif defined(AMD_WMMA_AVAILABLE)
-    return ggml_cuda_mmq_get_config_rdna_4(type, J, fallback);
+    return ggml_cuda_mmq_get_config_rdna4(type, J, fallback);
 #else
-    return ggml_cuda_mmq_get_config_pascal(type, J, fallback);
+    return ggml_cuda_mmq_get_config_rdna2(type, J, fallback);
 #endif // CDNA
 #else
 #if __CUDA_ARCH__ >= GGML_CUDA_CC_BLACKWELL
