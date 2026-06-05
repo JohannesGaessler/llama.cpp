@@ -1490,14 +1490,20 @@ static void ggml_cuda_mul_mat_cublas(ggml_backend_cuda_context & ctx, const ggml
         compute_type = GGML_TYPE_F32;
     }
 
-    const char * env_compute_type = getenv("GGML_CUDA_CUBLAS_COMPUTE_TYPE");
-    if (env_compute_type != nullptr) {
-        if (strcmp(env_compute_type, "f32") == 0 || strcmp(env_compute_type, "F32") == 0) {
+    const char * env_c = getenv("GGML_CUDA_CUBLAS_COMPUTE_TYPE");
+    if (env_c != nullptr) {
+        std::string env_cpp = env_c;
+        for (char & c : env_cpp) {
+            c = std::tolower(c);
+        }
+        if (env_cpp == "f32" || env_cpp == "fp32") {
             compute_type = GGML_TYPE_F32;
-        } else if (strcmp(env_compute_type, "f16") == 0 || strcmp(env_compute_type, "F16") == 0) {
+        } else if (env_cpp == "f16" || env_cpp == "fp16") {
             compute_type = GGML_TYPE_F16;
-        } else if (strcmp(env_compute_type, "bf16") == 0 || strcmp(env_compute_type, "BF16") == 0) {
+        } else if (env_cpp == "bf16") {
             compute_type = GGML_TYPE_BF16;
+        } else if (env_cpp != "auto") {
+            GGML_LOG_WARN("%s: unknown value for GGML_CUDA_CUBLAS_COMPUTE_TYPE: %s", __func__, env_cpp.c_str());
         }
     }
 
