@@ -1415,7 +1415,16 @@ static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const
     const int64_t r2 = ne12/ne02;
     const int64_t r3 = ne13/ne03;
 
-    if (r2 == 1 && r3 == 1 && is_src0_cont_2 && is_src1_cont_2) {
+    if (ne12 == 1 && ne13 == 1) {
+        CUBLAS_CHECK(
+            cublasGemmEx(ctx.cublas_handle(), CUBLAS_OP_T, CUBLAS_OP_N,
+                    ne01, ne11, ne10,
+                    alpha, src0_ptr, cu_data_type_a, s01,
+                           src1_ptr, cu_data_type_b, s11,
+                    beta,     dst_t, cu_data_type,   ne0,
+                    cu_compute_type,
+                    CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+    } else if (r2 == 1 && r3 == 1 && is_src0_cont_2 && is_src1_cont_2) {
         // with a [0, 2, 1, 3] perm. and ne02==1 the matrix strides need to be determined from dim 3:
         const int64_t sma = ne02 == 1 ? nb03/nb00 : nb02/nb00;
         const int64_t smb = ne12 == 1 ? s13       : s12;
@@ -1431,6 +1440,7 @@ static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const
                 ne12*ne13,
                 cu_compute_type,
                 CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+        return;
     } else {
         // use cublasGemmBatchedEx
         const int64_t ne23 = ne12*ne13;
