@@ -1390,7 +1390,7 @@ static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const
     const void * beta = traits::get_beta();
 
     const int cc = ggml_cuda_info().devices[ctx.device].cc;
-    const bool prefer_f32_output = true;
+    const bool prefer_f32_output = false;
 
     if (prefer_f32_output) {
         dst_t = (char *) dst_ddf;
