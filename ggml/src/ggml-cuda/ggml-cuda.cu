@@ -1390,7 +1390,7 @@ static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const
     const void * beta = traits::get_beta();
 
     const int cc = ggml_cuda_info().devices[ctx.device].cc;
-    const bool prefer_f32_output = GGML_CUDA_CC_IS_CDNA(cc) || GGML_CUDA_CC_IS_RDNA4(cc) || cc == GGML_CUDA_CC_VOLTA;
+    const bool prefer_f32_output = (GGML_CUDA_CC_IS_CDNA(cc) && compute_type == GGML_TYPE_F16) || GGML_CUDA_CC_IS_RDNA4(cc) || cc == GGML_CUDA_CC_VOLTA;
 
     if (prefer_f32_output) {
         dst_t = (char *) dst_ddf;
