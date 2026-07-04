@@ -1579,6 +1579,9 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
         // copy the input tensors to the split backend
         for (int input_id = 0; input_id < split->n_inputs; input_id++) {
             ggml_backend_t input_backend = ggml_backend_sched_get_tensor_backend(sched, split->inputs[input_id]);
+            ggml_backend_dev_props input_props;
+            ggml_backend_dev_get_props(ggml_backend_get_device(input_backend), &input_props);
+
             struct ggml_tensor * input = split->inputs[input_id];
             struct ggml_tensor * input_cpy = tensor_copy(input, split_backend_id, sched->cur_copy);
 
@@ -1588,7 +1591,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                 continue;
             }
 
-            bool synchronized = split_id == 0; // first split does not need to wait
+            bool synchronized = !input_props.caps.async || split_id == 0; // split does not need to wait if first or input was synchronous
             if (!synchronized) { // try to synchronize via events
                 synchronized = ggml_backend_event_wait(split_backend, sched->events[(split_id - 1) * sched->n_copies + sched->cur_copy]);
             }
