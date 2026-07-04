@@ -3197,10 +3197,10 @@ static bool ggml_backend_cuda_cpy_tensor_async(ggml_backend_t backend_copy, ggml
     ggml_backend_buffer_t buf_src = src->view_src ? src->view_src->buffer : src->buffer;
     ggml_backend_buffer_t buf_dst = dst->view_src ? dst->view_src->buffer : dst->buffer;
 
-    if (!(ggml_backend_buffer_is_cuda(buf_src) && !ggml_backend_buffer_is_host(buf_src))) {
+    if (!ggml_backend_buffer_is_cuda(buf_src) && !ggml_backend_buffer_is_host(buf_src)) {
         return false;
     }
-    if (!(ggml_backend_buffer_is_cuda(buf_dst) && !ggml_backend_buffer_is_host(buf_dst))) {
+    if (!ggml_backend_buffer_is_cuda(buf_dst) && !ggml_backend_buffer_is_host(buf_dst)) {
         return false;
     }
 
