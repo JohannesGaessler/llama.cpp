@@ -846,7 +846,7 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
     constexpr int sz = sizeof(block_q8_1_mmq) / sizeof(int);
 
     for (int kb0 = kb0_start; kb0 < kb0_stop; kb0 += blocks_per_iter) {
-        load_tiles(x, tile_x, offset_x + kb0, tile_x_max_i, stride_row_x);
+        load_tiles(x, tile_x, offset_x + (type == GGML_TYPE_Q8_0 ? kb0/8 : kb0), tile_x_max_i, stride_row_x);
         {
             const int * by0 = y + ncols_y * (kb0 * qk / ne_block) * sz;
 #pragma unroll
@@ -975,7 +975,9 @@ static __global__ void mul_mat_q(
         const int tile_x_max_i = nrows_x  - it*I - 1;
         const int tile_y_max_j = col_diff - jt*J - 1;
 
-        const int offset_x = fastdiv(wt, sample_ratio)*stride_sample_x + fastdiv(zt, channel_ratio)*stride_channel_x + it*I*stride_row_x;
+        const int offset_x = type == GGML_TYPE_Q8_0 ?
+            fastdiv(wt, sample_ratio)*(stride_sample_x/512) + fastdiv(zt, channel_ratio)*(stride_channel_x/512) + it*(I/64)*(stride_row_x/8) :
+            fastdiv(wt, sample_ratio)* stride_sample_x      + fastdiv(zt, channel_ratio)* stride_channel_x      + it* I    * stride_row_x;
 
         constexpr bool fixup = false;
         mul_mat_q_process_tile<type, J, fallback, fixup>
@@ -1054,7 +1056,9 @@ static __global__ void mul_mat_q(
         const int tile_x_max_i = nrows_x  - it*I - 1;
         const int tile_y_max_j = col_diff - jt*J - 1;
 
-        const int offset_x = fastdiv(wt, sample_ratio)*stride_sample_x + fastdiv(zt, channel_ratio)*stride_channel_x + it*I*stride_row_x;
+        const int offset_x = type == GGML_TYPE_Q8_0 ?
+            fastdiv(wt, sample_ratio)*(stride_sample_x/512) + fastdiv(zt, channel_ratio)*(stride_channel_x/512) + it*(I/64)*(stride_row_x/8) :
+            fastdiv(wt, sample_ratio)* stride_sample_x      + fastdiv(zt, channel_ratio)* stride_channel_x      + it* I    * stride_row_x;
 
         constexpr bool fixup = false; // All but (potentially) the last iterations write their data to dst rather than the fixup buffer.
         mul_mat_q_process_tile<type, J, fallback, fixup>
@@ -1123,7 +1127,9 @@ static __global__ void mul_mat_q(
     const int tile_x_max_i = nrows_x  - it*I - 1;
     const int tile_y_max_j = col_diff - jt*J - 1;
 
-    const int offset_x = fastdiv(wt, sample_ratio)*stride_sample_x + fastdiv(zt, channel_ratio)*stride_channel_x + it*I*stride_row_x;
+    const int offset_x = type == GGML_TYPE_Q8_0 ?
+        fastdiv(wt, sample_ratio)*(stride_sample_x/512) + fastdiv(zt, channel_ratio)*(stride_channel_x/512) + it*(I/64)*(stride_row_x/8) :
+        fastdiv(wt, sample_ratio)* stride_sample_x      + fastdiv(zt, channel_ratio)* stride_channel_x      + it* I    * stride_row_x;
 
     constexpr bool fixup = true; // Last index writes its data to fixup buffer to avoid data races with other blocks.
     mul_mat_q_process_tile<type, J, fallback, fixup>
