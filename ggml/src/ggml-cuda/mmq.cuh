@@ -117,6 +117,7 @@ struct tile_x_sizes {
 
 enum ggml_cuda_mmq_sram_layout {
     GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0,
+    GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0_REPACKED,
     GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_1,
     GGML_CUDA_MMQ_SRAM_LAYOUT_Q2_K,
     GGML_CUDA_MMQ_SRAM_LAYOUT_Q3_K,
@@ -129,6 +130,8 @@ static constexpr __host__ __device__ int ggml_cuda_mmq_get_sram_stride(ggml_cuda
     switch (sram_layout) {
         case GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0:
             return 2*MMQ_TILE_NE_K + 2*MMQ_TILE_NE_K/QI8_0 + 4;
+        case GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0_REPACKED:
+            return MMQ_TILE_NE_K + MMQ_TILE_NE_K/QI8_0;
         case GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_1:
             return 2*MMQ_TILE_NE_K + 2*MMQ_TILE_NE_K/QI8_1 + 4;
         case GGML_CUDA_MMQ_SRAM_LAYOUT_Q2_K:
@@ -147,6 +150,7 @@ static constexpr __host__ __device__ int ggml_cuda_mmq_get_sram_stride(ggml_cuda
 }
 
 static_assert(ggml_cuda_mmq_get_sram_stride(GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0)  % 8 == 4, "Wrong padding.");
+static_assert(ggml_cuda_mmq_get_sram_stride(GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0_REPACKED)  % 8 == 4, "Wrong padding.");
 static_assert(ggml_cuda_mmq_get_sram_stride(GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_1)  % 8 == 4, "Wrong padding.");
 static_assert(ggml_cuda_mmq_get_sram_stride(GGML_CUDA_MMQ_SRAM_LAYOUT_Q2_K)  % 8 == 4, "Wrong padding.");
 static_assert(ggml_cuda_mmq_get_sram_stride(GGML_CUDA_MMQ_SRAM_LAYOUT_Q3_K)  % 8 == 4, "Wrong padding.");
@@ -205,7 +209,7 @@ struct ggml_cuda_mmq_config {
         static_assert(                          (occupancy_)      <=   8, "bad occupancy");                                               \
         static_assert((I_)        %  32 == 0,                             "bad I");                                                       \
         static_assert((J_)        %   8 == 0,                             "bad J");                                                       \
-        static_assert((K_vram_)   % 256 == 0,                             "bad K_vram");                                                  \
+        static_assert((K_vram_)   % 128 == 0,                             "bad K_vram");                                                  \
         return ggml_cuda_mmq_config((type_), (nthreads_), (occupancy_), (I_), (J_), (sram_layout_), (K_vram_), (stream_k_), (fallback_)); \
     }                                                                                                                                     \
 
@@ -689,7 +693,7 @@ static constexpr __device__ ggml_cuda_mmq_util_funcs ggml_cuda_mmq_get_util_func
         case GGML_TYPE_Q8_0:
             return ggml_cuda_mmq_util_funcs(
                 -1,
-                ggml_cuda_mmq_load_tiles_q8_0<type, J, fallback>,
+                ggml_cuda_mmq_load_tiles_q8_0_repacked<type, J, fallback>,
                 ggml_cuda_mmq_vec_dot_q8_0_q8_1_mma<type, J, fallback, MMQ_Q8_1_DS_LAYOUT_D4>,
                 ggml_cuda_mmq_write_back_mma<type, J, fallback>);
 // ---------------------------------------------------------------------------------------------
@@ -846,7 +850,7 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
     constexpr int sz = sizeof(block_q8_1_mmq) / sizeof(int);
 
     for (int kb0 = kb0_start; kb0 < kb0_stop; kb0 += blocks_per_iter) {
-        load_tiles(x, tile_x, offset_x + (type == GGML_TYPE_Q8_0 ? kb0/8 : kb0), tile_x_max_i, stride_row_x);
+        load_tiles(x, tile_x, offset_x + (type == GGML_TYPE_Q8_0 ? kb0/4 : kb0), tile_x_max_i, stride_row_x);
         {
             const int * by0 = y + ncols_y * (kb0 * qk / ne_block) * sz;
 #pragma unroll
@@ -863,21 +867,23 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
 
         __syncthreads();
 
-        {
-            const int * by0 = y + ncols_y * ((kb0 * qk / ne_block) * sz + sz);
+        if (type != GGML_TYPE_Q8_0) {
+            {
+                const int * by0 = y + ncols_y * ((kb0 * qk / ne_block) * sz + sz);
 #pragma unroll
-            for (int l0 = 0; l0 < J * MMQ_TILE_Y_K; l0 += nwarps * warp_size) {
-                int l = l0 + threadIdx.y*warp_size + threadIdx.x;
+                for (int l0 = 0; l0 < J * MMQ_TILE_Y_K; l0 += nwarps * warp_size) {
+                    int l = l0 + threadIdx.y*warp_size + threadIdx.x;
 
-                tile_y[l] = by0[l];
+                    tile_y[l] = by0[l];
+                }
             }
+
+            __syncthreads();
+
+            vec_dot(tile_x, tile_y, sum, MMQ_TILE_NE_K);
+
+            __syncthreads();
         }
-
-        __syncthreads();
-
-        vec_dot(tile_x, tile_y, sum, MMQ_TILE_NE_K);
-
-        __syncthreads();
     }
 
     if (fixup) {
@@ -976,7 +982,7 @@ static __global__ void mul_mat_q(
         const int tile_y_max_j = col_diff - jt*J - 1;
 
         const int offset_x = type == GGML_TYPE_Q8_0 ?
-            fastdiv(wt, sample_ratio)*(stride_sample_x/512) + fastdiv(zt, channel_ratio)*(stride_channel_x/512) + it*(I/64)*(stride_row_x/8) :
+            fastdiv(wt, sample_ratio)*(stride_sample_x/256) + fastdiv(zt, channel_ratio)*(stride_channel_x/256) + it*(I/64)*(stride_row_x/4) :
             fastdiv(wt, sample_ratio)* stride_sample_x      + fastdiv(zt, channel_ratio)* stride_channel_x      + it* I    * stride_row_x;
 
         constexpr bool fixup = false;
@@ -1057,7 +1063,7 @@ static __global__ void mul_mat_q(
         const int tile_y_max_j = col_diff - jt*J - 1;
 
         const int offset_x = type == GGML_TYPE_Q8_0 ?
-            fastdiv(wt, sample_ratio)*(stride_sample_x/512) + fastdiv(zt, channel_ratio)*(stride_channel_x/512) + it*(I/64)*(stride_row_x/8) :
+            fastdiv(wt, sample_ratio)*(stride_sample_x/256) + fastdiv(zt, channel_ratio)*(stride_channel_x/256) + it*(I/64)*(stride_row_x/4) :
             fastdiv(wt, sample_ratio)* stride_sample_x      + fastdiv(zt, channel_ratio)* stride_channel_x      + it* I    * stride_row_x;
 
         constexpr bool fixup = false; // All but (potentially) the last iterations write their data to dst rather than the fixup buffer.
@@ -1128,7 +1134,7 @@ static __global__ void mul_mat_q(
     const int tile_y_max_j = col_diff - jt*J - 1;
 
     const int offset_x = type == GGML_TYPE_Q8_0 ?
-        fastdiv(wt, sample_ratio)*(stride_sample_x/512) + fastdiv(zt, channel_ratio)*(stride_channel_x/512) + it*(I/64)*(stride_row_x/8) :
+        fastdiv(wt, sample_ratio)*(stride_sample_x/256) + fastdiv(zt, channel_ratio)*(stride_channel_x/256) + it*(I/64)*(stride_row_x/4) :
         fastdiv(wt, sample_ratio)* stride_sample_x      + fastdiv(zt, channel_ratio)* stride_channel_x      + it* I    * stride_row_x;
 
     constexpr bool fixup = true; // Last index writes its data to fixup buffer to avoid data races with other blocks.
