@@ -211,6 +211,8 @@ static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q8_0_q8_1_mma(
     // if (rows_per_warp != 32) {
     //     printf("%s: BAD", __func__);
     // }
+    constexpr int tile_ne_k = type == GGML_TYPE_Q8_0 ? 16 : MMQ_TILE_NE_K;
+    constexpr int tile_y_k = type == GGML_TYPE_Q8_0 ? 20 : MMQ_TILE_Y_K;
 
     // ntx 1: y += 0
     // ntx 2: y += 0,8*MMQ_TILE_Y_K,0,...
@@ -219,13 +221,13 @@ static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q8_0_q8_1_mma(
     }
 
     const int   * x_qs = (const int   *) x;
-    const float * x_df = (const float *) x_qs + (type == GGML_TYPE_Q8_0 ? MMQ_TILE_NE_K : 2*MMQ_TILE_NE_K);
+    const float * x_df = (const float *) x_qs + (type == GGML_TYPE_Q8_0 ? tile_ne_k : 2*MMQ_TILE_NE_K);
     const int   * y_qs = (const int   *) y + 4;
     const float * y_df = (const float *) y;
     const half2 * y_ds = (const half2 *) y;
 
-    tile_A A[ntx][MMQ_TILE_NE_K/QI8_0];
-    float dA[ntx][tile_C::ne/2][MMQ_TILE_NE_K/QI8_0];
+    tile_A A[ntx][tile_ne_k/QI8_0];
+    float dA[ntx][tile_C::ne/2][tile_ne_k/QI8_0];
 
     // ntx 1: 0,16,32,48,64,80,96,112
     // ntx 2: 0, 0,32,32,64,64,96, 96
@@ -234,7 +236,7 @@ static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q8_0_q8_1_mma(
 #pragma unroll
     for (int n = 0; n < ntx; ++n) {
 #pragma unroll
-        for (int k01 = 0; k01 < MMQ_TILE_NE_K; k01 += QI8_0) {
+        for (int k01 = 0; k01 < tile_ne_k; k01 += QI8_0) {
             const int k0 = k00 + k01;
 
             load_ldmatrix(A[n][k01/QI8_0], x_qs + (i0 + n*tile_A::I)*sram_stride + k0, sram_stride);
@@ -245,7 +247,7 @@ static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q8_0_q8_1_mma(
             const int i = i0 + n*tile_A::I + tile_C::get_i(2*l);
 
 #pragma unroll
-            for (int k01 = 0; k01 < MMQ_TILE_NE_K; k01 += QI8_0) {
+            for (int k01 = 0; k01 < tile_ne_k; k01 += QI8_0) {
                 const int k0 = k00 + k01;
 
                 dA[n][l][k01/QI8_0] = x_df[i*sram_stride + k0/QI8_0];
@@ -256,20 +258,20 @@ static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q8_0_q8_1_mma(
 #pragma unroll
     for (int j0 = 0; j0 < J; j0 += (type == GGML_TYPE_Q8_0 ? tile_C::J : ntx*tile_C::J)) {
 #pragma unroll
-        for (int k01 = 0; k01 < MMQ_TILE_NE_K; k01 += QI8_0) {
+        for (int k01 = 0; k01 < tile_ne_k; k01 += QI8_0) {
             tile_B B;
             float dB[tile_C::ne/2];
 
-            load_generic(B, y_qs + j0*MMQ_TILE_Y_K + k01, MMQ_TILE_Y_K); // faster than load_ldmatrix
+            load_generic(B, y_qs + j0*tile_y_k + k01, tile_y_k); // faster than load_ldmatrix
 
 #pragma unroll
             for (int l = 0; l < tile_C::ne/2; ++l) {
                 const int j = j0 + tile_C::get_j(l);
 
-                if (ds_layout == MMQ_Q8_1_DS_LAYOUT_D4) {
-                    dB[l] =             y_df[j*MMQ_TILE_Y_K + k01/QI8_1];
+                if (ds_layout == MMQ_Q8_1_DS_LAYOUT_D4 || ds_layout == MMQ_Q8_1_DS_LAYOUT_D4_REPACKED) {
+                    dB[l] =             y_df[j*tile_y_k + k01/QI8_1];
                 } else {
-                    dB[l] = __low2float(y_ds[j*MMQ_TILE_Y_K + k01/QI8_1]);
+                    dB[l] = __low2float(y_ds[j*tile_y_k + k01/QI8_1]);
                 }
             }
 

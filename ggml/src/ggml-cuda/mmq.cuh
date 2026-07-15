@@ -17,6 +17,7 @@ typedef void (*ggml_cuda_mmq_write_back_t)(const float * __restrict__ sum, const
 
 enum mmq_q8_1_ds_layout {
     MMQ_Q8_1_DS_LAYOUT_D4,
+    MMQ_Q8_1_DS_LAYOUT_D4_REPACKED,
     MMQ_Q8_1_DS_LAYOUT_DS4,
     MMQ_Q8_1_DS_LAYOUT_D2S6,
 };
@@ -42,6 +43,12 @@ struct block_q8_1_mmq {
     int8_t qs[4*QK8_1]; // 128 values quantized to 8 bit each
 };
 
+struct block_q8_1_mmq_repacked {
+    float  d4[4];
+    int8_t qs[2*QK8_1];
+};
+static_assert(sizeof(block_q8_1_mmq_repacked) == 80, "bad");
+
 // this struct is used for fp4 data types (currently only used for Blackwell)
 // mxfp4 has block size 32, each int32 of d4 contains 2 e8m0 scales in the lower 16 bits
 // nvfp4 has block size 16, each int32 of d4 contains 4 ue4m3 scales
@@ -66,7 +73,7 @@ static mmq_q8_1_ds_layout mmq_get_q8_1_ds_layout(const ggml_type type_x) {
         case GGML_TYPE_Q5_1:
             return MMQ_Q8_1_DS_LAYOUT_DS4;
         case GGML_TYPE_Q8_0:
-            return MMQ_Q8_1_DS_LAYOUT_D4;
+            return MMQ_Q8_1_DS_LAYOUT_D4_REPACKED;
         case GGML_TYPE_MXFP4:
             return MMQ_Q8_1_DS_LAYOUT_D4;
         case GGML_TYPE_NVFP4:
@@ -131,7 +138,7 @@ static constexpr __host__ __device__ int ggml_cuda_mmq_get_sram_stride(ggml_cuda
         case GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0:
             return 2*MMQ_TILE_NE_K + 2*MMQ_TILE_NE_K/QI8_0 + 4;
         case GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0_REPACKED:
-            return MMQ_TILE_NE_K + MMQ_TILE_NE_K/QI8_0;
+            return 20;
         case GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_1:
             return 2*MMQ_TILE_NE_K + 2*MMQ_TILE_NE_K/QI8_1 + 4;
         case GGML_CUDA_MMQ_SRAM_LAYOUT_Q2_K:
@@ -209,7 +216,6 @@ struct ggml_cuda_mmq_config {
         static_assert(                          (occupancy_)      <=   8, "bad occupancy");                                               \
         static_assert((I_)        %  32 == 0,                             "bad I");                                                       \
         static_assert((J_)        %   8 == 0,                             "bad J");                                                       \
-        static_assert((K_vram_)   % 128 == 0,                             "bad K_vram");                                                  \
         return ggml_cuda_mmq_config((type_), (nthreads_), (occupancy_), (I_), (J_), (sram_layout_), (K_vram_), (stream_k_), (fallback_)); \
     }                                                                                                                                     \
 
@@ -831,15 +837,17 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
     constexpr ggml_cuda_mmq_vec_dot_t    vec_dot    = ggml_cuda_mmq_get_vec_dot<type, J, fallback>();
     constexpr ggml_cuda_mmq_write_back_t write_back = ggml_cuda_mmq_get_write_back<type, J, fallback>();
 
+    constexpr int tile_y_k = type == GGML_TYPE_Q8_0 ? 20 : MMQ_TILE_Y_K;
+
     extern __shared__ int data_mul_mat_q[];
     int * tile_y = data_mul_mat_q + J;
-    int * tile_x = tile_y + GGML_PAD(J*MMQ_TILE_Y_K, nwarps*warp_size);
+    int * tile_x = tile_y + GGML_PAD(J*tile_y_k, nwarps*warp_size);
 
 #if defined(BLACKWELL_MMA_AVAILABLE)
     // FP4 tile stores 8 blocks
-    constexpr int ne_block = (type == GGML_TYPE_MXFP4 || type == GGML_TYPE_NVFP4) ? QK_K : 4 * QK8_1;
+    constexpr int ne_block = type == GGML_TYPE_Q8_0 ? 64 : (type == GGML_TYPE_MXFP4 || type == GGML_TYPE_NVFP4) ? QK_K : 4 * QK8_1;
 #else
-    constexpr int ne_block = 4 * QK8_1;
+    constexpr int ne_block = type == GGML_TYPE_Q8_0 ? 64 : 4 * QK8_1;
 #endif  // defined(BLACKWELL_MMA_AVAILABLE)
 
     constexpr int ITER_K          = ggml_cuda_mmq_get_K_vram(type, J, fallback);
@@ -847,14 +855,14 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
 
     float sum[J*I / (nwarps*warp_size)] = {0.0f};
 
-    constexpr int sz = sizeof(block_q8_1_mmq) / sizeof(int);
+    constexpr int sz = (type == GGML_TYPE_Q8_0 ? sizeof(block_q8_1_mmq_repacked) : sizeof(block_q8_1_mmq)) / sizeof(int);
 
     for (int kb0 = kb0_start; kb0 < kb0_stop; kb0 += blocks_per_iter) {
-        load_tiles(x, tile_x, offset_x + (type == GGML_TYPE_Q8_0 ? kb0/4 : kb0), tile_x_max_i, stride_row_x);
+        load_tiles(x, tile_x, offset_x + (type == GGML_TYPE_Q8_0 ? kb0/2 : kb0), tile_x_max_i, stride_row_x);
         {
             const int * by0 = y + ncols_y * (kb0 * qk / ne_block) * sz;
 #pragma unroll
-            for (int l0 = 0; l0 < J * MMQ_TILE_Y_K; l0 += nwarps * warp_size) {
+            for (int l0 = 0; l0 < J * tile_y_k; l0 += nwarps * warp_size) {
                 int l = l0 + threadIdx.y*warp_size + threadIdx.x;
 
                 tile_y[l] = by0[l];
@@ -975,14 +983,14 @@ static __global__ void mul_mat_q(
             __syncthreads();
         }
 
-        offset_y   += (col_low + jt*J)*(sizeof(block_q8_1_mmq)/sizeof(int));
+        offset_y   += (col_low + jt*J)*((type == GGML_TYPE_Q8_0 ? sizeof(block_q8_1_mmq_repacked) : sizeof(block_q8_1_mmq))/sizeof(int));
         offset_dst += it*I;
 
         const int tile_x_max_i = nrows_x  - it*I - 1;
         const int tile_y_max_j = col_diff - jt*J - 1;
 
         const int offset_x = type == GGML_TYPE_Q8_0 ?
-            fastdiv(wt, sample_ratio)*(stride_sample_x/256) + fastdiv(zt, channel_ratio)*(stride_channel_x/256) + it*(I/64)*(stride_row_x/4) :
+            fastdiv(wt, sample_ratio)*(stride_sample_x/128) + fastdiv(zt, channel_ratio)*(stride_channel_x/128) + it*(I/64)*(stride_row_x/2) :
             fastdiv(wt, sample_ratio)* stride_sample_x      + fastdiv(zt, channel_ratio)* stride_channel_x      + it* I    * stride_row_x;
 
         constexpr bool fixup = false;
@@ -1056,14 +1064,14 @@ static __global__ void mul_mat_q(
             __syncthreads();
         }
 
-        offset_y += (col_low + jt * J) * (sizeof(block_q8_1_mmq) / sizeof(int));
+        offset_y   += (col_low + jt*J)*((type == GGML_TYPE_Q8_0 ? sizeof(block_q8_1_mmq_repacked) : sizeof(block_q8_1_mmq))/sizeof(int));
         offset_dst += it*I;
 
         const int tile_x_max_i = nrows_x  - it*I - 1;
         const int tile_y_max_j = col_diff - jt*J - 1;
 
         const int offset_x = type == GGML_TYPE_Q8_0 ?
-            fastdiv(wt, sample_ratio)*(stride_sample_x/256) + fastdiv(zt, channel_ratio)*(stride_channel_x/256) + it*(I/64)*(stride_row_x/4) :
+            fastdiv(wt, sample_ratio)*(stride_sample_x/128) + fastdiv(zt, channel_ratio)*(stride_channel_x/128) + it*(I/64)*(stride_row_x/2) :
             fastdiv(wt, sample_ratio)* stride_sample_x      + fastdiv(zt, channel_ratio)* stride_channel_x      + it* I    * stride_row_x;
 
         constexpr bool fixup = false; // All but (potentially) the last iterations write their data to dst rather than the fixup buffer.
@@ -1127,14 +1135,14 @@ static __global__ void mul_mat_q(
         __syncthreads();
     }
 
-    offset_y += (col_low + jt * J) * (sizeof(block_q8_1_mmq) / sizeof(int));
+    offset_y   += (col_low + jt*J)*((type == GGML_TYPE_Q8_0 ? sizeof(block_q8_1_mmq_repacked) : sizeof(block_q8_1_mmq))/sizeof(int));
     offset_dst += it*I;
 
     const int tile_x_max_i = nrows_x  - it*I - 1;
     const int tile_y_max_j = col_diff - jt*J - 1;
 
     const int offset_x = type == GGML_TYPE_Q8_0 ?
-        fastdiv(wt, sample_ratio)*(stride_sample_x/256) + fastdiv(zt, channel_ratio)*(stride_channel_x/256) + it*(I/64)*(stride_row_x/4) :
+        fastdiv(wt, sample_ratio)*(stride_sample_x/128) + fastdiv(zt, channel_ratio)*(stride_channel_x/128) + it*(I/64)*(stride_row_x/2) :
         fastdiv(wt, sample_ratio)* stride_sample_x      + fastdiv(zt, channel_ratio)* stride_channel_x      + it* I    * stride_row_x;
 
     constexpr bool fixup = true; // Last index writes its data to fixup buffer to avoid data races with other blocks.
@@ -1292,7 +1300,7 @@ struct mmq_args {
 static size_t mmq_get_nbytes_shared(const ggml_cuda_mmq_config & config, const int cc) {
     const size_t nbs_ids = config.J*sizeof(int);
     const size_t nbs_x = ggml_cuda_mmq_get_nbytes_shared_x(config, cc);
-    const size_t nbs_y = config.J * (sizeof(block_q8_1_mmq));
+    const size_t nbs_y = config.J * (config.type == GGML_TYPE_Q8_0 ? sizeof(block_q8_1_mmq_repacked) : sizeof(block_q8_1_mmq));
     return nbs_ids + nbs_x + GGML_PAD(nbs_y, config.nthreads*sizeof(int));
 }
 

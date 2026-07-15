@@ -720,7 +720,7 @@ static void ggml_backend_cuda_buffer_set_tensor(ggml_backend_buffer_t buffer, gg
         GGML_ASSERT(ggml_is_contiguous(tensor));
         GGML_ASSERT(offset == 0);
         GGML_ASSERT(size == ggml_nbytes(tensor));
-        GGML_ASSERT(tensor->ne[0] % (4*QK8_0) == 0);
+        GGML_ASSERT(tensor->ne[0] % (2*QK8_0) == 0);
         GGML_ASSERT(tensor->ne[1] % 64 == 0);
         GGML_ASSERT(tensor->ne[2] == 1);
         GGML_ASSERT(tensor->ne[3] == 1);
@@ -730,7 +730,7 @@ static void ggml_backend_cuda_buffer_set_tensor(ggml_backend_buffer_t buffer, gg
             CUDA_CHECK(ggml_cuda_device_malloc(&tmp, 1024*1024*1024, ctx->device));
         }
         CUDA_CHECK(cudaMemcpyAsync((char *) tmp + offset, data, size, cudaMemcpyHostToDevice, cudaStreamPerThread));
-        const dim3 block_nums(tensor->ne[0] / (4*QK8_0), tensor->ne[1] / 64, 1);
+        const dim3 block_nums(tensor->ne[0] / (2*QK8_0), tensor->ne[1] / 64, 1);
         repack_q8_0<<<block_nums, 32, 0, cudaStreamPerThread>>>(tmp, tensor->data);
         CUDA_CHECK(cudaStreamSynchronize(cudaStreamPerThread));
         return;

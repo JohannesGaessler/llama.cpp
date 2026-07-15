@@ -128,7 +128,7 @@ void ggml_cuda_mul_mat_q(
     if (!ids) {
         const size_t nbytes_src1_q8_1 = ne13*ne12 * ne11*ne10_padded * sizeof(block_q8_1)/QK8_1 +
             ggml_cuda_mmq_get_J_max(src0->type, fallback, cc, ne11) * sizeof(block_q8_1_mmq);
-        ggml_cuda_pool_alloc<char> src1_q8_1(ctx.pool(), nbytes_src1_q8_1);
+        ggml_cuda_pool_alloc<char> src1_q8_1(ctx.pool(), 2*nbytes_src1_q8_1);
 
         {
             const int64_t s11 = src1->nb[1] / ts_src1;

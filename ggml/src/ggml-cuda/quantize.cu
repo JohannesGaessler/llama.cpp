@@ -281,6 +281,7 @@ static __global__ void quantize_mmq_q8_1(
 
     constexpr int vals_per_scale = ds_layout == MMQ_Q8_1_DS_LAYOUT_D2S6 ? 64 : 32;
     constexpr int vals_per_sum   = ds_layout == MMQ_Q8_1_DS_LAYOUT_D2S6 ? 16 : 32;
+    constexpr int n32 = ds_layout == MMQ_Q8_1_DS_LAYOUT_D4_REPACKED ? 2 : 4;
 
     const int64_t i0 = ((int64_t)blockDim.x*blockIdx.y + threadIdx.x)*4;
 
@@ -301,10 +302,11 @@ static __global__ void quantize_mmq_q8_1(
     const float4 * x4 = (const float4 *) x;
 
     block_q8_1_mmq * y = (block_q8_1_mmq *) vy;
+    block_q8_1_mmq_repacked * yr = (block_q8_1_mmq_repacked *) vy;
 
     const int64_t ib0 = blockIdx.z*((int64_t)gridDim.x*gridDim.y*blockDim.x/QK8_1); // first block of channel
-    const int64_t ib  = ib0 + (i0 / (4*QK8_1))*ne1 + blockIdx.x;                    // block index in channel
-    const int64_t iqs = i0 % (4*QK8_1);                                             // quant index in block
+    const int64_t ib  = ib0 + (i0 / (n32*QK8_1))*ne1 + blockIdx.x;                    // block index in channel
+    const int64_t iqs = i0 % (n32*QK8_1);                                             // quant index in block
 
     // Load 4 floats per thread and calculate max. abs. value between them:
     const float4 xi = i0 < ne00 ? x4[(i03*s03 + i02*s02 + i01*s01 + i00)/4] : make_float4(0.0f, 0.0f, 0.0f, 0.0f);
@@ -320,7 +322,7 @@ static __global__ void quantize_mmq_q8_1(
     }
 
     float sum;
-    if (ds_layout != MMQ_Q8_1_DS_LAYOUT_D4) {
+    if (ds_layout != MMQ_Q8_1_DS_LAYOUT_D4 && ds_layout != MMQ_Q8_1_DS_LAYOUT_D4_REPACKED) {
         sum = xi.x + xi.y + xi.z + xi.w;
 
         // Calculate sums across vals_per_sum/4 threads.
@@ -338,7 +340,7 @@ static __global__ void quantize_mmq_q8_1(
     q.w = roundf(xi.w*d_inv);
 
     // Write back 4 int8 values as a single 32 bit value for better memory bandwidth:
-    char4 * yqs4 = (char4 *) y[ib].qs;
+    char4 * yqs4 = ds_layout == MMQ_Q8_1_DS_LAYOUT_D4_REPACKED ? ((char4 *) yr[ib].qs) : ((char4 *) y[ib].qs);
     yqs4[iqs/4] = q;
 
     if (ds_layout == MMQ_Q8_1_DS_LAYOUT_D2S6) {
@@ -367,6 +369,9 @@ static __global__ void quantize_mmq_q8_1(
 
     if (ds_layout == MMQ_Q8_1_DS_LAYOUT_DS4) {
         y[ib].ds4[iqs/32] = make_half2(d, sum);
+    } else if (ds_layout == MMQ_Q8_1_DS_LAYOUT_D4_REPACKED) {
+        yr[ib].d4[iqs/32] = d;
+        // yr[ib].d4[iqs/32 + 2] = 0.0f;
     } else {
         y[ib].d4[iqs/32]  = d;
     }
@@ -398,11 +403,17 @@ void quantize_mmq_q8_1_cuda(
 
     // ne1 tends to assume the highest values, therefore use it as the "x" dimension of the CUDA grid:
     const int64_t block_num_y = (ne0 + 4*CUDA_QUANTIZE_BLOCK_SIZE_MMQ - 1) / (4*CUDA_QUANTIZE_BLOCK_SIZE_MMQ);
-    const dim3 num_blocks(ne1, block_num_y, ne2*ne3);
-    const dim3 block_size(CUDA_QUANTIZE_BLOCK_SIZE_MMQ, 1, 1);
+    dim3 num_blocks(ne1, block_num_y, ne2*ne3);
+    dim3 block_size(CUDA_QUANTIZE_BLOCK_SIZE_MMQ, 1, 1);
     switch (mmq_get_q8_1_ds_layout(type_src0)) {
         case MMQ_Q8_1_DS_LAYOUT_D4:
             quantize_mmq_q8_1<MMQ_Q8_1_DS_LAYOUT_D4>
+                <<<num_blocks, block_size, 0, stream>>>(x, ids, vy, ne00, s01, s02, s03, ne0, ne1, ne2);
+            break;
+        case MMQ_Q8_1_DS_LAYOUT_D4_REPACKED:
+            GGML_ASSERT(ne0 % 1024 == 0);
+            GGML_ASSERT(num_blocks.z == 1);
+            quantize_mmq_q8_1<MMQ_Q8_1_DS_LAYOUT_D4_REPACKED>
                 <<<num_blocks, block_size, 0, stream>>>(x, ids, vy, ne00, s01, s02, s03, ne0, ne1, ne2);
             break;
         case MMQ_Q8_1_DS_LAYOUT_DS4:

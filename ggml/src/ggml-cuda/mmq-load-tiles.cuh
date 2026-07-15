@@ -445,27 +445,27 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
     constexpr int sram_stride = ggml_cuda_mmq_get_sram_stride(type, J, fallback);
 
     int   * x_qs = (int   *)  x_tile;
-    float * x_df = (float *) (x_tile + MMQ_TILE_NE_K);
+    float * x_df = (float *) (x_tile + 16);
 
     {
         static_assert(I == 128, "bad I");
         const int i = threadIdx.y*32 + threadIdx.x;
-        const block_q8_0_Z64 * bxi = (const block_q8_0_Z64 *) x + kbx0 + (i/64) * (stride/4);
-        half2 tmph2[2];
-        ggml_cuda_memcpy_1<8>(tmph2, &bxi->d[i % 64][0]);
-        const float2 tmpf2[2] = {__half22float2(tmph2[0]), __half22float2(tmph2[1])};
-        ggml_cuda_memcpy_1<16>(x_df + i*sram_stride, tmpf2);
+        const block_q8_0_Z64 * bxi = (const block_q8_0_Z64 *) x + kbx0 + (i/64) * (stride/2);
+        half2 tmph2[1];
+        ggml_cuda_memcpy_1<4>(tmph2, &bxi->d[i % 64][0]);
+        const float2 tmpf2[1] = {__half22float2(tmph2[0])};
+        ggml_cuda_memcpy_1<8>(x_df + i*sram_stride, tmpf2);
     }
     {
-        const int k0 = (threadIdx.x % 8) * 4;
+        const int k0 = (threadIdx.x % 4) * 4;
         const block_q8_0_Z64 * bxi0 = (const block_q8_0_Z64 *) x + kbx0;
 #pragma unroll
-        for (int i0 = 0; i0 < I; i0 += nwarps * 4) {
-            const int i = i0 + threadIdx.y * 4 + threadIdx.x / 8;
+        for (int i0 = 0; i0 < I; i0 += nwarps * 8) {
+            const int i = i0 + threadIdx.y * 8 + threadIdx.x / 4;
 
             ggml_cuda_memcpy_1<16>(
                 x_qs + i*sram_stride + k0,
-                &bxi0[(i/64) * (stride/4)].qs[i % 64][k0*4]);
+                &bxi0[(i/64) * (stride/2)].qs[i % 64][k0*4]);
         }
     }
 }
