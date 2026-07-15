@@ -181,7 +181,7 @@ struct ggml_cuda_mmq_config {
 #if defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
         return 16;
 #else
-        return J >= 48 && J % 16 == 0 ? 32 : 16;
+        return nthreads == 128 || (J >= 48 && J % 16 == 0) ? 32 : 16;
 #endif // defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     }
 
@@ -456,15 +456,15 @@ static __device__ __forceinline__ void ggml_cuda_mmq_write_back_mma(
     constexpr int rows_per_warp = ggml_cuda_mmq_get_rows_per_warp(type, J, fallback);
     constexpr int ntx           = rows_per_warp/tile_C::I; // Number of x minitiles per warp.
 
-    const int i0 = (threadIdx.y / ntx) * (ntx*tile_C::I);
+    const int i0 = type == GGML_TYPE_Q8_0 ? threadIdx.y * rows_per_warp : (threadIdx.y/ntx)*rows_per_warp;
 
 #pragma unroll
-    for (int j0 = 0; j0 < J; j0 += ntx*tile_C::J) {
+    for (int j0 = 0; j0 < J; j0 += (type == GGML_TYPE_Q8_0 ? tile_C::J : ntx*tile_C::J)) {
 #pragma unroll
         for (int n = 0; n < ntx; ++n) {
 #pragma unroll
             for (int l = 0; l < tile_C::ne; ++l) {
-                const int j = j0 + (threadIdx.y % ntx) * tile_C::J + tile_C::get_j(l);
+                const int j = j0 + (type == GGML_TYPE_Q8_0 ? 0 : (threadIdx.y % ntx) * tile_C::J) + tile_C::get_j(l);
 
                 if (j > j_max) {
                     continue;
@@ -476,7 +476,7 @@ static __device__ __forceinline__ void ggml_cuda_mmq_write_back_mma(
                     continue;
                 }
 
-                dst[ids_dst[j]*stride + i] = sum[(j0/tile_C::J + n)*tile_C::ne + l];
+                dst[ids_dst[j]*stride + i] = sum[((type == GGML_TYPE_Q8_0 ? ntx*j0 : j0)/tile_C::J + n)*tile_C::ne + l];
             }
         }
     }
@@ -1343,9 +1343,9 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     // For the stream-k kernel it is possible to run it with tiling by setting the number of CUDA blocks equal to the number of tiles.
     // This is worthwhile if the efficiency of tiling is high and skipping the fixup kernel is more important.
     const int ntiles_dst = ntx * nty * ntzw;
-    const int tiles_nwaves = (ntiles_dst + nsm - 1) / nsm;
-    const int tiles_efficiency_percent = 100 * ntiles_dst / (nsm*tiles_nwaves);
-    const dim3 block_nums_stream_k(GGML_CUDA_CC_IS_NVIDIA(cc) && tiles_efficiency_percent >= 90 ? ntiles_dst : nsm, 1, 1);
+    const int tiles_nwaves = (ntiles_dst + (2*nsm) - 1) / (2*nsm);
+    const int tiles_efficiency_percent = 100 * ntiles_dst / (2*nsm*tiles_nwaves);
+    const dim3 block_nums_stream_k(GGML_CUDA_CC_IS_NVIDIA(cc) && tiles_efficiency_percent >= 90 ? ntiles_dst : 2*nsm, 1, 1);
 
     GGML_ASSERT(ntiles_dst * blocks_per_ne00_fd.z < (1 << 30)); // Assert that variable kbc will not overflow.
 
