@@ -209,8 +209,6 @@ static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q8_0_q8_1_mma(
     constexpr int rows_per_warp = ggml_cuda_mmq_get_rows_per_warp(type, J, fallback);
     constexpr int ntx           = rows_per_warp/tile_C::I; // Number of x minitiles per warp.
 
-    y += (threadIdx.y % ntx) * (tile_C::J*MMQ_TILE_Y_K);
-
     const int   * x_qs = (const int   *) x;
     const float * x_df = (const float *) x_qs + 2*MMQ_TILE_NE_K;
     const int   * y_qs = (const int   *) y + 4;
@@ -220,7 +218,7 @@ static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q8_0_q8_1_mma(
     tile_A A[ntx][MMQ_TILE_NE_K/QI8_0];
     float dA[ntx][tile_C::ne/2][MMQ_TILE_NE_K/QI8_0];
 
-    const int i0 = (threadIdx.y/ntx)*rows_per_warp;
+    const int i0 = threadIdx.y*rows_per_warp;
 
 #pragma unroll
     for (int n = 0; n < ntx; ++n) {
@@ -245,7 +243,7 @@ static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q8_0_q8_1_mma(
     }
 
 #pragma unroll
-    for (int j0 = 0; j0 < J; j0 += ntx*tile_C::J) {
+    for (int j0 = 0; j0 < J; j0 += tile_C::J) {
 #pragma unroll
         for (int k01 = 0; k01 < MMQ_TILE_NE_K; k01 += QI8_0) {
             tile_B B;
@@ -271,7 +269,7 @@ static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q8_0_q8_1_mma(
 
 #pragma unroll
                 for (int l = 0; l < tile_C::ne; ++l) {
-                    sum[(j0/tile_C::J + n)*tile_C::ne + l] += C.x[l]*dA[n][l/2][k01/QI8_0]*dB[l%2];
+                    sum[(j0/tile_C::J*ntx + n)*tile_C::ne + l] += C.x[l]*dA[n][l/2][k01/QI8_0]*dB[l%2];
                 }
             }
         }

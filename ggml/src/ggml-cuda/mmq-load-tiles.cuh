@@ -391,12 +391,13 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 
     {
         static_assert(I == 128, "bad I");
-        const int i = threadIdx.y*16 + threadIdx.x/2;
+        const int i = threadIdx.y*32 + threadIdx.x;
         const block_q8_0_Z64 * bxi = (const block_q8_0_Z64 *) x + kbx0 + (i/64) * (stride/8);
-        half2 tmph2[2];
-        ggml_cuda_memcpy_1<8>(tmph2, &bxi->d[i % 64][(threadIdx.x % 2) * 4]);
-        const float2 tmpf2[2] = {__half22float2(tmph2[0]), __half22float2(tmph2[1])};
-        ggml_cuda_memcpy_1<16>(x_df + i*sram_stride + (threadIdx.x % 2) * 4, tmpf2);
+        half2 tmph2[4];
+        ggml_cuda_memcpy_1<16>(tmph2, &bxi->d[i % 64][0]);
+        const float2 tmpf2[4] = {__half22float2(tmph2[0]), __half22float2(tmph2[1]), __half22float2(tmph2[2]), __half22float2(tmph2[3])};
+        ggml_cuda_memcpy_1<16>(x_df + i*sram_stride + 0, tmpf2 + 0);
+        ggml_cuda_memcpy_1<16>(x_df + i*sram_stride + 4, tmpf2 + 2);
     }
     {
         const int k0 = (threadIdx.x % 16) * 4;

@@ -177,7 +177,7 @@ struct ggml_cuda_mmq_config {
 #if defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
         return 16;
 #else
-        return J >= 48 && J % 16 == 0 ? 32 : 16;
+        return type == GGML_TYPE_Q8_0 || (J >= 48 && J % 16 == 0) ? 32 : 16;
 #endif // defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     }
 
@@ -452,15 +452,15 @@ static __device__ __forceinline__ void ggml_cuda_mmq_write_back_mma(
     constexpr int rows_per_warp = ggml_cuda_mmq_get_rows_per_warp(type, J, fallback);
     constexpr int ntx           = rows_per_warp/tile_C::I; // Number of x minitiles per warp.
 
-    const int i0 = (threadIdx.y / ntx) * (ntx*tile_C::I);
+    const int i0 = threadIdx.y * (ntx*tile_C::I);
 
 #pragma unroll
-    for (int j0 = 0; j0 < J; j0 += ntx*tile_C::J) {
+    for (int j0 = 0; j0 < J; j0 += tile_C::J) {
 #pragma unroll
         for (int n = 0; n < ntx; ++n) {
 #pragma unroll
             for (int l = 0; l < tile_C::ne; ++l) {
-                const int j = j0 + (threadIdx.y % ntx) * tile_C::J + tile_C::get_j(l);
+                const int j = j0 + tile_C::get_j(l);
 
                 if (j > j_max) {
                     continue;
@@ -472,7 +472,7 @@ static __device__ __forceinline__ void ggml_cuda_mmq_write_back_mma(
                     continue;
                 }
 
-                dst[ids_dst[j]*stride + i] = sum[(j0/tile_C::J + n)*tile_C::ne + l];
+                dst[ids_dst[j]*stride + i] = sum[(j0/tile_C::J*ntx + n)*tile_C::ne + l];
             }
         }
     }
