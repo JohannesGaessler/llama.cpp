@@ -445,27 +445,25 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
     constexpr int sram_stride = ggml_cuda_mmq_get_sram_stride(type, J, fallback);
 
     int   * x_qs = (int   *)  x_tile;
-    float * x_df = (float *) (x_tile + 16);
+    float * x_df = (float *) (x_tile + 8);
 
     {
         static_assert(I == 128, "bad I");
         const int i = threadIdx.y*32 + threadIdx.x;
-        const block_q8_0_Z64 * bxi = (const block_q8_0_Z64 *) x + kbx0 + (i/64) * (stride/2);
-        half2 tmph2[1];
-        ggml_cuda_memcpy_1<4>(tmph2, &bxi->d[i % 64][0]);
-        const float2 tmpf2[1] = {__half22float2(tmph2[0])};
-        ggml_cuda_memcpy_1<8>(x_df + i*sram_stride, tmpf2);
+        const block_q8_0_Z64 * bxi = (const block_q8_0_Z64 *) x + kbx0 + (i/64) * stride;
+        const float tmp = bxi->d[i % 64][0];
+        ggml_cuda_memcpy_1<4>(x_df + i*sram_stride, &tmp);
     }
     {
-        const int k0 = (threadIdx.x % 4) * 4;
+        const int k0 = (threadIdx.x % 2) * 4;
         const block_q8_0_Z64 * bxi0 = (const block_q8_0_Z64 *) x + kbx0;
 #pragma unroll
-        for (int i0 = 0; i0 < I; i0 += nwarps * 8) {
-            const int i = i0 + threadIdx.y * 8 + threadIdx.x / 4;
+        for (int i0 = 0; i0 < I; i0 += nwarps * 16) {
+            const int i = i0 + threadIdx.y * 16 + threadIdx.x / 2;
 
             ggml_cuda_memcpy_1<16>(
                 x_qs + i*sram_stride + k0,
-                &bxi0[(i/64) * (stride/2)].qs[i % 64][k0*4]);
+                &bxi0[(i/64) * stride].qs[i % 64][k0*4]);
         }
     }
 }
@@ -1669,7 +1667,7 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
     constexpr int warp_size       = ggml_cuda_get_physical_warp_size();
     constexpr int nwarps          = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
     constexpr int I               = ggml_cuda_mmq_get_I(type, J, fallback);
-    constexpr int iter_k          = ggml_cuda_mmq_get_K_vram(type, J, fallback);
+    constexpr int iter_k          = MMQ_ITER_K_FP4;
     constexpr int threads_per_row = iter_k / QK_NVFP4; // each thread processes 1 block
     constexpr int rows_per_warp   = warp_size / threads_per_row;
     constexpr int sram_stride     = ggml_cuda_mmq_get_sram_stride(type, J, fallback);

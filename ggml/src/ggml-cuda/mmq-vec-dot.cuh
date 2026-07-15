@@ -211,8 +211,8 @@ static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q8_0_q8_1_mma(
     // if (rows_per_warp != 32) {
     //     printf("%s: BAD", __func__);
     // }
-    constexpr int tile_ne_k = type == GGML_TYPE_Q8_0 ? 16 : MMQ_TILE_NE_K;
-    constexpr int tile_y_k = type == GGML_TYPE_Q8_0 ? 20 : MMQ_TILE_Y_K;
+    constexpr int tile_ne_k = type == GGML_TYPE_Q8_0 ? 8 : MMQ_TILE_NE_K;
+    constexpr int tile_y_k = type == GGML_TYPE_Q8_0 ? 12 : MMQ_TILE_Y_K;
 
     // ntx 1: y += 0
     // ntx 2: y += 0,8*MMQ_TILE_Y_K,0,...

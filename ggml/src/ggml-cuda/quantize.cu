@@ -281,7 +281,7 @@ static __global__ void quantize_mmq_q8_1(
 
     constexpr int vals_per_scale = ds_layout == MMQ_Q8_1_DS_LAYOUT_D2S6 ? 64 : 32;
     constexpr int vals_per_sum   = ds_layout == MMQ_Q8_1_DS_LAYOUT_D2S6 ? 16 : 32;
-    constexpr int n32 = ds_layout == MMQ_Q8_1_DS_LAYOUT_D4_REPACKED ? 2 : 4;
+    constexpr int n32 = ds_layout == MMQ_Q8_1_DS_LAYOUT_D4_REPACKED ? 1 : 4;
 
     const int64_t i0 = ((int64_t)blockDim.x*blockIdx.y + threadIdx.x)*4;
 

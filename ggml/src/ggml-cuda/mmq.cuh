@@ -45,9 +45,9 @@ struct block_q8_1_mmq {
 
 struct block_q8_1_mmq_repacked {
     float  d4[4];
-    int8_t qs[2*QK8_1];
+    int8_t qs[1*QK8_1];
 };
-static_assert(sizeof(block_q8_1_mmq_repacked) == 80, "bad");
+static_assert(sizeof(block_q8_1_mmq_repacked) == 48, "bad");
 
 // this struct is used for fp4 data types (currently only used for Blackwell)
 // mxfp4 has block size 32, each int32 of d4 contains 2 e8m0 scales in the lower 16 bits
@@ -138,7 +138,7 @@ static constexpr __host__ __device__ int ggml_cuda_mmq_get_sram_stride(ggml_cuda
         case GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0:
             return 2*MMQ_TILE_NE_K + 2*MMQ_TILE_NE_K/QI8_0 + 4;
         case GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0_REPACKED:
-            return 20;
+            return 12;
         case GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_1:
             return 2*MMQ_TILE_NE_K + 2*MMQ_TILE_NE_K/QI8_1 + 4;
         case GGML_CUDA_MMQ_SRAM_LAYOUT_Q2_K:
@@ -837,7 +837,7 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
     constexpr ggml_cuda_mmq_vec_dot_t    vec_dot    = ggml_cuda_mmq_get_vec_dot<type, J, fallback>();
     constexpr ggml_cuda_mmq_write_back_t write_back = ggml_cuda_mmq_get_write_back<type, J, fallback>();
 
-    constexpr int tile_y_k = type == GGML_TYPE_Q8_0 ? 20 : MMQ_TILE_Y_K;
+    constexpr int tile_y_k = type == GGML_TYPE_Q8_0 ? 12 : MMQ_TILE_Y_K;
 
     extern __shared__ int data_mul_mat_q[];
     int * tile_y = data_mul_mat_q + J;
@@ -845,9 +845,9 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
 
 #if defined(BLACKWELL_MMA_AVAILABLE)
     // FP4 tile stores 8 blocks
-    constexpr int ne_block = type == GGML_TYPE_Q8_0 ? 64 : (type == GGML_TYPE_MXFP4 || type == GGML_TYPE_NVFP4) ? QK_K : 4 * QK8_1;
+    constexpr int ne_block = type == GGML_TYPE_Q8_0 ? 32 : (type == GGML_TYPE_MXFP4 || type == GGML_TYPE_NVFP4) ? QK_K : 4 * QK8_1;
 #else
-    constexpr int ne_block = type == GGML_TYPE_Q8_0 ? 64 : 4 * QK8_1;
+    constexpr int ne_block = type == GGML_TYPE_Q8_0 ? 32 : 4 * QK8_1;
 #endif  // defined(BLACKWELL_MMA_AVAILABLE)
 
     constexpr int ITER_K          = ggml_cuda_mmq_get_K_vram(type, J, fallback);
@@ -858,7 +858,7 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
     constexpr int sz = (type == GGML_TYPE_Q8_0 ? sizeof(block_q8_1_mmq_repacked) : sizeof(block_q8_1_mmq)) / sizeof(int);
 
     for (int kb0 = kb0_start; kb0 < kb0_stop; kb0 += blocks_per_iter) {
-        load_tiles(x, tile_x, offset_x + (type == GGML_TYPE_Q8_0 ? kb0/2 : kb0), tile_x_max_i, stride_row_x);
+        load_tiles(x, tile_x, offset_x + (type == GGML_TYPE_Q8_0 ? kb0 : kb0), tile_x_max_i, stride_row_x);
         {
             const int * by0 = y + ncols_y * (kb0 * qk / ne_block) * sz;
 #pragma unroll
@@ -990,8 +990,8 @@ static __global__ void mul_mat_q(
         const int tile_y_max_j = col_diff - jt*J - 1;
 
         const int offset_x = type == GGML_TYPE_Q8_0 ?
-            fastdiv(wt, sample_ratio)*(stride_sample_x/128) + fastdiv(zt, channel_ratio)*(stride_channel_x/128) + it*(I/64)*(stride_row_x/2) :
-            fastdiv(wt, sample_ratio)* stride_sample_x      + fastdiv(zt, channel_ratio)* stride_channel_x      + it* I    * stride_row_x;
+            fastdiv(wt, sample_ratio)*(stride_sample_x/64) + fastdiv(zt, channel_ratio)*(stride_channel_x/64) + it*(I/64)*stride_row_x :
+            fastdiv(wt, sample_ratio)* stride_sample_x     + fastdiv(zt, channel_ratio)* stride_channel_x     + it* I    *stride_row_x;
 
         constexpr bool fixup = false;
         mul_mat_q_process_tile<type, J, fallback, fixup>
@@ -1071,8 +1071,8 @@ static __global__ void mul_mat_q(
         const int tile_y_max_j = col_diff - jt*J - 1;
 
         const int offset_x = type == GGML_TYPE_Q8_0 ?
-            fastdiv(wt, sample_ratio)*(stride_sample_x/128) + fastdiv(zt, channel_ratio)*(stride_channel_x/128) + it*(I/64)*(stride_row_x/2) :
-            fastdiv(wt, sample_ratio)* stride_sample_x      + fastdiv(zt, channel_ratio)* stride_channel_x      + it* I    * stride_row_x;
+            fastdiv(wt, sample_ratio)*(stride_sample_x/64) + fastdiv(zt, channel_ratio)*(stride_channel_x/64) + it*(I/64)*stride_row_x :
+            fastdiv(wt, sample_ratio)* stride_sample_x     + fastdiv(zt, channel_ratio)* stride_channel_x     + it* I    *stride_row_x;
 
         constexpr bool fixup = false; // All but (potentially) the last iterations write their data to dst rather than the fixup buffer.
         mul_mat_q_process_tile<type, J, fallback, fixup>
@@ -1142,8 +1142,8 @@ static __global__ void mul_mat_q(
     const int tile_y_max_j = col_diff - jt*J - 1;
 
     const int offset_x = type == GGML_TYPE_Q8_0 ?
-        fastdiv(wt, sample_ratio)*(stride_sample_x/128) + fastdiv(zt, channel_ratio)*(stride_channel_x/128) + it*(I/64)*(stride_row_x/2) :
-        fastdiv(wt, sample_ratio)* stride_sample_x      + fastdiv(zt, channel_ratio)* stride_channel_x      + it* I    * stride_row_x;
+        fastdiv(wt, sample_ratio)*(stride_sample_x/64) + fastdiv(zt, channel_ratio)*(stride_channel_x/64) + it*(I/64)*stride_row_x :
+        fastdiv(wt, sample_ratio)* stride_sample_x     + fastdiv(zt, channel_ratio)* stride_channel_x     + it* I    *stride_row_x;
 
     constexpr bool fixup = true; // Last index writes its data to fixup buffer to avoid data races with other blocks.
     mul_mat_q_process_tile<type, J, fallback, fixup>
