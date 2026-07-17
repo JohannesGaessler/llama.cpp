@@ -1677,3 +1677,28 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
         x_u32_scale[i*sram_stride] = get_int_b4(bxi->d, 0);
     }
 }
+
+template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void ggml_cuda_mmq_load_tiles_f32(
+        const char * __restrict__ x, int * __restrict__ x_tile, const int kb0, const int i_max, const int stride) {
+    constexpr int warp_size   = ggml_cuda_get_physical_warp_size();
+    constexpr int nwarps      = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
+    constexpr int I           = ggml_cuda_mmq_get_I(type, J, fallback);
+    constexpr int sram_stride = ggml_cuda_mmq_get_sram_stride(type, J, fallback);
+    constexpr int K_vram      = ggml_cuda_mmq_get_K_vram(type, J, fallback);
+
+    const float * x0 = (const float *) x + kb0;
+    float * xtf = (float *) x_tile;
+
+    constexpr int floats_per_chunk = 16 / sizeof(float);
+    constexpr int chunks_per_row = K_vram / floats_per_chunk;
+    constexpr int rows_per_warp = warp_size / chunks_per_row;
+
+    const int k0 = (threadIdx.x % chunks_per_row) * floats_per_chunk;
+
+#pragma unroll
+    for (int i0 = 0; i0 < I; i0 += rows_per_warp * nwarps) {
+        const int i = i0 + threadIdx.y * rows_per_warp + threadIdx.x / chunks_per_row;
+
+        ggml_cuda_memcpy_1<16>(xtf + i*sram_stride + k0, x0 + i*stride + k0);
+    }
+}

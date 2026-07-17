@@ -126,6 +126,7 @@ enum ggml_cuda_mmq_sram_layout {
     GGML_CUDA_MMQ_SRAM_LAYOUT_Q6_K,
     GGML_CUDA_MMQ_SRAM_LAYOUT_FP4,   // MXFP4 and NVFP4 on Blackwell.
     GGML_CUDA_MMQ_SRAM_LAYOUT_NVFP4, // Generic NVFP4
+    GGML_CUDA_MMQ_SRAM_LAYOUT_F32,
 };
 
 static constexpr __host__ __device__ int ggml_cuda_mmq_get_sram_stride(ggml_cuda_mmq_sram_layout sram_layout) {
@@ -144,6 +145,8 @@ static constexpr __host__ __device__ int ggml_cuda_mmq_get_sram_stride(ggml_cuda
             return 2*MMQ_TILE_NE_K + 8                     + 4;
         case GGML_CUDA_MMQ_SRAM_LAYOUT_NVFP4:
             return 2*MMQ_TILE_NE_K + MMQ_TILE_NE_K/2       + 4;
+        case GGML_CUDA_MMQ_SRAM_LAYOUT_F32:
+            return 32                                      + 4;
         default:
             return -1;
     }
@@ -156,6 +159,7 @@ static_assert(ggml_cuda_mmq_get_sram_stride(GGML_CUDA_MMQ_SRAM_LAYOUT_Q3_K)  % 8
 static_assert(ggml_cuda_mmq_get_sram_stride(GGML_CUDA_MMQ_SRAM_LAYOUT_Q6_K)  % 8 == 4, "Wrong padding.");
 static_assert(ggml_cuda_mmq_get_sram_stride(GGML_CUDA_MMQ_SRAM_LAYOUT_FP4)   % 8 == 4, "Wrong padding.");
 static_assert(ggml_cuda_mmq_get_sram_stride(GGML_CUDA_MMQ_SRAM_LAYOUT_NVFP4) % 8 == 4, "Wrong padding.");
+static_assert(ggml_cuda_mmq_get_sram_stride(GGML_CUDA_MMQ_SRAM_LAYOUT_F32)   % 8 == 4, "Wrong padding.");
 
 static_assert(ggml_cuda_mmq_get_sram_stride(GGML_CUDA_MMQ_SRAM_LAYOUT_FP4) == ggml_cuda_mmq_get_sram_stride(GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_1), "Wrong tile size for MXFP4");
 
@@ -189,14 +193,14 @@ struct ggml_cuda_mmq_config {
         if (amd_mfma_available(cc) || amd_wmma_available(cc) || turing_mma_available(cc)) {
             return true;
         }
-        return false;
+        return type == GGML_TYPE_F32;
     }
 
     constexpr __device__ bool use_mma_data_layout() const {
 #if defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE)
         return true;
 #else
-        return false;
+        return type == GGML_TYPE_F32;
 #endif // defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE)
     }
 
@@ -441,8 +445,8 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 
 template<ggml_type type, int J, bool fallback>
 static __device__ __forceinline__ void ggml_cuda_mmq_write_back_mma(
-            const float * __restrict__ sum, const int * __restrict__ ids_dst, float * __restrict__ dst,
-            const int stride, const int i_max, const int j_max) {
+        const float * __restrict__ sum, const int * __restrict__ ids_dst, float * __restrict__ dst,
+        const int stride, const int i_max, const int j_max) {
 #if defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     typedef tile<16, 16, int, DATA_LAYOUT_J_MAJOR> tile_C;
 #else
@@ -478,6 +482,32 @@ static __device__ __forceinline__ void ggml_cuda_mmq_write_back_mma(
                 dst[ids_dst[j]*stride + i] = sum[(j0/tile_C::J + n)*tile_C::ne + l];
             }
         }
+    }
+}
+
+template<ggml_type type, int J, bool fallback>
+static __device__ __forceinline__ void ggml_cuda_mmq_write_back_f(
+        const float * __restrict__ sum, const int * __restrict__ ids_dst, float * __restrict__ dst,
+        const int stride, const int i_max, const int j_max) {
+    constexpr int warp_size     = ggml_cuda_get_physical_warp_size();
+    constexpr int nwarps        = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
+    constexpr int I             = ggml_cuda_mmq_get_I(type, J, fallback);
+
+    const int i = threadIdx.y * warp_size + threadIdx.x;
+
+    if (fallback && i > i_max) {
+        return;
+    }
+
+#pragma unroll
+    for (int j0 = 0; j0 < J; j0 += nwarps) {
+        const int j = j0 + threadIdx.y;
+
+        if (j > j_max) {
+            return;
+        }
+
+        dst[ids_dst[j]*stride + i] = sum[j0/nwarps];
     }
 }
 
@@ -788,6 +818,12 @@ static constexpr __device__ ggml_cuda_mmq_util_funcs ggml_cuda_mmq_get_util_func
                 ggml_cuda_mmq_load_tiles_nvfp4<type, J, fallback>,
                 ggml_cuda_mmq_vec_dot_q8_0_16_q8_1_mma<type, J, fallback>,
                 ggml_cuda_mmq_write_back_mma<type, J, fallback>);
+        case GGML_TYPE_F32:
+            return ggml_cuda_mmq_util_funcs(
+                -1,
+                ggml_cuda_mmq_load_tiles_f32<type, J, fallback>,
+                ggml_cuda_mmq_vec_dot_f32_f32<type, J, fallback>,
+                ggml_cuda_mmq_write_back_f<type, J, fallback>);
         default:
             return ggml_cuda_mmq_util_funcs(1, nullptr, nullptr, nullptr);
     }
@@ -1490,6 +1526,7 @@ extern DECL_MMQ_CASE(GGML_TYPE_IQ4_XS);
 // -----------------------------------------
 extern DECL_MMQ_CASE(GGML_TYPE_MXFP4);
 extern DECL_MMQ_CASE(GGML_TYPE_NVFP4);
+extern DECL_MMQ_CASE(GGML_TYPE_F32);
 
 // -------------------------------------------------------------------------------------------------------------------------
 
