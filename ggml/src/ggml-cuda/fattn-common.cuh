@@ -1174,7 +1174,7 @@ void launch_fattn(
                 return true;
             }
             if (amd_wmma_available(cc)) {
-                return tiles_efficiency_percent < 50;
+                return tiles_efficiency_percent <= 50;
             }
             return tiles_efficiency_percent < 75;
         };
