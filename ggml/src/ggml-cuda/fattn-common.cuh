@@ -1166,15 +1166,15 @@ void launch_fattn(
 
     dim3 blocks_num;
     if (stream_k) {
+        if (amd_wmma_available(cc)) {
+            max_blocks_per_sm = std::min(max_blocks_per_sm, 4);
+        }
         auto should_use_stream_k = [](const int cc, const int ntiles_dst, const int max_blocks) {
             const int tiles_nwaves             = (ntiles_dst + max_blocks - 1) / max_blocks;
             const int tiles_efficiency_percent = 100 * ntiles_dst / (max_blocks*tiles_nwaves);
 
             if (GGML_CUDA_CC_IS_NVIDIA(cc) && cc >= GGML_CUDA_CC_ADA_LOVELACE) {
                 return true;
-            }
-            if (amd_wmma_available(cc)) {
-                return tiles_efficiency_percent <= 50;
             }
             return tiles_efficiency_percent < 75;
         };
