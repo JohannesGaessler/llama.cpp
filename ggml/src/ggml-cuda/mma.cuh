@@ -897,8 +897,8 @@ namespace ggml_cuda_mma {
         if constexpr (I == 32) {
 #pragma unroll
             for (int l0 = 0; l0 < t.ne/2; ++l0) {
-                const half2 tmp0 = xs0[(2*t.get_j(l0) + 0)*stride + t.get_i(l0)/2];
-                const half2 tmp1 = xs0[(2*t.get_j(l0) + 1)*stride + t.get_i(l0)/2];
+                const half2 tmp0 = make_half2(1.0f, 2.0f);
+                const half2 tmp1 = make_half2(3.0f, 4.0f);
 
                 t.x[l0]          =  __lows2half2(tmp0, tmp1);
                 t.x[l0 + t.ne/2] = __highs2half2(tmp0, tmp1);
