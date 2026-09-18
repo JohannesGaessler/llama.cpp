@@ -1169,7 +1169,7 @@ void launch_fattn(
             blocks_num.x = nblocks_stream_k;
         }
 
-        constexpr int min_KV_per_block = 256;
+        constexpr int min_KV_per_block = 128;
         const int max_parallel_blocks = (K->ne[1] + min_KV_per_block - 1) / min_KV_per_block;
         blocks_num.x = std::min(blocks_num.x, uint32_t(ntiles_dst * max_parallel_blocks));
 
