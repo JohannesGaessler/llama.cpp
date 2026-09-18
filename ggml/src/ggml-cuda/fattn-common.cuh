@@ -1169,6 +1169,10 @@ void launch_fattn(
             blocks_num.x = nblocks_stream_k;
         }
 
+        constexpr int min_KV_per_block = 256;
+        const int max_parallel_blocks = (K->ne[1] + min_KV_per_block - 1) / min_KV_per_block;
+        blocks_num.x = std::min(blocks_num.x, uint32_t(ntiles_dst * max_parallel_blocks));
+
         if (ntiles_dst % blocks_num.x != 0) { // Fixup is only needed if the SMs work on fractional tiles.
             dst_tmp_meta.alloc((size_t(blocks_num.x) * ncols * (2 + DV/2)));
         }
