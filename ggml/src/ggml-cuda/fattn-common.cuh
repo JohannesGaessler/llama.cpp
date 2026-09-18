@@ -1124,7 +1124,9 @@ void launch_fattn(
 
     const dim3 block_dim(warp_size, nwarps, 1);
     int max_blocks_per_sm = 1; // Max. number of active blocks limited by occupancy.
-    CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max_blocks_per_sm, fattn_kernel, block_dim.x * block_dim.y * block_dim.z, nbytes_shared));
+    if (Q->ne[0] <= 256) {
+        CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max_blocks_per_sm, fattn_kernel, block_dim.x * block_dim.y * block_dim.z, nbytes_shared));
+    }
     GGML_ASSERT(max_blocks_per_sm > 0);
     int parallel_blocks = max_blocks_per_sm;
 
@@ -1222,8 +1224,8 @@ void launch_fattn(
 
     GGML_ASSERT(block_dim.x % warp_size == 0);
 
-        ggml_cuda_kernel_launch_params launch_params = ggml_cuda_kernel_launch_params(blocks_num, block_dim, nbytes_shared, main_stream);
-        ggml_cuda_kernel_launch(fattn_kernel, launch_params,
+    ggml_cuda_kernel_launch_params launch_params = ggml_cuda_kernel_launch_params(blocks_num, block_dim, nbytes_shared, main_stream);
+    ggml_cuda_kernel_launch(fattn_kernel, launch_params,
         (const char *) Q->data,
         K_data,
         V_data,
