@@ -75,9 +75,9 @@ static constexpr __host__ __device__ fattn_mma_config ggml_cuda_fattn_mma_get_co
     GGML_CUDA_FATTN_MMA_CONFIG_CASE(320, 256, 32, 128, 2,  32, 128, 128, 128, 1, false);
     GGML_CUDA_FATTN_MMA_CONFIG_CASE(320, 256, 64, 256, 1,  32, 128, 128, 128, 1, false);
 
-    GGML_CUDA_FATTN_MMA_CONFIG_CASE(512, 512,  8,  64, 4,  32, 256, 256, 128, 1, false);
-    GGML_CUDA_FATTN_MMA_CONFIG_CASE(512, 512, 16,  64, 4,  32, 256, 256, 128, 1, false);
-    GGML_CUDA_FATTN_MMA_CONFIG_CASE(512, 512, 32, 128, 2,  32, 128, 128, 128, 1, false);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE(512, 512,  8,  64, 4,  32, 256, 256, 128, 2, false);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE(512, 512, 16, 128, 2,  32, 256, 256, 128, 2, false);
+    GGML_CUDA_FATTN_MMA_CONFIG_CASE(512, 512, 32, 256, 1,  32, 128, 128, 128, 1, false);
     GGML_CUDA_FATTN_MMA_CONFIG_CASE(512, 512, 64, 256, 1,  32, 128, 128, 128, 1, false);
 
     GGML_CUDA_FATTN_MMA_CONFIG_CASE(576, 512,  8,  64, 4,  32, 288, 256, 128, 1, false);
@@ -1082,6 +1082,15 @@ template<int DV> struct mma_tile_sizes<DV, 8> {
     using T_B_VKQ = tile< 8,  8, half2>; // column-major
     using T_C_VKQ = tile<16,  4, half2>; // row-major
 };
+template<int ncols> struct mma_tile_sizes<512, ncols> {
+    using T_A_KQ  = tile<16,  8, half2>; // row-major
+    using T_B_KQ  = tile< 8,  8, half2>; // column-major
+    using T_C_KQ  = tile<16,  8, float>; // row-major
+    using T_A_VKQ = tile<16,  8, half2>; // row-major
+    using T_B_VKQ = tile< 8,  8, half2>; // column-major
+    using T_C_VKQ = tile<16,  4, half2>; // row-major
+};
+template<> struct mma_tile_sizes<512, 8> : mma_tile_sizes<512, 0> {}; // Only needed for disambiguation.
 #elif defined(AMD_WMMA_AVAILABLE)
 #ifdef RDNA3
 template<int DV, int ncols> struct mma_tile_sizes {
