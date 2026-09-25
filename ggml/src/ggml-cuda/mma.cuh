@@ -793,7 +793,7 @@ namespace ggml_cuda_mma {
     template <bool swz, typename T>
     static __device__ __forceinline__ const T * swizzle(
             const T * __restrict__ tile_base, const int i, const int j, const int stride) {
-        return (const T *) ((const char *) tile_base + swizzle_bytes<swz, T>(i, j, stride));
+        return tile_base + (swz ? (i*stride + j) ^ ((i & 7) << 2) : (i*stride + j));
     }
 
     template <typename T>
