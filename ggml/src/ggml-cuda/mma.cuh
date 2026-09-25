@@ -797,6 +797,16 @@ namespace ggml_cuda_mma {
     }
 
     template <typename T>
+    static __device__ __forceinline__ T swizzle2(const T ptr, const int i) {
+        return ptr ^ ((i & 7) << 4);
+    }
+
+    template <typename T>
+    static __device__ __forceinline__ T * swizzle2(T * ptr, const int i) {
+        return (T *) swizzle2(uintptr_t(ptr), i);
+    }
+
+    template <typename T>
     static __device__ __forceinline__ void load_ldmatrix(
             tile<8, 8, T> & t, const T * __restrict__ xs0, const int stride) {
 #ifdef TURING_MMA_AVAILABLE
