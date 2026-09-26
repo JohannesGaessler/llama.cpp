@@ -957,6 +957,23 @@ namespace ggml_cuda_mma {
         asm volatile("ldmatrix.sync.aligned.m8n8.x4.b16 {%0, %1, %2, %3}, [%4];"
             : "=r"(xi[0]), "=r"(xi[1]), "=r"(xi[2]), "=r"(xi[3])
             : "l"(xs0 + offset_ij));
+#elif defined(AMD_WMMA_AVAILABLE)
+#ifdef RDNA3
+        static_assert(dl == DATA_LAYOUT_I_MAJOR_MIRRORED, "bad data layout");
+        static_assert(sizeof(t.x) == 32, "bad ne");
+        static_assert(I == 16, "bad tile width");
+        static_assert(J ==  8, "bad tile height");
+#pragma unroll
+        for (int o = 0; o < 8; o += 4) {
+            int offset_ij = offset + t.get_i(0) * stride + o;
+            offset_ij = swizzle2<T>(offset_ij, t.get_i(0));
+            ggml_cuda_memcpy_1<16>(t.x + o, xs0 + offset_ij);
+        }
+#else
+        static_assert(dl == DATA_LAYOUT_I_MAJOR, "bad data layout");
+        static_assert(sizeof(t.x) == 16, "bad ne");
+        ggml_cuda_memcpy_1<16>(t.x, xs0 + t.get_i(0)*stride + t.get_j(0));
+#endif // RDNA3
 #else
         GGML_UNUSED_VARS(t, xs0, offset);
         NO_DEVICE_CODE;
@@ -977,6 +994,34 @@ namespace ggml_cuda_mma {
         asm volatile("ldmatrix.sync.aligned.m8n8.x4.trans.b16 {%0, %1, %2, %3}, [%4];"
             : "=r"(xi[0]), "=r"(xi[2]), "=r"(xi[1]), "=r"(xi[3])
             : "l"(xs0 + offset_ij));
+#elif defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
+        static_assert(dl == DATA_LAYOUT_I_MAJOR || dl == DATA_LAYOUT_I_MAJOR_MIRRORED, "bad data layout");
+        if constexpr (I == 32) {
+#pragma unroll
+            for (int l0 = 0; l0 < t.ne/2; ++l0) {
+                half2 tmp[2];
+#pragma unroll
+                for (int o = 0; o < 2; ++o) {
+                    const int j = 2*t.get_j(l0) + o;
+                    int offset_ij = offset + j*stride + t.get_i(l0)/2;
+                    offset_ij = swizzle2<T>(offset_ij, j);
+                    tmp[o] = xs0[offset_ij];
+                }
+
+                t.x[l0]          =  __lows2half2(tmp[0], tmp[1]);
+                t.x[l0 + t.ne/2] = __highs2half2(tmp[0], tmp[1]);
+            }
+        } else {
+            half * xh = (half *) t.x;
+#pragma unroll
+            for (int l = 0; l < t.ne; ++l) {
+#pragma unroll
+                for (int o = 0; o < 2; ++o) {
+                    const int j = 2*t.get_j(l) + o;
+                    xh[2*l + o] = ((const half *) xs0)[swizzle2<half>(j*(2*stride) + t.get_i(l), j)];
+                }
+            }
+        }
 #else
         GGML_UNUSED_VARS(t, xs0, offset);
         NO_DEVICE_CODE;
