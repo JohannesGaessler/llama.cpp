@@ -943,9 +943,9 @@ namespace ggml_cuda_mma {
 #endif // TURING_MMA_AVAILABLE
     }
 
-    template <int I, int J, typename T, data_layout dl>
+    template <int stride, int I, int J, typename T, data_layout dl>
     static __device__ __forceinline__ void load_ldmatrix_swizzled(
-            tile<I, J, T, dl> & t, const T * __restrict__ xs0, const int offset, const int stride) {
+            tile<I, J, T, dl> & t, const T * __restrict__ xs0, const int offset) {
 #if defined(TURING_MMA_AVAILABLE)
         static_assert(I == 16, "bad tile width");
         static_assert(J ==  8, "bad tile height");
@@ -958,14 +958,14 @@ namespace ggml_cuda_mma {
             : "=r"(xi[0]), "=r"(xi[1]), "=r"(xi[2]), "=r"(xi[3])
             : "l"(xs0 + offset_ij));
 #else
-        GGML_UNUSED_VARS(t, xs0, offset, stride);
+        GGML_UNUSED_VARS(t, xs0, offset);
         NO_DEVICE_CODE;
 #endif // defined(TURING_MMA_AVAILABLE)
     }
 
-    template <int I, typename T, data_layout dl>
+    template <int stride, int I, typename T, data_layout dl>
     static __device__ __forceinline__ void load_ldmatrix_trans_swizzled(
-            tile<I, 8, T, dl> & t, const T * __restrict__ xs0, const int offset, const int stride) {
+            tile<I, 8, T, dl> & t, const T * __restrict__ xs0, const int offset) {
 #if defined(TURING_MMA_AVAILABLE)
         static_assert(I == 16, "bad tile width");
         static_assert(dl == DATA_LAYOUT_I_MAJOR, "bad data layout");
@@ -978,7 +978,7 @@ namespace ggml_cuda_mma {
             : "=r"(xi[0]), "=r"(xi[2]), "=r"(xi[1]), "=r"(xi[3])
             : "l"(xs0 + offset_ij));
 #else
-        GGML_UNUSED_VARS(t, xs0, offset, stride);
+        GGML_UNUSED_VARS(t, xs0, offset);
         NO_DEVICE_CODE;
 #endif // defined(TURING_MMA_AVAILABLE)
     }
