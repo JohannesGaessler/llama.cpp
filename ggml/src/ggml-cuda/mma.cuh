@@ -796,16 +796,27 @@ namespace ggml_cuda_mma {
         return tile_base + (swz ? (i*stride + j) ^ ((i & 7) << 2) : (i*stride + j));
     }
 
-    template <typename T>
+    template <int stride, typename T>
     static __device__ __forceinline__ uint32_t swizzle2(const uint32_t offset, const uint32_t i) {
         static_assert(sizeof(T) <= 4, "unsupported type size");
+        constexpr int stride_bytes = stride*sizeof(T);
+        static_assert(stride_bytes % 16 == 0, "bad stride");
         constexpr uint32_t shift = sizeof(T) == 1 ? 4 : (sizeof(T) == 2 ? 3 : 2);
-        return offset ^ ((i & 7) << shift);
+        if (stride_bytes % 32 != 0) {
+            return offset; // Equivalent to padding with 16 bytes.
+        }
+        if (stride_bytes % 64 != 0) {
+            return offset ^ (((i / 4) % 2) << shift);
+        }
+        if (stride_bytes % 128 != 0) {
+            return offset ^ (((i / 2) % 4) << shift);
+        }
+        return offset ^ ((i % 8) << shift);
     }
 
-    template <typename T>
+    template <int stride, typename T>
     static __device__ __forceinline__ T * swizzle2(T * ptr, const uint32_t offset, const uint32_t i) {
-        return ptr + swizzle2<T>(offset, i);
+        return ptr + swizzle2<stride, T>(offset, i);
     }
 
     template <typename T>
@@ -952,7 +963,7 @@ namespace ggml_cuda_mma {
         const int i = threadIdx.x % t.I;
         const int j = (threadIdx.x / t.I) * (t.J / 2);
         int offset_ij = offset + i * stride + j;
-        offset_ij = swizzle2<T>(offset_ij, i);
+        offset_ij = swizzle2<stride, T>(offset_ij, i);
         int * xi = (int *) t.x;
         asm volatile("ldmatrix.sync.aligned.m8n8.x4.b16 {%0, %1, %2, %3}, [%4];"
             : "=r"(xi[0]), "=r"(xi[1]), "=r"(xi[2]), "=r"(xi[3])
@@ -966,7 +977,7 @@ namespace ggml_cuda_mma {
 #pragma unroll
         for (int o = 0; o < 8; o += 4) {
             int offset_ij = offset + t.get_i(0) * stride + o;
-            offset_ij = swizzle2<T>(offset_ij, t.get_i(0));
+            offset_ij = swizzle2<stride, T>(offset_ij, t.get_i(0));
             ggml_cuda_memcpy_1<16>(t.x + o, xs0 + offset_ij);
         }
 #else
@@ -989,7 +1000,7 @@ namespace ggml_cuda_mma {
         const int i = threadIdx.x % t.I;
         const int j = (threadIdx.x / t.I) * (t.J / 2);
         int offset_ij = offset + i * stride + j;
-        offset_ij = swizzle2<T>(offset_ij, i);
+        offset_ij = swizzle2<stride, T>(offset_ij, i);
         int * xi = (int *) t.x;
         asm volatile("ldmatrix.sync.aligned.m8n8.x4.trans.b16 {%0, %1, %2, %3}, [%4];"
             : "=r"(xi[0]), "=r"(xi[2]), "=r"(xi[1]), "=r"(xi[3])
@@ -1004,7 +1015,7 @@ namespace ggml_cuda_mma {
                 for (int o = 0; o < 2; ++o) {
                     const int j = 2*t.get_j(l0) + o;
                     int offset_ij = offset + j*stride + t.get_i(l0)/2;
-                    offset_ij = swizzle2<T>(offset_ij, j);
+                    offset_ij = swizzle2<stride, T>(offset_ij, j);
                     tmp[o] = xs0[offset_ij];
                 }
 
@@ -1018,7 +1029,7 @@ namespace ggml_cuda_mma {
 #pragma unroll
                 for (int o = 0; o < 2; ++o) {
                     const int j = 2*t.get_j(l) + o;
-                    xh[2*l + o] = ((const half *) xs0)[swizzle2<half>(j*(2*stride) + t.get_i(l), j)];
+                    xh[2*l + o] = ((const half *) xs0)[swizzle2<2*stride, half>(2*offset + j*(2*stride) + t.get_i(l), j)];
                 }
             }
         }
