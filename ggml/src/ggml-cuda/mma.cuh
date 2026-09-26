@@ -797,13 +797,15 @@ namespace ggml_cuda_mma {
     }
 
     template <typename T>
-    static __device__ __forceinline__ T swizzle2(const T ptr, const int i) {
-        return ptr ^ ((i & 7) << 4);
+    static __device__ __forceinline__ uint32_t swizzle2(const uint32_t offset, const uint32_t i) {
+        static_assert(sizeof(T) <= 4, "unsupported type size");
+        constexpr uint32_t shift = sizeof(T) == 1 ? 4 : (sizeof(T) == 2 ? 3 : 2);
+        return offset ^ ((i & 7) << shift);
     }
 
     template <typename T>
-    static __device__ __forceinline__ T * swizzle2(T * ptr, const int i) {
-        return (T *) swizzle2(uintptr_t(ptr), i);
+    static __device__ __forceinline__ T * swizzle2(T * ptr, const uint32_t offset, const uint32_t i) {
+        return ptr + swizzle2<T>(offset, i);
     }
 
     template <typename T>
