@@ -968,6 +968,12 @@ namespace ggml_cuda_mma {
         asm volatile("ldmatrix.sync.aligned.m8n8.x4.b16 {%0, %1, %2, %3}, [%4];"
             : "=r"(xi[0]), "=r"(xi[1]), "=r"(xi[2]), "=r"(xi[3])
             : "l"(xs0 + offset_ij));
+#elif defined(VOLTA_MMA_AVAILABLE)
+#pragma unroll
+        for (int o = 0; o < 8; o += 4) {
+            const int offset_ij = offset + t.get_i(o) * stride + o;
+            ggml_cuda_memcpy_1<4*sizeof(T)>(t.x + o, swizzle2(xs0, offset_ij, t.get_i(o)));
+        }
 #elif defined(AMD_WMMA_AVAILABLE)
 #ifdef RDNA3
         static_assert(dl == DATA_LAYOUT_I_MAJOR_MIRRORED, "bad data layout");
@@ -976,15 +982,19 @@ namespace ggml_cuda_mma {
         static_assert(J ==  8, "bad tile height");
 #pragma unroll
         for (int o = 0; o < 8; o += 4) {
-            int offset_ij = offset + t.get_i(0) * stride + o;
-            offset_ij = swizzle2<stride, T>(offset_ij, t.get_i(0));
-            ggml_cuda_memcpy_1<16>(t.x + o, xs0 + offset_ij);
+            const int offset_ij = offset + t.get_i(0) * stride + o;
+            ggml_cuda_memcpy_1<16>(t.x + o, swizzle2<stride, T>(xs0, offset_ij, t.get_i(0)));
         }
 #else
         static_assert(dl == DATA_LAYOUT_I_MAJOR, "bad data layout");
         static_assert(sizeof(t.x) == 16, "bad ne");
-        ggml_cuda_memcpy_1<16>(t.x, xs0 + t.get_i(0)*stride + t.get_j(0));
+        const int offset_ij = xs0 + t.get_i(0)*stride + t.get_j(0);
+        ggml_cuda_memcpy_1<16>(t.x, swizzle2<stride, T>(xs0, offset_ij, t.get_i(0)));
 #endif // RDNA3
+#elif defined(AMD_MFMA_AVAILABLE)
+        static_assert(sizeof(t.x) == 8, "bad ne");
+        const int offset_ij = xs0 + t.get_i(0)*stride + t.get_j(0);
+        ggml_cuda_memcpy_1<8>(t.x, swizzle2(xs0, offset_ij, t.get_i(0)));
 #else
         GGML_UNUSED_VARS(t, xs0, offset);
         NO_DEVICE_CODE;
