@@ -972,7 +972,7 @@ namespace ggml_cuda_mma {
 #pragma unroll
         for (int o = 0; o < 8; o += 4) {
             const int offset_ij = offset + t.get_i(o) * stride + o;
-            ggml_cuda_memcpy_1<4*sizeof(T)>(t.x + o, swizzle2(xs0, offset_ij, t.get_i(o)));
+            ggml_cuda_memcpy_1<4*sizeof(T)>(t.x + o, swizzle2<stride>(xs0, offset_ij, t.get_i(o)));
         }
 #elif defined(AMD_WMMA_AVAILABLE)
 #ifdef RDNA3
@@ -983,18 +983,18 @@ namespace ggml_cuda_mma {
 #pragma unroll
         for (int o = 0; o < 8; o += 4) {
             const int offset_ij = offset + t.get_i(0) * stride + o;
-            ggml_cuda_memcpy_1<16>(t.x + o, swizzle2<stride, T>(xs0, offset_ij, t.get_i(0)));
+            ggml_cuda_memcpy_1<16>(t.x + o, swizzle2<stride>(xs0, offset_ij, t.get_i(0)));
         }
 #else
         static_assert(dl == DATA_LAYOUT_I_MAJOR, "bad data layout");
         static_assert(sizeof(t.x) == 16, "bad ne");
         const int offset_ij = offset + t.get_i(0)*stride + t.get_j(0);
-        ggml_cuda_memcpy_1<16>(t.x, swizzle2<stride, T>(xs0, offset_ij, t.get_i(0)));
+        ggml_cuda_memcpy_1<16>(t.x, swizzle2<stride>(xs0, offset_ij, t.get_i(0)));
 #endif // RDNA3
 #elif defined(AMD_MFMA_AVAILABLE)
         static_assert(sizeof(t.x) == 8, "bad ne");
         const int offset_ij = offset + t.get_i(0)*stride + t.get_j(0);
-        ggml_cuda_memcpy_1<8>(t.x, swizzle2<stride, T>(xs0, offset_ij, t.get_i(0)));
+        ggml_cuda_memcpy_1<8>(t.x, swizzle2<stride>(xs0, offset_ij, t.get_i(0)));
 #else
         GGML_UNUSED_VARS(t, xs0, offset);
         NO_DEVICE_CODE;
