@@ -994,7 +994,7 @@ namespace ggml_cuda_mma {
 #elif defined(AMD_MFMA_AVAILABLE)
         static_assert(sizeof(t.x) == 8, "bad ne");
         const int offset_ij = offset + t.get_i(0)*stride + t.get_j(0);
-        ggml_cuda_memcpy_1<8>(t.x, swizzle2(xs0, offset_ij, t.get_i(0)));
+        ggml_cuda_memcpy_1<8>(t.x, swizzle2<stride, T>(xs0, offset_ij, t.get_i(0)));
 #else
         GGML_UNUSED_VARS(t, xs0, offset);
         NO_DEVICE_CODE;
