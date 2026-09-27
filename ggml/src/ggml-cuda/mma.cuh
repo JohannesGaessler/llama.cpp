@@ -988,12 +988,12 @@ namespace ggml_cuda_mma {
 #else
         static_assert(dl == DATA_LAYOUT_I_MAJOR, "bad data layout");
         static_assert(sizeof(t.x) == 16, "bad ne");
-        const int offset_ij = xs0 + t.get_i(0)*stride + t.get_j(0);
+        const int offset_ij = offset + t.get_i(0)*stride + t.get_j(0);
         ggml_cuda_memcpy_1<16>(t.x, swizzle2<stride, T>(xs0, offset_ij, t.get_i(0)));
 #endif // RDNA3
 #elif defined(AMD_MFMA_AVAILABLE)
         static_assert(sizeof(t.x) == 8, "bad ne");
-        const int offset_ij = xs0 + t.get_i(0)*stride + t.get_j(0);
+        const int offset_ij = offset + t.get_i(0)*stride + t.get_j(0);
         ggml_cuda_memcpy_1<8>(t.x, swizzle2(xs0, offset_ij, t.get_i(0)));
 #else
         GGML_UNUSED_VARS(t, xs0, offset);
