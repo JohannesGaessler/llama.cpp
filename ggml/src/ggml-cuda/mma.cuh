@@ -782,20 +782,6 @@ namespace ggml_cuda_mma {
         }
     }
 
-    // Byte offset of tile element (i, j). If swz, XOR swizzle it to avoid bank conflicts without row padding.
-    template <bool swz, typename T>
-    static __device__ __forceinline__ int swizzle_bytes(const int i, const int j, const int stride) {
-        static_assert(!swz || sizeof(T) == 4, "swizzled tiles need 32 bit elements");
-        const int off = (i*stride + j) * (int) sizeof(T);
-        return swz ? off ^ ((i & 7) << 4) : off;
-    }
-
-    template <bool swz, typename T>
-    static __device__ __forceinline__ const T * swizzle(
-            const T * __restrict__ tile_base, const int i, const int j, const int stride) {
-        return tile_base + (swz ? (i*stride + j) ^ ((i & 7) << 2) : (i*stride + j));
-    }
-
     template <int stride, typename T>
     static __device__ __forceinline__ uint32_t swizzle2(const uint32_t offset, const uint32_t i) {
         static_assert(sizeof(T) <= 4, "unsupported type size");
