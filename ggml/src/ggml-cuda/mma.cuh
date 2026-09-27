@@ -902,10 +902,15 @@ namespace ggml_cuda_mma {
 
     static __device__ __forceinline__ void load_ldmatrix(
             tile<8, 4, half2, DATA_LAYOUT_J_MAJOR_MIRRORED> & t, const half2 * __restrict__ xs0, const int stride) {
+#ifdef VOLTA_MMA_AVAILABLE
 #pragma unroll
         for (int l0 = 0; l0 < t.ne; l0 += 2) {
             ggml_cuda_memcpy_1<2*sizeof(half2)>(t.x + l0, xs0 + t.get_i(l0)*stride + t.get_j(l0));
         }
+#else
+        GGML_UNUSED_VARS(t, xs0, stride);
+        NO_DEVICE_CODE;
+#endif // VOLTA_MMA_AVAILABLE
     }
 
     static __device__ __forceinline__ void load_ldmatrix(
@@ -999,6 +1004,21 @@ namespace ggml_cuda_mma {
         GGML_UNUSED_VARS(t, xs0, offset);
         NO_DEVICE_CODE;
 #endif // defined(TURING_MMA_AVAILABLE)
+    }
+
+    template <int stride>
+    static __device__ __forceinline__ void load_ldmatrix_swizzled(
+            tile<8, 4, half2, DATA_LAYOUT_J_MAJOR_MIRRORED> & t, const half2 * __restrict__ xs0, const int offset) {
+#ifdef VOLTA_MMA_AVAILABLE
+#pragma unroll
+        for (int l0 = 0; l0 < t.ne; l0 += 2) {
+            const int offset_ij = offset + t.get_i(l0)*stride + t.get_j(l0);
+            ggml_cuda_memcpy_1<2*sizeof(half2)>(t.x + l0, swizzle2<stride>(xs0, offset_ij, t.get_i(l0)));
+        }
+#else
+        GGML_UNUSED_VARS(t, xs0, offset);
+        NO_DEVICE_CODE;
+#endif // VOLTA_MMA_AVAILABLE
     }
 
     template <int stride, int I, typename T, data_layout dl>
