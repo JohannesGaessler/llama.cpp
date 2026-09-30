@@ -807,6 +807,11 @@ bool ggml_cuda_should_use_mmvf(enum ggml_type type, int cc, int warp_size, const
         }
     }
 
+    // MMF needs full row tiles, for other row counts MMVF still beats cuBLAS at small batch size
+    if (!ggml_cuda_should_use_mmf(type, cc, warp_size, src0_ne, src0_nb, ne11, /*mul_mat_id =*/ false)) {
+        return ne11 <= MMVF_MAX_BATCH_SIZE;
+    }
+
     switch (type) {
         case GGML_TYPE_F32:
             if (GGML_CUDA_CC_IS_NVIDIA(cc)) {
@@ -827,10 +832,6 @@ bool ggml_cuda_should_use_mmvf(enum ggml_type type, int cc, int warp_size, const
         case GGML_TYPE_F16:
             if (GGML_CUDA_CC_IS_NVIDIA(cc)) {
                 const bool src0_small = (src0_ne[1] <= 512 || src0_ne[2]*src0_ne[3] == 1);
-                // MMF needs full row tiles, for other row counts MMVF still beats cuBLAS at small batch size
-                if (src0_small && !ggml_cuda_should_use_mmf(type, cc, warp_size, src0_ne, src0_nb, ne11, /*mul_mat_id =*/ false)) {
-                    return ne11 <= MMVF_MAX_BATCH_SIZE;
-                }
                 if (ampere_mma_available(cc)) {
                     return src0_small && ne11 == 1;
                 }
@@ -857,10 +858,6 @@ bool ggml_cuda_should_use_mmvf(enum ggml_type type, int cc, int warp_size, const
         case GGML_TYPE_BF16:
             if (GGML_CUDA_CC_IS_NVIDIA(cc)) {
                 const bool src0_small = (src0_ne[1] <= 512 || src0_ne[2]*src0_ne[3] == 1);
-                // MMF needs full row tiles, for other row counts MMVF still beats cuBLAS at small batch size
-                if (src0_small && !ggml_cuda_should_use_mmf(type, cc, warp_size, src0_ne, src0_nb, ne11, /*mul_mat_id =*/ false)) {
-                    return ne11 <= MMVF_MAX_BATCH_SIZE;
-                }
                 if (ampere_mma_available(cc)) {
                     return src0_small && ne11 == 1;
                 }
