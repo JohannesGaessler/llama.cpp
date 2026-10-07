@@ -239,8 +239,6 @@ static __global__ void lightning_indexer_kernel_wmma(
 // tokens scored per block by the tile kernel
 #define LIGHTNING_INDEXER_TILE_TOKENS 8
 
-#if defined(GGML_USE_HIP)
-
 template <int WARPS_PER_BLOCK, int K_VECS_PER_BLOCK, int64_t N_EMBD, int64_t N_HEAD, ggml_type TYPE_K>
 static __global__ void lightning_indexer_kernel_mma(
         const float * Q, const char * K, const float * W, const half * M, float * dst,
@@ -252,7 +250,6 @@ static __global__ void lightning_indexer_kernel_mma(
         size_t nbm1, size_t nbm2, size_t nbm3,
         int64_t nem3
     ) {
-#if defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     constexpr int MMA_DIM = 16;
     constexpr int WAVE_SIZE = ggml_cuda_get_physical_warp_size();
     constexpr int THREADS_PER_BLOCK = WARPS_PER_BLOCK * WAVE_SIZE;
@@ -369,19 +366,7 @@ static __global__ void lightning_indexer_kernel_mma(
             dst_base[i_kv] = score + __half2float(m_base[i_kv]);
         }
     }
-#else
-    GGML_UNUSED_VARS(Q, K, W, M, dst,
-        n_stream, n_batch, n_kv,
-        nb1, nb2, nb3,
-        nbq1, nbq2, nbq3,
-        nbk1, nbk2, nbk3,
-        nbw1, nbw2, nbw3,
-        nbm1, nbm2, nbm3,
-        nem3);
-    NO_DEVICE_CODE;
-#endif // defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
 }
-#endif // defined(GGML_USE_HIP)
 
 // TODO there is one ugly assumption used in this kernel - that WARP_SIZE is equal to 32
 // thanks to that one warp operating on float4 processes whole indexer K/Q vectors
@@ -740,27 +725,8 @@ void ggml_cuda_lightning_indexer(ggml_backend_cuda_context & ctx, ggml_tensor * 
     const int cc     = ggml_cuda_info().devices[device].cc;
 
     if (n_embd == 128 && n_head == 64) {
-#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
-        if (GGML_CUDA_CC_IS_NVIDIA(cc) && turing_mma_available(cc) && k->type != GGML_TYPE_F32 && k->type != GGML_TYPE_BF16) {
-            // use wmma kernel
-            constexpr int K_VECS_PER_BLOCK = 32;
-            constexpr int WARPS_PER_BLOCK = 8;
-
-            dim3 block(32, WARPS_PER_BLOCK);
-            int num_kv_blocks = (n_kv + (K_VECS_PER_BLOCK) - 1) / (K_VECS_PER_BLOCK);
-            dim3 grid(num_kv_blocks, n_batch, n_stream);
-
-            LIGHTNING_INDEXER_CASE(lightning_indexer_kernel_wmma, 128, 64, k, GGML_TYPE_F16)
-            LIGHTNING_INDEXER_CASE(lightning_indexer_kernel_wmma, 128, 64, k, GGML_TYPE_Q4_0)
-            LIGHTNING_INDEXER_CASE(lightning_indexer_kernel_wmma, 128, 64, k, GGML_TYPE_Q4_1)
-            LIGHTNING_INDEXER_CASE(lightning_indexer_kernel_wmma, 128, 64, k, GGML_TYPE_Q5_0)
-            LIGHTNING_INDEXER_CASE(lightning_indexer_kernel_wmma, 128, 64, k, GGML_TYPE_Q5_1)
-            LIGHTNING_INDEXER_CASE(lightning_indexer_kernel_wmma, 128, 64, k, GGML_TYPE_Q8_0)
-            GGML_ABORT("fatal error");
-        } else {
-#elif defined(GGML_USE_HIP)
         static const bool indexer_no_mfma = getenv("GGML_INDEXER_NO_MFMA") != nullptr;
-        if ((amd_mfma_available(cc) || amd_wmma_available(cc)) && !indexer_no_mfma && k->type != GGML_TYPE_F32 && k->type != GGML_TYPE_BF16) {
+        if ((turing_mma_available(cc) || amd_mfma_available(cc) || amd_wmma_available(cc)) && !indexer_no_mfma && k->type != GGML_TYPE_F32 && k->type != GGML_TYPE_BF16) {
             constexpr int K_VECS_PER_BLOCK = 32;
             constexpr int WARPS_PER_BLOCK  = 4;
 
@@ -776,9 +742,6 @@ void ggml_cuda_lightning_indexer(ggml_backend_cuda_context & ctx, ggml_tensor * 
             LIGHTNING_INDEXER_CASE(lightning_indexer_kernel_mma, 128, 64, k, GGML_TYPE_Q8_0)
             GGML_ABORT("fatal error");
         } else {
-#else // !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
-        {
-#endif // !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
             // use vector kernel
             constexpr int K_VECS_PER_WARP = 8;
             constexpr int WARPS_PER_BLOCK = 8;
