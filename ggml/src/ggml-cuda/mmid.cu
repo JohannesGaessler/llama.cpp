@@ -118,6 +118,8 @@ static __global__ void mm_ids_helper(
         return;
     }
 
+    atomicMax(expert_bounds + gridDim.x + 1, it_compact);
+
     expert_bounds[expert] = nex_prev;
 
     if (expert < static_cast<int>(gridDim.x) - 1) {

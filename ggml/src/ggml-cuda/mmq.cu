@@ -283,7 +283,9 @@ void ggml_cuda_mul_mat_q(
 
     ggml_cuda_pool_alloc<int32_t> ids_src1(ctx.pool(), ne_get_rows);
     ggml_cuda_pool_alloc<int32_t> ids_dst(ctx.pool(), ne_get_rows + J_best-1); // Needs to be padded for unconditional memory access.
-    ggml_cuda_pool_alloc<int32_t> expert_bounds(ctx.pool(), ne02 + 1);
+    ggml_cuda_pool_alloc<int32_t> expert_bounds(ctx.pool(), ne02 + 2);
+
+    CUDA_CHECK(cudaMemsetAsync(expert_bounds.get() + ne02 + 1, 0, sizeof(int32_t), stream));
 
     // gate/up activations are broadcast across experts (ne11 == 1): quantize each token once and
     // scatter to its slots. ids_src1 then holds the inverse map (token slot -> compact row).

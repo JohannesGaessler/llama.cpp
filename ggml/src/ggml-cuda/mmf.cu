@@ -77,7 +77,7 @@ void ggml_cuda_mul_mat_f(ggml_backend_cuda_context & ctx, const ggml_tensor * sr
 
         ids_src_compact_dev.alloc(ctx.pool(), ne_get_rows);
         ids_dst_compact_dev.alloc(ctx.pool(), ne_get_rows);
-        expert_bounds_dev.alloc(ctx.pool(), n_experts + 1);
+        expert_bounds_dev.alloc(ctx.pool(), n_experts + 2);
 
         const int si1  = static_cast<int>(ids_s1);
         const int sis1 = static_cast<int>(src1->nb[2] / src1->nb[1]);
