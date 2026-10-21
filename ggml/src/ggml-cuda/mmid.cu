@@ -36,31 +36,36 @@ static __global__ void mm_ids_helper(
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
     const int n_expert_used = n_expert_used_template == 0 ? n_expert_used_var : n_expert_used_template;
     const int expert = blockIdx.x;
+    const int nr = blockIdx.y;
 
     extern __shared__ char data_mm_ids_helper[];
     mm_ids_helper_store * store = (mm_ids_helper_store *) data_mm_ids_helper;
 
     int nex_prev   = 0; // Number of columns for experts with a lower index.
     int it_compact = 0; // Running index for the compact slice of this expert.
+    int rep_prev   = 0;
 
     if constexpr (n_expert_used_template == 0) {
         // Generic implementation:
         for (int it = 0; it < n_tokens; ++it) {
+            int n_found = 0; // How many times the expert has been found already.
             for (int iex0 = 0; iex0 < n_expert_used; iex0 += warp_size) {
                 const int iex = iex0 + threadIdx.x;
 
                 const int expert_used = iex < n_expert_used ? ids[it*si1 + iex] : INT_MAX;
                 nex_prev += expert_used < expert;
 
-                const int iex_used = __ballot_sync(0xFFFFFFFF, expert_used == expert);
-                const int it_compact_offset = __popc(iex_used << (warp_size - threadIdx.x));
-
-                if (expert_used == expert) {
-                    store[it_compact + it_compact_offset] = mm_ids_helper_store(it, iex);
+                const bool found = expert_used == expert;
+                const int found_warp = __ballot_sync(0xFFFFFFFF, found);
+                const int n_found_by_lower = __popc(found_warp << (warp_size - threadIdx.x));
+                if (found && n_found + n_found_by_lower == nr) {
+                    store[it_compact] = mm_ids_helper_store(it, iex);
                 }
 
-                it_compact += __popc(iex_used);
+                n_found += __popc(found_warp);
             }
+            it_compact += (n_found > nr);
+            rep_prev += min(nr, n_found);
         }
     } else {
         // Implementation optimized for specific numbers of experts used:
@@ -99,21 +104,22 @@ static __global__ void mm_ids_helper(
     }
     nex_prev = warp_reduce_sum<warp_size>(nex_prev);
     ggml_cuda_syncwarp();
+    const int n_prev = nex_prev + rep_prev;
 
     for (int itc = threadIdx.x; itc < it_compact; itc += warp_size) {
         const mm_ids_helper_store store_it = store[itc];
         const int it       = store_it.it();
         const int iex_used = store_it.iex_used();
-        ids_dst[nex_prev + itc] = it*n_expert_used + iex_used;
+        ids_dst[n_prev + itc] = it*n_expert_used + iex_used;
         // ids_src1 holds the forward map, or the inverse map (token slot -> compact row) for quant dedup
         if (write_inverse) {
-            ids_src1[it*n_expert_used + iex_used] = nex_prev + itc;
+            ids_src1[it*n_expert_used + iex_used] = n_prev + itc;
         } else {
-            ids_src1[nex_prev + itc] = it*sis1 + iex_used % nchannels_y;
+            ids_src1[n_prev + itc] = it*sis1 + iex_used % nchannels_y;
         }
     }
 
-    if (threadIdx.x != 0) {
+    if (nr != 0 || threadIdx.x != 0) {
         return;
     }
 
@@ -138,9 +144,9 @@ static void launch_mm_ids_helper(
     const size_t smpbo = ggml_cuda_info().devices[id].smpbo;
     CUDA_SET_SHARED_MEMORY_LIMIT(mm_ids_helper<n_expert_used_template>, smpbo);
 
-    const dim3 num_blocks(n_experts, 1, 1);
+    const dim3 num_blocks(n_experts, n_expert_used_var, 1);
     const dim3 block_size(warp_size, 1, 1);
-    const size_t nbytes_shared = n_tokens*n_expert_used_var*sizeof(mm_ids_helper_store);
+    const size_t nbytes_shared = n_tokens*sizeof(mm_ids_helper_store);
     GGML_ASSERT(nbytes_shared <= smpbo);
     mm_ids_helper<n_expert_used_template><<<num_blocks, block_size, nbytes_shared, stream>>>
         (ids, ids_src1, ids_dst, expert_bounds, n_tokens, n_expert_used_var, nchannels_y, si1, sis1, write_inverse);
