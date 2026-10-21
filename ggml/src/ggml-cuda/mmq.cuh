@@ -994,7 +994,7 @@ static __global__ void mul_mat_q(
     if constexpr (!ggml_cuda_mmq_get_stream_k(type, J, fallback, prec_src1)) {
         const uint2 tmp2 = fast_div_modulo(blockIdx.z, nchannels_y);
         const int wt = tmp2.x;
-        const int zt = tmp2.y;
+        int       zt = tmp2.y;
         const int jt = blockIdx.y;
         const int it = blockIdx.x;
 
@@ -1013,6 +1013,7 @@ static __global__ void mul_mat_q(
 
         if (ids_dst) {
             const ggml_cuda_mm_id_tile_spec tsz = tile_spec[jt];
+            zt       = tsz.expert;
             col_low  = tsz.col_low;
             col_high = tsz.col_high;
             col_diff = col_high - col_low;
@@ -1415,10 +1416,10 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     const int ntzw = args.nchannels_y * args.nsamples_y;
     const dim3 block_nums_xy_tiling(nty, args.ntj, ntzw);
 
-    GGML_ASSERT(args.nchannels_y % args.nchannels_x == 0);
-    GGML_ASSERT(args.nsamples_y  % args.nsamples_x  == 0);
-    const int channel_ratio = args.nchannels_y / args.nchannels_x;
-    const int sample_ratio  = args.nsamples_y  / args.nsamples_x;
+    GGML_ASSERT(args.ids_dst || args.nchannels_y % args.nchannels_x == 0);
+    GGML_ASSERT(                args.nsamples_y  % args.nsamples_x  == 0);
+    const int channel_ratio = args.ids_dst ? 1 : args.nchannels_y / args.nchannels_x;
+    const int sample_ratio  =                    args.nsamples_y  / args.nsamples_x;
 
     const uint3 blocks_per_ne00_fd = init_fastdiv_values(args.ncols_x / ggml_cuda_type_traits<type>::qk);
     const uint3 ntx_fd             = init_fastdiv_values(args.ntj);
