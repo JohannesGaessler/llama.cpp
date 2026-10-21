@@ -123,17 +123,12 @@ static __global__ void mm_ids_helper(
     int col_low  = nex_prev;
     int col_high = nex_prev + min(int(tile_width.z), it_compact);
 
-    uint2 tmp_low  = fast_div_modulo(col_low,  tile_width);
-    uint2 tmp_high = fast_div_modulo(col_high, tile_width);
-
     while (col_high > fastdiv(col_low + tile_width.z - 1, tile_width) * tile_width.z) {
         tile_spec[fastdiv(col_low + tile_width.z - 1, tile_width)]
             = {expert, col_low, col_high, /*padding =*/ 0};
 
         col_low  = col_high;
         col_high = min(col_high + int(tile_width.z), nex_prev + it_compact);
-        tmp_low  = fast_div_modulo(col_low,  tile_width);
-        tmp_high = fast_div_modulo(col_high, tile_width);
     }
     tile_spec[fastdiv(n_tokens*n_expert_used + tile_width.z - 1, tile_width) + expert]
         = {expert, col_low, col_high, /*padding =*/ 0};
