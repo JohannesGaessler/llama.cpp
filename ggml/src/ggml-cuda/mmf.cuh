@@ -38,6 +38,7 @@ struct mmf_ids_data {
     const int32_t * ids_dst_compact = nullptr;
     const int32_t * expert_bounds_dev = nullptr;
     int n_experts = 0;
+    int n_expert_used = 0;
     int sis1 = 0;
 };
 
@@ -602,8 +603,9 @@ static inline void mul_mat_f_switch_ids(
 
     // Use the compact-ids kernel only for larger tiles; for small ncols_dst (< 16)
     // we prefer the normal mul_mat_f path with has_ids=true.
-    if (has_ids_data && ncols_dst > 16) {
-        const int max_tiles = (int) ((ncols_dst + cols_per_block - 1) / cols_per_block);
+    // if (has_ids_data && ncols_dst > 16) {
+    if (has_ids_data) { // FIXME
+        const int max_tiles = (int) ((ncols_dst*ids_data->n_expert_used + cols_per_block - 1) / cols_per_block);
         if (max_tiles == 0) {
             return;
         }

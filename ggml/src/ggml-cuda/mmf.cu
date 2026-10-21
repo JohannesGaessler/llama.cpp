@@ -69,7 +69,8 @@ void ggml_cuda_mul_mat_f(ggml_backend_cuda_context & ctx, const ggml_tensor * sr
         nchannels_y      = ids->ne[0];
     }
 
-    if (ids && ncols_dst > 16) {
+    // if (ids && ncols_dst > 16) {
+    if (ids) { // FIXME
         const int64_t n_expert_used = ids->ne[0];
         const int64_t n_experts     = ne02;
         const int64_t n_tokens      = ne12;
@@ -92,6 +93,7 @@ void ggml_cuda_mul_mat_f(ggml_backend_cuda_context & ctx, const ggml_tensor * sr
         ids_info.ids_dst_compact   = ids_dst_compact_dev.get();
         ids_info.expert_bounds_dev = expert_bounds_dev.get();
         ids_info.n_experts         = static_cast<int>(n_experts);
+        ids_info.n_expert_used     = static_cast<int>(n_expert_used);
         ids_info.sis1              = sis1;
         ids_info_ptr = &ids_info;
     }
@@ -160,7 +162,6 @@ bool ggml_cuda_should_use_mmf(enum ggml_type type, int cc, int warp_size, const 
     }
 
     if (mul_mat_id) {
-        return false; // FIXME
         if (src0_ne[1] <= 1024 && src1_ncols > 512) {
             return false;
         } else if(src0_ne[1] > 1024 && src1_ncols > 128) {
