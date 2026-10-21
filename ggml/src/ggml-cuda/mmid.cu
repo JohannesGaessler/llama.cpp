@@ -126,7 +126,7 @@ static __global__ void mm_ids_helper(
     uint2 tmp_low  = fast_div_modulo(col_low,  tile_width);
     uint2 tmp_high = fast_div_modulo(col_high, tile_width);
 
-    while (col_high > col_low && (tmp_low.y == 0 || (tmp_low.x < tmp_high.x && col_high < n_tokens*n_expert_used && fastmodulo(col_high, tile_width) != 0))) {
+    while (col_high > fastdiv(col_low + tile_width.z - 1, tile_width) * tile_width.z) {
         tile_spec[fastdiv(col_low + tile_width.z - 1, tile_width)]
             = {expert, col_low, col_high, /*padding =*/ 0};
 
