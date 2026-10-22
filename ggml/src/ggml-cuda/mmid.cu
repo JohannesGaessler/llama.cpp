@@ -125,6 +125,7 @@ static __global__ void mm_ids_helper(
     int col_low  = nex_prev;
     int col_high = nex_prev + min(int(tile_width.z), it_compact);
 
+    // The while loop covers all tiles at the seams containing the column with % tile_width == 0.
     while (col_high > fastdiv(col_low + tile_width.z - 1, tile_width) * tile_width.z) {
         tile_spec[fastdiv(col_low + tile_width.z - 1, tile_width)]
             = {expert, col_low, col_high, /*padding =*/ 0};
@@ -132,6 +133,8 @@ static __global__ void mm_ids_helper(
         col_low  = col_high;
         col_high = min(col_high + int(tile_width.z), nex_prev + it_compact);
     }
+
+    // Finally, at most one extra tile_spec between the seams per expert.
     tile_spec[fastdiv(n_tokens*n_expert_used + tile_width.z - 1, tile_width) + expert]
         = {expert, col_low, col_high, /*padding =*/ 0};
 }
