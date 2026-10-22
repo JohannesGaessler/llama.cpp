@@ -437,7 +437,7 @@ template <ggml_type type, int J, bool fallback, ggml_prec prec_src1> static __de
     constexpr int nwarps    = ggml_cuda_mmq_get_nthreads(type, J, fallback, prec_src1) / warp_size;
     constexpr int I         = ggml_cuda_mmq_get_I(type, J, fallback, prec_src1);
 
-    const bool y_scale_used = y_scale != nullptr;
+    const bool y_scale_used = type == GGML_TYPE_NVFP4 && y_scale != nullptr;
 
 #pragma unroll
     for (int j0 = 0; j0 < J; j0 += nwarps) {
@@ -455,15 +455,10 @@ template <ggml_type type, int J, bool fallback, ggml_prec prec_src1> static __de
                 continue;
             }
 
-            if constexpr (type == GGML_TYPE_NVFP4) {
-                if (y_scale_used) {
-                    dst[ids_dst[j]*stride + i] = y_scale[j] * sum[(j0/nwarps) * (I/warp_size) + i0/warp_size];
-                } else {
-                    dst[ids_dst[j]*stride + i] = sum[(j0/nwarps) * (I/warp_size) + i0/warp_size];
-                }
+            if (y_scale_used) {
+                dst[ids_dst[j]*stride + i] = y_scale[j] * sum[(j0/nwarps) * (I/warp_size) + i0/warp_size];
             } else {
                 dst[ids_dst[j]*stride + i] = sum[(j0/nwarps) * (I/warp_size) + i0/warp_size];
-                GGML_UNUSED(y_scale_used);
             }
         }
     }
@@ -485,7 +480,7 @@ static __device__ __forceinline__ void ggml_cuda_mmq_write_back_mma(
 
     const int i0 = (threadIdx.y / ntx) * (ntx*tile_C::I);
 
-    const bool y_scale_used = y_scale != nullptr;
+    const bool y_scale_used = type == GGML_TYPE_NVFP4 && y_scale != nullptr;
 
 #pragma unroll
     for (int j0 = 0; j0 < J; j0 += ntx*tile_C::J) {
@@ -505,15 +500,10 @@ static __device__ __forceinline__ void ggml_cuda_mmq_write_back_mma(
                     continue;
                 }
 
-                if constexpr (type == GGML_TYPE_NVFP4) {
-                    if (y_scale_used) {
-                        dst[ids_dst[j]*stride + i] = y_scale[j] * sum[(j0/tile_C::J + n)*tile_C::ne + l];
-                    } else {
-                        dst[ids_dst[j]*stride + i] = sum[(j0/tile_C::J + n)*tile_C::ne + l];
-                    }
+                if (y_scale_used) {
+                    dst[ids_dst[j]*stride + i] = y_scale[j] * sum[(j0/tile_C::J + n)*tile_C::ne + l];
                 } else {
                     dst[ids_dst[j]*stride + i] = sum[(j0/tile_C::J + n)*tile_C::ne + l];
-                    GGML_UNUSED(y_scale_used);
                 }
             }
         }
@@ -1002,13 +992,8 @@ static __global__ void mul_mat_q(
         int col_low    = jt*J;
         int col_high   = col_low + J;
         int offset_y   = wt*stride_sample_y   + zt*stride_channel_y;
+        int offset_y_scale = wt*nchannels_y.z*ncols_y + zt*ncols_y;
         int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*J*stride_col_dst;
-        int offset_y_scale;
-        if constexpr (type == GGML_TYPE_NVFP4) {
-            offset_y_scale = wt*nchannels_y.z*ncols_y + zt*ncols_y;
-        } else {
-            GGML_UNUSED(offset_y_scale);
-        }
 
         if (ids_dst) {
             const ggml_cuda_mm_id_tile_spec tsj = tile_spec[jt];
@@ -1016,11 +1001,9 @@ static __global__ void mul_mat_q(
             col_low  = tsj.col_low;
             col_high = tsj.col_high;
 
-            offset_y   = 0;
-            offset_dst = 0;
-            if constexpr (type == GGML_TYPE_NVFP4) {
-                offset_y_scale = 0;
-            }
+            offset_y       = 0;
+            offset_y_scale = 0;
+            offset_dst     = 0;
 
             if (col_low == col_high) {
                 return;
@@ -1040,15 +1023,13 @@ static __global__ void mul_mat_q(
             __syncthreads();
         }
 
-        offset_y   += col_low * (sizeof(block_q8_1_mmq)/sizeof(int));
-        offset_dst += it*I;
-        const float * y_scale_tile = nullptr;
-        if constexpr (type == GGML_TYPE_NVFP4) {
-            offset_y_scale += col_low;
-            y_scale_tile = y_scale ? y_scale + offset_y_scale : nullptr;
-        }
+        offset_y       += col_low * (sizeof(block_q8_1_mmq)/sizeof(int));
+        offset_y_scale += col_low;
+        offset_dst     += it*I;
 
-        const int tile_x_max_i = nrows_x  - it*I - 1;
+        const float * y_scale_tile = type == GGML_TYPE_NVFP4 && y_scale ? y_scale + offset_y_scale : nullptr;
+
+        const int tile_x_max_i = nrows_x - it*I - 1;
 
         const int offset_x = fastdiv(wt, sample_ratio)*stride_sample_x + fastdiv(zt, channel_ratio)*stride_channel_x + it*I*stride_row_x;
 
@@ -1086,16 +1067,11 @@ static __global__ void mul_mat_q(
         const int it = tmp2.x;
 
         // Defaults for regular matrix multiplication:
-        int col_low    = jt*J;
-        int col_high   = col_low + J;
-        int offset_y   = wt*stride_sample_y   + zt*stride_channel_y;
-        int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*J*stride_col_dst;
-        int offset_y_scale;
-        if constexpr (type == GGML_TYPE_NVFP4) {
-            offset_y_scale = wt*nchannels_y.z*ncols_y + zt*ncols_y;
-        } else {
-            GGML_UNUSED(offset_y_scale);
-        }
+        int col_low        = jt*J;
+        int col_high       = col_low + J;
+        int offset_y       = wt*stride_sample_y   + zt*stride_channel_y;
+        int offset_y_scale = wt*nchannels_y.z*ncols_y + zt*ncols_y;
+        int offset_dst     = wt*stride_sample_dst + zt*stride_channel_dst + jt*J*stride_col_dst;
 
         if (ids_dst) {
             const ggml_cuda_mm_id_tile_spec tsj = tile_spec[jt];
@@ -1103,11 +1079,9 @@ static __global__ void mul_mat_q(
             col_low  = tsj.col_low;
             col_high = tsj.col_high;
 
-            offset_y   = 0;
-            offset_dst = 0;
-            if constexpr (type == GGML_TYPE_NVFP4) {
-                offset_y_scale = 0;
-            }
+            offset_y       = 0;
+            offset_y_scale = 0;
+            offset_dst     = 0;
 
             if (col_low == col_high) {
                 kbc += blocks_per_ne00.z;
@@ -1133,15 +1107,13 @@ static __global__ void mul_mat_q(
             __syncthreads();
         }
 
-        offset_y += col_low * (sizeof(block_q8_1_mmq) / sizeof(int));
-        offset_dst += it*I;
-        const float * y_scale_tile = nullptr;
-        if constexpr (type == GGML_TYPE_NVFP4) {
-            offset_y_scale += col_low;
-            y_scale_tile = y_scale ? y_scale + offset_y_scale : nullptr;
-        }
+        offset_y       += col_low * (sizeof(block_q8_1_mmq) / sizeof(int));
+        offset_y_scale += col_low;
+        offset_dst     += it*I;
 
-        const int tile_x_max_i = nrows_x  - it*I - 1;
+        const float * y_scale_tile = type == GGML_TYPE_NVFP4 && y_scale ? y_scale + offset_y_scale : nullptr;
+
+        const int tile_x_max_i = nrows_x - it*I - 1;
 
         const int offset_x = fastdiv(wt, sample_ratio)*stride_sample_x + fastdiv(zt, channel_ratio)*stride_channel_x + it*I*stride_row_x;
 
@@ -1174,16 +1146,11 @@ static __global__ void mul_mat_q(
     const int it = tmp2.x;
 
     // Defaults for regular matrix multiplication:
-    int col_low    = jt*J;
-    int col_high   = col_low + J;
-    int offset_y   = wt*stride_sample_y   + zt*stride_channel_y;
-    int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*J*stride_col_dst;
-    int offset_y_scale;
-    if constexpr (type == GGML_TYPE_NVFP4) {
-        offset_y_scale = wt*nchannels_y.z*ncols_y + zt*ncols_y;
-    } else {
-        GGML_UNUSED(offset_y_scale);
-    }
+    int col_low        = jt*J;
+    int col_high       = col_low + J;
+    int offset_y       = wt*stride_sample_y   + zt*stride_channel_y;
+    int offset_y_scale = wt*nchannels_y.z*ncols_y + zt*ncols_y;
+    int offset_dst     = wt*stride_sample_dst + zt*stride_channel_dst + jt*J*stride_col_dst;
 
     if (ids_dst) {
         const ggml_cuda_mm_id_tile_spec tsj = tile_spec[jt];
@@ -1191,11 +1158,9 @@ static __global__ void mul_mat_q(
         col_low  = tsj.col_low;
         col_high = tsj.col_high;
 
-        offset_y   = 0;
-        offset_dst = 0;
-        if constexpr (type == GGML_TYPE_NVFP4) {
-            offset_y_scale = 0;
-        }
+        offset_y       = 0;
+        offset_y_scale = 0;
+        offset_dst     = 0;
 
         if (col_low == col_high) {
             return;
@@ -1216,15 +1181,13 @@ static __global__ void mul_mat_q(
         __syncthreads();
     }
 
-    offset_y += col_low * (sizeof(block_q8_1_mmq) / sizeof(int));
-    offset_dst += it*I;
-    const float * y_scale_tile = nullptr;
-    if constexpr (type == GGML_TYPE_NVFP4) {
-        offset_y_scale += col_low;
-        y_scale_tile = y_scale ? y_scale + offset_y_scale : nullptr;
-    }
+    offset_y       += col_low * (sizeof(block_q8_1_mmq) / sizeof(int));
+    offset_y_scale += col_low;
+    offset_dst     += it*I;
 
-    const int tile_x_max_i = nrows_x  - it*I - 1;
+    const float * y_scale_tile = type == GGML_TYPE_NVFP4 && y_scale ? y_scale + offset_y_scale : nullptr;
+
+    const int tile_x_max_i = nrows_x - it*I - 1;
 
     const int offset_x = fastdiv(wt, sample_ratio)*stride_sample_x + fastdiv(zt, channel_ratio)*stride_channel_x + it*I*stride_row_x;
 
