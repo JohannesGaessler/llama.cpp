@@ -27,7 +27,9 @@ template <>      struct mm_ids_pow2<0> { static constexpr int value = 1; };
 // Helper function for mul_mat_id, converts ids to a more convenient format.
 // ids_src1 describes how to permute the flattened column indices of src1 in order to get a compact src1 tensor sorted by expert.
 // ids_dst describes the same mapping but for the dst tensor.
-// The upper and lower bounds for the ith expert in the compact src1 tensor are stored in expert_bounds[i:i+1].
+// The first (n_tokens*n_expert_used + J - 1) / tile_width elements of tile_spec contain the specication for
+//   matrix multiplication tiles at token positions which are exactly divided by tile_width.
+// Additionally the following n_expert elements of tile_spec may contain additional tiles that fall between these seams.
 template <int n_expert_used_template>
 __launch_bounds__(ggml_cuda_get_physical_warp_size(), 1)
 static __global__ void mm_ids_helper(
