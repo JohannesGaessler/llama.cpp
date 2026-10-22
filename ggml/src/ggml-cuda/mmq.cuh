@@ -1012,10 +1012,10 @@ static __global__ void mul_mat_q(
         }
 
         if (ids_dst) {
-            const ggml_cuda_mm_id_tile_spec tsz = tile_spec[jt];
-            zt       = tsz.expert;
-            col_low  = tsz.col_low;
-            col_high = tsz.col_high;
+            const ggml_cuda_mm_id_tile_spec tsj = tile_spec[jt];
+            zt       = tsj.expert;
+            col_low  = tsj.col_low;
+            col_high = tsj.col_high;
             col_diff = col_high - col_low;
 
             offset_y   = 0;
@@ -1082,18 +1082,18 @@ static __global__ void mul_mat_q(
         const int jt = tmp2.y;
         tmp = tmp2.x;
         tmp2 = fast_div_modulo(tmp, nchannels_y);
-        const int zt = tmp2.y;
+        int zt = tmp2.y;
         tmp = tmp2.x;
         tmp2 = fast_div_modulo(tmp, nsamples_y);
         const int wt = tmp2.y;
         const int it = tmp2.x;
 
         // Defaults for regular matrix multiplication:
-        int col_low    = 0;
-        int col_high   = ncols_dst;
-        int col_diff   = ncols_dst;
-        int offset_y       = wt*stride_sample_y   + zt*stride_channel_y;
-        int offset_dst     = wt*stride_sample_dst + zt*stride_channel_dst + jt*J*stride_col_dst;
+        int col_low    = jt*J;
+        int col_high   = col_low + J;
+        int col_diff   = J;
+        int offset_y   = wt*stride_sample_y   + zt*stride_channel_y;
+        int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*J*stride_col_dst;
         int offset_y_scale;
         if constexpr (type == GGML_TYPE_NVFP4) {
             offset_y_scale = wt*nchannels_y.z*ncols_y + zt*ncols_y;
@@ -1102,8 +1102,10 @@ static __global__ void mul_mat_q(
         }
 
         if (ids_dst) {
-            // col_low  = expert_bounds[zt + 0];
-            // col_high = expert_bounds[zt + 1];
+            const ggml_cuda_mm_id_tile_spec tsj = tile_spec[jt];
+            zt       = tsj.expert;
+            col_low  = tsj.col_low;
+            col_high = tsj.col_high;
             col_diff = col_high - col_low;
 
             offset_y   = 0;
@@ -1112,7 +1114,7 @@ static __global__ void mul_mat_q(
                 offset_y_scale = 0;
             }
 
-            if (jt*J >= col_diff) {
+            if (col_diff == 0) {
                 kbc += blocks_per_ne00.z;
                 kbc -= fastmodulo(kbc, blocks_per_ne00);
 
@@ -1131,21 +1133,21 @@ static __global__ void mul_mat_q(
                     break;
                 }
 
-                ids_dst_shared[j] = ids_dst[col_low + jt*J + j];
+                ids_dst_shared[j] = ids_dst[col_low + j];
             }
             __syncthreads();
         }
 
-        offset_y += (col_low + jt * J) * (sizeof(block_q8_1_mmq) / sizeof(int));
+        offset_y += col_low * (sizeof(block_q8_1_mmq) / sizeof(int));
         offset_dst += it*I;
         const float * y_scale_tile = nullptr;
         if constexpr (type == GGML_TYPE_NVFP4) {
-            offset_y_scale += col_low + jt * J;
+            offset_y_scale += col_low;
             y_scale_tile = y_scale ? y_scale + offset_y_scale : nullptr;
         }
 
         const int tile_x_max_i = nrows_x  - it*I - 1;
-        const int tile_y_max_j = col_diff - jt*J - 1;
+        const int tile_y_max_j = col_diff        - 1;
 
         const int offset_x = fastdiv(wt, sample_ratio)*stride_sample_x + fastdiv(zt, channel_ratio)*stride_channel_x + it*I*stride_row_x;
 
@@ -1171,18 +1173,18 @@ static __global__ void mul_mat_q(
     const int jt = tmp2.y;
     tmp = tmp2.x;
     tmp2 = fast_div_modulo(tmp, nchannels_y);
-    const int zt = tmp2.y;
+    int zt = tmp2.y;
     tmp = tmp2.x;
     tmp2 = fast_div_modulo(tmp, nsamples_y);
     const int wt = tmp2.y;
     const int it = tmp2.x;
 
     // Defaults for regular matrix multiplication:
-    int col_low    = 0;
-    int col_high   = ncols_dst;
-    int col_diff   = ncols_dst;
-    int offset_y       = wt*stride_sample_y   + zt*stride_channel_y;
-    int offset_dst     = wt*stride_sample_dst + zt*stride_channel_dst + jt*J*stride_col_dst;
+    int col_low    = jt*J;
+    int col_high   = col_low + J;
+    int col_diff   = J;
+    int offset_y   = wt*stride_sample_y   + zt*stride_channel_y;
+    int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*J*stride_col_dst;
     int offset_y_scale;
     if constexpr (type == GGML_TYPE_NVFP4) {
         offset_y_scale = wt*nchannels_y.z*ncols_y + zt*ncols_y;
@@ -1191,8 +1193,10 @@ static __global__ void mul_mat_q(
     }
 
     if (ids_dst) {
-        // col_low  = expert_bounds[zt + 0];
-        // col_high = expert_bounds[zt + 1];
+        const ggml_cuda_mm_id_tile_spec tsj = tile_spec[jt];
+        zt       = tsj.expert;
+        col_low  = tsj.col_low;
+        col_high = tsj.col_high;
         col_diff = col_high - col_low;
 
         offset_y   = 0;
@@ -1201,7 +1205,7 @@ static __global__ void mul_mat_q(
             offset_y_scale = 0;
         }
 
-        if (jt*J >= col_diff) {
+        if (col_diff == 0) {
             return;
         }
 
@@ -1220,16 +1224,16 @@ static __global__ void mul_mat_q(
         __syncthreads();
     }
 
-    offset_y += (col_low + jt * J) * (sizeof(block_q8_1_mmq) / sizeof(int));
+    offset_y += col_low * (sizeof(block_q8_1_mmq) / sizeof(int));
     offset_dst += it*I;
     const float * y_scale_tile = nullptr;
     if constexpr (type == GGML_TYPE_NVFP4) {
-        offset_y_scale += col_low + jt * J;
+        offset_y_scale += col_low;
         y_scale_tile = y_scale ? y_scale + offset_y_scale : nullptr;
     }
 
     const int tile_x_max_i = nrows_x  - it*I - 1;
-    const int tile_y_max_j = col_diff - jt*J - 1;
+    const int tile_y_max_j = col_diff        - 1;
 
     const int offset_x = fastdiv(wt, sample_ratio)*stride_sample_x + fastdiv(zt, channel_ratio)*stride_channel_x + it*I*stride_row_x;
 
@@ -1437,7 +1441,6 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
              ntx_fd);
         return;
     }
-    GGML_ABORT("bad");
 
     // For the stream-k kernel it is possible to run it with tiling by setting the number of CUDA blocks equal to the number of tiles.
     // This is worthwhile if the efficiency of tiling is high and skipping the fixup kernel is more important.
@@ -1448,7 +1451,8 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     GGML_ASSERT(ntiles_dst * blocks_per_ne00_fd.z < (1 << 30)); // Assert that variable kbc will not overflow.
 
     const int nwork = ntiles_dst * ((args.ncols_x + config.K_vram - 1) / config.K_vram); // Maximum number of CUDA blocks that can do useful work.
-    const dim3 block_nums_stream_k(GGML_CUDA_CC_IS_NVIDIA(cc) && tiles_efficiency_percent >= 90 ? ntiles_dst : std::min(nsm, nwork), 1, 1);
+    // const dim3 block_nums_stream_k(GGML_CUDA_CC_IS_NVIDIA(cc) && tiles_efficiency_percent >= 90 ? ntiles_dst : std::min(nsm, nwork), 1, 1);
+    const dim3 block_nums_stream_k(GGML_CUDA_CC_IS_NVIDIA(cc) && tiles_efficiency_percent >= 0 ? ntiles_dst : std::min(nsm, nwork), 1, 1); // FIXME
 
     const bool fixup_needed = ntiles_dst % block_nums_stream_k.x != 0;
 
@@ -1471,6 +1475,7 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     if (!fixup_needed) {
         return;
     }
+    GGML_ABORT("bad");
 
     // CUDA_CHECK(cudaGetLastError());
     // mul_mat_q_stream_k_fixup<type, J, fallback, prec_src1><<<block_nums_fixup, block_dims_fixup, 0, stream>>>
