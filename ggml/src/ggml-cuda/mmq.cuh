@@ -1001,7 +1001,6 @@ static __global__ void mul_mat_q(
         // Defaults for regular matrix multiplication:
         int col_low    = jt*J;
         int col_high   = col_low + J;
-        int col_diff   = J;
         int offset_y   = wt*stride_sample_y   + zt*stride_channel_y;
         int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*J*stride_col_dst;
         int offset_y_scale;
@@ -1016,7 +1015,6 @@ static __global__ void mul_mat_q(
             zt       = tsj.expert;
             col_low  = tsj.col_low;
             col_high = tsj.col_high;
-            col_diff = col_high - col_low;
 
             offset_y   = 0;
             offset_dst = 0;
@@ -1024,7 +1022,7 @@ static __global__ void mul_mat_q(
                 offset_y_scale = 0;
             }
 
-            if (col_diff == 0) {
+            if (col_low == col_high) {
                 return;
             }
 
@@ -1058,7 +1056,7 @@ static __global__ void mul_mat_q(
         mul_mat_q_process_tile<type, J, fallback, fixup, prec_src1>
             (x, offset_x, y + offset_y, ids_dst_shared, dst + offset_dst, tmp_fixup, y_scale_tile,
              stride_row_x, ncols_y, stride_col_dst,
-             tile_x_max_i, col_diff, 0, blocks_per_ne00.z);
+             tile_x_max_i, col_high - col_low, 0, blocks_per_ne00.z);
         return;
     }
 
@@ -1090,7 +1088,6 @@ static __global__ void mul_mat_q(
         // Defaults for regular matrix multiplication:
         int col_low    = jt*J;
         int col_high   = col_low + J;
-        int col_diff   = J;
         int offset_y   = wt*stride_sample_y   + zt*stride_channel_y;
         int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*J*stride_col_dst;
         int offset_y_scale;
@@ -1105,7 +1102,6 @@ static __global__ void mul_mat_q(
             zt       = tsj.expert;
             col_low  = tsj.col_low;
             col_high = tsj.col_high;
-            col_diff = col_high - col_low;
 
             offset_y   = 0;
             offset_dst = 0;
@@ -1113,7 +1109,7 @@ static __global__ void mul_mat_q(
                 offset_y_scale = 0;
             }
 
-            if (col_diff == 0) {
+            if (col_low == col_high) {
                 kbc += blocks_per_ne00.z;
                 kbc -= fastmodulo(kbc, blocks_per_ne00);
 
@@ -1153,7 +1149,7 @@ static __global__ void mul_mat_q(
         mul_mat_q_process_tile<type, J, fallback, fixup, prec_src1>
             (x, offset_x, y + offset_y, ids_dst_shared, dst + offset_dst, tmp_fixup, y_scale_tile,
              stride_row_x, ncols_y, stride_col_dst,
-             tile_x_max_i, col_diff, kb0_start, kb0_stop);
+             tile_x_max_i, col_high - col_low, kb0_start, kb0_stop);
 
         kbc += blocks_per_ne00.z;
         kbc -= fastmodulo(kbc, blocks_per_ne00);
@@ -1180,7 +1176,6 @@ static __global__ void mul_mat_q(
     // Defaults for regular matrix multiplication:
     int col_low    = jt*J;
     int col_high   = col_low + J;
-    int col_diff   = J;
     int offset_y   = wt*stride_sample_y   + zt*stride_channel_y;
     int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*J*stride_col_dst;
     int offset_y_scale;
@@ -1195,7 +1190,6 @@ static __global__ void mul_mat_q(
         zt       = tsj.expert;
         col_low  = tsj.col_low;
         col_high = tsj.col_high;
-        col_diff = col_high - col_low;
 
         offset_y   = 0;
         offset_dst = 0;
@@ -1203,7 +1197,7 @@ static __global__ void mul_mat_q(
             offset_y_scale = 0;
         }
 
-        if (col_diff == 0) {
+        if (col_low == col_high) {
             return;
         }
 
@@ -1238,7 +1232,7 @@ static __global__ void mul_mat_q(
     mul_mat_q_process_tile<type, J, fallback, fixup, prec_src1>
         (x, offset_x, y + offset_y, ids_dst_shared, dst + offset_dst, tmp_fixup, y_scale_tile,
          stride_row_x, ncols_y, stride_col_dst,
-         tile_x_max_i, col_diff, kb0_start, kb0_stop);
+         tile_x_max_i, col_high - col_low, kb0_start, kb0_stop);
 }
 
 template <ggml_type type, int J, bool fallback, ggml_prec prec_src1>
@@ -1353,7 +1347,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
     zt                 = tsj.expert;
     const int col_low  = tsj.col_low;
     const int col_high = tsj.col_high;
-    const int col_diff = col_high - col_low;
+    const int j_sup    = col_high - col_low;
 
     for (int j = threadIdx.y*warp_size + threadIdx.x; j < J; j += nwarps*warp_size) {
         ids_dst_shared[j] = ids_dst[col_low + j];
@@ -1372,7 +1366,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
     for (int j0 = 0; j0 < J; j0 += nwarps) {
         const int j = j0 + threadIdx.y;
 
-        if (j >= col_diff) {
+        if (j >= j_sup) {
             return;
         }
 
