@@ -1247,7 +1247,7 @@ static __global__ void mul_mat_q(
 template <ggml_type type, int J, bool fallback, ggml_prec prec_src1>
 __launch_bounds__(ggml_cuda_mmq_get_nthreads(type, J, fallback, prec_src1)/2, 1)
 static __global__ void mul_mat_q_stream_k_fixup(
-        const int32_t * __restrict__ ids_dst, const int32_t * __restrict__ expert_bounds, float * __restrict__ dst,
+        const int32_t * __restrict__ ids_dst, const ggml_cuda_mm_id_tile_spec * __restrict__ tile_spec, float * __restrict__ dst,
         float * __restrict__ tmp_last_tile, const uint3 blocks_per_ne00, const int nrows_x, const int ncols_dst,
         const int stride_col_dst, const uint3 nchannels_y, const int stride_channel_dst, const uint3 nsamples_y,
         const int stride_sample_dst, const uint3 ntx) {
@@ -1322,7 +1322,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
     const int jt = tmp2.y;
     tmp = tmp2.x;
     tmp2 = fast_div_modulo(tmp, nchannels_y);
-    const int zt = tmp2.y;
+    int zt = tmp2.y;
     tmp = tmp2.x;
     tmp2 = fast_div_modulo(tmp, nsamples_y);
     const int wt = tmp2.y;
@@ -1352,12 +1352,14 @@ static __global__ void mul_mat_q_stream_k_fixup(
     }
 
     __shared__ int ids_dst_shared[J];
-    const int col_low  = expert_bounds[zt + 0];
-    const int col_high = expert_bounds[zt + 1];
+    const ggml_cuda_mm_id_tile_spec tsj = tile_spec[jt];
+    zt                 = tsj.expert;
+    const int col_low  = tsj.col_low;
+    const int col_high = tsj.col_high;
     const int col_diff = col_high - col_low;
 
     for (int j = threadIdx.y*warp_size + threadIdx.x; j < J; j += nwarps*warp_size) {
-        ids_dst_shared[j] = ids_dst[col_low + jt*J + j];
+        ids_dst_shared[j] = ids_dst[col_low + j];
     }
     __syncthreads();
 
@@ -1365,7 +1367,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
     dst += offset_dst;
 
     const int i_max = nrows_x  - it*I - 1;
-    const int j_max = col_diff - jt*J - 1;
+    const int j_max = col_diff        - 1;
     if (fallback && i > i_max) {
         return;
     }
@@ -1451,8 +1453,7 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     GGML_ASSERT(ntiles_dst * blocks_per_ne00_fd.z < (1 << 30)); // Assert that variable kbc will not overflow.
 
     const int nwork = ntiles_dst * ((args.ncols_x + config.K_vram - 1) / config.K_vram); // Maximum number of CUDA blocks that can do useful work.
-    // const dim3 block_nums_stream_k(GGML_CUDA_CC_IS_NVIDIA(cc) && tiles_efficiency_percent >= 90 ? ntiles_dst : std::min(nsm, nwork), 1, 1);
-    const dim3 block_nums_stream_k(GGML_CUDA_CC_IS_NVIDIA(cc) && tiles_efficiency_percent >= 0 ? ntiles_dst : std::min(nsm, nwork), 1, 1); // FIXME
+    const dim3 block_nums_stream_k(GGML_CUDA_CC_IS_NVIDIA(cc) && tiles_efficiency_percent >= 90 ? ntiles_dst : std::min(nsm, nwork), 1, 1);
 
     const bool fixup_needed = ntiles_dst % block_nums_stream_k.x != 0;
 
@@ -1475,13 +1476,12 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     if (!fixup_needed) {
         return;
     }
-    GGML_ABORT("bad");
 
-    // CUDA_CHECK(cudaGetLastError());
-    // mul_mat_q_stream_k_fixup<type, J, fallback, prec_src1><<<block_nums_fixup, block_dims_fixup, 0, stream>>>
-    //     (args.ids_dst, args.expert_bounds, args.dst, tmp_fixup.ptr, blocks_per_ne00_fd, args.nrows_x, args.ncols_dst,
-    //      args.nrows_dst, nchannels_y_fd, args.stride_channel_dst, nsamples_y_fd, args.stride_sample_dst,
-    //      ntx_fd);
+    CUDA_CHECK(cudaGetLastError());
+    mul_mat_q_stream_k_fixup<type, J, fallback, prec_src1><<<block_nums_fixup, block_dims_fixup, 0, stream>>>
+        (args.ids_dst, args.tile_spec, args.dst, tmp_fixup.ptr, blocks_per_ne00_fd, args.nrows_x, args.ncols_dst,
+         args.nrows_dst, nchannels_y_fd, args.stride_channel_dst, nsamples_y_fd, args.stride_sample_dst,
+         ntx_fd);
 }
 
 template <ggml_type type, bool fallback, ggml_prec prec_src1>
