@@ -866,7 +866,7 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
         const int * __restrict__ ids_dst, float * __restrict__ dst, float * __restrict__ tmp_fixup,
         const float * __restrict__ y_scale,
         const int stride_row_x, const int ncols_y, const int stride_col_dst,
-        const int tile_x_max_i, const int tile_y_j_sup, const int kb0_start, const int kb0_stop) {
+        const int tile_x_i_max, const int tile_y_j_sup, const int kb0_start, const int kb0_stop) {
 
     constexpr int              warp_size  = ggml_cuda_get_physical_warp_size();
     constexpr int              nwarps     = ggml_cuda_mmq_get_nthreads(type, J, fallback, prec_src1) / warp_size;
@@ -897,7 +897,7 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
     constexpr int sz = sizeof(block_q8_1_mmq) / sizeof(int);
 
     for (int kb0 = kb0_start; kb0 < kb0_stop; kb0 += blocks_per_iter) {
-        load_tiles(x, tile_x, offset_x + kb0, tile_x_max_i, stride_row_x);
+        load_tiles(x, tile_x, offset_x + kb0, tile_x_i_max, stride_row_x);
         {
             const int * by0 = y + ncols_y * (kb0 * qk / ne_block) * sz;
 #pragma unroll
@@ -934,7 +934,7 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
     if (fixup) {
         write_back(sum, ids_dst, tmp_fixup + blockIdx.x*(J*I), y_scale, I, I, J);
     } else {
-        write_back(sum, ids_dst, dst, y_scale, stride_col_dst, tile_x_max_i, tile_y_j_sup);
+        write_back(sum, ids_dst, dst, y_scale, stride_col_dst, tile_x_i_max, tile_y_j_sup);
     }
 }
 
@@ -989,11 +989,11 @@ static __global__ void mul_mat_q(
         const int it = blockIdx.x;
 
         // Defaults for regular matrix multiplication:
-        int col_low    = jt*J;
-        int col_high   = col_low + J;
-        int offset_y   = wt*stride_sample_y   + zt*stride_channel_y;
+        int col_low        = jt*J;
+        int col_high       = col_low + J;
+        int offset_y       = wt*stride_sample_y   + zt*stride_channel_y;
         int offset_y_scale = wt*nchannels_y.z*ncols_y + zt*ncols_y;
-        int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*J*stride_col_dst;
+        int offset_dst     = wt*stride_sample_dst + zt*stride_channel_dst + jt*J*stride_col_dst;
 
         if (ids_dst) {
             const ggml_cuda_mm_id_tile_spec tsj = tile_spec[jt];
@@ -1029,7 +1029,7 @@ static __global__ void mul_mat_q(
 
         const float * y_scale_tile = type == GGML_TYPE_NVFP4 && y_scale ? y_scale + offset_y_scale : nullptr;
 
-        const int tile_x_max_i = nrows_x - it*I - 1;
+        const int tile_x_i_max = nrows_x - it*I - 1;
 
         const int offset_x = fastdiv(wt, sample_ratio)*stride_sample_x + fastdiv(zt, channel_ratio)*stride_channel_x + it*I*stride_row_x;
 
@@ -1037,7 +1037,7 @@ static __global__ void mul_mat_q(
         mul_mat_q_process_tile<type, J, fallback, fixup, prec_src1>
             (x, offset_x, y + offset_y, ids_dst_shared, dst + offset_dst, tmp_fixup, y_scale_tile,
              stride_row_x, ncols_y, stride_col_dst,
-             tile_x_max_i, col_high - col_low, 0, blocks_per_ne00.z);
+             tile_x_i_max, col_high - col_low, 0, blocks_per_ne00.z);
         return;
     }
 
@@ -1113,7 +1113,7 @@ static __global__ void mul_mat_q(
 
         const float * y_scale_tile = type == GGML_TYPE_NVFP4 && y_scale ? y_scale + offset_y_scale : nullptr;
 
-        const int tile_x_max_i = nrows_x - it*I - 1;
+        const int tile_x_i_max = nrows_x - it*I - 1;
 
         const int offset_x = fastdiv(wt, sample_ratio)*stride_sample_x + fastdiv(zt, channel_ratio)*stride_channel_x + it*I*stride_row_x;
 
@@ -1121,7 +1121,7 @@ static __global__ void mul_mat_q(
         mul_mat_q_process_tile<type, J, fallback, fixup, prec_src1>
             (x, offset_x, y + offset_y, ids_dst_shared, dst + offset_dst, tmp_fixup, y_scale_tile,
              stride_row_x, ncols_y, stride_col_dst,
-             tile_x_max_i, col_high - col_low, kb0_start, kb0_stop);
+             tile_x_i_max, col_high - col_low, kb0_start, kb0_stop);
 
         kbc += blocks_per_ne00.z;
         kbc -= fastmodulo(kbc, blocks_per_ne00);
@@ -1187,7 +1187,7 @@ static __global__ void mul_mat_q(
 
     const float * y_scale_tile = type == GGML_TYPE_NVFP4 && y_scale ? y_scale + offset_y_scale : nullptr;
 
-    const int tile_x_max_i = nrows_x - it*I - 1;
+    const int tile_x_i_max = nrows_x - it*I - 1;
 
     const int offset_x = fastdiv(wt, sample_ratio)*stride_sample_x + fastdiv(zt, channel_ratio)*stride_channel_x + it*I*stride_row_x;
 
@@ -1195,7 +1195,7 @@ static __global__ void mul_mat_q(
     mul_mat_q_process_tile<type, J, fallback, fixup, prec_src1>
         (x, offset_x, y + offset_y, ids_dst_shared, dst + offset_dst, tmp_fixup, y_scale_tile,
          stride_row_x, ncols_y, stride_col_dst,
-         tile_x_max_i, col_high - col_low, kb0_start, kb0_stop);
+         tile_x_i_max, col_high - col_low, kb0_start, kb0_stop);
 }
 
 template <ggml_type type, int J, bool fallback, ggml_prec prec_src1>
