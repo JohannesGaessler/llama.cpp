@@ -50,26 +50,29 @@ static __global__ void mm_ids_helper(
     int nex_prev   = 0; // Number of columns for experts with a lower index.
     int it_compact = 0; // Running index for the compact slice of this expert.
 
-    using ballot_t = std::conditional_t<warp_size == 32, uint32_t, uint64_t>;
+
+    auto inner_loop = [&] (const int it, const int iex, const int expert_found) {
+        nex_prev += expert_found < expert;
+
+        using ballot_t = std::conditional_t<warp_size == 32, uint32_t, uint64_t>;
+        const ballot_t iex_used = __ballot_sync(0xFFFFFFFFFFFFFFFFull, expert_found == expert);
+        const ballot_t mask = (ballot_t(1) << threadIdx.x) - 1;
+        const int it_compact_offset = __popc(iex_used & mask);
+
+        if (expert_found == expert) {
+            store[it_compact + it_compact_offset] = mm_ids_helper_store(it, iex);
+        }
+
+        it_compact += __popc(iex_used);
+    };
 
     if constexpr (n_expert_used_template == 0) {
         // Generic implementation:
         for (int it = 0; it < n_tokens; ++it) {
             for (int iex0 = 0; iex0 < n_expert_used; iex0 += warp_size) {
                 const int iex = iex0 + threadIdx.x;
-
-                const int expert_used = iex < n_expert_used ? ids[it*si1 + iex] : INT_MAX;
-                nex_prev += expert_used < expert;
-
-                const ballot_t iex_used = __ballot_sync(0xFFFFFFFFFFFFFFFFull, expert_used == expert);
-                const ballot_t mask = (ballot_t(1) << threadIdx.x) - 1;
-                const int it_compact_offset = __popc(iex_used & mask);
-
-                if (expert_used == expert) {
-                    store[it_compact + it_compact_offset] = mm_ids_helper_store(it, iex);
-                }
-
-                it_compact += __popc(iex_used);
+                const int expert_found = iex < n_expert_used ? ids[it*si1 + iex] : INT_MAX;
+                inner_loop(it, iex, expert_found);
             }
         }
     } else {
@@ -77,34 +80,14 @@ static __global__ void mm_ids_helper(
         // a warp holds a whole number of token slots, so the slot count is padded to a power of 2
         constexpr int neu_padded = mm_ids_pow2<n_expert_used_template>::value;
         static_assert(neu_padded <= warp_size && warp_size % neu_padded == 0, "bad n_expert_used");
+        const int iex = threadIdx.x % neu_padded; // The index at which the expert is used, if any.
+
         for (int it0 = 0; it0 < n_tokens; it0 += warp_size/neu_padded) {
             const int it = it0 + threadIdx.x / neu_padded;
 
-            const int iex = threadIdx.x % neu_padded; // The index at which the expert is used, if any.
-            const int expert_used = (neu_padded == n_expert_used || iex < n_expert_used) && it < n_tokens ?
+            const int expert_found = (neu_padded == n_expert_used || iex < n_expert_used) && it < n_tokens ?
                 ids[it*si1 + iex] : INT_MAX;
-            const int iex_used = expert_used == expert ? iex : -1;
-            nex_prev += expert_used < expert;
-
-            // Whether the threads at this token position have used the expert:
-            const int it_compact_add_self = warp_reduce_any<neu_padded>(iex_used != -1);
-
-            // Do a scan over threads at lower token positions in warp to get the correct index for writing data:
-            int it_compact_add_lower = 0;
-#pragma unroll
-            for (int offset = neu_padded; offset < warp_size; offset += neu_padded) {
-                const int tmp = __shfl_up_sync(0xFFFFFFFF, it_compact_add_self, offset, warp_size);
-                if (threadIdx.x >= static_cast<unsigned int>(offset)) {
-                    it_compact_add_lower += tmp;
-                }
-            }
-
-            if (iex_used != -1) {
-                store[it_compact + it_compact_add_lower] = mm_ids_helper_store(it, iex_used);
-            }
-
-            // The thread with the highest index in the warp always has the sum over the whole warp, use it to increment all threads:
-            it_compact += __shfl_sync(0xFFFFFFFF, it_compact_add_lower + it_compact_add_self, warp_size - 1, warp_size);
+            inner_loop(it, iex, expert_found);
         }
     }
     nex_prev = warp_reduce_sum<warp_size>(nex_prev);
@@ -174,34 +157,34 @@ void ggml_cuda_launch_mm_ids_helper(
         const int n_experts, const int n_tokens, const int n_expert_used, const int nchannels_y, const int tile_width,
         const int si1, const int sis1, const bool write_inverse, cudaStream_t stream) {
     switch (n_expert_used) {
-        // case  2:
-        //     launch_mm_ids_helper< 2>(ids, ids_src1, ids_dst, tile_spec,
-        //         n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
-        //     break;
-        // case  4:
-        //     launch_mm_ids_helper< 4>(ids, ids_src1, ids_dst, tile_spec,
-        //         n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
-        //     break;
-        // case  6:
-        //     launch_mm_ids_helper< 6>(ids, ids_src1, ids_dst, tile_spec,
-        //         n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
-        //     break;
-        // case  8:
-        //     launch_mm_ids_helper< 8>(ids, ids_src1, ids_dst, tile_spec,
-        //         n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
-        //     break;
-        // case 10:
-        //     launch_mm_ids_helper<10>(ids, ids_src1, ids_dst, tile_spec,
-        //         n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
-        //     break;
-        // case 16:
-        //     launch_mm_ids_helper<16>(ids, ids_src1, ids_dst, tile_spec,
-        //         n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
-        //     break;
-        // case 32:
-        //     launch_mm_ids_helper<32>(ids, ids_src1, ids_dst, tile_spec,
-        //         n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
-        //     break;
+        case  2:
+            launch_mm_ids_helper< 2>(ids, ids_src1, ids_dst, tile_spec,
+                n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
+            break;
+        case  4:
+            launch_mm_ids_helper< 4>(ids, ids_src1, ids_dst, tile_spec,
+                n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
+            break;
+        case  6:
+            launch_mm_ids_helper< 6>(ids, ids_src1, ids_dst, tile_spec,
+                n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
+            break;
+        case  8:
+            launch_mm_ids_helper< 8>(ids, ids_src1, ids_dst, tile_spec,
+                n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
+            break;
+        case 10:
+            launch_mm_ids_helper<10>(ids, ids_src1, ids_dst, tile_spec,
+                n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
+            break;
+        case 16:
+            launch_mm_ids_helper<16>(ids, ids_src1, ids_dst, tile_spec,
+                n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
+            break;
+        case 32:
+            launch_mm_ids_helper<32>(ids, ids_src1, ids_dst, tile_spec,
+                n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
+            break;
         default:
             launch_mm_ids_helper< 0>(ids, ids_src1, ids_dst, tile_spec,
                 n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
