@@ -90,29 +90,31 @@ static __global__ void mul_mat_f(
     constexpr int ntA = rows_per_block / tile_A::I;
     constexpr int ntB = (cols_per_block + tile_B::I - 1) / tile_B::I;
 
-    const int row0        = blockIdx.x * rows_per_block;
+    const int row0 = blockIdx.x * rows_per_block;
 
     int expert_idx = 0;
+    [[maybe_unused]] int expert_nr = 0;
     [[maybe_unused]] int col_base = 0;
 
     const int channel_dst = has_ids ? 0 : blockIdx.y;
 
     if constexpr (has_ids) {
         // experts + tiles of ncols_dst are packed in the y dimension
-        int col_tiles = (ncols_dst_total + cols_per_block - 1) / cols_per_block;
+        const int col_tiles = (ncols_dst_total + cols_per_block - 1) / cols_per_block;
         const int nchannels_x = gridDim.y / col_tiles;
         const int tile_idx = blockIdx.y / nchannels_x;
         expert_idx = blockIdx.y - tile_idx * nchannels_x;
         col_base = tile_idx * cols_per_block;
+        expert_nr = blockIdx.z;
     }
 
-    const int channel_x   = has_ids ? expert_idx : (channel_dst / channel_ratio);
-    const int channel_y   = channel_dst;
-    const int sample_dst  = blockIdx.z;
-    const int sample_x    = sample_dst / sample_ratio;
-    const int sample_y    = sample_dst;
+    const int channel_x  = has_ids ? expert_idx : (channel_dst / channel_ratio);
+    const int channel_y  = channel_dst;
+    const int sample_dst = has_ids ? 0 : blockIdx.z;
+    const int sample_x   = sample_dst / sample_ratio;
+    const int sample_y   = sample_dst;
 
-    x   += int64_t(sample_x)  *stride_sample_x   + channel_x  *stride_channel_x  + row0*stride_row ;
+    x   += int64_t(sample_x)  *stride_sample_x   + channel_x                 *stride_channel_x  + row0*stride_row ;
     y   += int64_t(sample_y)  *stride_sample_y   + (has_ids ? 0 : channel_y  *stride_channel_y);
     dst += int64_t(sample_dst)*stride_sample_dst + (has_ids ? 0 : channel_dst*stride_channel_dst);
 
@@ -152,15 +154,22 @@ static __global__ void mul_mat_f(
             }
 
             const int32_t * __restrict__ id_row = ids + j*stride_row_id;
+            using ballot_t = std::conditional_t<warp_size == 32, uint32_t, uint64_t>;
 
-            for (int k = threadIdx.x; k < nchannels_dst; k += warp_size) {
-                int match = id_row[k*stride_col_id] == expert_idx;
+            int nr_total = 0;
+            for (int k0 = 0; k0 < nchannels_dst; k0 += warp_size) {
+                const int k = k0 + threadIdx.x;
 
-                if (match) {
+                const int id_jk = k < nchannels_dst ? id_row[k*stride_col_id] : -1;
+                const ballot_t match = __ballot_sync(0xFFFFFFFF, id_jk == expert_idx);
+                const ballot_t mask = (ballot_t(1) << threadIdx.x) - 1;
+                const int nr_warp = __popc(match & mask);
+
+                if (id_jk == expert_idx && nr_total + nr_warp == expert_nr) {
                     slot_map[j] = k;
                     found = 1;
-                    break;
                 }
+                nr_total += __popc(match);
             }
         }
 
@@ -619,7 +628,7 @@ static inline void mul_mat_f_switch_ids(
     } else if (ids) {
         GGML_ASSERT(block_nums.z == 1);
         const int64_t col_tiles = (ncols_dst + cols_per_block - 1) / cols_per_block;
-        const dim3 block_nums_ids(block_nums.x, nchannels_x*col_tiles, 1);
+        const dim3 block_nums_ids(block_nums.x, nchannels_x*col_tiles, nchannels_dst);
 
         mul_mat_f<T, rows_per_block, cols_per_block, nwarps, true><<<block_nums_ids, block_dims, nbytes_shared_total, stream>>>
             (x, y, ids, dst, ncols_x, ncols_dst, nchannels_dst, stride_row, stride_col_y, stride_col_dst,
