@@ -609,7 +609,7 @@ static inline void mul_mat_f_switch_ids(
 
     // Use the compact-ids kernel only for larger tiles; for small ncols_dst (< 16)
     // we prefer the normal mul_mat_f path with has_ids=true.
-    if (has_ids_data && ncols_dst > 16) {
+    if (has_ids_data) {
         if (ids_data->max_tiles == 0) {
             return;
         }
