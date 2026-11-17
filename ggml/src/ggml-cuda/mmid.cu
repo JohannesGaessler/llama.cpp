@@ -50,10 +50,7 @@ static __global__ void mm_ids_helper(
     int nr_prev    = 0; // Number of columns with the right expert but lower repetitions (only used for low_sram)
     int it_compact = 0; // Running index for the compact slice of this expert (with expert_nr previous repetitions if low_sram).
 
-    int it_prev = -1;
-    int n_found_token = 0;
-
-    auto check_experts = [&] (const int it, const int iex, const int expert_found) {
+    auto check_experts = [&] (const int it, const int iex, const int expert_found, int * nr_found_at_token = nullptr) {
         nex_prev += expert_found < expert;
 
         const ggml_cuda_thread_mask_t iex_used = ggml_cuda_ballot(expert_found == expert);
@@ -62,13 +59,10 @@ static __global__ void mm_ids_helper(
         if constexpr (low_sram) {
             int rep_idx = 0;
             if constexpr (n_expert_used_template == 0) {
-                if (it != it_prev) {
-                    it_prev = it;
-                    n_found_token = 0;
-                }
-                rep_idx = n_found_token + ggml_cuda_popc(iex_used & mask);
-                n_found_token += ggml_cuda_popc(iex_used);
+                rep_idx = *nr_found_at_token + ggml_cuda_popc(iex_used & mask);
+                *nr_found_at_token += ggml_cuda_popc(iex_used);
             } else {
+                GGML_UNUSED(nr_found_at_token);
                 constexpr int neu_padded = mm_ids_pow2<n_expert_used_template>::value;
                 const int token_in_warp = threadIdx.x / neu_padded;
                 const int token_start_lane = token_in_warp * neu_padded;
@@ -91,6 +85,7 @@ static __global__ void mm_ids_helper(
             it_compact += ggml_cuda_popc(store_mask);
         } else {
             GGML_UNUSED(expert_nr);
+            GGML_UNUSED(nr_found_at_token);
 
             const int it_compact_offset = ggml_cuda_popc(iex_used & mask);
 
@@ -105,10 +100,11 @@ static __global__ void mm_ids_helper(
     if constexpr (n_expert_used_template == 0) {
         // Generic implementation:
         for (int it = 0; it < n_tokens; ++it) {
+            int nr_found_at_token = 0;
             for (int iex0 = 0; iex0 < n_expert_used; iex0 += warp_size) {
                 const int iex = iex0 + threadIdx.x;
                 const int expert_found = iex < n_expert_used ? ids[it*si1 + iex] : INT_MAX;
-                check_experts(it, iex, expert_found);
+                check_experts(it, iex, expert_found, &nr_found_at_token);
             }
         }
     } else {
