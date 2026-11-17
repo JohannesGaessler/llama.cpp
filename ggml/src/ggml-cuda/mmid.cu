@@ -47,19 +47,18 @@ static __global__ void mm_ids_helper(
     int nex_prev   = 0; // Number of columns for experts with a lower index.
     int it_compact = 0; // Running index for the compact slice of this expert.
 
-
     auto check_experts = [&] (const int it, const int iex, const int expert_found) {
         nex_prev += expert_found < expert;
 
         const ggml_cuda_thread_mask_t iex_used = ggml_cuda_ballot(expert_found == expert);
         const ggml_cuda_thread_mask_t mask = (ggml_cuda_thread_mask_t(1) << threadIdx.x) - 1;
-        const int it_compact_offset = __popc(iex_used & mask);
+        const int it_compact_offset = ggml_cuda_popc(iex_used & mask);
 
         if (expert_found == expert) {
             store[it_compact + it_compact_offset] = mm_ids_helper_store(it, iex);
         }
 
-        it_compact += __popc(iex_used);
+        it_compact += ggml_cuda_popc(iex_used);
     };
 
     if constexpr (n_expert_used_template == 0) {
