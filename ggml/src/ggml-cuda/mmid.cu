@@ -57,6 +57,7 @@ static __global__ void mm_ids_helper(
         const ggml_cuda_thread_mask_t mask_lower = (ggml_cuda_thread_mask_t(1) << threadIdx.x) - 1;
 
         if constexpr (low_sram) {
+            // Slower and more complex path if shared memory is tight.
             int rep_idx = 0;
             if constexpr (n_expert_used_template == 0) {
                 rep_idx = *nr_found_at_token + ggml_cuda_popc(iex_used & mask_lower);
@@ -84,6 +85,7 @@ static __global__ void mm_ids_helper(
 
             it_compact += ggml_cuda_popc(store_mask);
         } else {
+            // Faster and streamlined path that handles all expert repetitions at once.
             GGML_UNUSED(expert_nr);
             GGML_UNUSED(nr_found_at_token);
 
