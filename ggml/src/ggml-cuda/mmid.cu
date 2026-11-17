@@ -46,10 +46,9 @@ static __global__ void mm_ids_helper(
     extern __shared__ char data_mm_ids_helper[];
     mm_ids_helper_store * store = (mm_ids_helper_store *) data_mm_ids_helper;
 
-    int nex_prev       = 0; // Number of columns for experts with a lower index.
-    int nr_prev        = 0;
-    int n_expert_total = 0;
-    int it_compact     = 0; // Running index for the compact slice of this expert.
+    int nex_prev   = 0; // Number of columns for experts with a lower index.
+    int nr_prev    = 0; // Number of columns with the right expert but lower repetitions (only used for low_sram)
+    int it_compact = 0; // Running index for the compact slice of this expert (with expert_nr previous repetitions if low_sram).
 
     int it_prev = -1;
     int n_found_token = 0;
@@ -80,7 +79,6 @@ static __global__ void mm_ids_helper(
 
             const bool is_expert = expert_found == expert;
             nr_prev += is_expert && (rep_idx < expert_nr);
-            n_expert_total += is_expert;
 
             const bool write_store = is_expert && (rep_idx == expert_nr);
             const ggml_cuda_thread_mask_t store_mask = ggml_cuda_ballot(write_store);
@@ -131,7 +129,6 @@ static __global__ void mm_ids_helper(
     nex_prev = warp_reduce_sum<warp_size>(nex_prev);
     if constexpr (low_sram) {
         nr_prev        = warp_reduce_sum<warp_size>(nr_prev);
-        n_expert_total = warp_reduce_sum<warp_size>(n_expert_total);
     }
     ggml_cuda_syncwarp();
 
@@ -151,7 +148,7 @@ static __global__ void mm_ids_helper(
     }
 
     if constexpr (low_sram) {
-        if (expert_nr != 0) {
+        if (expert_nr != gridDim.y - 1) {
             return;
         }
     }
@@ -160,7 +157,7 @@ static __global__ void mm_ids_helper(
         return;
     }
 
-    const int n_expert_cols = low_sram ? n_expert_total : it_compact;
+    const int n_expert_cols = nr_prev + it_compact;
 
     int col_low  = nex_prev;
     int col_high = nex_prev + min(int(tile_width.z), n_expert_cols);
