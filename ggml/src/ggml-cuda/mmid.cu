@@ -54,12 +54,12 @@ static __global__ void mm_ids_helper(
         nex_prev += expert_found < expert;
 
         const ggml_cuda_thread_mask_t iex_used = ggml_cuda_ballot(expert_found == expert);
-        const ggml_cuda_thread_mask_t mask = (ggml_cuda_thread_mask_t(1) << threadIdx.x) - 1;
+        const ggml_cuda_thread_mask_t mask_lower = (ggml_cuda_thread_mask_t(1) << threadIdx.x) - 1;
 
         if constexpr (low_sram) {
             int rep_idx = 0;
             if constexpr (n_expert_used_template == 0) {
-                rep_idx = *nr_found_at_token + ggml_cuda_popc(iex_used & mask);
+                rep_idx = *nr_found_at_token + ggml_cuda_popc(iex_used & mask_lower);
                 *nr_found_at_token += ggml_cuda_popc(iex_used);
             } else {
                 GGML_UNUSED(nr_found_at_token);
@@ -67,18 +67,18 @@ static __global__ void mm_ids_helper(
                 const int token_in_warp = threadIdx.x / neu_padded;
                 const int token_start_lane = token_in_warp * neu_padded;
                 const int lane_in_token = threadIdx.x % neu_padded;
-                const ggml_cuda_thread_mask_t token_mask = ((ggml_cuda_thread_mask_t(1) << lane_in_token) - 1) << token_start_lane;
-                rep_idx = ggml_cuda_popc(iex_used & token_mask);
+                const ggml_cuda_thread_mask_t mask_other_lanes = ((ggml_cuda_thread_mask_t(1) << lane_in_token) - 1) << token_start_lane;
+                rep_idx = ggml_cuda_popc(iex_used & mask_other_lanes);
             }
 
             const bool is_expert = expert_found == expert;
             nr_prev += is_expert && (rep_idx < expert_nr);
 
-            const bool write_store = is_expert && (rep_idx == expert_nr);
-            const ggml_cuda_thread_mask_t store_mask = ggml_cuda_ballot(write_store);
-            const int it_compact_offset = ggml_cuda_popc(store_mask & mask);
+            const bool thread_writes_to_store = is_expert && (rep_idx == expert_nr);
+            const ggml_cuda_thread_mask_t store_mask = ggml_cuda_ballot(thread_writes_to_store);
+            const int it_compact_offset = ggml_cuda_popc(store_mask & mask_lower);
 
-            if (write_store) {
+            if (thread_writes_to_store) {
                 store[it_compact + it_compact_offset] = mm_ids_helper_store(it, iex);
             }
 
@@ -87,7 +87,7 @@ static __global__ void mm_ids_helper(
             GGML_UNUSED(expert_nr);
             GGML_UNUSED(nr_found_at_token);
 
-            const int it_compact_offset = ggml_cuda_popc(iex_used & mask);
+            const int it_compact_offset = ggml_cuda_popc(iex_used & mask_lower);
 
             if (expert_found == expert) {
                 store[it_compact + it_compact_offset] = mm_ids_helper_store(it, iex);
