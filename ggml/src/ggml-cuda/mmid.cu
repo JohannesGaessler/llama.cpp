@@ -24,20 +24,25 @@ template <int n> struct mm_ids_pow2 { static constexpr int value = 2*mm_ids_pow2
 template <>      struct mm_ids_pow2<1> { static constexpr int value = 1; };
 template <>      struct mm_ids_pow2<0> { static constexpr int value = 1; };
 
+template <bool increment_nex_prev, bool write_to_store>
 static __device__ void check_experts(
         mm_ids_helper_store * store, int & nex_prev, int & it_compact,
         const int expert, const int it, const int iex, const int expert_found) {
-    nex_prev += expert_found < expert;
-
-    const ggml_cuda_thread_mask_t iex_used = ggml_cuda_ballot(expert_found == expert);
-    const ggml_cuda_thread_mask_t mask = (ggml_cuda_thread_mask_t(1) << threadIdx.x) - 1;
-    const int it_compact_offset = ggml_cuda_popc(iex_used & mask);
-
-    if (expert_found == expert) {
-        store[it_compact + it_compact_offset] = mm_ids_helper_store(it, iex);
+    if (increment_nex_prev) {
+        nex_prev += expert_found < expert;
     }
 
-    it_compact += ggml_cuda_popc(iex_used);
+    if (write_to_store) {
+        const ggml_cuda_thread_mask_t iex_used = ggml_cuda_ballot(expert_found == expert);
+        const ggml_cuda_thread_mask_t mask = (ggml_cuda_thread_mask_t(1) << threadIdx.x) - 1;
+        const int it_compact_offset = ggml_cuda_popc(iex_used & mask);
+
+        if (expert_found == expert) {
+            store[it_compact + it_compact_offset] = mm_ids_helper_store(it, iex);
+        }
+
+        it_compact += ggml_cuda_popc(iex_used);
+    }
 }
 
 // Helper function for mul_mat_id, converts ids to a more convenient format.
@@ -70,7 +75,11 @@ static __global__ void mm_ids_helper(
             for (int iex0 = 0; iex0 < n_expert_used; iex0 += warp_size) {
                 const int iex = iex0 + threadIdx.x;
                 const int expert_found = iex < n_expert_used ? ids[it*si1 + iex] : INT_MAX;
-                check_experts(store, nex_prev, it_compact, expert, it, iex, expert_found);
+
+                constexpr bool increment_nex_prev = true;
+                constexpr bool write_to_store     = true;
+                check_experts<increment_nex_prev, write_to_store>
+                    (store, nex_prev, it_compact, expert, it, iex, expert_found);
             }
         }
     } else {
@@ -85,7 +94,11 @@ static __global__ void mm_ids_helper(
 
             const int expert_found = (neu_padded == n_expert_used || iex < n_expert_used) && it < n_tokens ?
                 ids[it*si1 + iex] : INT_MAX;
-            check_experts(store, nex_prev, it_compact, expert, it, iex, expert_found);
+
+            constexpr bool increment_nex_prev = true;
+            constexpr bool write_to_store     = true;
+            check_experts<increment_nex_prev, write_to_store>
+                (store, nex_prev, it_compact, expert, it, iex, expert_found);
         }
     }
     nex_prev = warp_reduce_sum<warp_size>(nex_prev);
