@@ -105,44 +105,9 @@ static __global__ void mm_ids_helper(
                     (store, nex_prev, it_compact, expert, it, iex, expert_found);
             }
         }
-        int it_dumped = it;
-        for (; it < n_tokens; ++it) {
-            for (int iex0 = 0; iex0 < n_expert_used; iex0 += warp_size) {
-                const int iex = iex0 + threadIdx.x;
-                const int expert_found = iex < n_expert_used ? ids[it*si1 + iex] : INT_MAX;
-
-                constexpr bool increment_nex_prev = true;
-                constexpr bool write_to_store     = false;
-                check_experts<increment_nex_prev, write_to_store>
-                    (store, nex_prev, it_compact, expert, it, iex, expert_found);
-            }
-        }
-
         nex_prev = warp_reduce_sum<warp_size>(nex_prev);
         ggml_cuda_syncwarp();
         dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, n_dumped, it_compact);
-        it_compact = 0;
-
-        for (int it = it_dumped; it < n_tokens; ++it) {
-            for (int iex0 = 0; iex0 < n_expert_used && it_compact + warp_size <= ne_store; iex0 += warp_size) {
-                const int iex = iex0 + threadIdx.x;
-                const int expert_found = iex < n_expert_used ? ids[it*si1 + iex] : INT_MAX;
-
-                constexpr bool increment_nex_prev = false;
-                constexpr bool write_to_store     = true;
-                check_experts<increment_nex_prev, write_to_store>
-                    (store, nex_prev, it_compact, expert, it, iex, expert_found);
-            }
-            if (it_compact + max(warp_size, n_expert_used) >= ne_store) {
-                ggml_cuda_syncwarp();
-                dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, n_dumped, it_compact);
-                it_compact = 0;
-            }
-        }
-        if (it_compact > 0) {
-            ggml_cuda_syncwarp();
-            dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, n_dumped, it_compact);
-        }
     } else {
         // Implementation optimized for specific numbers of experts used:
         // a warp holds a whole number of token slots, so the slot count is padded to a power of 2
@@ -161,42 +126,9 @@ static __global__ void mm_ids_helper(
             check_experts<increment_nex_prev, write_to_store>
                 (store, nex_prev, it_compact, expert, it, iex, expert_found);
         }
-        int it0_dumped = it0;
-        for (; it0 < n_tokens; it0 += warp_size/neu_padded) {
-            const int it = it0 + threadIdx.x / neu_padded;
-            const int expert_found = (neu_padded == n_expert_used || iex < n_expert_used) && it < n_tokens ?
-                ids[it*si1 + iex] : INT_MAX;
-
-            constexpr bool increment_nex_prev = true;
-            constexpr bool write_to_store     = false;
-            check_experts<increment_nex_prev, write_to_store>
-                (store, nex_prev, it_compact, expert, it, iex, expert_found);
-        }
-
         nex_prev = warp_reduce_sum<warp_size>(nex_prev);
         ggml_cuda_syncwarp();
         dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, n_dumped, it_compact);
-        it_compact = 0;
-
-        for (int it0 = it0_dumped; it0 < n_tokens; it0 += warp_size/neu_padded) {
-            const int it = it0 + threadIdx.x / neu_padded;
-            const int expert_found = (neu_padded == n_expert_used || iex < n_expert_used) && it < n_tokens ?
-                ids[it*si1 + iex] : INT_MAX;
-
-            constexpr bool increment_nex_prev = false;
-            constexpr bool write_to_store     = true;
-            check_experts<increment_nex_prev, write_to_store>
-                (store, nex_prev, it_compact, expert, it, iex, expert_found);
-            if (it_compact + warp_size >= ne_store) {
-                ggml_cuda_syncwarp();
-                dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, n_dumped, it_compact);
-                it_compact = 0;
-            }
-        }
-        if (it_compact > 0) {
-            ggml_cuda_syncwarp();
-            dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, n_dumped, it_compact);
-        }
     }
 
     if (threadIdx.x != 0) {
