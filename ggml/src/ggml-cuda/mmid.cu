@@ -66,6 +66,8 @@ static __device__ __forceinline__ void dump_store(
     n_dumped += it_compact;
 }
 
+constexpr int n_unroll = 16;
+
 // Helper function for mul_mat_id, converts ids to a more convenient format.
 // ids_src1 describes how to permute the flattened column indices of src1 in order to get a compact src1 tensor sorted by expert.
 // ids_dst describes the same mapping but for the dst tensor.
@@ -151,26 +153,32 @@ static __global__ void mm_ids_helper(
         const int iex = threadIdx.x % neu_padded; // The index at which the expert is used, if any.
 
         int it0 = 0;
-        for (; it0 < n_tokens && it_compact + warp_size <= ne_store; it0 += warp_size/neu_padded) {
-            const int it = it0 + threadIdx.x / neu_padded;
-            const int expert_found = (neu_padded == n_expert_used || iex < n_expert_used) && it < n_tokens ?
-                ids[it*si1 + iex] : INT_MAX;
+        for (; it0 < n_tokens && it_compact + warp_size <= ne_store; it0 += n_unroll*warp_size/neu_padded) {
+#pragma unroll
+            for (int it1 = 0; it1 < n_unroll*warp_size/neu_padded; it1 += warp_size/neu_padded) {
+                const int it = it0 + it1 + threadIdx.x / neu_padded;
+                const int expert_found = (neu_padded == n_expert_used || iex < n_expert_used) && it < n_tokens ?
+                    ids[it*si1 + iex] : INT_MAX;
 
-            constexpr bool increment_nex_prev = true;
-            constexpr bool write_to_store     = true;
-            check_experts<increment_nex_prev, write_to_store>
-                (store, nex_prev, it_compact, expert, it, iex, expert_found);
+                constexpr bool increment_nex_prev = true;
+                constexpr bool write_to_store     = true;
+                check_experts<increment_nex_prev, write_to_store>
+                    (store, nex_prev, it_compact, expert, it, iex, expert_found);
+            }
         }
         int it0_dumped = it0;
-        for (; it0 < n_tokens; it0 += warp_size/neu_padded) {
-            const int it = it0 + threadIdx.x / neu_padded;
-            const int expert_found = (neu_padded == n_expert_used || iex < n_expert_used) && it < n_tokens ?
-                ids[it*si1 + iex] : INT_MAX;
+        for (; it0 < n_tokens && it_compact + warp_size <= ne_store; it0 += n_unroll*warp_size/neu_padded) {
+#pragma unroll
+            for (int it1 = 0; it1 < n_unroll*warp_size/neu_padded; it1 += warp_size/neu_padded) {
+                const int it = it0 + it1 + threadIdx.x / neu_padded;
+                const int expert_found = (neu_padded == n_expert_used || iex < n_expert_used) && it < n_tokens ?
+                    ids[it*si1 + iex] : INT_MAX;
 
-            constexpr bool increment_nex_prev = true;
-            constexpr bool write_to_store     = false;
-            check_experts<increment_nex_prev, write_to_store>
-                (store, nex_prev, it_compact, expert, it, iex, expert_found);
+                constexpr bool increment_nex_prev = true;
+                constexpr bool write_to_store     = false;
+                check_experts<increment_nex_prev, write_to_store>
+                    (store, nex_prev, it_compact, expert, it, iex, expert_found);
+            }
         }
 
         nex_prev = warp_reduce_sum<warp_size>(nex_prev);
@@ -178,24 +186,27 @@ static __global__ void mm_ids_helper(
         dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, n_dumped, it_compact);
         it_compact = 0;
 
-        for (int it0 = it0_dumped; it0 < n_tokens; it0 += warp_size/neu_padded) {
-            const int it = it0 + threadIdx.x / neu_padded;
-            const int expert_found = (neu_padded == n_expert_used || iex < n_expert_used) && it < n_tokens ?
-                ids[it*si1 + iex] : INT_MAX;
+        for (it0 = it0_dumped; it0 < n_tokens && it_compact + warp_size <= ne_store; it0 += n_unroll*warp_size/neu_padded) {
+#pragma unroll
+            for (int it1 = 0; it1 < n_unroll*warp_size/neu_padded; it1 += warp_size/neu_padded) {
+                const int it = it0 + it1 + threadIdx.x / neu_padded;
+                const int expert_found = (neu_padded == n_expert_used || iex < n_expert_used) && it < n_tokens ?
+                    ids[it*si1 + iex] : INT_MAX;
 
-            constexpr bool increment_nex_prev = false;
-            constexpr bool write_to_store     = true;
-            check_experts<increment_nex_prev, write_to_store>
-                (store, nex_prev, it_compact, expert, it, iex, expert_found);
-            if (it_compact + warp_size >= ne_store) {
+                constexpr bool increment_nex_prev = false;
+                constexpr bool write_to_store     = true;
+                check_experts<increment_nex_prev, write_to_store>
+                    (store, nex_prev, it_compact, expert, it, iex, expert_found);
+                if (it_compact + warp_size >= ne_store) {
+                    ggml_cuda_syncwarp();
+                    dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, n_dumped, it_compact);
+                    it_compact = 0;
+                }
+            }
+            if (it_compact > 0) {
                 ggml_cuda_syncwarp();
                 dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, n_dumped, it_compact);
-                it_compact = 0;
             }
-        }
-        if (it_compact > 0) {
-            ggml_cuda_syncwarp();
-            dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, n_dumped, it_compact);
         }
     }
 
@@ -238,8 +249,8 @@ static void launch_mm_ids_helper(
 
     const dim3 num_blocks(n_experts, 1, 1);
     const dim3 block_size(warp_size, 1, 1);
-    const size_t nbytes_shared = std::min(smpbo,
-        (n_tokens + std::max(n_expert_used_var, warp_size)) * sizeof(mm_ids_helper_store));
+    const size_t ne_shared_pad = n_expert_used_template == 0 ? std::max(n_expert_used_var, warp_size) : n_unroll*warp_size;
+    const size_t nbytes_shared = std::min(smpbo, (n_tokens + ne_shared_pad) * sizeof(mm_ids_helper_store));
     const size_t ne_store = nbytes_shared / sizeof(mm_ids_helper_store);
     mm_ids_helper<n_expert_used_template><<<num_blocks, block_size, nbytes_shared, stream>>>
         (ids, ids_src1, ids_dst, tile_spec, n_tokens, n_expert_used_var, nchannels_y, tile_width_fd, si1, sis1, write_inverse, ne_store);
