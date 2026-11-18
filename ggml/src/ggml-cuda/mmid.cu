@@ -66,7 +66,7 @@ static __device__ __forceinline__ void dump_store(
     n_dumped += it_compact;
 }
 
-constexpr int n_unroll = 16; // Manually unroll this many loop iterations for better performance.
+constexpr int n_unroll = 4; // Manually unroll this many loop iterations for better performance.
 
 // Helper function for mul_mat_id, converts ids to a more convenient format.
 // ids_src1 describes how to permute the flattened column indices of src1 in order to get a compact src1 tensor sorted by expert.
