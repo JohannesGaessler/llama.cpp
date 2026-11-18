@@ -25,7 +25,7 @@ template <>      struct mm_ids_pow2<1> { static constexpr int value = 1; };
 template <>      struct mm_ids_pow2<0> { static constexpr int value = 1; };
 
 template <bool increment_nex_prev, bool write_to_store>
-static __device__ void check_experts(
+static __device__ __forceinline__ void check_experts(
         mm_ids_helper_store * store, int & nex_prev, int & it_compact,
         const int expert, const int it, const int iex, const int expert_found) {
     if (increment_nex_prev) {
@@ -45,7 +45,7 @@ static __device__ void check_experts(
     }
 }
 
-static __device__ void dump_store(
+static __device__ __forceinline__ void dump_store(
         int32_t * __restrict__ ids_src1, int32_t * __restrict__ ids_dst,
         const int n_expert_used, const int nchannels_y, const int sis1, const bool write_inverse,
         const mm_ids_helper_store * __restrict__ store, const int nex_prev, int & n_dumped, const int it_compact) {
