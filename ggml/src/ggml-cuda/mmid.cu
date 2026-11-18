@@ -48,21 +48,22 @@ static __device__ void check_experts(
 static __device__ void dump_store(
         int32_t * __restrict__ ids_src1, int32_t * __restrict__ ids_dst,
         const int n_expert_used, const int nchannels_y, const int sis1, const bool write_inverse,
-        const mm_ids_helper_store * __restrict__ store, const int nex_prev, const int it_compact) {
+        const mm_ids_helper_store * __restrict__ store, const int nex_prev, int & n_dumped, const int it_compact) {
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
 
     for (int itc = threadIdx.x; itc < it_compact; itc += warp_size) {
         const mm_ids_helper_store store_it = store[itc];
         const int it       = store_it.it();
         const int iex_used = store_it.iex_used();
-        ids_dst[nex_prev + itc] = it*n_expert_used + iex_used;
+        ids_dst[nex_prev + n_dumped + itc] = it*n_expert_used + iex_used;
         // ids_src1 holds the forward map, or the inverse map (token slot -> compact row) for quant dedup
         if (write_inverse) {
-            ids_src1[it*n_expert_used + iex_used] = nex_prev + itc;
+            ids_src1[it*n_expert_used + iex_used] = nex_prev + n_dumped + itc;
         } else {
-            ids_src1[nex_prev + itc] = it*sis1 + iex_used % nchannels_y;
+            ids_src1[nex_prev + n_dumped + itc] = it*sis1 + iex_used % nchannels_y;
         }
     }
+    n_dumped += it_compact;
 }
 
 // Helper function for mul_mat_id, converts ids to a more convenient format.
@@ -87,14 +88,14 @@ static __global__ void mm_ids_helper(
     mm_ids_helper_store * store = (mm_ids_helper_store *) data_mm_ids_helper;
 
     int nex_prev   = 0; // Number of columns for experts with a lower index.
-    int itc_dumped = 0;
+    int n_dumped   = 0;
     int it_compact = 0; // Running index for the compact slice of this expert.
 
     if constexpr (n_expert_used_template == 0) {
         // Generic implementation:
         int it = 0;
         for (; it < n_tokens && it_compact + max(warp_size, n_expert_used) <= ne_store; ++it) {
-            for (int iex0 = 0; iex0 < n_expert_used && it_compact + warp_size <= ne_store; iex0 += warp_size) {
+            for (int iex0 = 0; iex0 < n_expert_used; iex0 += warp_size) {
                 const int iex = iex0 + threadIdx.x;
                 const int expert_found = iex < n_expert_used ? ids[it*si1 + iex] : INT_MAX;
 
@@ -119,8 +120,7 @@ static __global__ void mm_ids_helper(
 
         nex_prev = warp_reduce_sum<warp_size>(nex_prev);
         ggml_cuda_syncwarp();
-        dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, it_compact);
-        itc_dumped += it_compact;
+        dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, n_dumped, it_compact);
         it_compact = 0;
 
         for (int it = it_dumped; it < n_tokens; ++it) {
@@ -135,15 +135,13 @@ static __global__ void mm_ids_helper(
             }
             if (it_compact + max(warp_size, n_expert_used) >= ne_store) {
                 ggml_cuda_syncwarp();
-                dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, it_compact);
-                itc_dumped += it_compact;
+                dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, n_dumped, it_compact);
                 it_compact = 0;
             }
         }
         if (it_compact > 0) {
             ggml_cuda_syncwarp();
-            dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, it_compact);
-            itc_dumped += it_compact;
+            dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, n_dumped, it_compact);
         }
     } else {
         // Implementation optimized for specific numbers of experts used:
@@ -177,8 +175,7 @@ static __global__ void mm_ids_helper(
 
         nex_prev = warp_reduce_sum<warp_size>(nex_prev);
         ggml_cuda_syncwarp();
-        dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, it_compact);
-        itc_dumped += it_compact;
+        dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, n_dumped, it_compact);
         it_compact = 0;
 
         for (int it0 = it0_dumped; it0 < n_tokens; it0 += warp_size/neu_padded) {
@@ -186,21 +183,19 @@ static __global__ void mm_ids_helper(
             const int expert_found = (neu_padded == n_expert_used || iex < n_expert_used) && it < n_tokens ?
                 ids[it*si1 + iex] : INT_MAX;
 
-            constexpr bool increment_nex_prev = true;
-            constexpr bool write_to_store     = false;
+            constexpr bool increment_nex_prev = false;
+            constexpr bool write_to_store     = true;
             check_experts<increment_nex_prev, write_to_store>
                 (store, nex_prev, it_compact, expert, it, iex, expert_found);
             if (it_compact + warp_size >= ne_store) {
                 ggml_cuda_syncwarp();
-                dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, it_compact);
-                itc_dumped += it_compact;
+                dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, n_dumped, it_compact);
                 it_compact = 0;
             }
         }
         if (it_compact > 0) {
             ggml_cuda_syncwarp();
-            dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, it_compact);
-            itc_dumped += it_compact;
+            dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, n_dumped, it_compact);
         }
     }
 
@@ -209,7 +204,7 @@ static __global__ void mm_ids_helper(
     }
 
     int col_low  = nex_prev;
-    int col_high = nex_prev + min(int(tile_width.z), itc_dumped);
+    int col_high = nex_prev + min(int(tile_width.z), n_dumped);
 
     // The while loop covers all tiles at the seams containing the column with % tile_width == 0.
     while (col_high > fastdiv(col_low + tile_width.z - 1, tile_width) * tile_width.z) {
@@ -217,7 +212,7 @@ static __global__ void mm_ids_helper(
             = {expert, col_low, col_high, /*padding =*/ 0};
 
         col_low  = col_high;
-        col_high = min(col_high + int(tile_width.z), nex_prev + itc_dumped);
+        col_high = min(col_high + int(tile_width.z), nex_prev + n_dumped);
     }
 
     // Finally, at most one extra tile_spec between the seams per expert.
