@@ -345,6 +345,7 @@ static ggml_cuda_device_info ggml_cuda_init() {
         info.devices[id].integrated = false; // Temporarily disabled due to issues with corrupted output (e.g. #15034)
         info.devices[id].nsm        = prop.multiProcessorCount;
         info.devices[id].smpb       = prop.sharedMemPerBlock;
+        info.devices[id].smpsm      = prop.sharedMemPerMultiprocessor;
         info.devices[id].warp_size  = prop.warpSize;
 
         int supports_coop_launch = 0;
