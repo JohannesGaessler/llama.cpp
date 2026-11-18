@@ -45,6 +45,26 @@ static __device__ void check_experts(
     }
 }
 
+static __device__ void dump_store(
+        int32_t * __restrict__ ids_src1, int32_t * __restrict__ ids_dst,
+        const int n_expert_used, const int nchannels_y, const int sis1, const bool write_inverse,
+        const mm_ids_helper_store * __restrict__ store, const int nex_prev, const int it_compact) {
+    constexpr int warp_size = ggml_cuda_get_physical_warp_size();
+
+    for (int itc = threadIdx.x; itc < it_compact; itc += warp_size) {
+        const mm_ids_helper_store store_it = store[itc];
+        const int it       = store_it.it();
+        const int iex_used = store_it.iex_used();
+        ids_dst[nex_prev + itc] = it*n_expert_used + iex_used;
+        // ids_src1 holds the forward map, or the inverse map (token slot -> compact row) for quant dedup
+        if (write_inverse) {
+            ids_src1[it*n_expert_used + iex_used] = nex_prev + itc;
+        } else {
+            ids_src1[nex_prev + itc] = it*sis1 + iex_used % nchannels_y;
+        }
+    }
+}
+
 // Helper function for mul_mat_id, converts ids to a more convenient format.
 // ids_src1 describes how to permute the flattened column indices of src1 in order to get a compact src1 tensor sorted by expert.
 // ids_dst describes the same mapping but for the dst tensor.
@@ -104,18 +124,7 @@ static __global__ void mm_ids_helper(
     nex_prev = warp_reduce_sum<warp_size>(nex_prev);
     ggml_cuda_syncwarp();
 
-    for (int itc = threadIdx.x; itc < it_compact; itc += warp_size) {
-        const mm_ids_helper_store store_it = store[itc];
-        const int it       = store_it.it();
-        const int iex_used = store_it.iex_used();
-        ids_dst[nex_prev + itc] = it*n_expert_used + iex_used;
-        // ids_src1 holds the forward map, or the inverse map (token slot -> compact row) for quant dedup
-        if (write_inverse) {
-            ids_src1[it*n_expert_used + iex_used] = nex_prev + itc;
-        } else {
-            ids_src1[nex_prev + itc] = it*sis1 + iex_used % nchannels_y;
-        }
-    }
+    dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, it_compact);
 
     if (threadIdx.x != 0) {
         return;
