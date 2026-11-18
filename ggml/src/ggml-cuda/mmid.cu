@@ -152,9 +152,9 @@ static __global__ void mm_ids_helper(
         static_assert(neu_padded <= warp_size && warp_size % neu_padded == 0, "bad n_expert_used");
         const int iex = threadIdx.x % neu_padded; // The index at which the expert is used, if any.
 
-        for (int it0 = 0; it0 < n_tokens; it0 += warp_size/neu_padded) {
+        int it0 = 0;
+        for (; it0 < n_tokens && it_compact + warp_size <= ne_store; it0 += warp_size/neu_padded) {
             const int it = it0 + threadIdx.x / neu_padded;
-
             const int expert_found = (neu_padded == n_expert_used || iex < n_expert_used) && it < n_tokens ?
                 ids[it*si1 + iex] : INT_MAX;
 
@@ -162,6 +162,45 @@ static __global__ void mm_ids_helper(
             constexpr bool write_to_store     = true;
             check_experts<increment_nex_prev, write_to_store>
                 (store, nex_prev, it_compact, expert, it, iex, expert_found);
+        }
+        int it0_dumped = it0;
+        for (; it0 < n_tokens; it0 += warp_size/neu_padded) {
+            const int it = it0 + threadIdx.x / neu_padded;
+            const int expert_found = (neu_padded == n_expert_used || iex < n_expert_used) && it < n_tokens ?
+                ids[it*si1 + iex] : INT_MAX;
+
+            constexpr bool increment_nex_prev = true;
+            constexpr bool write_to_store     = false;
+            check_experts<increment_nex_prev, write_to_store>
+                (store, nex_prev, it_compact, expert, it, iex, expert_found);
+        }
+
+        nex_prev = warp_reduce_sum<warp_size>(nex_prev);
+        ggml_cuda_syncwarp();
+        dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, it_compact);
+        itc_dumped += it_compact;
+        it_compact = 0;
+
+        for (int it0 = it0_dumped; it0 < n_tokens; it0 += warp_size/neu_padded) {
+            const int it = it0 + threadIdx.x / neu_padded;
+            const int expert_found = (neu_padded == n_expert_used || iex < n_expert_used) && it < n_tokens ?
+                ids[it*si1 + iex] : INT_MAX;
+
+            constexpr bool increment_nex_prev = true;
+            constexpr bool write_to_store     = false;
+            check_experts<increment_nex_prev, write_to_store>
+                (store, nex_prev, it_compact, expert, it, iex, expert_found);
+            if (it_compact + warp_size >= ne_store) {
+                ggml_cuda_syncwarp();
+                dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, it_compact);
+                itc_dumped += it_compact;
+                it_compact = 0;
+            }
+        }
+        if (it_compact > 0) {
+            ggml_cuda_syncwarp();
+            dump_store(ids_src1, ids_dst, n_expert_used, nchannels_y, sis1, write_inverse, store, nex_prev, it_compact);
+            itc_dumped += it_compact;
         }
     }
 
@@ -217,34 +256,34 @@ void ggml_cuda_launch_mm_ids_helper(
         const int n_experts, const int n_tokens, const int n_expert_used, const int nchannels_y, const int tile_width,
         const int si1, const int sis1, const bool write_inverse, cudaStream_t stream) {
     switch (n_expert_used) {
-        // case  2:
-        //     launch_mm_ids_helper< 2>(ids, ids_src1, ids_dst, tile_spec,
-        //         n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
-        //     break;
-        // case  4:
-        //     launch_mm_ids_helper< 4>(ids, ids_src1, ids_dst, tile_spec,
-        //         n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
-        //     break;
-        // case  6:
-        //     launch_mm_ids_helper< 6>(ids, ids_src1, ids_dst, tile_spec,
-        //         n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
-        //     break;
-        // case  8:
-        //     launch_mm_ids_helper< 8>(ids, ids_src1, ids_dst, tile_spec,
-        //         n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
-        //     break;
-        // case 10:
-        //     launch_mm_ids_helper<10>(ids, ids_src1, ids_dst, tile_spec,
-        //         n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
-        //     break;
-        // case 16:
-        //     launch_mm_ids_helper<16>(ids, ids_src1, ids_dst, tile_spec,
-        //         n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
-        //     break;
-        // case 32:
-        //     launch_mm_ids_helper<32>(ids, ids_src1, ids_dst, tile_spec,
-        //         n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
-        //     break;
+        case  2:
+            launch_mm_ids_helper< 2>(ids, ids_src1, ids_dst, tile_spec,
+                n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
+            break;
+        case  4:
+            launch_mm_ids_helper< 4>(ids, ids_src1, ids_dst, tile_spec,
+                n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
+            break;
+        case  6:
+            launch_mm_ids_helper< 6>(ids, ids_src1, ids_dst, tile_spec,
+                n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
+            break;
+        case  8:
+            launch_mm_ids_helper< 8>(ids, ids_src1, ids_dst, tile_spec,
+                n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
+            break;
+        case 10:
+            launch_mm_ids_helper<10>(ids, ids_src1, ids_dst, tile_spec,
+                n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
+            break;
+        case 16:
+            launch_mm_ids_helper<16>(ids, ids_src1, ids_dst, tile_spec,
+                n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
+            break;
+        case 32:
+            launch_mm_ids_helper<32>(ids, ids_src1, ids_dst, tile_spec,
+                n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
+            break;
         default:
             launch_mm_ids_helper< 0>(ids, ids_src1, ids_dst, tile_spec,
                 n_experts, n_tokens, n_expert_used, nchannels_y, tile_width, si1, sis1, write_inverse, stream);
