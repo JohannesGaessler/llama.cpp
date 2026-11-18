@@ -93,8 +93,7 @@ static __global__ void mm_ids_helper(
 
     if constexpr (n_expert_used_template == 0) {
         // Generic implementation:
-        int it = 0;
-        for (; it < n_tokens && it_compact + max(warp_size, n_expert_used) <= ne_store; ++it) {
+        for (int it = 0; it < n_tokens; ++it) {
             for (int iex0 = 0; iex0 < n_expert_used; iex0 += warp_size) {
                 const int iex = iex0 + threadIdx.x;
                 const int expert_found = iex < n_expert_used ? ids[it*si1 + iex] : INT_MAX;
@@ -115,9 +114,9 @@ static __global__ void mm_ids_helper(
         static_assert(neu_padded <= warp_size && warp_size % neu_padded == 0, "bad n_expert_used");
         const int iex = threadIdx.x % neu_padded; // The index at which the expert is used, if any.
 
-        int it0 = 0;
-        for (; it0 < n_tokens && it_compact + warp_size <= ne_store; it0 += warp_size/neu_padded) {
+        for (int it0 = 0; it0 < n_tokens; it0 += warp_size/neu_padded) {
             const int it = it0 + threadIdx.x / neu_padded;
+
             const int expert_found = (neu_padded == n_expert_used || iex < n_expert_used) && it < n_tokens ?
                 ids[it*si1 + iex] : INT_MAX;
 
