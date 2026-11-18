@@ -30,7 +30,7 @@ template <>      struct mm_ids_pow2<0> { static constexpr int value = 1; };
 // The first (n_tokens*n_expert_used + J - 1) / tile_width elements of tile_spec contain the specication for
 //   matrix multiplication tiles at token positions which are exactly divided by tile_width.
 // Additionally the following n_expert elements of tile_spec may contain additional tiles that fall between these seams.
-template <int n_expert_used_template, bool low_sram>
+template <int n_expert_used_template>
 __launch_bounds__(ggml_cuda_get_physical_warp_size(), 1)
 static __global__ void mm_ids_helper(
         const int32_t * __restrict__ ids,
@@ -40,73 +40,35 @@ static __global__ void mm_ids_helper(
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
     const int n_expert_used = n_expert_used_template == 0 ? n_expert_used_var : n_expert_used_template;
 
-    const int expert    = blockIdx.x; // The expert this CUDA block handles.
-    const int expert_nr = blockIdx.y; // If low_sram, then each CUDA block only handles a single number of previous repetitions of the expert.
+    const int expert = blockIdx.x; // The expert this CUDA block handles.
 
     extern __shared__ char data_mm_ids_helper[];
     mm_ids_helper_store * store = (mm_ids_helper_store *) data_mm_ids_helper;
 
     int nex_prev   = 0; // Number of columns for experts with a lower index.
-    int nr_prev    = 0; // Number of columns with the right expert but lower repetitions (only used for low_sram)
-    int it_compact = 0; // Running index for the compact slice of this expert (with expert_nr previous repetitions if low_sram).
+    int it_compact = 0; // Running index for the compact slice of this expert.
 
-    auto check_experts = [&] (const int it, const int iex, const int expert_found, int * nr_found_at_token = nullptr) {
+    auto check_experts = [&] (const int it, const int iex, const int expert_found) {
         nex_prev += expert_found < expert;
 
         const ggml_cuda_thread_mask_t iex_used = ggml_cuda_ballot(expert_found == expert);
-        const ggml_cuda_thread_mask_t mask_lower = (ggml_cuda_thread_mask_t(1) << threadIdx.x) - 1;
+        const ggml_cuda_thread_mask_t mask = (ggml_cuda_thread_mask_t(1) << threadIdx.x) - 1;
+        const int it_compact_offset = ggml_cuda_popc(iex_used & mask);
 
-        if constexpr (low_sram) {
-            // Slower and more complex path if shared memory is tight.
-            int rep_idx = 0;
-            if constexpr (n_expert_used_template == 0) {
-                rep_idx = *nr_found_at_token + ggml_cuda_popc(iex_used & mask_lower);
-                *nr_found_at_token += ggml_cuda_popc(iex_used);
-            } else {
-                GGML_UNUSED(nr_found_at_token);
-                constexpr int neu_padded = mm_ids_pow2<n_expert_used_template>::value;
-                const int token_in_warp = threadIdx.x / neu_padded;
-                const int token_start_lane = token_in_warp * neu_padded;
-                const int lane_in_token = threadIdx.x % neu_padded;
-                const ggml_cuda_thread_mask_t mask_other_lanes = ((ggml_cuda_thread_mask_t(1) << lane_in_token) - 1) << token_start_lane;
-                rep_idx = ggml_cuda_popc(iex_used & mask_other_lanes);
-            }
-
-            const bool is_expert = expert_found == expert;
-            nr_prev += is_expert && (rep_idx < expert_nr);
-
-            const bool thread_writes_to_store = is_expert && (rep_idx == expert_nr);
-            const ggml_cuda_thread_mask_t store_mask = ggml_cuda_ballot(thread_writes_to_store);
-            const int it_compact_offset = ggml_cuda_popc(store_mask & mask_lower);
-
-            if (thread_writes_to_store) {
-                store[it_compact + it_compact_offset] = mm_ids_helper_store(it, iex);
-            }
-
-            it_compact += ggml_cuda_popc(store_mask);
-        } else {
-            // Faster and streamlined path that handles all expert repetitions at once.
-            GGML_UNUSED(expert_nr);
-            GGML_UNUSED(nr_found_at_token);
-
-            const int it_compact_offset = ggml_cuda_popc(iex_used & mask_lower);
-
-            if (expert_found == expert) {
-                store[it_compact + it_compact_offset] = mm_ids_helper_store(it, iex);
-            }
-
-            it_compact += ggml_cuda_popc(iex_used);
+        if (expert_found == expert) {
+            store[it_compact + it_compact_offset] = mm_ids_helper_store(it, iex);
         }
+
+        it_compact += ggml_cuda_popc(iex_used);
     };
 
     if constexpr (n_expert_used_template == 0) {
         // Generic implementation:
         for (int it = 0; it < n_tokens; ++it) {
-            int nr_found_at_token = 0;
             for (int iex0 = 0; iex0 < n_expert_used; iex0 += warp_size) {
                 const int iex = iex0 + threadIdx.x;
                 const int expert_found = iex < n_expert_used ? ids[it*si1 + iex] : INT_MAX;
-                check_experts(it, iex, expert_found, &nr_found_at_token);
+                check_experts(it, iex, expert_found);
             }
         }
     } else {
@@ -125,29 +87,18 @@ static __global__ void mm_ids_helper(
         }
     }
     nex_prev = warp_reduce_sum<warp_size>(nex_prev);
-    if constexpr (low_sram) {
-        nr_prev = warp_reduce_sum<warp_size>(nr_prev);
-    }
     ggml_cuda_syncwarp();
-
-    const int n_prev = nex_prev + nr_prev;
 
     for (int itc = threadIdx.x; itc < it_compact; itc += warp_size) {
         const mm_ids_helper_store store_it = store[itc];
         const int it       = store_it.it();
         const int iex_used = store_it.iex_used();
-        ids_dst[n_prev + itc] = it*n_expert_used + iex_used;
+        ids_dst[nex_prev + itc] = it*n_expert_used + iex_used;
         // ids_src1 holds the forward map, or the inverse map (token slot -> compact row) for quant dedup
         if (write_inverse) {
-            ids_src1[it*n_expert_used + iex_used] = n_prev + itc;
+            ids_src1[it*n_expert_used + iex_used] = nex_prev + itc;
         } else {
-            ids_src1[n_prev + itc] = it*sis1 + iex_used % nchannels_y;
-        }
-    }
-
-    if constexpr (low_sram) {
-        if (expert_nr != gridDim.y - 1) {
-            return;
+            ids_src1[nex_prev + itc] = it*sis1 + iex_used % nchannels_y;
         }
     }
 
@@ -155,10 +106,8 @@ static __global__ void mm_ids_helper(
         return;
     }
 
-    const int n_expert_cols = nr_prev + it_compact;
-
     int col_low  = nex_prev;
-    int col_high = nex_prev + min(int(tile_width.z), n_expert_cols);
+    int col_high = nex_prev + min(int(tile_width.z), it_compact);
 
     // The while loop covers all tiles at the seams containing the column with % tile_width == 0.
     while (col_high > fastdiv(col_low + tile_width.z - 1, tile_width) * tile_width.z) {
@@ -166,7 +115,7 @@ static __global__ void mm_ids_helper(
             = {expert, col_low, col_high, /*padding =*/ 0};
 
         col_low  = col_high;
-        col_high = min(col_high + int(tile_width.z), nex_prev + n_expert_cols);
+        col_high = min(col_high + int(tile_width.z), nex_prev + it_compact);
     }
 
     // Finally, at most one extra tile_spec between the seams per expert.
@@ -186,26 +135,15 @@ static void launch_mm_ids_helper(
     const int id = ggml_cuda_get_device();
     const int warp_size = ggml_cuda_info().devices[id].warp_size;
     const size_t smpbo = ggml_cuda_info().devices[id].smpbo;
+    CUDA_SET_SHARED_MEMORY_LIMIT(mm_ids_helper<n_expert_used_template>, smpbo);
 
     const uint3 tile_width_fd = init_fastdiv_values(tile_width);
 
+    const dim3 num_blocks(n_experts, 1, 1);
     const dim3 block_size(warp_size, 1, 1);
-    const size_t nbytes_shared_high = n_tokens*n_expert_used_var*sizeof(mm_ids_helper_store);
-    if (nbytes_shared_high <= smpbo) {
-        constexpr bool low_sram = false;
-        const dim3 num_blocks(n_experts, 1, 1);
-        CUDA_SET_SHARED_MEMORY_LIMIT((mm_ids_helper<n_expert_used_template, low_sram>), smpbo);
-        mm_ids_helper<n_expert_used_template, low_sram><<<num_blocks, block_size, nbytes_shared_high, stream>>>
-            (ids, ids_src1, ids_dst, tile_spec, n_tokens, n_expert_used_var, nchannels_y, tile_width_fd, si1, sis1, write_inverse);
-        return;
-    }
-    const size_t nbytes_shared_low = n_tokens*sizeof(mm_ids_helper_store);
-    GGML_ASSERT(nbytes_shared_low <= smpbo);
-
-    constexpr bool low_sram = true;
-    const dim3 num_blocks(n_experts, n_expert_used_var, 1);
-    CUDA_SET_SHARED_MEMORY_LIMIT((mm_ids_helper<n_expert_used_template, low_sram>), smpbo);
-    mm_ids_helper<n_expert_used_template, low_sram><<<num_blocks, block_size, nbytes_shared_low, stream>>>
+    const size_t nbytes_shared = n_tokens*sizeof(mm_ids_helper_store);
+    GGML_ASSERT(nbytes_shared <= smpbo);
+    mm_ids_helper<n_expert_used_template><<<num_blocks, block_size, nbytes_shared, stream>>>
         (ids, ids_src1, ids_dst, tile_spec, n_tokens, n_expert_used_var, nchannels_y, tile_width_fd, si1, sis1, write_inverse);
 }
 
