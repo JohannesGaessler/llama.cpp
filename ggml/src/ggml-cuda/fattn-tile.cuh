@@ -469,14 +469,15 @@ static __device__ __forceinline__ void flash_attn_tile_load_tile(
             }
         }
     };
-    // 1: max 32*16=512 bytes, 128 float
-    // 2: max 16*16=256 bytes,  64 float
-    // 3: max  8*16=128 bytes,  32 float
-    // 4: max  4*16= 64 bytes,  16 float
-    // 5: max  2*16= 32 bytes,   8 float
+    // 1: max 64*16=512 bytes, 256 float
+    // 2: max 32*16=512 bytes, 128 float
+    // 3: max 16*16=256 bytes,  64 float
+    // 4: max  8*16=128 bytes,  32 float
+    // 5: max  4*16= 64 bytes,  16 float
+    // 6: max  2*16= 32 bytes,   8 float
     static_assert(J % 8 == 0, "bad J");
     static_assert(J % cpy_ne == 0, "bad J");
-    ggml_cuda_unroll<5>{}(load);
+    ggml_cuda_unroll<6>{}(load);
 }
 
 // Function that performs a single iteration in for the KQ matrix multiplication:
@@ -843,7 +844,7 @@ static __global__ void flash_attn_tile(
     static_assert(ggml_cuda_fattn_tile_get_config(DKQ, DV, ncols1*ncols2) != 0, "kernel config not defined");
 
     constexpr int ncols     = ncols1*ncols2;
-    constexpr int warp_size = 32;
+    constexpr int warp_size = ggml_cuda_get_physical_warp_size();
     constexpr int nwarps    = ggml_cuda_fattn_tile_get_nthreads (DKQ, DV, ncols1*ncols2) / warp_size;
     constexpr int nbatch_fa = ggml_cuda_fattn_tile_get_nbatch_fa(DKQ, DV, ncols1*ncols2);
     constexpr int nbatch_K  = ggml_cuda_fattn_tile_get_nbatch_K (DKQ, DV, ncols1*ncols2);
@@ -1153,7 +1154,7 @@ static void launch_fattn_tile_switch_ncols1(ggml_backend_cuda_context & ctx, ggm
 
     const int id        = ggml_cuda_get_device();
     const int cc        = ggml_cuda_info().devices[id].cc;
-    const int warp_size = 32;
+    const int warp_size = ggml_cuda_info().devices[id].warp_size;
 
     constexpr size_t nbytes_shared = 0;
 
