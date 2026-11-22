@@ -761,6 +761,7 @@ struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oo
 
         // K/V data is loaded with decreasing granularity for D for better memory bandwidth.
         const int chunks_per_row = D2 / cpy_ne;
+        const half2 * const __restrict__ KV_0 = use_sparse || indices ? KV : KV + int64_t(k_VKQ_0)*stride_KV;
 
         auto load_step = [&] __device__ (const int n) {
             const int stride_k = warp_size >> n;
@@ -794,8 +795,12 @@ struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oo
                         const int32_t index = i < i_sup ? indices[k_VKQ_0 + i] : -1;
                         src = index >= 0 ? KV + int64_t(index)*stride_KV + k*cpy_ne : zero;
                     } else if (!oob_check || i < i_sup) {
-                        const int64_t i_KV = indices ? max(indices[k_VKQ_0 + i], 0) : k_VKQ_0 + i;
-                        src = KV + i_KV*stride_KV + k*cpy_ne;
+                        if (indices) {
+                            const int64_t i_KV = max(indices[k_VKQ_0 + i], 0);
+                            src = KV + i_KV*stride_KV + k*cpy_ne;
+                        } else {
+                            src = KV_0 + i*stride_KV + k*cpy_ne;
+                        }
                     } else {
                         src = zero;
                     }
@@ -829,6 +834,7 @@ struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oo
 
         // K/V data is loaded with decreasing granularity for D for better memory bandwidth.
         const int chunks_per_row = D2 / h2_per_chunk;
+        const half2 * const __restrict__ KV_0 = use_sparse || indices ? KV : KV + int64_t(k_VKQ_0)*stride_KV;
 
         auto load_step = [&] __device__ (const int n) {
             const int stride_k = warp_size >> n;
@@ -852,7 +858,7 @@ struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oo
                     break;
                 }
 
-                const __align__(16) half2 zero[h2_per_chunk] = {{0.0f, 0.0f}};
+                const half2 zero[h2_per_chunk] = {{0.0f, 0.0f}};
 #pragma unroll
                 for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
                     const int k = k0 + (stride_k == warp_size ? threadIdx.x : threadIdx.x % stride_k);
@@ -862,8 +868,12 @@ struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oo
                         const int32_t index = i < i_sup ? indices[k_VKQ_0 + i] : -1;
                         src = index >= 0 ? KV + int64_t(index)*stride_KV + k*h2_per_chunk : zero;
                     } else if (!oob_check || i < i_sup) {
-                        const int64_t i_KV = indices ? max(indices[k_VKQ_0 + i], 0) : k_VKQ_0 + i;
-                        src = KV + i_KV*stride_KV + k*h2_per_chunk;
+                        if (indices) {
+                            const int64_t i_KV = max(indices[k_VKQ_0 + i], 0);
+                            src = KV + i_KV*stride_KV + k*h2_per_chunk;
+                        } else {
+                            src = KV_0 + i*stride_KV + k*h2_per_chunk;
+                        }
                     } else {
                         src = zero;
                     }
