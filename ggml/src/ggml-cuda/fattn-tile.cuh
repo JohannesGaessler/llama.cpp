@@ -385,7 +385,7 @@ static __device__ __forceinline__ void flash_attn_tile_iter_KQ(
         const int k_VKQ_sup,
         const int k_KQ_0,
         float * KQ_acc) {
-    constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
+    constexpr int cpy_nb = 16;
     constexpr int cpy_ne = cpy_nb / 4;
 
     constexpr int ncols = ncols1*ncols2;
@@ -471,7 +471,7 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
         const int k_VKQ_0,
         const int k_VKQ_max,
         const int col_Q_0) {
-    constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
+    constexpr int cpy_nb = 16;
     constexpr int cpy_ne = cpy_nb / 4;
 
     constexpr int ncols = ncols1*ncols2;
@@ -763,7 +763,7 @@ static __global__ void flash_attn_tile(
 
     const float slope = ncols2 == 1 ? get_alibi_slope(max_bias, head0, n_head_log2, m0, m1) : 1.0f;
 
-    constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
+    constexpr int cpy_nb = 16;
     constexpr int cpy_ne = cpy_nb / 4;
 
     constexpr int cpw = ncols > nwarps ? ncols/nwarps : 1; // Q columns per warp.
