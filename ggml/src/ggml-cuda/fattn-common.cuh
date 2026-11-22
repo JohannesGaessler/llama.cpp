@@ -676,16 +676,14 @@ static __device__ __forceinline__ void dequantize_V_q8_0(const void * __restrict
     }
 }
 
-template <int nwarps, int I, int J, int stride_tile, bool use_cp_async, bool oob_check, bool use_sparse, bool use_swizzle, typename T_dst>
+template <int warp_size, int nwarps, int I, int J, int stride_tile, bool use_cp_async, bool oob_check, bool use_sparse, bool use_swizzle, typename T_dst>
 struct flash_attn_load_tile_impl;
 
-template <int nwarps, int I, int J, int stride_tile, bool oob_check, bool use_sparse, bool use_swizzle>
-struct flash_attn_load_tile_impl<nwarps, I, J, stride_tile, true, oob_check, use_sparse, use_swizzle, half2> {
+template <int warp_size, int nwarps, int I, int J, int stride_tile, bool oob_check, bool use_sparse, bool use_swizzle>
+struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, true, oob_check, use_sparse, use_swizzle, half2> {
     static __device__ __forceinline__ void load(
             const half2 * const __restrict__ KV, half2 * const __restrict__ tile_KV, const int D2, const int stride_KV,
             const int k_VKQ_0, const int i_sup, const int32_t * const __restrict__ indices) {
-
-        constexpr int warp_size = ggml_cuda_get_physical_warp_size();
         constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
         constexpr int cpy_ne = cpy_nb / 4;
 
@@ -750,13 +748,11 @@ struct flash_attn_load_tile_impl<nwarps, I, J, stride_tile, true, oob_check, use
     }
 };
 
-template <int nwarps, int I, int J, int stride_tile, bool oob_check, bool use_sparse, bool use_swizzle>
-struct flash_attn_load_tile_impl<nwarps, I, J, stride_tile, false, oob_check, use_sparse, use_swizzle, half2> {
+template <int warp_size, int nwarps, int I, int J, int stride_tile, bool oob_check, bool use_sparse, bool use_swizzle>
+struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oob_check, use_sparse, use_swizzle, half2> {
     static __device__ __forceinline__ void load(
             const half2 * const __restrict__ KV, half2 * const __restrict__ tile_KV, const int D2, const int stride_KV,
             const int k_VKQ_0, const int i_sup, const int32_t * const __restrict__ indices) {
-
-        constexpr int warp_size = ggml_cuda_get_physical_warp_size();
         constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
         constexpr int cpy_ne = cpy_nb / 4;
 
@@ -819,13 +815,11 @@ struct flash_attn_load_tile_impl<nwarps, I, J, stride_tile, false, oob_check, us
     }
 };
 
-template <int nwarps, int I, int J, int stride_tile, bool oob_check, bool use_sparse>
-struct flash_attn_load_tile_impl<nwarps, I, J, stride_tile, false, oob_check, use_sparse, false, float> {
+template <int warp_size, int nwarps, int I, int J, int stride_tile, bool oob_check, bool use_sparse>
+struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oob_check, use_sparse, false, float> {
     static __device__ __forceinline__ void load(
             const half2 * const __restrict__ KV, float * const __restrict__ tile_KV, const int D2, const int stride_KV,
             const int k_VKQ_0, const int i_sup, const int32_t * const __restrict__ indices) {
-
-        constexpr int warp_size = ggml_cuda_get_physical_warp_size();
         constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
         constexpr int cpy_ne = cpy_nb / 4;
         constexpr int h2_per_chunk = cpy_ne / 2;
@@ -890,11 +884,11 @@ struct flash_attn_load_tile_impl<nwarps, I, J, stride_tile, false, oob_check, us
     }
 };
 
-template <int nwarps, int I, int J, int stride_tile, bool use_cp_async, bool oob_check, bool use_sparse, bool use_swizzle, typename T_dst>
+template <int warp_size, int nwarps, int I, int J, int stride_tile, bool use_cp_async, bool oob_check, bool use_sparse, bool use_swizzle, typename T_dst>
 static __device__ __forceinline__ void flash_attn_load_tile(
         const half2 * const __restrict__ KV, T_dst * const __restrict__ tile_KV, const int D2, const int stride_KV,
         const int k_VKQ_0, const int i_sup, const int32_t * const __restrict__ indices) {
-    flash_attn_load_tile_impl<nwarps, I, J, stride_tile, use_cp_async, oob_check, use_sparse, use_swizzle, T_dst>::load(
+    flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, use_cp_async, oob_check, use_sparse, use_swizzle, T_dst>::load(
         KV, tile_KV, D2, stride_KV, k_VKQ_0, i_sup, indices);
 }
 
