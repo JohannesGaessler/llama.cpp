@@ -753,7 +753,7 @@ struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oo
     static __device__ __forceinline__ void load(
             const half2 * const __restrict__ KV, half2 * const __restrict__ tile_KV, const int D2, const int stride_KV,
             const int k_VKQ_0, const int i_sup, const int32_t * const __restrict__ indices) {
-        constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
+        constexpr int cpy_nb = 16;
         constexpr int cpy_ne = cpy_nb / 4;
 
         static_assert(J % 8 == 0, "bad J");
@@ -797,7 +797,7 @@ struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oo
                     } else if (!oob_check || i < i_sup) {
                         if (indices) {
                             const int64_t i_KV = max(indices[k_VKQ_0 + i], 0);
-                            src = KV + i_KV*stride_KV + k*cpy_ne;
+                            src = KV_0 + i_KV*stride_KV + k*cpy_ne;
                         } else {
                             src = KV_0 + i*stride_KV + k*cpy_ne;
                         }
@@ -825,7 +825,7 @@ struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oo
     static __device__ __forceinline__ void load(
             const half2 * const __restrict__ KV, float * const __restrict__ tile_KV, const int D2, const int stride_KV,
             const int k_VKQ_0, const int i_sup, const int32_t * const __restrict__ indices) {
-        constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
+        constexpr int cpy_nb = 16;
         constexpr int cpy_ne = cpy_nb / 4;
         constexpr int h2_per_chunk = cpy_ne / 2;
 
@@ -858,7 +858,7 @@ struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oo
                     break;
                 }
 
-                const half2 zero[h2_per_chunk] = {{0.0f, 0.0f}};
+                const __align__(16) half2 zero[h2_per_chunk] = {{0.0f, 0.0f}};
 #pragma unroll
                 for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
                     const int k = k0 + (stride_k == warp_size ? threadIdx.x : threadIdx.x % stride_k);
@@ -870,7 +870,7 @@ struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oo
                     } else if (!oob_check || i < i_sup) {
                         if (indices) {
                             const int64_t i_KV = max(indices[k_VKQ_0 + i], 0);
-                            src = KV + i_KV*stride_KV + k*h2_per_chunk;
+                            src = KV_0 + i_KV*stride_KV + k*h2_per_chunk;
                         } else {
                             src = KV_0 + i*stride_KV + k*h2_per_chunk;
                         }
