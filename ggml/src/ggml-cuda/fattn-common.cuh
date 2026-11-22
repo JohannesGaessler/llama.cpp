@@ -676,11 +676,11 @@ static __device__ __forceinline__ void dequantize_V_q8_0(const void * __restrict
     }
 }
 
-template <int warp_size, int nwarps, int I, int J, int stride_tile, bool use_cp_async, bool oob_check, bool use_sparse, bool use_swizzle, typename T_dst>
+template <int warp_size, int nwarps, int I, int J, int stride_tile, bool use_cp_async, bool oob_check, bool use_sparse, bool KV_indirection, bool use_swizzle, typename T_dst>
 struct flash_attn_load_tile_impl;
 
-template <int warp_size, int nwarps, int I, int J, int stride_tile, bool oob_check, bool use_sparse, bool use_swizzle>
-struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, true, oob_check, use_sparse, use_swizzle, half2> {
+template <int warp_size, int nwarps, int I, int J, int stride_tile, bool oob_check, bool use_sparse, bool KV_indirection, bool use_swizzle>
+struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, true, oob_check, use_sparse, KV_indirection, use_swizzle, half2> {
     static __device__ __forceinline__ void load(
             const half2 * const __restrict__ KV, half2 * const __restrict__ tile_KV, const int D2, const int stride_KV,
             const int k_VKQ_0, const int i_sup, const int32_t * const __restrict__ indices) {
@@ -689,8 +689,10 @@ struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, true, oob
 
         static_assert(warp_size == 32, "bad warp_size");
         static_assert(!oob_check || use_sparse, "OOB check not compatible with cp_async");
+        static_assert(!use_sparse || KV_indirection, "use_sparse requires KV_indirection");
         static_assert(J % 8 == 0, "bad J");
         static_assert((J/2) % cpy_ne == 0, "bad J");
+        GGML_UNUSED(indices);
 
         // K/V data is loaded with decreasing granularity for D for better memory bandwidth.
         const int chunks_per_row = D2 / cpy_ne;
@@ -725,9 +727,9 @@ struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, true, oob
                     // padded slots gather row 0, the -inf mask removes their contribution
                     const int32_t index = i < i_sup ? indices[k_VKQ_0 + i] : 0;
                     i_KV = index >= 0 ? index : 0;
-                } else if (indices) {
+                } else if constexpr (KV_indirection) {
                     // K/V rows given per mask column, negative rows are padding
-                    i_KV = max(indices[k_VKQ_0 + i], 0);
+                    i_KV = indices ? max(indices[k_VKQ_0 + i], 0) : k_VKQ_0 + i;
                 } else {
                     i_KV = k_VKQ_0 + i;
                 }
@@ -748,20 +750,22 @@ struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, true, oob
     }
 };
 
-template <int warp_size, int nwarps, int I, int J, int stride_tile, bool oob_check, bool use_sparse, bool use_swizzle>
-struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oob_check, use_sparse, use_swizzle, half2> {
+template <int warp_size, int nwarps, int I, int J, int stride_tile, bool oob_check, bool use_sparse, bool KV_indirection, bool use_swizzle>
+struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oob_check, use_sparse, KV_indirection, use_swizzle, half2> {
     static __device__ __forceinline__ void load(
             const half2 * const __restrict__ KV, half2 * const __restrict__ tile_KV, const int D2, const int stride_KV,
             const int k_VKQ_0, const int i_sup, const int32_t * const __restrict__ indices) {
         constexpr int cpy_nb = 16;
         constexpr int cpy_ne = cpy_nb / 4;
 
+        static_assert(!use_sparse || KV_indirection, "use_sparse requires KV_indirection");
         static_assert(J % 8 == 0, "bad J");
         static_assert((J/2) % cpy_ne == 0, "bad J");
+        GGML_UNUSED(indices);
 
         // K/V data is loaded with decreasing granularity for D for better memory bandwidth.
         const int chunks_per_row = D2 / cpy_ne;
-        const half2 * const __restrict__ KV_0 = use_sparse || indices ? KV : KV + int64_t(k_VKQ_0)*stride_KV;
+        const half2 * const __restrict__ KV_0 = use_sparse || (KV_indirection && indices) ? KV : KV + int64_t(k_VKQ_0)*stride_KV;
 
         auto load_step = [&] __device__ (const int n) {
             const int stride_k = warp_size >> n;
@@ -795,9 +799,13 @@ struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oo
                         const int32_t index = i < i_sup ? indices[k_VKQ_0 + i] : -1;
                         src = index >= 0 ? KV + int64_t(index)*stride_KV + k*cpy_ne : zero;
                     } else if (!oob_check || i < i_sup) {
-                        if (indices) {
-                            const int64_t i_KV = max(indices[k_VKQ_0 + i], 0);
-                            src = KV_0 + i_KV*stride_KV + k*cpy_ne;
+                        if constexpr (KV_indirection) {
+                            if (indices) {
+                                const int64_t i_KV = max(indices[k_VKQ_0 + i], 0);
+                                src = KV_0 + i_KV*stride_KV + k*cpy_ne;
+                            } else {
+                                src = KV_0 + i*stride_KV + k*cpy_ne;
+                            }
                         } else {
                             src = KV_0 + i*stride_KV + k*cpy_ne;
                         }
@@ -820,8 +828,8 @@ struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oo
     }
 };
 
-template <int warp_size, int nwarps, int I, int J, int stride_tile, bool oob_check, bool use_sparse>
-struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oob_check, use_sparse, false, float> {
+template <int warp_size, int nwarps, int I, int J, int stride_tile, bool oob_check, bool use_sparse, bool KV_indirection>
+struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oob_check, use_sparse, KV_indirection, false, float> {
     static __device__ __forceinline__ void load(
             const half2 * const __restrict__ KV, float * const __restrict__ tile_KV, const int D2, const int stride_KV,
             const int k_VKQ_0, const int i_sup, const int32_t * const __restrict__ indices) {
@@ -829,12 +837,14 @@ struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oo
         constexpr int cpy_ne = cpy_nb / 4;
         constexpr int h2_per_chunk = cpy_ne / 2;
 
+        static_assert(!use_sparse || KV_indirection, "use_sparse requires KV_indirection");
         static_assert(J % 8 == 0, "bad J");
         static_assert(J % cpy_ne == 0, "bad J");
+        GGML_UNUSED(indices);
 
         // K/V data is loaded with decreasing granularity for D for better memory bandwidth.
         const int chunks_per_row = D2 / h2_per_chunk;
-        const half2 * const __restrict__ KV_0 = use_sparse || indices ? KV : KV + int64_t(k_VKQ_0)*stride_KV;
+        const half2 * const __restrict__ KV_0 = use_sparse || (KV_indirection && indices) ? KV : KV + int64_t(k_VKQ_0)*stride_KV;
 
         auto load_step = [&] __device__ (const int n) {
             const int stride_k = warp_size >> n;
@@ -868,9 +878,13 @@ struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oo
                         const int32_t index = i < i_sup ? indices[k_VKQ_0 + i] : -1;
                         src = index >= 0 ? KV + int64_t(index)*stride_KV + k*h2_per_chunk : zero;
                     } else if (!oob_check || i < i_sup) {
-                        if (indices) {
-                            const int64_t i_KV = max(indices[k_VKQ_0 + i], 0);
-                            src = KV_0 + i_KV*stride_KV + k*h2_per_chunk;
+                        if constexpr (KV_indirection) {
+                            if (indices) {
+                                const int64_t i_KV = max(indices[k_VKQ_0 + i], 0);
+                                src = KV_0 + i_KV*stride_KV + k*h2_per_chunk;
+                            } else {
+                                src = KV_0 + i*stride_KV + k*h2_per_chunk;
+                            }
                         } else {
                             src = KV_0 + i*stride_KV + k*h2_per_chunk;
                         }
@@ -894,11 +908,11 @@ struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oo
     }
 };
 
-template <int warp_size, int nwarps, int I, int J, int stride_tile, bool use_cp_async, bool oob_check, bool use_sparse, bool use_swizzle, typename T_dst>
+template <int warp_size, int nwarps, int I, int J, int stride_tile, bool use_cp_async, bool oob_check, bool use_sparse, bool KV_indirection, bool use_swizzle, typename T_dst>
 static __device__ __forceinline__ void flash_attn_load_tile(
         const half2 * const __restrict__ KV, T_dst * const __restrict__ tile_KV, const int D2, const int stride_KV,
         const int k_VKQ_0, const int i_sup, const int32_t * const __restrict__ indices) {
-    flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, use_cp_async, oob_check, use_sparse, use_swizzle, T_dst>::load(
+    flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, use_cp_async, oob_check, use_sparse, KV_indirection, use_swizzle, T_dst>::load(
         KV, tile_KV, D2, stride_KV, k_VKQ_0, i_sup, indices);
 }
 

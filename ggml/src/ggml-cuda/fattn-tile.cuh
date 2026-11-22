@@ -393,7 +393,7 @@ static __device__ __forceinline__ void flash_attn_tile_iter_KQ(
     constexpr int np    = nwarps > ncols ? nwarps/ncols : 1; // number of parallel warps per Q column
 
     constexpr int stride_tile_K = std::is_same_v<T_vec_dot, half2> ? nbatch_K/2 + cpy_ne : nbatch_K + cpy_ne;
-    flash_attn_load_tile<warp_size, nwarps, nbatch_fa, nbatch_K, stride_tile_K, false, oob_check, false, false, T_vec_dot>
+    flash_attn_load_tile<warp_size, nwarps, nbatch_fa, nbatch_K, stride_tile_K, false, oob_check, false, false, false, T_vec_dot>
         (K_h2 + k_KQ_0/2, KV_tmp, nbatch_K/2, stride_K2, k_VKQ_0, k_VKQ_sup, nullptr);
     __syncthreads();
 
@@ -614,7 +614,7 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
     constexpr int stride_tile_V = std::is_same_v<T_vec_dot, half2> ? DV/2 : DV;
 #pragma unroll
     for (int k0 = 0; k0 < nbatch_fa; k0 += nbatch_V) {
-        flash_attn_load_tile<warp_size, nwarps, nbatch_V, DV, stride_tile_V, false, oob_check, false, false, T_vec_dot>
+        flash_attn_load_tile<warp_size, nwarps, nbatch_V, DV, stride_tile_V, false, oob_check, false, false, false, T_vec_dot>
             (V_h2, KV_tmp, DV/2, stride_V2, k_VKQ_0 + k0, k_VKQ_sup - k0, nullptr);
         __syncthreads();
 
