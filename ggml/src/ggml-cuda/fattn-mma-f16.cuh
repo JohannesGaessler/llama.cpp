@@ -413,116 +413,6 @@ static constexpr __device__ int ggml_cuda_fattn_mma_get_nstages(
 
 // ------------------------------------------------------------------------------------------------------------------
 
-template<int stride_tile, int nwarps, int nbatch_fa, bool use_cp_async, bool oob_check, bool use_sparse>
-static __device__ __forceinline__ void flash_attn_ext_f16_load_tile(
-        const half2 * const __restrict__ KV, half2 * const __restrict__ tile_KV, const int D2, const int stride_KV,
-        const int k_VKQ_0, const int i_sup, const int32_t * const __restrict__ indices) {
-    constexpr int warp_size = ggml_cuda_get_physical_warp_size();
-    // K/V data is loaded with decreasing granularity for D for better memory bandwidth.
-    // The minimum granularity is 16 bytes.
-    constexpr int chunk_size = 16;
-    constexpr int h2_per_chunk = chunk_size / sizeof(half2);
-    const int chunks_per_row = D2 / h2_per_chunk;
-    if constexpr (use_cp_async) {
-        static_assert(warp_size == 32, "bad warp_size");
-        static_assert(!oob_check || use_sparse, "OOB check not compatible with cp_async");
-        constexpr int preload = 64;
-
-        const unsigned int tile_KV_32 = ggml_cuda_cvta_generic_to_shared(tile_KV);
-
-        auto load = [&] __device__ (auto n) {
-            const int stride_k = warp_size >> n;
-            const int k0_start = stride_k == warp_size ? 0 : chunks_per_row - chunks_per_row % (2*stride_k);
-            const int k0_stop  =                             chunks_per_row - chunks_per_row % (1*stride_k);
-            const int stride_i = warp_size / stride_k;
-
-            if (k0_start == k0_stop) {
-                return;
-            }
-
-#pragma unroll
-            for (int i0 = 0; i0 < nbatch_fa; i0 += nwarps*stride_i) {
-                const int i = i0 + threadIdx.y*stride_i + (stride_k == warp_size ? 0 : threadIdx.x / stride_k);
-
-                if (i0 + nwarps*stride_i > nbatch_fa && i >= nbatch_fa) {
-                    break;
-                }
-
-                int64_t i_KV;
-                if constexpr (use_sparse) {
-                    // padded slots gather row 0, the -inf mask removes their contribution
-                    const int32_t index = i < i_sup ? indices[k_VKQ_0 + i] : 0;
-                    i_KV = index >= 0 ? index : 0;
-                } else if (indices) {
-                    // K/V rows given per mask column, negative rows are padding
-                    i_KV = max(indices[k_VKQ_0 + i], 0);
-                } else {
-                    i_KV = k_VKQ_0 + i;
-                }
-
-#pragma unroll
-                for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
-                    const int k = k0 + (stride_k == warp_size ? threadIdx.x : threadIdx.x % stride_k);
-
-                    cp_async_cg_16<preload>(tile_KV_32 + swizzle<stride_tile*sizeof(half2), char>(i*stride_tile*sizeof(half2) + k*chunk_size, i), KV + i_KV*stride_KV + k*h2_per_chunk);
-                }
-            }
-        };
-        // 1: max 32*16=512 bytes, 256 half
-        // 2: max 16*16=256 bytes, 128 half
-        // 3: max  8*16=128 bytes,  64 half
-        // 4: max  4*16= 64 bytes,  32 half
-        // 5: max  2*16= 32 bytes,  16 half
-        // 6: max  1*16= 16 bytes,   8 half
-        ggml_cuda_unroll<6>{}(load);
-    } else {
-        const half2 zero[4] = {{0.0f, 0.0f}, {0.0f, 0.0f}, {0.0f, 0.0f}, {0.0f, 0.0f}};
-        auto load = [&] __device__ (const int n) {
-            const int stride_k = 32 >> n;
-            const int k0_start = stride_k == 32 ? 0 : chunks_per_row - chunks_per_row % (2*stride_k);
-            const int k0_stop  =                      chunks_per_row - chunks_per_row % (1*stride_k);
-            const int stride_i = warp_size / stride_k;
-
-            if (k0_start == k0_stop) {
-                return;
-            }
-
-#pragma unroll
-            for (int i0 = 0; i0 < nbatch_fa; i0 += nwarps*stride_i) {
-                const int i = i0 + threadIdx.y*stride_i + (stride_k == warp_size ? 0 : threadIdx.x / stride_k);
-
-                if (i0 + nwarps*stride_i > nbatch_fa && i >= nbatch_fa) {
-                    break;
-                }
-
-#pragma unroll
-                for (int k0 = k0_start; k0 < k0_stop; k0 += stride_k) {
-                    const int k = k0 + (stride_k == warp_size ? threadIdx.x : threadIdx.x % stride_k);
-
-                    const half2 * src;
-                    if constexpr (use_sparse) {
-                        const int32_t index = i < i_sup ? indices[k_VKQ_0 + i] : -1;
-                        src = index >= 0 ? KV + int64_t(index)*stride_KV + k*h2_per_chunk : zero;
-                    } else if (!oob_check || i < i_sup) {
-                        const int64_t i_KV = indices ? max(indices[k_VKQ_0 + i], 0) : k_VKQ_0 + i;
-                        src = KV + i_KV*stride_KV + k*h2_per_chunk;
-                    } else {
-                        src = zero;
-                    }
-                    ggml_cuda_memcpy_1<16>(swizzle<stride_tile>(tile_KV, i*stride_tile + k*h2_per_chunk, i), src);
-                }
-            }
-        };
-        // 1: max 32*16=512 bytes, 256 half
-        // 2: max 16*16=256 bytes, 128 half
-        // 3: max  8*16=128 bytes,  64 half
-        // 4: max  4*16= 64 bytes,  32 half
-        // 5: max  2*16= 32 bytes,  16 half
-        // 6: max  1*16= 16 bytes,   8 half
-        ggml_cuda_unroll<6>{}(load);
-    }
-}
-
 template<int ncols1, int nwarps, int nbatch_fa, bool use_cp_async, bool oob_check, bool use_sparse>
 static __device__ __forceinline__ void flash_attn_ext_f16_load_mask(
         const half * const __restrict__ mask_h, half * const __restrict__ tile_mask,
@@ -676,7 +566,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         constexpr bool use_cp_async = true;
         cp_async_wait_all();
         __syncthreads();
-        flash_attn_ext_f16_load_tile<stride_tile_V, nwarps, nbatch_fa, use_cp_async, oob_check, use_sparse>
+        flash_attn_load_tile<nwarps, nbatch_fa, 2*nbatch_V2, stride_tile_V, use_cp_async, oob_check, use_sparse, swz, half2>
             (V_h2, tile_V, min(nbatch_V2, DV/2), stride_V, k_VKQ_0, k_VKQ_sup, indices);
     } else {
         // the sparse mask values are gathered per element, always load them synchronously
@@ -696,7 +586,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
         if constexpr (nstages <= 1) {
             const int k0_diff = min(k0_stop, DKQ/2) - k0_start; // Only load the real head size from global memory.
             constexpr bool use_cp_async = nstages == 1;
-            flash_attn_ext_f16_load_tile<stride_tile_K, nwarps, nbatch_fa, use_cp_async, oob_check, use_sparse>
+            flash_attn_load_tile<nwarps, nbatch_fa, 2*nbatch_K2, stride_tile_K, use_cp_async, oob_check, use_sparse, swz, half2>
                 (K_h2 + k0_start, tile_K, k0_diff, stride_K, k_VKQ_0, k_VKQ_sup, indices);
             if (use_cp_async) {
                 cp_async_wait_all();
@@ -1033,7 +923,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
                 flash_attn_ext_f16_load_mask<ncols1, nwarps, nbatch_fa, use_cp_async, oob_check, use_sparse>
                     (mask_h, tile_mask, stride_mask, kb0_next*nbatch_fa, k_VKQ_sup, jt*ncols1, ne01, nullptr);
             }
-            flash_attn_ext_f16_load_tile<stride_tile_K, nwarps, nbatch_fa, use_cp_async, oob_check, use_sparse>
+            flash_attn_load_tile<nwarps, nbatch_fa, 2*nbatch_K2, stride_tile_K, use_cp_async, oob_check, use_sparse, swz, half2>
                 (K_h2, tile_K, min(nbatch_K2, DKQ/2), stride_K, kb0_next*nbatch_fa, k_VKQ_sup, indices);
         }
     }
@@ -1049,7 +939,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
             const int i0_diff = min(i0_stop, DV) - i0_start; // Only load the real head size from global memory.
             if (!V_is_K_view || i0_stop > 2*nbatch_K2) {
                 constexpr bool use_cp_async = nstages == 1;
-                flash_attn_ext_f16_load_tile<stride_tile_V, nwarps, nbatch_fa, use_cp_async, oob_check, use_sparse>
+                flash_attn_load_tile<nwarps, nbatch_fa, 2*nbatch_V2, stride_tile_V, use_cp_async, oob_check, use_sparse, swz, half2>
                     (V_h2 + i0_start/2, tile_V, i0_diff/2, stride_V, k_VKQ_0, k_VKQ_sup, indices);
                 if (use_cp_async) {
                     cp_async_wait_all();
@@ -1459,7 +1349,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
             flash_attn_ext_f16_load_mask<ncols1, nwarps, nbatch_fa, use_cp_async, oob_check, use_sparse>
                 (mask_h, tile_mask, stride_mask, kb0*nbatch_fa, k_VKQ_sup, jt*ncols1, ne01, nullptr);
         }
-        flash_attn_ext_f16_load_tile<stride_tile_K, nwarps, nbatch_fa, use_cp_async, oob_check, use_sparse>
+        flash_attn_load_tile<nwarps, nbatch_fa, 2*nbatch_K2, stride_tile_K, use_cp_async, oob_check, use_sparse, swz, half2>
             (K_h2, tile_K, min(nbatch_K2, DKQ/2), stride_K, kb0*nbatch_fa, k_VKQ_sup, indices);
     }
 
