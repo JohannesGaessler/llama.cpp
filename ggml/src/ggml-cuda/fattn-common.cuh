@@ -691,7 +691,6 @@ struct flash_attn_load_tile_impl<nwarps, I, J, stride_tile, true, oob_check, use
 
         static_assert(warp_size == 32, "bad warp_size");
         static_assert(!oob_check || use_sparse, "OOB check not compatible with cp_async");
-        static_assert(cpy_nb == 16, "cp_async requires 16 byte copies");
         static_assert(J % 8 == 0, "bad J");
         static_assert((J/2) % cpy_ne == 0, "bad J");
 
