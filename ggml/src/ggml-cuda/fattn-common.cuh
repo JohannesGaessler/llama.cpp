@@ -765,7 +765,6 @@ struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oo
 
         // K/V data is loaded with decreasing granularity for D for better memory bandwidth.
         const int chunks_per_row = D2 / cpy_ne;
-        const half2 * const __restrict__ KV_0 = use_sparse || (KV_indirection && indices) ? KV : KV + int64_t(k_VKQ_0)*stride_KV;
 
         auto load_step = [&] __device__ (const int n) {
             const int stride_k = warp_size >> n;
@@ -800,14 +799,10 @@ struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oo
                         src = index >= 0 ? KV + int64_t(index)*stride_KV + k*cpy_ne : zero;
                     } else if (!oob_check || i < i_sup) {
                         if constexpr (KV_indirection) {
-                            if (indices) {
-                                const int64_t i_KV = max(indices[k_VKQ_0 + i], 0);
-                                src = KV_0 + i_KV*stride_KV + k*cpy_ne;
-                            } else {
-                                src = KV_0 + i*stride_KV + k*cpy_ne;
-                            }
+                            const int64_t i_KV = indices ? max(indices[k_VKQ_0 + i], 0) : k_VKQ_0 + i;
+                            src = KV + i_KV*stride_KV + k*cpy_ne;
                         } else {
-                            src = KV_0 + i*stride_KV + k*cpy_ne;
+                            src = KV + int64_t(k_VKQ_0 + i)*stride_KV + k*cpy_ne;
                         }
                     } else {
                         src = zero;
