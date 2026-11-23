@@ -713,14 +713,14 @@ static __global__ void flash_attn_tile(
     using T_K = decltype(ggml_cuda_fattn_kv_dtype<type_K>());
     using T_V = decltype(ggml_cuda_fattn_kv_dtype<type_V>());
 
-    const float2 * GGML_CUDA_RESTRICT Q       = Q_ptr;
-    const T_K   * GGML_CUDA_RESTRICT K        = (const T_K *) K_ptr;
-    const T_V   * GGML_CUDA_RESTRICT V        = (const T_V *) V_ptr;
-    const half  * GGML_CUDA_RESTRICT mask     = mask_ptr;
-    const float * GGML_CUDA_RESTRICT sinks    = sinks_ptr;
-    const int   * GGML_CUDA_RESTRICT KV_max   = KV_max_ptr;
-    float       * GGML_CUDA_RESTRICT dst      = dst_ptr;
-    float2      * GGML_CUDA_RESTRICT dst_meta = dst_meta_ptr;
+    const float2 * GGML_CUDA_RESTRICT Q        = Q_ptr;
+    const T_K    * GGML_CUDA_RESTRICT K        = (const T_K *) K_ptr;
+    const T_V    * GGML_CUDA_RESTRICT V        = (const T_V *) V_ptr;
+    const half   * GGML_CUDA_RESTRICT mask     = mask_ptr;
+    const float  * GGML_CUDA_RESTRICT sinks    = sinks_ptr;
+    const int    * GGML_CUDA_RESTRICT KV_max   = KV_max_ptr;
+    float        * GGML_CUDA_RESTRICT dst      = dst_ptr;
+    float2       * GGML_CUDA_RESTRICT dst_meta = dst_meta_ptr;
     GGML_UNUSED(KV_rows_ptr);
 
     // Skip unused kernel variants for faster compilation:
@@ -818,7 +818,7 @@ static __global__ void flash_attn_tile(
             if (i0 + np*warp_size*cpy_ne_D <= DKQ || i0 + (threadIdx.y % np)*(warp_size*cpy_ne_D) + threadIdx.x*cpy_ne_D < DKQ) {
                 __align__(16) float tmp_f[cpy_ne_D] = {0.0f};
                 ggml_cuda_memcpy_1<sizeof(tmp_f)>
-                    (tmp_f, (const float *) &Q_f2[c*s02 + fastmodulo(col_Q_0 + j, ne01)*s01]
+                    (tmp_f, &Q_f2[c*s02 + fastmodulo(col_Q_0 + j, ne01)*s01]
                                  + i0 + (threadIdx.y % np)*(warp_size*cpy_ne_D) + threadIdx.x*cpy_ne_D);
 
 #pragma unroll

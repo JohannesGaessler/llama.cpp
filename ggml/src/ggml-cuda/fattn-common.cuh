@@ -686,7 +686,7 @@ struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, true, oob
     static __device__ __forceinline__ void load(
             const half2 * const __restrict__ KV, half2 * const __restrict__ tile_KV, const int D2, const int stride_KV,
             const int k_VKQ_0, const int i_sup, const int32_t * const __restrict__ indices) {
-        constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
+        constexpr int cpy_nb = 16;
         constexpr int cpy_ne = cpy_nb / 4;
 
         static_assert(warp_size == 32, "bad warp_size");
@@ -913,6 +913,7 @@ static __device__ __forceinline__ void flash_attn_load_tile(
         KV, tile_KV, D2, stride_KV, k_VKQ_0, i_sup, indices);
 }
 
+// Helper function to get a C++ type for calculating pointer offsets from a ggml type:
 template <ggml_type type>
 static __host__ __device__ auto ggml_cuda_fattn_kv_dtype() {
     if constexpr (type == GGML_TYPE_F16) {
