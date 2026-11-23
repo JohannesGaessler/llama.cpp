@@ -1281,7 +1281,7 @@ static __global__ void flash_attn_combine_results(
     dst[tid] = VKQ_numerator / VKQ_denominator;
 }
 
-template <int DV, int ncols1, int ncols2, typename T_Q_stride = float, typename T_K_stride = char, typename T_V_stride = char>
+template <int DV, int ncols1, int ncols2, typename T_K_stride, typename T_V_stride>
 void launch_fattn(
     ggml_backend_cuda_context & ctx, ggml_tensor * dst, fattn_kernel_t fattn_kernel,
     const int nwarps, const size_t nbytes_shared,
@@ -1563,9 +1563,9 @@ void launch_fattn(
 
     GGML_ASSERT(block_dim.x % warp_size == 0);
 
-    GGML_ASSERT(Q->nb[1] % sizeof(T_Q_stride) == 0);
-    GGML_ASSERT(Q->nb[2] % sizeof(T_Q_stride) == 0);
-    GGML_ASSERT(Q->nb[3] % sizeof(T_Q_stride) == 0);
+    GGML_ASSERT(Q->nb[1] % sizeof(float2) == 0);
+    GGML_ASSERT(Q->nb[2] % sizeof(float2) == 0);
+    GGML_ASSERT(Q->nb[3] % sizeof(float2) == 0);
 
     GGML_ASSERT(nb11 % sizeof(T_K_stride) == 0);
     GGML_ASSERT(nb12 % sizeof(T_K_stride) == 0);
@@ -1593,7 +1593,7 @@ void launch_fattn(
         !stream_k && parallel_blocks > 1 ? dst_tmp.ptr : (float *) KQV->data, dst_tmp_meta.ptr,
         scale, max_bias, m0, m1, n_head_log2, logit_softcap,
         Q->ne[0], ne01, Q->ne[2], Q->ne[3],
-        int32_t(Q->nb[1] / sizeof(T_Q_stride)), int32_t(Q->nb[2] / sizeof(T_Q_stride)), int32_t(Q->nb[3] / sizeof(T_Q_stride)),
+        int32_t(Q->nb[1] / sizeof(float2)), int32_t(Q->nb[2] / sizeof(float2)), int32_t(Q->nb[3] / sizeof(float2)),
         K->ne[0], n_kv, K->ne[2], K->ne[3],
         int32_t(nb11 / sizeof(T_K_stride)), int32_t(nb12 / sizeof(T_K_stride)), int64_t(nb13 / sizeof(T_K_stride)),
         int32_t(nb21 / sizeof(T_V_stride)), int32_t(nb22 / sizeof(T_V_stride)), int64_t(nb23 / sizeof(T_V_stride)),

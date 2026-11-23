@@ -43,7 +43,7 @@ static __global__ void flash_attn_ext_vec(
                             const int32_t s31,  const int64_t s32,  const int64_t s33) {
     ggml_cuda_pdl_lc();
 #ifdef FLASH_ATTN_AVAILABLE
-    const float * GGML_CUDA_RESTRICT Q        = (const float *) Q_ptr;
+    const float2 * GGML_CUDA_RESTRICT Q        = Q_ptr;
     const char  * GGML_CUDA_RESTRICT K        = K_ptr;
     const char  * GGML_CUDA_RESTRICT V        = V_ptr;
     const half  * GGML_CUDA_RESTRICT mask     = mask_ptr;
@@ -176,7 +176,7 @@ static __global__ void flash_attn_ext_vec(
                     tmp_q_ds[threadIdx.x] = make_float2(0.0f, 0.0f);
                 }
             } else {
-                const float * Q_f = Q + j*s01;
+                const float * Q_f = (const float *) (Q + j*s01);
                 constexpr int nthreads_quantize = D/sizeof(int) < WARP_SIZE ? D/sizeof(int) : WARP_SIZE;
 #pragma unroll
                 for (int i0 = 0; i0 < int(D/sizeof(int)); i0 += nthreads_quantize) {
@@ -206,7 +206,7 @@ static __global__ void flash_attn_ext_vec(
     } else if constexpr (type_K == GGML_TYPE_F8_E4M3) {
 #pragma unroll
         for (int j = 0; j < ncols; ++j) {
-            const float * Q_j = Q + j*s01;
+            const float * Q_j = (const float *) (Q + j*s01);
 #pragma unroll
             for (int i0 = 0; i0 < D; i0 += nthreads_KQ*4) {
                 const int i = i0 + (threadIdx.x % nthreads_KQ)*4;
@@ -229,7 +229,7 @@ static __global__ void flash_attn_ext_vec(
         const half2 scale_h2 = make_half2(scale, scale);
 #pragma unroll
         for (int j = 0; j < ncols; ++j) {
-            const float2 * Q_j = (const float2 *) (Q + j*s01);
+            const float2 * Q_j = Q + j*s01;
 #pragma unroll
             for (int i0 = 0; i0 < D/2; i0 += nthreads_KQ*cpy_ne) {
                 const int i = i0 + (nthreads_KQ == WARP_SIZE ? threadIdx.x : threadIdx.x % nthreads_KQ)*cpy_ne;
@@ -252,7 +252,7 @@ static __global__ void flash_attn_ext_vec(
 #else
 #pragma unroll
         for (int j = 0; j < ncols; ++j) {
-            const float2 * Q_j = (const float2 *) (Q + j*s01);
+            const float2 * Q_j = Q + j*s01;
 #pragma unroll
             for (int i0 = 0; i0 < D/2; i0 += nthreads_KQ*cpy_ne) {
                 const int i = i0 + (nthreads_KQ == WARP_SIZE ? threadIdx.x : threadIdx.x % nthreads_KQ)*cpy_ne;
@@ -563,7 +563,7 @@ void ggml_cuda_flash_attn_ext_vec_case_impl(ggml_backend_cuda_context & ctx, ggm
     const bool need_f16_K = type_K == GGML_TYPE_F16;
     const bool need_f16_V = type_V == GGML_TYPE_F16;
     constexpr size_t nbytes_shared = 0;
-    launch_fattn<D, cols_per_block, 1>(ctx, dst, fattn_kernel, nwarps, nbytes_shared, D, need_f16_K, need_f16_V, false, false);
+    launch_fattn<D, cols_per_block, 1, char, char>(ctx, dst, fattn_kernel, nwarps, nbytes_shared, D, need_f16_K, need_f16_V, false, false);
 }
 
 template <int D, ggml_type type_K, ggml_type type_V>
