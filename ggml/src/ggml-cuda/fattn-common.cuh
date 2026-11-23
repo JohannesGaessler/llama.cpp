@@ -48,9 +48,9 @@ using fattn_kernel_t = void (*)(
 typedef float (*vec_dot_KQ_t)(
     const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8 , const void * __restrict__ Q_ds);
 
-template <typename T_dst>
+template <typename T_src, typename T_dst>
 using fattn_load_tile_t = void (*)(
-    const half2 * __restrict__ KV, T_dst * __restrict__ tile_KV, const int D2, const int stride_KV,
+    const T_src * __restrict__ KV, T_dst * __restrict__ tile_KV, const int D2, const int stride_KV,
     const int k_VKQ_0, const int i_sup, const int32_t * __restrict__ indices);
 
 struct ggml_cuda_flash_attn_ext_f16_extra_data {
@@ -677,11 +677,13 @@ static __device__ __forceinline__ void dequantize_V_q8_0(const void * __restrict
     }
 }
 
-template <int warp_size, int nwarps, int I, int J, int stride_tile, bool use_cp_async, bool oob_check, bool use_sparse, bool KV_indirection, bool use_swizzle, typename T_dst>
+template <int warp_size, int nwarps, int I, int J, int stride_tile,
+              bool use_cp_async, bool oob_check, bool use_sparse, bool KV_indirection, bool use_swizzle,
+              typename T_src, typename T_dst>
 struct flash_attn_load_tile_impl;
 
 template <int warp_size, int nwarps, int I, int J, int stride_tile, bool oob_check, bool use_sparse, bool KV_indirection, bool use_swizzle>
-struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, true, oob_check, use_sparse, KV_indirection, use_swizzle, half2> {
+struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, true, oob_check, use_sparse, KV_indirection, use_swizzle, half2, half2> {
     static __device__ __forceinline__ void load(
             const half2 * const __restrict__ KV, half2 * const __restrict__ tile_KV, const int D2, const int stride_KV,
             const int k_VKQ_0, const int i_sup, const int32_t * const __restrict__ indices) {
@@ -752,7 +754,7 @@ struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, true, oob
 };
 
 template <int warp_size, int nwarps, int I, int J, int stride_tile, bool oob_check, bool use_sparse, bool KV_indirection, bool use_swizzle>
-struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oob_check, use_sparse, KV_indirection, use_swizzle, half2> {
+struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oob_check, use_sparse, KV_indirection, use_swizzle, half2, half2> {
     static __device__ __forceinline__ void load(
             const half2 * const __restrict__ KV, half2 * const __restrict__ tile_KV, const int D2, const int stride_KV,
             const int k_VKQ_0, const int i_sup, const int32_t * const __restrict__ indices) {
@@ -825,7 +827,7 @@ struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oo
 };
 
 template <int warp_size, int nwarps, int I, int J, int stride_tile, bool oob_check, bool use_sparse, bool KV_indirection>
-struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oob_check, use_sparse, KV_indirection, false, float> {
+struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oob_check, use_sparse, KV_indirection, false, half2, float> {
     static __device__ __forceinline__ void load(
             const half2 * const __restrict__ KV, float * const __restrict__ tile_KV, const int D2, const int stride_KV,
             const int k_VKQ_0, const int i_sup, const int32_t * const __restrict__ indices) {
@@ -904,11 +906,11 @@ struct flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, false, oo
     }
 };
 
-template <int warp_size, int nwarps, int I, int J, int stride_tile, bool use_cp_async, bool oob_check, bool use_sparse, bool KV_indirection, bool use_swizzle, typename T_dst>
+template <int warp_size, int nwarps, int I, int J, int stride_tile, bool use_cp_async, bool oob_check, bool use_sparse, bool KV_indirection, bool use_swizzle, typename T_src, typename T_dst>
 static __device__ __forceinline__ void flash_attn_load_tile(
-        const half2 * const __restrict__ KV, T_dst * const __restrict__ tile_KV, const int D2, const int stride_KV,
+        const T_src * const __restrict__ KV, T_dst * const __restrict__ tile_KV, const int D2, const int stride_KV,
         const int k_VKQ_0, const int i_sup, const int32_t * const __restrict__ indices) {
-    flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, use_cp_async, oob_check, use_sparse, KV_indirection, use_swizzle, T_dst>::load(
+    flash_attn_load_tile_impl<warp_size, nwarps, I, J, stride_tile, use_cp_async, oob_check, use_sparse, KV_indirection, use_swizzle, T_src, T_dst>::load(
         KV, tile_KV, D2, stride_KV, k_VKQ_0, i_sup, indices);
 }
 
