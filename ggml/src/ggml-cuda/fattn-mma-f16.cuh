@@ -2121,7 +2121,7 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     float logit_softcap;
     memcpy(&logit_softcap, (const float *) KQV->op_params + 2, sizeof(float));
 
-    using fattn_mma_f16_kernel_t = fattn_kernel_t<float2, char, char, half>;
+    using fattn_mma_f16_kernel_t = fattn_kernel_t;
 #if defined(GGML_USE_HIP)
     using fattn_kernel_ptr_t = const void*;
 #else
@@ -2178,7 +2178,7 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     }
 
     const bool async_kv_preload = nstages == 2 && !use_sparse;
-    launch_fattn<DV, ncols1, ncols2, T_K, T_V>
+    launch_fattn<DV, ncols1, ncols2, float2, T_K, T_V>
         (ctx, dst, fattn_kernel, nwarps, nbytes_shared_total, nbatch_fa, true, true, true, use_sparse, warp_size_host, async_kv_preload);
 }
 

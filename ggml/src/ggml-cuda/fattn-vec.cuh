@@ -19,10 +19,10 @@ static constexpr __device__ int ggml_cuda_fattn_vec_get_nthreads_device() {
 template<int D, int ncols, ggml_type type_K, ggml_type type_V, bool use_logit_softcap> // D == head size
 __launch_bounds__(ggml_cuda_fattn_vec_get_nthreads_device(), 1)
 static __global__ void flash_attn_ext_vec(
-        const float * Q_ptr,
-        const char  * K_ptr,
-        const char  * V_ptr,
-        const half  * mask_ptr,
+        const float2 * Q_ptr,
+        const char   * K_ptr,
+        const char   * V_ptr,
+        const half   * mask_ptr,
         const float * sinks_ptr,
         const int   * KV_max_ptr,
         const int   * KV_rows_ptr,
@@ -43,7 +43,7 @@ static __global__ void flash_attn_ext_vec(
                             const int32_t s31,  const int64_t s32,  const int64_t s33) {
     ggml_cuda_pdl_lc();
 #ifdef FLASH_ATTN_AVAILABLE
-    const float * GGML_CUDA_RESTRICT Q        = Q_ptr;
+    const float * GGML_CUDA_RESTRICT Q        = (const float *) Q_ptr;
     const char  * GGML_CUDA_RESTRICT K        = K_ptr;
     const char  * GGML_CUDA_RESTRICT V        = V_ptr;
     const half  * GGML_CUDA_RESTRICT mask     = mask_ptr;
@@ -559,7 +559,7 @@ void ggml_cuda_flash_attn_ext_vec_case_impl(ggml_backend_cuda_context & ctx, ggm
 
     const int nthreads = ggml_cuda_fattn_vec_get_nthreads_host(cc);
     const int nwarps   = nthreads / WARP_SIZE;
-    fattn_kernel_t<float, char, char, half> fattn_kernel = flash_attn_ext_vec<D, cols_per_block, type_K, type_V, use_logit_softcap>;
+    fattn_kernel_t fattn_kernel = flash_attn_ext_vec<D, cols_per_block, type_K, type_V, use_logit_softcap>;
     const bool need_f16_K = type_K == GGML_TYPE_F16;
     const bool need_f16_V = type_V == GGML_TYPE_F16;
     constexpr size_t nbytes_shared = 0;
