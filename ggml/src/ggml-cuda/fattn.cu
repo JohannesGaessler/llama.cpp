@@ -201,14 +201,15 @@ static void ggml_cuda_flash_attn_ext_mma_f16_switch_ncols1(ggml_backend_cuda_con
 template <int DKQ, int DV>
 static void ggml_cuda_flash_attn_ext_mma_f16_switch_ncols2(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
-    const ggml_tensor * KQV  = dst;
-    const ggml_tensor * Q    = dst->src[0];
-    const ggml_tensor * K    = dst->src[1];
-    const ggml_tensor * V    = dst->src[2];
-    const ggml_tensor * mask = dst->src[3];
+    const ggml_tensor * KQV     = dst;
+    const ggml_tensor * Q       = dst->src[0];
+    const ggml_tensor * K       = dst->src[1];
+    const ggml_tensor * V       = dst->src[2];
+    const ggml_tensor * mask    = dst->src[3];
+    const ggml_tensor * kv_rows = dst->src[5];
 
     // with kv_rows the kernel iterates over the mask columns
-    const int64_t n_kv = dst->src[5] ? dst->src[5]->ne[0] : K->ne[1];
+    const int64_t n_kv = kv_rows ? kv_rows->ne[0] : K->ne[1];
 
     float max_bias = 0.0f;
     memcpy(&max_bias, (const float *) KQV->op_params + 1, sizeof(float));
@@ -216,7 +217,8 @@ static void ggml_cuda_flash_attn_ext_mma_f16_switch_ncols2(ggml_backend_cuda_con
     // Edge cases like no mask, ALiBi, unpadded K/V, or misaligned addresses for large data transfers
     //     are put into the template specialization without GQA optimizations.
     // a mask with a head dimension is not shared by the Q heads of a K/V head
-    bool use_gqa_opt = mask && mask->ne[2] == 1 && max_bias == 0.0f && n_kv % FATTN_KQ_STRIDE == 0;
+    // kv_rows indirection is only compiled into ncols2 == 1
+    bool use_gqa_opt = !kv_rows && mask && mask->ne[2] == 1 && max_bias == 0.0f && n_kv % FATTN_KQ_STRIDE == 0;
     for (const ggml_tensor * t : {Q, K, V, mask}) {
         if (t == nullptr || ggml_is_quantized(t->type)) {
             continue;
@@ -601,7 +603,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
     // The effective batch size for the kernel can be increased by gqa_ratio.
     // The kernel versions without this optimization are also used for ALiBi, if there is no mask, if the mask has a head dimension,
     //     or if the KV cache is not padded,
-    bool gqa_opt_applies = gqa_ratio >= 2 && mask && mask->ne[2] == 1 && max_bias == 0.0f && n_kv % FATTN_KQ_STRIDE == 0;
+    bool gqa_opt_applies = !kv_rows && gqa_ratio >= 2 && mask && mask->ne[2] == 1 && max_bias == 0.0f && n_kv % FATTN_KQ_STRIDE == 0;
     for (const ggml_tensor * t : {Q, K, V, mask}) {
         if (t == nullptr || ggml_is_quantized(t->type)) {
             continue;
