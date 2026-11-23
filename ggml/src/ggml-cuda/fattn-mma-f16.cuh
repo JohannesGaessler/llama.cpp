@@ -1841,12 +1841,12 @@ static constexpr __host__ __device__ bool ggml_cuda_flash_attn_ext_mma_f16_may_u
            (DKQ == 256 && DV == 256 && ncols1 == 8 && ncols2 == 8);
 }
 
-template<int DKQ, int DV, int ncols1, int ncols2, bool use_logit_softcap, bool V_is_K_view, bool use_sparse, typename T_K, typename T_V>
+template<int DKQ, int DV, int ncols1, int ncols2, bool use_logit_softcap, bool V_is_K_view, bool use_sparse, ggml_type type_K, ggml_type type_V>
 __launch_bounds__(ggml_cuda_fattn_mma_get_nthreads(DKQ, DV, ncols1*ncols2), ggml_cuda_fattn_mma_get_occupancy(DKQ, DV, ncols1*ncols2))
 static __global__ void flash_attn_ext_f16(
         const float2 * Q_ptr,
-        const T_K    * K_ptr,
-        const T_V    * V_ptr,
+        const char   * K_ptr,
+        const char   * V_ptr,
         const half   * mask_ptr,
         const float  * sinks_ptr,
         const int    * KV_max_ptr,
@@ -1868,9 +1868,12 @@ static __global__ void flash_attn_ext_f16(
                             const int32_t s31,  const int64_t s32,  const int64_t s33) {
     ggml_cuda_pdl_sync(); // TODO optimize placement
 #if defined(FLASH_ATTN_AVAILABLE) && (defined(VOLTA_MMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE))
+    using T_K = decltype(ggml_cuda_fattn_kv_dtype<type_K>());
+    using T_V = decltype(ggml_cuda_fattn_kv_dtype<type_V>());
+
     const float2 * GGML_CUDA_RESTRICT Q              = Q_ptr;
-    const T_K    * GGML_CUDA_RESTRICT K              = K_ptr;
-    const T_V    * GGML_CUDA_RESTRICT V              = V_ptr;
+    const T_K    * GGML_CUDA_RESTRICT K              = (const T_K *) K_ptr;
+    const T_V    * GGML_CUDA_RESTRICT V              = (const T_V *) V_ptr;
     const half   * GGML_CUDA_RESTRICT mask           = mask_ptr;
     const float  * GGML_CUDA_RESTRICT sinks          = sinks_ptr;
     // sparse: one index list per (sequence, query tile), the live count of each list follows the lists
@@ -2073,8 +2076,11 @@ static __global__ void flash_attn_ext_f16(
 
 bool ggml_cuda_flash_attn_ext_mma_f16_shall_use_sparse(const int cc, const ggml_tensor * dst, const int ncols1, const int ncols2);
 
-template <int DKQ, int DV, int ncols1, int ncols2, typename T_K = half2, typename T_V = half2>
+template <int DKQ, int DV, int ncols1, int ncols2, ggml_type type_K = GGML_TYPE_F16, ggml_type type_V = GGML_TYPE_F16>
 void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    using T_K = decltype(ggml_cuda_fattn_kv_dtype<type_K>());
+    using T_V = decltype(ggml_cuda_fattn_kv_dtype<type_V>());
+
     const ggml_tensor * KQV = dst;
     const int id = ggml_cuda_get_device();
     const int cc = ggml_cuda_info().devices[id].cc;
@@ -2115,7 +2121,7 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     float logit_softcap;
     memcpy(&logit_softcap, (const float *) KQV->op_params + 2, sizeof(float));
 
-    using fattn_mma_f16_kernel_t = fattn_kernel_t<float2, T_K, T_V, half>;
+    using fattn_mma_f16_kernel_t = fattn_kernel_t<float2, char, char, half>;
 #if defined(GGML_USE_HIP)
     using fattn_kernel_ptr_t = const void*;
 #else
@@ -2129,7 +2135,7 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
         if constexpr (ggml_cuda_flash_attn_ext_mma_f16_may_use_sparse(DKQ, DV, ncols1, ncols2)) {
             if (ggml_cuda_flash_attn_ext_mma_f16_shall_use_sparse(cc, dst, ncols1, ncols2)) {
                 constexpr bool use_sparse_kernel = true;
-                fattn_kernel = flash_attn_ext_f16<DKQ, DV, ncols1, ncols2, use_logit_softcap, V_is_K_view, use_sparse_kernel, T_K, T_V>;
+                fattn_kernel = flash_attn_ext_f16<DKQ, DV, ncols1, ncols2, use_logit_softcap, V_is_K_view, use_sparse_kernel, type_K, type_V>;
                 use_sparse = true;
 
                 static bool shared_memory_limit_raised[GGML_CUDA_MAX_DEVICES] = {false};
@@ -2139,7 +2145,7 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
                 }
             } else {
                 constexpr bool use_sparse_kernel = false;
-                fattn_kernel = flash_attn_ext_f16<DKQ, DV, ncols1, ncols2, use_logit_softcap, V_is_K_view, use_sparse_kernel, T_K, T_V>;
+                fattn_kernel = flash_attn_ext_f16<DKQ, DV, ncols1, ncols2, use_logit_softcap, V_is_K_view, use_sparse_kernel, type_K, type_V>;
 
                 static bool shared_memory_limit_raised[GGML_CUDA_MAX_DEVICES] = {false};
                 if (!shared_memory_limit_raised[id]) {
@@ -2151,7 +2157,7 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
 #endif // !defined(GGML_USE_MUSA)
         {
             constexpr bool use_sparse_kernel = false;
-            fattn_kernel = flash_attn_ext_f16<DKQ, DV, ncols1, ncols2, use_logit_softcap, V_is_K_view, use_sparse_kernel, T_K, T_V>;
+            fattn_kernel = flash_attn_ext_f16<DKQ, DV, ncols1, ncols2, use_logit_softcap, V_is_K_view, use_sparse_kernel, type_K, type_V>;
 
             static bool shared_memory_limit_raised[GGML_CUDA_MAX_DEVICES] = {false};
             if (!shared_memory_limit_raised[id]) {
@@ -2162,7 +2168,7 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     } else {
         constexpr bool use_logit_softcap = true;
         constexpr bool use_sparse_kernel = false;
-        fattn_kernel = flash_attn_ext_f16<DKQ, DV, ncols1, ncols2, use_logit_softcap, V_is_K_view, use_sparse_kernel, T_K, T_V>;
+        fattn_kernel = flash_attn_ext_f16<DKQ, DV, ncols1, ncols2, use_logit_softcap, V_is_K_view, use_sparse_kernel, type_K, type_V>;
 
         static bool shared_memory_limit_raised[GGML_CUDA_MAX_DEVICES] = {false};
         if (!shared_memory_limit_raised[id]) {
@@ -2172,83 +2178,83 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     }
 
     const bool async_kv_preload = nstages == 2 && !use_sparse;
-    launch_fattn<DV, ncols1, ncols2>
+    launch_fattn<DV, ncols1, ncols2, T_K, T_V>
         (ctx, dst, fattn_kernel, nwarps, nbytes_shared_total, nbatch_fa, true, true, true, use_sparse, warp_size_host, async_kv_preload);
 }
 
 
-#define DECL_FATTN_MMA_F16_CASE(DKQ, DV, ncols1, ncols2, T_K, T_V)                          \
-    template void ggml_cuda_flash_attn_ext_mma_f16_case                                   \
-    <DKQ, DV, ncols1, ncols2, T_K, T_V>(ggml_backend_cuda_context & ctx, ggml_tensor * dst) \
+#define DECL_FATTN_MMA_F16_CASE(DKQ, DV, ncols1, ncols2, type_K, type_V)                          \
+    template void ggml_cuda_flash_attn_ext_mma_f16_case                                           \
+    <DKQ, DV, ncols1, ncols2, type_K, type_V>(ggml_backend_cuda_context & ctx, ggml_tensor * dst) \
 
-#define DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(DKQ, DV, ncols, T_K, T_V)   \
-    extern DECL_FATTN_MMA_F16_CASE(DKQ, DV, (ncols)/ 1,  1, T_K, T_V); \
-    extern DECL_FATTN_MMA_F16_CASE(DKQ, DV, (ncols)/ 2,  2, T_K, T_V); \
-    extern DECL_FATTN_MMA_F16_CASE(DKQ, DV, (ncols)/ 4,  4, T_K, T_V); \
-    extern DECL_FATTN_MMA_F16_CASE(DKQ, DV, (ncols)/ 8,  8, T_K, T_V); \
-    extern DECL_FATTN_MMA_F16_CASE(DKQ, DV, (ncols)/16, 16, T_K, T_V); \
+#define DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(DKQ, DV, ncols, type_K, type_V)   \
+    extern DECL_FATTN_MMA_F16_CASE(DKQ, DV, (ncols)/ 1,  1, type_K, type_V); \
+    extern DECL_FATTN_MMA_F16_CASE(DKQ, DV, (ncols)/ 2,  2, type_K, type_V); \
+    extern DECL_FATTN_MMA_F16_CASE(DKQ, DV, (ncols)/ 4,  4, type_K, type_V); \
+    extern DECL_FATTN_MMA_F16_CASE(DKQ, DV, (ncols)/ 8,  8, type_K, type_V); \
+    extern DECL_FATTN_MMA_F16_CASE(DKQ, DV, (ncols)/16, 16, type_K, type_V); \
 
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 40,  40,   8, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 64,  64,   8, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 72,  72,   8, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 80,  80,   8, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 96,  96,   8, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(112, 112,   8, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(128, 128,   8, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(256, 256,   8, half2, half2)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 40,  40,   8, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 64,  64,   8, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 72,  72,   8, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 80,  80,   8, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 96,  96,   8, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(112, 112,   8, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(128, 128,   8, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(256, 256,   8, GGML_TYPE_F16, GGML_TYPE_F16)
 
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 40,  40,  16, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 64,  64,  16, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 72,  72,  16, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 80,  80,  16, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 96,  96,  16, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(112, 112,  16, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(128, 128,  16, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(256, 256,  16, half2, half2)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 40,  40,  16, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 64,  64,  16, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 72,  72,  16, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 80,  80,  16, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 96,  96,  16, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(112, 112,  16, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(128, 128,  16, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(256, 256,  16, GGML_TYPE_F16, GGML_TYPE_F16)
 
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 40,  40,  32, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 64,  64,  32, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 72,  72,  32, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 80,  80,  32, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 96,  96,  32, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(112, 112,  32, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(128, 128,  32, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(256, 256,  32, half2, half2)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 40,  40,  32, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 64,  64,  32, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 72,  72,  32, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 80,  80,  32, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 96,  96,  32, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(112, 112,  32, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(128, 128,  32, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(256, 256,  32, GGML_TYPE_F16, GGML_TYPE_F16)
 
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 40,  40,  64, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 64,  64,  64, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 72,  72,  64, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 80,  80,  64, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 96,  96,  64, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(112, 112,  64, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(128, 128,  64, half2, half2)
-DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(256, 256,  64, half2, half2)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 40,  40,  64, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 64,  64,  64, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 72,  72,  64, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 80,  80,  64, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2( 96,  96,  64, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(112, 112,  64, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(128, 128,  64, GGML_TYPE_F16, GGML_TYPE_F16)
+DECL_FATTN_MMA_F16_CASE_ALL_NCOLS2(256, 256,  64, GGML_TYPE_F16, GGML_TYPE_F16)
 
-extern DECL_FATTN_MMA_F16_CASE(512, 512,  4,  2, half2, half2);
-extern DECL_FATTN_MMA_F16_CASE(512, 512,  8,  2, half2, half2);
-extern DECL_FATTN_MMA_F16_CASE(512, 512, 16,  2, half2, half2);
-extern DECL_FATTN_MMA_F16_CASE(512, 512, 32,  2, half2, half2);
-extern DECL_FATTN_MMA_F16_CASE(512, 512,  2,  4, half2, half2);
-extern DECL_FATTN_MMA_F16_CASE(512, 512,  4,  4, half2, half2);
-extern DECL_FATTN_MMA_F16_CASE(512, 512,  8,  4, half2, half2);
-extern DECL_FATTN_MMA_F16_CASE(512, 512, 16,  4, half2, half2);
-extern DECL_FATTN_MMA_F16_CASE(512, 512,  1,  8, half2, half2);
-extern DECL_FATTN_MMA_F16_CASE(512, 512,  2,  8, half2, half2);
-extern DECL_FATTN_MMA_F16_CASE(512, 512,  4,  8, half2, half2);
-extern DECL_FATTN_MMA_F16_CASE(512, 512,  8,  8, half2, half2);
+extern DECL_FATTN_MMA_F16_CASE(512, 512,  4,  2, GGML_TYPE_F16, GGML_TYPE_F16);
+extern DECL_FATTN_MMA_F16_CASE(512, 512,  8,  2, GGML_TYPE_F16, GGML_TYPE_F16);
+extern DECL_FATTN_MMA_F16_CASE(512, 512, 16,  2, GGML_TYPE_F16, GGML_TYPE_F16);
+extern DECL_FATTN_MMA_F16_CASE(512, 512, 32,  2, GGML_TYPE_F16, GGML_TYPE_F16);
+extern DECL_FATTN_MMA_F16_CASE(512, 512,  2,  4, GGML_TYPE_F16, GGML_TYPE_F16);
+extern DECL_FATTN_MMA_F16_CASE(512, 512,  4,  4, GGML_TYPE_F16, GGML_TYPE_F16);
+extern DECL_FATTN_MMA_F16_CASE(512, 512,  8,  4, GGML_TYPE_F16, GGML_TYPE_F16);
+extern DECL_FATTN_MMA_F16_CASE(512, 512, 16,  4, GGML_TYPE_F16, GGML_TYPE_F16);
+extern DECL_FATTN_MMA_F16_CASE(512, 512,  1,  8, GGML_TYPE_F16, GGML_TYPE_F16);
+extern DECL_FATTN_MMA_F16_CASE(512, 512,  2,  8, GGML_TYPE_F16, GGML_TYPE_F16);
+extern DECL_FATTN_MMA_F16_CASE(512, 512,  4,  8, GGML_TYPE_F16, GGML_TYPE_F16);
+extern DECL_FATTN_MMA_F16_CASE(512, 512,  8,  8, GGML_TYPE_F16, GGML_TYPE_F16);
 
 // The number of viable configurations for Deepseek is very limited:
-extern DECL_FATTN_MMA_F16_CASE(576, 512, 1, 16, half2, half2);
-extern DECL_FATTN_MMA_F16_CASE(576, 512, 2, 16, half2, half2);
-extern DECL_FATTN_MMA_F16_CASE(576, 512, 4, 16, half2, half2);
+extern DECL_FATTN_MMA_F16_CASE(576, 512, 1, 16, GGML_TYPE_F16, GGML_TYPE_F16);
+extern DECL_FATTN_MMA_F16_CASE(576, 512, 2, 16, GGML_TYPE_F16, GGML_TYPE_F16);
+extern DECL_FATTN_MMA_F16_CASE(576, 512, 4, 16, GGML_TYPE_F16, GGML_TYPE_F16);
 
 // Mistral Small 4 (DKQ=320, DV=256), GQA=32-only build:
-extern DECL_FATTN_MMA_F16_CASE(320, 256,  1, 32, half2, half2);
-extern DECL_FATTN_MMA_F16_CASE(320, 256,  2, 32, half2, half2);
+extern DECL_FATTN_MMA_F16_CASE(320, 256,  1, 32, GGML_TYPE_F16, GGML_TYPE_F16);
+extern DECL_FATTN_MMA_F16_CASE(320, 256,  2, 32, GGML_TYPE_F16, GGML_TYPE_F16);
 
 // For GLM 4.7 Flash
-extern DECL_FATTN_MMA_F16_CASE(576, 512,  4,  4, half2, half2);
-extern DECL_FATTN_MMA_F16_CASE(576, 512,  8,  4, half2, half2);
-extern DECL_FATTN_MMA_F16_CASE(576, 512, 16,  4, half2, half2);
-extern DECL_FATTN_MMA_F16_CASE(576, 512,  1, 32, half2, half2);
-extern DECL_FATTN_MMA_F16_CASE(576, 512,  2, 32, half2, half2);
+extern DECL_FATTN_MMA_F16_CASE(576, 512,  4,  4, GGML_TYPE_F16, GGML_TYPE_F16);
+extern DECL_FATTN_MMA_F16_CASE(576, 512,  8,  4, GGML_TYPE_F16, GGML_TYPE_F16);
+extern DECL_FATTN_MMA_F16_CASE(576, 512, 16,  4, GGML_TYPE_F16, GGML_TYPE_F16);
+extern DECL_FATTN_MMA_F16_CASE(576, 512,  1, 32, GGML_TYPE_F16, GGML_TYPE_F16);
+extern DECL_FATTN_MMA_F16_CASE(576, 512,  2, 32, GGML_TYPE_F16, GGML_TYPE_F16);

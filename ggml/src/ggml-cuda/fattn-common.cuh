@@ -914,6 +914,15 @@ static __device__ __forceinline__ void flash_attn_load_tile(
         KV, tile_KV, D2, stride_KV, k_VKQ_0, i_sup, indices);
 }
 
+template <ggml_type type>
+static auto ggml_cuda_fattn_kv_dtype() {
+    if constexpr (type == GGML_TYPE_F16) {
+        return half2{};
+    } else {
+        static_assert(type == -1, "bad type");
+    }
+}
+
 template <ggml_type type_K, int D, int nthreads>
 constexpr __device__ vec_dot_KQ_t get_vec_dot_KQ() {
     if constexpr (type_K == GGML_TYPE_F16) {
@@ -1273,7 +1282,7 @@ static __global__ void flash_attn_combine_results(
     dst[tid] = VKQ_numerator / VKQ_denominator;
 }
 
-template <int DV, int ncols1, int ncols2, typename T_Q, typename T_K, typename T_V, typename T_mask>
+template <int DV, int ncols1, int ncols2, typename T_K_elem = void, typename T_V_elem = void, typename T_Q, typename T_K, typename T_V, typename T_mask>
 void launch_fattn(
     ggml_backend_cuda_context & ctx, ggml_tensor * dst,
     void (*fattn_kernel)(
@@ -1578,17 +1587,20 @@ void launch_fattn(
 
     GGML_ASSERT(block_dim.x % warp_size == 0);
 
+    using T_K_stride = std::conditional_t<std::is_void_v<T_K_elem>, T_K, T_K_elem>;
+    using T_V_stride = std::conditional_t<std::is_void_v<T_V_elem>, T_V, T_V_elem>;
+
     GGML_ASSERT(Q->nb[1] % sizeof(T_Q) == 0);
     GGML_ASSERT(Q->nb[2] % sizeof(T_Q) == 0);
     GGML_ASSERT(Q->nb[3] % sizeof(T_Q) == 0);
 
-    GGML_ASSERT(nb11 % sizeof(T_K) == 0);
-    GGML_ASSERT(nb12 % sizeof(T_K) == 0);
-    GGML_ASSERT(nb13 % sizeof(T_K) == 0);
+    GGML_ASSERT(nb11 % sizeof(T_K_stride) == 0);
+    GGML_ASSERT(nb12 % sizeof(T_K_stride) == 0);
+    GGML_ASSERT(nb13 % sizeof(T_K_stride) == 0);
 
-    GGML_ASSERT(nb21 % sizeof(T_V) == 0);
-    GGML_ASSERT(nb22 % sizeof(T_V) == 0);
-    GGML_ASSERT(nb23 % sizeof(T_V) == 0);
+    GGML_ASSERT(nb21 % sizeof(T_V_stride) == 0);
+    GGML_ASSERT(nb22 % sizeof(T_V_stride) == 0);
+    GGML_ASSERT(nb23 % sizeof(T_V_stride) == 0);
 
     if (mask) {
         GGML_ASSERT(mask->nb[1] % sizeof(T_mask) == 0);
@@ -1610,8 +1622,8 @@ void launch_fattn(
         Q->ne[0], ne01, Q->ne[2], Q->ne[3],
         int32_t(Q->nb[1] / sizeof(T_Q)), int32_t(Q->nb[2] / sizeof(T_Q)), int32_t(Q->nb[3] / sizeof(T_Q)),
         K->ne[0], n_kv, K->ne[2], K->ne[3],
-        int32_t(nb11 / sizeof(T_K)), int32_t(nb12 / sizeof(T_K)), int64_t(nb13 / sizeof(T_K)),
-        int32_t(nb21 / sizeof(T_V)), int32_t(nb22 / sizeof(T_V)), int64_t(nb23 / sizeof(T_V)),
+        int32_t(nb11 / sizeof(T_K_stride)), int32_t(nb12 / sizeof(T_K_stride)), int64_t(nb13 / sizeof(T_K_stride)),
+        int32_t(nb21 / sizeof(T_V_stride)), int32_t(nb22 / sizeof(T_V_stride)), int64_t(nb23 / sizeof(T_V_stride)),
         mask ? mask->ne[1] : 0, mask ? mask->ne[2] : 0, mask ? mask->ne[3] : 0,
         mask ? int32_t(mask->nb[1] / sizeof(T_mask)) : 0,
         mask ? int64_t(mask->nb[2] / sizeof(T_mask)) : 0,
