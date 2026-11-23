@@ -1236,19 +1236,19 @@ void ggml_cuda_flash_attn_ext_tile_case(ggml_backend_cuda_context & ctx, ggml_te
 
 void ggml_cuda_flash_attn_ext_tile(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 
-#define DECL_FATTN_TILE_CASE(DKQ, DV)                             \
-    template void ggml_cuda_flash_attn_ext_tile_case              \
-    <DKQ, DV>(ggml_backend_cuda_context & ctx, ggml_tensor * dst) \
+#define DECL_FATTN_TILE_CASE(DKQ, DV, T_K, T_V)                         \
+    template void ggml_cuda_flash_attn_ext_tile_case                    \
+    <DKQ, DV, T_K, T_V>(ggml_backend_cuda_context & ctx, ggml_tensor * dst) \
 
-extern DECL_FATTN_TILE_CASE( 40,  40);
-extern DECL_FATTN_TILE_CASE( 64,  64);
-extern DECL_FATTN_TILE_CASE( 72,  72);
-extern DECL_FATTN_TILE_CASE( 80,  80);
-extern DECL_FATTN_TILE_CASE( 96,  96);
-extern DECL_FATTN_TILE_CASE(112, 112);
-extern DECL_FATTN_TILE_CASE(128, 128);
-extern DECL_FATTN_TILE_CASE(192, 128);
-extern DECL_FATTN_TILE_CASE(256, 256);
-extern DECL_FATTN_TILE_CASE(320, 256);
-extern DECL_FATTN_TILE_CASE(512, 512);
-extern DECL_FATTN_TILE_CASE(576, 512);
+extern DECL_FATTN_TILE_CASE( 40,  40, half2, half2);
+extern DECL_FATTN_TILE_CASE( 64,  64, half2, half2);
+extern DECL_FATTN_TILE_CASE( 72,  72, half2, half2);
+extern DECL_FATTN_TILE_CASE( 80,  80, half2, half2);
+extern DECL_FATTN_TILE_CASE( 96,  96, half2, half2);
+extern DECL_FATTN_TILE_CASE(112, 112, half2, half2);
+extern DECL_FATTN_TILE_CASE(128, 128, half2, half2);
+extern DECL_FATTN_TILE_CASE(192, 128, half2, half2);
+extern DECL_FATTN_TILE_CASE(256, 256, half2, half2);
+extern DECL_FATTN_TILE_CASE(320, 256, half2, half2);
+extern DECL_FATTN_TILE_CASE(512, 512, half2, half2);
+extern DECL_FATTN_TILE_CASE(576, 512, half2, half2);
