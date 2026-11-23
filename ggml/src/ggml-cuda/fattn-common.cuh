@@ -914,7 +914,7 @@ static __device__ __forceinline__ void flash_attn_load_tile(
 }
 
 template <ggml_type type>
-static auto ggml_cuda_fattn_kv_dtype() {
+static __host__ __device__ auto ggml_cuda_fattn_kv_dtype() {
     if constexpr (type == GGML_TYPE_F16) {
         return half2{};
     } else {
