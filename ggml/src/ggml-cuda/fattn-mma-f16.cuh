@@ -542,7 +542,13 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     constexpr int  nbatch_V2       = ggml_cuda_fattn_mma_get_nbatch_V2(DKQ, DV, ncols);
     constexpr bool Q_in_reg        = ggml_cuda_fattn_mma_get_Q_in_reg (DKQ, DV, ncols);
     constexpr int  nstages         = ggml_cuda_fattn_mma_get_nstages  (DKQ, DV, ncols1, ncols2, use_sparse);
-    constexpr bool KV_indirection  = ncols2 == 1 || use_sparse;
+
+    // FIXME this is causing performance regressions on AMD/V100.
+#ifdef TURING_MMA_AVAILABLE
+    constexpr bool KV_indirection = true;
+#else
+    constexpr bool KV_indirection = use_sparse;
+#endif // TURING_MMA_AVAILABLE
 
     constexpr int DKQp = GGML_PAD(DKQ, 16);
     constexpr int DVp  = GGML_PAD(DV, 16);
@@ -1200,7 +1206,13 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     constexpr int  nbatch_combine  = ggml_cuda_fattn_mma_get_nbatch_combine(DKQ, DV, ncols);
     constexpr bool Q_in_reg        = ggml_cuda_fattn_mma_get_Q_in_reg      (DKQ, DV, ncols);
     constexpr int  nstages         = ggml_cuda_fattn_mma_get_nstages       (DKQ, DV, ncols1, ncols2, use_sparse);
-    constexpr bool KV_indirection  = ncols2 == 1 || use_sparse;
+
+    // FIXME this is causing performance regressions on AMD/V100.
+#ifdef TURING_MMA_AVAILABLE
+    constexpr bool KV_indirection = true;
+#else
+    constexpr bool KV_indirection = use_sparse;
+#endif // TURING_MMA_AVAILABLE
 
     constexpr int DKQp = GGML_PAD(DKQ, 16);
     constexpr int DVp  = GGML_PAD(DV, 16);
@@ -1973,7 +1985,7 @@ static __global__ void flash_attn_ext_f16(
         const half2 * V_h2 = V_is_K_view ? K_h2 : (const half2 *) (V + nb23*sequence + nb22*z_KV);
         const float * sinks_f = sinks ? (const float *) sinks + zt_Q : nullptr;
         const int32_t * indices = use_sparse ? sparse_indices + (int64_t(sequence % ne33)*iter_j + jt)*ne11 :
-                                  ncols2 == 1 && KV_rows_ptr ? KV_rows_ptr + int64_t(sequence)*ne11 : nullptr;
+                                  KV_rows_ptr ? KV_rows_ptr + int64_t(sequence)*ne11 : nullptr;
 
         const float slope = ncols2 == 1 ? get_alibi_slope(max_bias, zt_Q, n_head_log2, m0, m1) : 1.0f;
 
@@ -2027,7 +2039,7 @@ static __global__ void flash_attn_ext_f16(
     const half2 * V_h2 = V_is_K_view ? K_h2 : (const half2 *) (V + nb23*sequence + nb22*z_KV);
     const float * sinks_f = sinks ? (const float *) sinks + zt_Q : nullptr;
     const int32_t * indices = use_sparse ? sparse_indices + (int64_t(sequence % ne33)*iter_j + jt)*ne11 :
-                              ncols2 == 1 && KV_rows_ptr ? KV_rows_ptr + int64_t(sequence)*ne11 : nullptr;
+                              KV_rows_ptr ? KV_rows_ptr + int64_t(sequence)*ne11 : nullptr;
 
     const float slope = ncols2 == 1 ? get_alibi_slope(max_bias, zt_Q, n_head_log2, m0, m1) : 1.0f;
 
