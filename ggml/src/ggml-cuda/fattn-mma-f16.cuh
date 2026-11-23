@@ -2121,13 +2121,12 @@ void ggml_cuda_flash_attn_ext_mma_f16_case(ggml_backend_cuda_context & ctx, ggml
     float logit_softcap;
     memcpy(&logit_softcap, (const float *) KQV->op_params + 2, sizeof(float));
 
-    using fattn_mma_f16_kernel_t = fattn_kernel_t;
 #if defined(GGML_USE_HIP)
     using fattn_kernel_ptr_t = const void*;
 #else
-    using fattn_kernel_ptr_t = fattn_mma_f16_kernel_t;
+    using fattn_kernel_ptr_t = fattn_kernel_t;
 #endif // defined(GGML_USE_HIP)
-    fattn_mma_f16_kernel_t fattn_kernel;
+    fattn_kernel_t fattn_kernel;
     bool use_sparse = false;
     if (logit_softcap == 0.0f) {
         constexpr bool use_logit_softcap = false;

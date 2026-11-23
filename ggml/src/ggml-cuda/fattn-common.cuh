@@ -1402,6 +1402,14 @@ void launch_fattn(
         }
     }
 
+    GGML_ASSERT(nb11 % sizeof(T_K_stride) == 0);
+    GGML_ASSERT(nb12 % sizeof(T_K_stride) == 0);
+    GGML_ASSERT(nb13 % sizeof(T_K_stride) == 0);
+
+    GGML_ASSERT(nb21 % sizeof(T_V_stride) == 0);
+    GGML_ASSERT(nb22 % sizeof(T_V_stride) == 0);
+    GGML_ASSERT(nb23 % sizeof(T_V_stride) == 0);
+
     const int ntiles_x     = ((Q->ne[1] + ncols1 - 1) / ncols1);
     const int gqa_ratio    = Q->ne[2] / K->ne[2];
     const int ntiles_z_gqa = ((gqa_ratio + ncols2 - 1) / ncols2);
@@ -1562,24 +1570,6 @@ void launch_fattn(
     const uint3 ne01 = init_fastdiv_values(Q->ne[1]);
 
     GGML_ASSERT(block_dim.x % warp_size == 0);
-
-    GGML_ASSERT(Q->nb[1] % sizeof(float2) == 0);
-    GGML_ASSERT(Q->nb[2] % sizeof(float2) == 0);
-    GGML_ASSERT(Q->nb[3] % sizeof(float2) == 0);
-
-    GGML_ASSERT(nb11 % sizeof(T_K_stride) == 0);
-    GGML_ASSERT(nb12 % sizeof(T_K_stride) == 0);
-    GGML_ASSERT(nb13 % sizeof(T_K_stride) == 0);
-
-    GGML_ASSERT(nb21 % sizeof(T_V_stride) == 0);
-    GGML_ASSERT(nb22 % sizeof(T_V_stride) == 0);
-    GGML_ASSERT(nb23 % sizeof(T_V_stride) == 0);
-
-    if (mask) {
-        GGML_ASSERT(mask->nb[1] % sizeof(half) == 0);
-        GGML_ASSERT(mask->nb[2] % sizeof(half) == 0);
-        GGML_ASSERT(mask->nb[3] % sizeof(half) == 0);
-    }
 
     ggml_cuda_kernel_launch_params launch_params = ggml_cuda_kernel_launch_params(blocks_num, block_dim, nbytes_shared, main_stream);
     ggml_cuda_kernel_launch(fattn_kernel, launch_params,

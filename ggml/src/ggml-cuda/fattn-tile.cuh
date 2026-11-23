@@ -1224,7 +1224,7 @@ static void launch_fattn_tile_switch_ncols2(ggml_backend_cuda_context & ctx, ggm
     GGML_ABORT("fatal error");
 }
 
-template <int DKQ, int DV, ggml_type type_K = GGML_TYPE_F16, ggml_type type_V = GGML_TYPE_F16>
+template <int DKQ, int DV, ggml_type type_K, ggml_type type_V>
 void ggml_cuda_flash_attn_ext_tile_case(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * KQV = dst;
 
