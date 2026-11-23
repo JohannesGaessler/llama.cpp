@@ -687,15 +687,15 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
 template<int DKQ, int DV, int ncols1, int ncols2, bool use_logit_softcap> // D == head size
 __launch_bounds__(ggml_cuda_fattn_tile_get_nthreads(DKQ, DV, ncols1*ncols2), ggml_cuda_fattn_tile_get_occupancy(DKQ, DV, ncols1*ncols2))
 static __global__ void flash_attn_tile(
-        const char * Q_ptr,
-        const char * K_ptr,
-        const char * V_ptr,
-        const char * mask_ptr,
-        const char * sinks_ptr,
-        const int  * KV_max_ptr,
-        const int  * KV_rows_ptr,
-        float      * dst_ptr,
-        float2     * dst_meta_ptr,
+        const float * Q_ptr,
+        const half2 * K_ptr,
+        const half2 * V_ptr,
+        const half  * mask_ptr,
+        const float * sinks_ptr,
+        const int   * KV_max_ptr,
+        const int   * KV_rows_ptr,
+        float       * dst_ptr,
+        float2      * dst_meta_ptr,
         const float scale,
         const float max_bias,
         const float m0,
@@ -703,21 +703,21 @@ static __global__ void flash_attn_tile(
         const uint32_t n_head_log2,
         const float logit_softcap,
         const int32_t ne00, const uint3   ne01, const int32_t ne02, const int32_t ne03,
-                            const int32_t nb01, const int32_t nb02, const int32_t nb03,
+                            const int32_t s01,  const int32_t s02,  const int32_t s03,
         const int32_t ne10, const int32_t ne11, const int32_t ne12, const int32_t ne13,
-                            const int32_t nb11, const int32_t nb12, const int64_t nb13,
-                            const int32_t nb21, const int32_t nb22, const int64_t nb23,
+                            const int32_t s11,  const int32_t s12,  const int64_t s13,
+                            const int32_t s21,  const int32_t s22,  const int64_t s23,
                             const int32_t ne31, const int32_t ne32, const int32_t ne33,
-                            const int32_t nb31, const int64_t nb32, const int64_t nb33) {
+                            const int32_t s31,  const int64_t s32,  const int64_t s33) {
 #ifdef FLASH_ATTN_AVAILABLE
-    const char * GGML_CUDA_RESTRICT Q        = Q_ptr;
-    const char * GGML_CUDA_RESTRICT K        = K_ptr;
-    const char * GGML_CUDA_RESTRICT V        = V_ptr;
-    const char * GGML_CUDA_RESTRICT mask     = mask_ptr;
-    const char * GGML_CUDA_RESTRICT sinks    = sinks_ptr;
-    const int  * GGML_CUDA_RESTRICT KV_max   = KV_max_ptr;
-    float      * GGML_CUDA_RESTRICT dst      = dst_ptr;
-    float2     * GGML_CUDA_RESTRICT dst_meta = dst_meta_ptr;
+    const float * GGML_CUDA_RESTRICT Q        = Q_ptr;
+    const half2 * GGML_CUDA_RESTRICT K        = K_ptr;
+    const half2 * GGML_CUDA_RESTRICT V        = V_ptr;
+    const half  * GGML_CUDA_RESTRICT mask     = mask_ptr;
+    const float * GGML_CUDA_RESTRICT sinks    = sinks_ptr;
+    const int   * GGML_CUDA_RESTRICT KV_max   = KV_max_ptr;
+    float       * GGML_CUDA_RESTRICT dst      = dst_ptr;
+    float2      * GGML_CUDA_RESTRICT dst_meta = dst_meta_ptr;
     GGML_UNUSED(KV_rows_ptr);
 
     // Skip unused kernel variants for faster compilation:
@@ -726,12 +726,12 @@ static __global__ void flash_attn_tile(
         GGML_UNUSED_VARS(Q, K, V, mask, sinks, KV_max, dst, dst_meta, scale,
             max_bias, m0, m1, n_head_log2, logit_softcap,
             ne00, ne01, ne02, ne03,
-                  nb01, nb02, nb03,
+                  s01,  s02,  s03,
             ne10, ne11, ne12, ne13,
-                  nb11, nb12, nb13,
-                  nb21, nb22, nb23,
+                  s11,  s12,  s13,
+                  s21,  s22,  s23,
                   ne31, ne32, ne33,
-                  nb31, nb32, nb33);
+                  s31,  s32,  s33);
         NO_DEVICE_CODE;
         return;
     }
@@ -751,15 +751,15 @@ static __global__ void flash_attn_tile(
     const int sequence = blockIdx.z / (ne02/ncols2);
     const int head0 = blockIdx.z*ncols2 - sequence*ne02; // == blockIdx.z % (ne02/ncols2)
     const int gqa_ratio = ne02 / ne12; // With grouped query attention there are > 1 Q matrices per K, V matrix.
-    const float * Q_f  = (const float *) (Q + nb03*sequence + nb02* head0);
-    const half2 * K_h2 = (const half2 *) (K + nb13*sequence + nb12*(head0 / gqa_ratio));
-    const half2 * V_h2 = (const half2 *) (V + nb23*sequence + nb22*(head0 / gqa_ratio)); // K and V have same shape
+    const float * Q_f  = Q + s03*sequence + s02* head0;
+    const half2 * K_h2 = K + s13*sequence + s12*(head0 / gqa_ratio);
+    const half2 * V_h2 = V + s23*sequence + s22*(head0 / gqa_ratio); // K and V have same shape
 
-    const half * maskh = mask ? (const half *) (mask + nb33*(sequence % ne33) + nb32*(head0 % ne32)) : nullptr;
+    const half * maskh = mask ? mask + s33*(sequence % ne33) + s32*(head0 % ne32) : nullptr;
 
-    const int stride_K2   = nb11 / sizeof(half2);
-    const int stride_V2   = nb21 / sizeof(half2);
-    const int stride_mask = nb31 / sizeof(half);
+    const int stride_K2   = s11;
+    const int stride_V2   = s21;
+    const int stride_mask = s31;
 
     const float slope = ncols2 == 1 ? get_alibi_slope(max_bias, head0, n_head_log2, m0, m1) : 1.0f;
 
@@ -815,7 +815,7 @@ static __global__ void flash_attn_tile(
             if (i0 + np*warp_size*cpy_ne_D <= DKQ || i0 + (threadIdx.y % np)*(warp_size*cpy_ne_D) + threadIdx.x*cpy_ne_D < DKQ) {
                 __align__(16) float tmp_f[cpy_ne_D] = {0.0f};
                 ggml_cuda_memcpy_1<sizeof(tmp_f)>
-                    (tmp_f, &Q_f[c*(nb02/sizeof(float)) + fastmodulo(col_Q_0 + j, ne01)*(nb01/sizeof(float))
+                    (tmp_f, &Q_f[c*s02 + fastmodulo(col_Q_0 + j, ne01)*s01
                                  + i0 + (threadIdx.y % np)*(warp_size*cpy_ne_D) + threadIdx.x*cpy_ne_D]);
 
 #pragma unroll
@@ -952,7 +952,7 @@ static __global__ void flash_attn_tile(
 #pragma unroll
         for (int jc0 = 0; jc0 < cpw; ++jc0) {
             const int jc = jc0 + (threadIdx.y/np)*cpw;
-            const float sink = ((const float *) sinks)[head0 + jc % ncols2];
+            const float sink = sinks[head0 + jc % ncols2];
 
             float KQ_max_new_j = fmaxf(KQ_max[jc0], sink);
             const float KQ_max_scale = expf(KQ_max[jc0] - KQ_max_new_j);
@@ -1033,12 +1033,12 @@ static __global__ void flash_attn_tile(
     GGML_UNUSED_VARS(Q_ptr, K_ptr, V_ptr, mask_ptr, sinks_ptr, KV_max_ptr, KV_rows_ptr, dst_ptr, dst_meta_ptr, scale,
         max_bias, m0, m1, n_head_log2, logit_softcap,
         ne00, ne01, ne02, ne03,
-              nb01, nb02, nb03,
+              s01,  s02,  s03,
         ne10, ne11, ne12, ne13,
-              nb11, nb12, nb13,
-              nb21, nb22, nb23,
+              s11,  s12,  s13,
+              s21,  s22,  s23,
               ne31, ne32, ne33,
-              nb31, nb32, nb33);
+              s31,  s32,  s33);
     NO_DEVICE_CODE;
 #endif // FLASH_ATTN_AVAILABLE
 }
@@ -1059,7 +1059,7 @@ static void launch_fattn_tile_switch_ncols1(ggml_backend_cuda_context & ctx, ggm
             constexpr int cols_per_block = 64;
             const int nwarps    = ggml_cuda_fattn_tile_get_nthreads (DKQ, DV, cols_per_block, cc) / warp_size;
             const int nbatch_fa = ggml_cuda_fattn_tile_get_nbatch_fa(DKQ, DV, cols_per_block, cc);
-            fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
+            fattn_kernel_t<float, half2, half2, half> fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
             launch_fattn<DV, cols_per_block/ncols2, ncols2>
                 (ctx, dst, fattn_kernel, nwarps, nbytes_shared, nbatch_fa, true, true, false, false, warp_size);
             return;
@@ -1075,7 +1075,7 @@ static void launch_fattn_tile_switch_ncols1(ggml_backend_cuda_context & ctx, ggm
             constexpr int cols_per_block = 32;
             const int nwarps    = ggml_cuda_fattn_tile_get_nthreads (DKQ, DV, cols_per_block, cc) / warp_size;
             const int nbatch_fa = ggml_cuda_fattn_tile_get_nbatch_fa(DKQ, DV, cols_per_block, cc);
-            fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
+            fattn_kernel_t<float, half2, half2, half> fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
             launch_fattn<DV, cols_per_block/ncols2, ncols2>
                 (ctx, dst, fattn_kernel, nwarps, nbytes_shared, nbatch_fa, true, true, false, false, warp_size);
             return;
@@ -1087,7 +1087,7 @@ static void launch_fattn_tile_switch_ncols1(ggml_backend_cuda_context & ctx, ggm
             constexpr int cols_per_block = 16;
             const int nwarps    = ggml_cuda_fattn_tile_get_nthreads (DKQ, DV, cols_per_block, cc) / warp_size;
             const int nbatch_fa = ggml_cuda_fattn_tile_get_nbatch_fa(DKQ, DV, cols_per_block, cc);
-            fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
+            fattn_kernel_t<float, half2, half2, half> fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
             launch_fattn<DV, cols_per_block/ncols2, ncols2>
                 (ctx, dst, fattn_kernel, nwarps, nbytes_shared, nbatch_fa, true, true, false, false, warp_size);
             return;
@@ -1099,7 +1099,7 @@ static void launch_fattn_tile_switch_ncols1(ggml_backend_cuda_context & ctx, ggm
             constexpr int cols_per_block = 8;
             const int nwarps    = ggml_cuda_fattn_tile_get_nthreads (DKQ, DV, cols_per_block, cc) / warp_size;
             const int nbatch_fa = ggml_cuda_fattn_tile_get_nbatch_fa(DKQ, DV, cols_per_block, cc);
-            fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
+            fattn_kernel_t<float, half2, half2, half> fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
             launch_fattn<DV, cols_per_block/ncols2, ncols2>
                 (ctx, dst, fattn_kernel, nwarps, nbytes_shared, nbatch_fa, true, true, false, false, warp_size);
             return;
@@ -1111,7 +1111,7 @@ static void launch_fattn_tile_switch_ncols1(ggml_backend_cuda_context & ctx, ggm
             constexpr int cols_per_block = 4;
             const int nwarps    = ggml_cuda_fattn_tile_get_nthreads (DKQ, DV, cols_per_block, cc) / warp_size;
             const int nbatch_fa = ggml_cuda_fattn_tile_get_nbatch_fa(DKQ, DV, cols_per_block, cc);
-            fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
+            fattn_kernel_t<float, half2, half2, half> fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
             launch_fattn<DV, cols_per_block/ncols2, ncols2>
                 (ctx, dst, fattn_kernel, nwarps, nbytes_shared, nbatch_fa, true, true, false, false, warp_size);
             return;
@@ -1122,7 +1122,7 @@ static void launch_fattn_tile_switch_ncols1(ggml_backend_cuda_context & ctx, ggm
         constexpr int cols_per_block = 2;
         const int nwarps    = ggml_cuda_fattn_tile_get_nthreads (DKQ, DV, cols_per_block, cc) / warp_size;
         const int nbatch_fa = ggml_cuda_fattn_tile_get_nbatch_fa(DKQ, DV, cols_per_block, cc);
-        fattn_kernel_t fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
+        fattn_kernel_t<float, half2, half2, half> fattn_kernel = flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, use_logit_softcap>;
         launch_fattn<DV, cols_per_block/ncols2, ncols2>
             (ctx, dst, fattn_kernel, nwarps, nbytes_shared, nbatch_fa, true, true, false, false, warp_size);
         return;

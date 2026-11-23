@@ -20,16 +20,17 @@
 // The macro on the following line shifts it by a factor of 2**3=8, as was needed to fix https://github.com/ggml-org/llama.cpp/issues/18606 .
 #define FATTN_KQ_MAX_OFFSET (3.0f*0.6931f)
 
-typedef void (* fattn_kernel_t)(
-        const char * __restrict__ Q,
-        const char * __restrict__ K,
-        const char * __restrict__ V,
-        const char * __restrict__ mask,
-        const char * __restrict__ sinks,
-        const int  * __restrict__ KV_max,
-        const int  * __restrict__ KV_rows,
-        float      * __restrict__ dst,
-        float2     * __restrict__ dst_meta,
+template <typename T_Q, typename T_K, typename T_V, typename T_mask>
+using fattn_kernel_t = void (*)(
+        const T_Q    * __restrict__ Q,
+        const T_K    * __restrict__ K,
+        const T_V    * __restrict__ V,
+        const T_mask * __restrict__ mask,
+        const float  * __restrict__ sinks,
+        const int    * __restrict__ KV_max,
+        const int    * __restrict__ KV_rows,
+        float        * __restrict__ dst,
+        float2       * __restrict__ dst_meta,
         const float scale,
         const float max_bias,
         const float m0,
@@ -37,12 +38,12 @@ typedef void (* fattn_kernel_t)(
         const uint32_t n_head_log2,
         const float logit_softcap,
         const int32_t ne00, const uint3   ne01, const int32_t ne02, const int32_t ne03,
-                            const int32_t nb01, const int32_t nb02, const int32_t nb03,
+                            const int32_t s01,  const int32_t s02,  const int32_t s03,
         const int32_t ne10, const int32_t ne11, const int32_t ne12, const int32_t ne13,
-                            const int32_t nb11, const int32_t nb12, const int64_t nb13,
-                            const int32_t nb21, const int32_t nb22, const int64_t nb23,
+                            const int32_t s11,  const int32_t s12,  const int64_t s13,
+                            const int32_t s21,  const int32_t s22,  const int64_t s23,
                             const int32_t ne31, const int32_t ne32, const int32_t ne33,
-                            const int32_t nb31, const int64_t nb32, const int64_t nb33);
+                            const int32_t s31,  const int64_t s32,  const int64_t s33);
 
 typedef float (*vec_dot_KQ_t)(
     const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8 , const void * __restrict__ Q_ds);
@@ -1270,9 +1271,33 @@ static __global__ void flash_attn_combine_results(
     dst[tid] = VKQ_numerator / VKQ_denominator;
 }
 
-template <int DV, int ncols1, int ncols2>
+template <int DV, int ncols1, int ncols2, typename T_Q, typename T_K, typename T_V, typename T_mask>
 void launch_fattn(
-    ggml_backend_cuda_context & ctx, ggml_tensor * dst, fattn_kernel_t fattn_kernel, const int nwarps, const size_t nbytes_shared,
+    ggml_backend_cuda_context & ctx, ggml_tensor * dst,
+    void (*fattn_kernel)(
+        const T_Q    * __restrict__ Q,
+        const T_K    * __restrict__ K,
+        const T_V    * __restrict__ V,
+        const T_mask * __restrict__ mask,
+        const float  * __restrict__ sinks,
+        const int    * __restrict__ KV_max,
+        const int    * __restrict__ KV_rows,
+        float        * __restrict__ dst,
+        float2       * __restrict__ dst_meta,
+        const float scale,
+        const float max_bias,
+        const float m0,
+        const float m1,
+        const uint32_t n_head_log2,
+        const float logit_softcap,
+        const int32_t ne00, const uint3   ne01, const int32_t ne02, const int32_t ne03,
+                            const int32_t s01,  const int32_t s02,  const int32_t s03,
+        const int32_t ne10, const int32_t ne11, const int32_t ne12, const int32_t ne13,
+                            const int32_t s11,  const int32_t s12,  const int64_t s13,
+                            const int32_t s21,  const int32_t s22,  const int64_t s23,
+                            const int32_t ne31, const int32_t ne32, const int32_t ne33,
+                            const int32_t s31,  const int64_t s32,  const int64_t s33),
+    const int nwarps, const size_t nbytes_shared,
     const int nbatch_fa, const bool need_f16_K, const bool need_f16_V, const bool stream_k, const bool use_sparse,
     const int warp_size = WARP_SIZE, const bool async_kv_preload = false
 ) {
@@ -1551,22 +1576,44 @@ void launch_fattn(
 
     GGML_ASSERT(block_dim.x % warp_size == 0);
 
+    GGML_ASSERT(Q->nb[1] % sizeof(T_Q) == 0);
+    GGML_ASSERT(Q->nb[2] % sizeof(T_Q) == 0);
+    GGML_ASSERT(Q->nb[3] % sizeof(T_Q) == 0);
+
+    GGML_ASSERT(nb11 % sizeof(T_K) == 0);
+    GGML_ASSERT(nb12 % sizeof(T_K) == 0);
+    GGML_ASSERT(nb13 % sizeof(T_K) == 0);
+
+    GGML_ASSERT(nb21 % sizeof(T_V) == 0);
+    GGML_ASSERT(nb22 % sizeof(T_V) == 0);
+    GGML_ASSERT(nb23 % sizeof(T_V) == 0);
+
+    if (mask) {
+        GGML_ASSERT(mask->nb[1] % sizeof(T_mask) == 0);
+        GGML_ASSERT(mask->nb[2] % sizeof(T_mask) == 0);
+        GGML_ASSERT(mask->nb[3] % sizeof(T_mask) == 0);
+    }
+
     ggml_cuda_kernel_launch_params launch_params = ggml_cuda_kernel_launch_params(blocks_num, block_dim, nbytes_shared, main_stream);
     ggml_cuda_kernel_launch(fattn_kernel, launch_params,
-        (const char *) Q->data,
-        K_data,
-        V_data,
-        mask ? ((const char *) mask->data) : nullptr,
-        sinks ? ((const char *) sinks->data) : nullptr,
+        (const T_Q *) Q->data,
+        (const T_K *) K_data,
+        (const T_V *) V_data,
+        mask ? ((const T_mask *) mask->data) : nullptr,
+        sinks ? ((const float *) sinks->data) : nullptr,
         KV_max.ptr,
         kv_rows ? (const int *) kv_rows->data : nullptr,
         !stream_k && parallel_blocks > 1 ? dst_tmp.ptr : (float *) KQV->data, dst_tmp_meta.ptr,
         scale, max_bias, m0, m1, n_head_log2, logit_softcap,
-        Q->ne[0], ne01,     Q->ne[2], Q->ne[3], Q->nb[1], Q->nb[2], Q->nb[3],
-        K->ne[0], n_kv, K->ne[2], K->ne[3], nb11, nb12, nb13,
-        nb21, nb22, nb23,
+        Q->ne[0], ne01, Q->ne[2], Q->ne[3],
+        int32_t(Q->nb[1] / sizeof(T_Q)), int32_t(Q->nb[2] / sizeof(T_Q)), int32_t(Q->nb[3] / sizeof(T_Q)),
+        K->ne[0], n_kv, K->ne[2], K->ne[3],
+        int32_t(nb11 / sizeof(T_K)), int32_t(nb12 / sizeof(T_K)), int64_t(nb13 / sizeof(T_K)),
+        int32_t(nb21 / sizeof(T_V)), int32_t(nb22 / sizeof(T_V)), int64_t(nb23 / sizeof(T_V)),
         mask ? mask->ne[1] : 0, mask ? mask->ne[2] : 0, mask ? mask->ne[3] : 0,
-        mask ? mask->nb[1] : 0, mask ? mask->nb[2] : 0, mask ? mask->nb[3] : 0
+        mask ? int32_t(mask->nb[1] / sizeof(T_mask)) : 0,
+        mask ? int64_t(mask->nb[2] / sizeof(T_mask)) : 0,
+        mask ? int64_t(mask->nb[3] / sizeof(T_mask)) : 0
     );
     CUDA_CHECK(cudaGetLastError());
 
